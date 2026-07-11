@@ -4,7 +4,7 @@ import {
   decryptWithKey,
   encryptWithKey,
   isEncryptedValue
-} from "../utils/field-encryption.js";
+} from "../utils/field-encryption-core.js";
 
 const key = Buffer.from("0123456789abcdef0123456789abcdef", "utf8");
 
