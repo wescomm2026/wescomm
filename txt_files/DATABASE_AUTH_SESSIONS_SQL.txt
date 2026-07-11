@@ -1,0 +1,42 @@
+-- WESCOMM revocable HttpOnly authentication sessions
+-- Run once in Supabase SQL Editor before testing the hardened login flow.
+
+create table if not exists public.auth_sessions (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  token_hash text not null unique,
+  user_agent text,
+  expires_at timestamptz not null,
+  last_seen_at timestamptz not null default now(),
+  revoked_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists auth_sessions_user_id_expires_at_idx
+  on public.auth_sessions(user_id, expires_at);
+
+create index if not exists auth_sessions_expires_at_revoked_at_idx
+  on public.auth_sessions(expires_at, revoked_at);
+
+alter table public.auth_sessions enable row level security;
+
+-- Browser clients must never read or write session hashes directly.
+revoke all on table public.auth_sessions from anon, authenticated;
+
+-- Protect Web Push capability URLs and key material with application encryption.
+-- Existing values are encrypted by `npm run security:encrypt-existing -- --apply`.
+alter table public.push_subscriptions
+  add column if not exists endpoint_hash text;
+
+create unique index if not exists push_subscriptions_endpoint_hash_unique_idx
+  on public.push_subscriptions(endpoint_hash)
+  where endpoint_hash is not null;
+
+-- Verification query. row_level_security_enabled should be true.
+select
+  c.relname as table_name,
+  c.relrowsecurity as row_level_security_enabled
+from pg_class c
+join pg_namespace n on n.oid = c.relnamespace
+where n.nspname = 'public'
+  and c.relname = 'auth_sessions';

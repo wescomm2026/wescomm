@@ -1,0 +1,115 @@
+Resend + Supabase SMTP Setup for WESCOMM
+========================================
+
+Goal
+----
+Use Resend as Supabase Auth's SMTP sender so WESCOMM auth emails can have a custom sender name/email and custom templates.
+
+Important Requirement
+---------------------
+Resend requires a verified domain to send emails.
+
+That means you need access to DNS records for a domain you own.
+
+Examples:
+- yourdomain.com
+- auth.yourdomain.com
+- wescomm.yourdomain.com
+
+For a sender like no-reply@wescomm.wesleyan.edu.ph, Wesleyan IT must help because they control the wesleyan.edu.ph DNS.
+
+Step 1 - Create Resend Account
+------------------------------
+1. Go to https://resend.com
+2. Create an account.
+3. Open the Resend Dashboard.
+
+Step 2 - Add and Verify Domain
+------------------------------
+1. Go to Domains.
+2. Click Add Domain.
+3. Add a domain or subdomain you control.
+   Recommended:
+   auth.yourdomain.com
+4. Resend will show DNS records.
+5. Copy those DNS records into your DNS provider.
+6. Return to Resend and click Verify DNS Records.
+7. Wait until the domain status becomes verified.
+
+Step 3 - Create Resend API Key
+------------------------------
+1. Go to API Keys.
+2. Create a new API key.
+3. Copy the API key.
+4. Keep it private.
+
+Step 4 - Configure Supabase SMTP
+--------------------------------
+1. Open Supabase Dashboard.
+2. Open WESCOMM project.
+3. Go to Authentication > Emails > SMTP Settings.
+4. Enable custom SMTP.
+5. Use these values:
+
+Sender email address:
+no-reply@auth.yourdomain.com
+
+Sender name:
+WESCOMM
+
+Host:
+smtp.resend.com
+
+Port number:
+465
+
+Minimum interval per user:
+60
+
+Username:
+resend
+
+Password:
+YOUR_RESEND_API_KEY
+
+6. Save changes.
+
+Alternative port:
+Use 587 if 465 does not work.
+
+Step 5 - Edit Supabase Email Templates
+--------------------------------------
+After custom SMTP is enabled, Supabase should allow editing templates.
+
+1. Go to Authentication > Emails > Templates.
+2. Edit Confirm signup.
+3. Edit Magic Link / OTP.
+4. Use the WESCOMM template from:
+   SUPABASE_WESCOMM_EMAIL_TEMPLATES.txt
+
+Step 6 - Test
+-------------
+1. Restart frontend and backend if needed.
+2. Open WESCOMM login.
+3. Enter a valid @wesleyan.edu.ph email.
+4. Check inbox/spam.
+5. Email sender should show as WESCOMM if Resend/Supabase SMTP is configured correctly.
+
+Troubleshooting
+---------------
+If Supabase says SMTP failed:
+- Check Resend API key.
+- Check SMTP host is smtp.resend.com.
+- Check username is resend.
+- Try port 587 instead of 465.
+- Make sure sender email uses your verified Resend domain.
+
+If email does not arrive:
+- Check Resend Logs.
+- Check spam folder.
+- Check Supabase Auth Logs.
+- Make sure the recipient email is valid.
+
+If sender still says Supabase:
+- Custom SMTP may not be enabled or saved.
+- Sender email may not match the verified Resend domain.

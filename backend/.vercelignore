@@ -1,0 +1,9 @@
+.env*
+!.env.example
+node_modules/
+dist/
+coverage/
+src/tests/
+src/scripts/
+*.tsbuildinfo
+*.log

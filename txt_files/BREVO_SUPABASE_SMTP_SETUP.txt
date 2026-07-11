@@ -1,0 +1,201 @@
+WESCOMM - BREVO SMTP SETUP FOR SUPABASE AUTH EMAILS
+====================================================
+
+Goal
+----
+Use Brevo as the email sender for Supabase Auth emails, so WESCOMM login emails
+look more proper than the default Supabase sender.
+
+This is for email verification / magic link login, not Microsoft Outlook OAuth.
+
+
+PART 1 - Create / open your Brevo account
+-----------------------------------------
+1. Open:
+   https://app.brevo.com/
+
+2. Log in or create an account.
+
+3. If Brevo asks what you want to use, choose Transactional Email / SMTP if
+   available.
+
+
+PART 2 - Create a sender in Brevo
+---------------------------------
+This is the "From" name and email that users will see in their inbox.
+
+For testing:
+  Sender name: WESCOMM
+  Sender email: your verified email address
+
+For production:
+  Sender name: WESCOMM
+  Sender email: noreply@your-domain.com
+
+If you want a real Wesleyan sender later:
+  noreply@wesleyan.edu.ph
+  auth@wesleyan.edu.ph
+  wescomm@wesleyan.edu.ph
+
+But this needs help from Wesleyan IT because they control the domain/DNS.
+
+Steps:
+1. In Brevo, click your account/profile menu.
+2. Go to:
+   Settings -> Senders, Domains, IPs -> Senders
+3. Click:
+   Add a sender
+4. Fill in:
+   From name: WESCOMM
+   From email: your sender email
+5. Save.
+6. If Brevo asks for verification, open the sender email inbox and enter the
+   verification code.
+
+
+PART 3 - Get Brevo SMTP credentials
+-----------------------------------
+Important:
+Use an SMTP key, not a normal API key.
+
+Steps:
+1. In Brevo, go to:
+   Settings -> SMTP & API
+
+2. Open the SMTP tab.
+
+3. Copy your SMTP login.
+   This is the username you will paste into Supabase.
+
+4. Click:
+   Generate a new SMTP key
+
+5. Suggested name:
+   wescomm-supabase-auth
+
+6. Choose:
+   Standard SMTP key
+
+7. Copy the full SMTP key immediately.
+   Brevo only shows the full key once.
+
+
+PART 4 - Add Brevo SMTP to Supabase
+-----------------------------------
+1. Open your Supabase project.
+
+2. Go to:
+   Authentication -> Emails -> SMTP Settings
+
+3. Enable:
+   Enable custom SMTP
+
+4. Fill in the fields like this:
+
+   Sender email address:
+   the same verified sender email you created in Brevo
+
+   Sender name:
+   WESCOMM
+
+   Host:
+   smtp-relay.brevo.com
+
+   Port:
+   587
+
+   Minimum interval per user:
+   60
+
+   Username:
+   your Brevo SMTP login
+
+   Password:
+   your Brevo SMTP key
+
+5. Save changes.
+
+
+PART 5 - Test WESCOMM login email
+---------------------------------
+1. Make sure the frontend is running:
+   cd C:\Users\vjohn\Desktop\Wescomm\frontend
+   npm run dev
+
+2. Open:
+   http://localhost:3000
+
+3. Click Log in.
+
+4. Enter an allowed email address.
+
+Current WESCOMM config only accepts:
+  @wesleyan.edu.ph
+
+If you want to test with your own personal email temporarily, change these:
+
+Frontend:
+  frontend/.env.local
+
+  NEXT_PUBLIC_AUTH_ALLOWED_EMAIL_DOMAIN=gmail.com
+
+Backend:
+  backend/.env
+
+  AUTH_ALLOWED_EMAIL_DOMAINS=gmail.com
+
+Then restart both frontend and backend.
+
+After testing, change them back to:
+  wesleyan.edu.ph
+
+
+PART 6 - If the email does not arrive
+-------------------------------------
+Check these:
+
+1. Brevo sender is verified.
+2. Supabase sender email is exactly the same as the verified Brevo sender.
+3. Supabase SMTP username is the Brevo SMTP login, not your Brevo account email
+   unless Brevo shows that as the SMTP login.
+4. Supabase SMTP password is the Brevo SMTP key, not the Brevo API key.
+5. Use port 587 first.
+6. Check Spam / Junk folder.
+7. Open Brevo Transactional logs to see whether the email was accepted or failed.
+
+
+PART 7 - Production recommendation
+----------------------------------
+For final defense / production-like demo, ask Wesleyan IT if they can provide:
+
+1. A sender email:
+   wescomm@wesleyan.edu.ph
+   or
+   noreply@wesleyan.edu.ph
+
+2. DNS records required by Brevo for domain authentication:
+   DKIM
+   DMARC
+   Brevo verification record/code
+
+This improves deliverability and makes the login email look official.
+
+
+SUPABASE FIELD SUMMARY
+----------------------
+Sender email address: your verified Brevo sender email
+Sender name: WESCOMM
+Host: smtp-relay.brevo.com
+Port: 587
+Minimum interval: 60
+Username: Brevo SMTP login
+Password: Brevo SMTP key
+
+
+NOTES
+-----
+- Do not commit SMTP keys to GitHub.
+- Do not screenshot or send SMTP keys in group chats.
+- Rotate/delete the SMTP key in Brevo if it gets exposed.
+- Keep auth emails simple. Avoid marketing-style wording so Gmail/Outlook will
+  not treat them as promotional or spam.

@@ -1,0 +1,120 @@
+SendGrid + Supabase SMTP Setup for WESCOMM
+==========================================
+
+Goal
+----
+Use Twilio SendGrid as Supabase Auth's SMTP sender so WESCOMM auth emails can use a custom sender name/email.
+
+Important Notes
+---------------
+- SendGrid account availability/free trial can vary.
+- You need either Single Sender Verification or Domain Authentication.
+- For production, Domain Authentication is better.
+- For a sender like no-reply@wescomm.wesleyan.edu.ph, Wesleyan IT must help because they control the wesleyan.edu.ph DNS.
+
+Option A - Single Sender Verification
+-------------------------------------
+Use this for quick testing.
+
+1. Create/login to SendGrid.
+2. Go to Settings > Sender Authentication.
+3. Choose Single Sender Verification.
+4. Add a sender email you can access.
+5. Verify it from the email inbox.
+
+Example sender:
+WESCOMM <your-email@example.com>
+
+This is easier but less production-ready than domain authentication.
+
+Option B - Domain Authentication
+--------------------------------
+Use this for production-like sending.
+
+1. Go to Settings > Sender Authentication.
+2. Choose Domain Authentication.
+3. Add a domain or subdomain you control.
+   Recommended:
+   auth.yourdomain.com
+4. SendGrid will show DNS records.
+5. Add those records to your DNS provider.
+6. Return to SendGrid and verify.
+
+Step 1 - Create SendGrid API Key
+--------------------------------
+1. In SendGrid, go to Settings > API Keys.
+2. Click Create API Key.
+3. Name it:
+   WESCOMM Supabase SMTP
+4. Give it Mail Send permission.
+5. Copy the API key.
+6. Keep it private.
+
+Step 2 - Configure Supabase SMTP
+--------------------------------
+1. Open Supabase Dashboard.
+2. Open WESCOMM project.
+3. Go to Authentication > Emails > SMTP Settings.
+4. Enable custom SMTP.
+5. Use these values:
+
+Sender email address:
+your verified sender email
+
+Sender name:
+WESCOMM
+
+Host:
+smtp.sendgrid.net
+
+Port number:
+587
+
+Minimum interval per user:
+60
+
+Username:
+apikey
+
+Password:
+YOUR_SENDGRID_API_KEY
+
+6. Save changes.
+
+Alternative port:
+Use 465 only if 587 does not work and your setup expects implicit TLS.
+
+Step 3 - Edit Supabase Email Templates
+--------------------------------------
+After custom SMTP is enabled, Supabase should allow editing templates.
+
+1. Go to Authentication > Emails > Templates.
+2. Edit Confirm signup.
+3. Edit Magic Link / OTP.
+4. Use the WESCOMM template from:
+   SUPABASE_WESCOMM_EMAIL_TEMPLATES.txt
+
+Step 4 - Test
+-------------
+1. Open WESCOMM login.
+2. Enter a valid @wesleyan.edu.ph email.
+3. Check inbox/spam.
+4. If email does not arrive, check:
+   - SendGrid Email Activity
+   - Supabase Auth Logs
+   - Sender verification status
+
+Troubleshooting
+---------------
+If Supabase says SMTP failed:
+- Check Host is smtp.sendgrid.net.
+- Check Port is 587.
+- Check Username is exactly apikey.
+- Check Password is your SendGrid API key.
+- Check API key has Mail Send permission.
+- Check sender email is verified in SendGrid.
+
+If emails go to spam:
+- Use Domain Authentication instead of Single Sender Verification.
+- Add SPF/DKIM records from SendGrid.
+- Avoid marketing-style content in auth emails.

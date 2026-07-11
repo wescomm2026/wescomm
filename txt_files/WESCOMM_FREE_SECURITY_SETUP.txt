@@ -1,0 +1,171 @@
+WESCOMM FREE SECURITY HARDENING SETUP
+====================================
+
+What is now implemented
+-----------------------
+1. Revocable random browser sessions stored only as SHA-256 hashes in PostgreSQL.
+2. HttpOnly, SameSite=Lax browser cookies; Secure is enforced automatically in production.
+3. Browser storage no longer keeps the real Supabase or development bearer token.
+4. Cookie-authenticated POST/PATCH/DELETE requests require an approved frontend Origin.
+5. AES-256-GCM application-level encryption with versioned keys.
+6. New support subjects/messages are encrypted before being stored.
+7. Profile phone and address values are decrypted only inside the authorized backend.
+8. Web Push endpoint and encryption credentials are encrypted; only a SHA-256 lookup hash remains searchable.
+9. Support notification and audit text no longer copies private conversation subjects.
+10. Production startup rejects missing encryption keys, non-HTTPS frontend origins, or database URLs without TLS settings.
+
+No paid security provider is required. Supabase PostgreSQL and deployment environment variables are enough.
+
+STEP 1 - Create the session table
+---------------------------------
+Open Supabase Dashboard > SQL Editor.
+Run the complete contents of:
+
+  txt_files/DATABASE_AUTH_SESSIONS_SQL.txt
+
+The verification result must show:
+
+  auth_sessions | true
+
+STEP 2 - Local encryption key
+-----------------------------
+A random local key was generated in backend/.env on this computer. It is ignored by Git.
+Never send, screenshot, commit, or paste this value into chat.
+
+For another computer or production host, generate a different key in PowerShell:
+
+  $bytes = New-Object byte[] 32
+  $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+  $rng.GetBytes($bytes)
+  [Convert]::ToBase64String($bytes)
+  $rng.Dispose()
+
+Then configure these private backend variables:
+
+  DATA_ENCRYPTION_CURRENT_VERSION=v1
+  DATA_ENCRYPTION_KEYS=v1:PASTE_THE_GENERATED_BASE64_VALUE
+  AUTH_SESSION_TTL_HOURS=168
+  AUTH_SESSION_MAX_PER_USER=5
+
+Use the hosting provider's encrypted Environment Variables/Secrets screen. Never put DATA_ENCRYPTION_KEYS in frontend/.env.local or any NEXT_PUBLIC variable.
+
+IMPORTANT: Losing every copy of the encryption key makes encrypted data unrecoverable. Keep one protected offline recovery copy accessible only to the project owner/adviser.
+
+STEP 3 - Generate Prisma and restart
+------------------------------------
+From backend:
+
+  npm run prisma:generate
+  npm run dev
+
+Restart the frontend too:
+
+  cd ../frontend
+  npm run dev
+
+STEP 4 - Test login before encrypting old rows
+------------------------------------------------
+1. Open the website and log in through email OTP.
+2. Sign out and verify that protected pages no longer load.
+3. Log in using each approved development account while NODE_ENV=development:
+   student@wesleyan.edu.ph
+   staff@wesleyan.edu.ph
+   admin@wesleyan.edu.ph
+4. In Browser DevTools > Application > Cookies, confirm wescomm_session exists and is HttpOnly.
+5. Confirm there is no Supabase access token in Local Storage or Session Storage.
+
+STEP 5 - Encrypt existing private records
+-----------------------------------------
+Back up the database first. Free-plan projects should make a manual Supabase CLI/pg_dump backup.
+
+Run the audit first; it changes nothing:
+
+  cd backend
+  npm run security:encrypt-existing
+
+Then apply encryption once the counts look correct:
+
+  npm run security:encrypt-existing -- --apply
+
+Run the audit again. Every count should be zero.
+
+Existing plaintext remains readable until this command is applied. New support conversations are encrypted immediately after the backend receives them.
+
+STEP 6 - Verify encrypted storage
+---------------------------------
+Run this read-only query in Supabase SQL Editor:
+
+  select
+    count(*) filter (where phone like 'wescomm.enc.%') as encrypted_phone_rows,
+    count(*) filter (where address like 'wescomm.enc.%') as encrypted_address_rows
+  from public.profiles;
+
+  select
+    count(*) filter (where subject like 'wescomm.enc.%') as encrypted_subject_rows
+  from public.conversations;
+
+  select
+    count(*) filter (where message like 'wescomm.enc.%') as encrypted_message_rows
+  from public.conversation_messages;
+
+  select
+    count(*) filter (
+      where endpoint_hash is not null
+        and endpoint like 'wescomm.enc.%'
+        and p256dh like 'wescomm.enc.%'
+        and auth like 'wescomm.enc.%'
+    ) as encrypted_push_subscription_rows
+  from public.push_subscriptions;
+
+The frontend should still show normal readable values because authorized decryption happens in the backend.
+
+STEP 7 - Free Supabase/dashboard settings
+-----------------------------------------
+1. Database Settings > SSL Configuration > enable Enforce SSL on incoming connections.
+2. Authentication > URL Configuration > use the final HTTPS site URL and approved redirect URLs only.
+3. Keep RLS enabled on every public table.
+4. Keep product images public only when intended. Avatars and receipt documents should use private buckets and short-lived signed URLs.
+5. Never expose a secret/service-role key in frontend code.
+
+STEP 8 - Rotate previously shared credentials
+---------------------------------------------
+Before production, rotate all credentials that were previously pasted or shown:
+
+1. Supabase secret/service-role key.
+2. Supabase database password and both database URLs.
+3. Brevo SMTP key.
+4. VAPID private key if it was ever shared.
+
+Update backend hosting secrets after rotation. Publishable/anon keys are designed for browser use; secret/service-role keys are not.
+
+STEP 9 - Production values
+--------------------------
+Required production rules:
+
+  NODE_ENV=production
+  AUTH_ENABLE_DEV_LOGIN=false
+  FRONTEND_ORIGINS=https://YOUR_REAL_DOMAIN
+  DATABASE_URL=...sslmode=require
+  DIRECT_URL=...sslmode=require
+
+Frontend production variable:
+
+  NEXT_PUBLIC_APP_ENV=production
+  NEXT_PUBLIC_API_URL=/api/backend
+  BACKEND_API_URL=https://YOUR_BACKEND_DOMAIN/api
+
+BACKEND_API_URL is server-only. The browser uses the same-origin /api/backend proxy so secure cookies continue working even when the backend is deployed on a different free-host domain.
+
+The three fixed test accounts intentionally work only when NODE_ENV is not production and AUTH_ENABLE_DEV_LOGIN=true.
+
+Key rotation later
+------------------
+1. Generate a new 32-byte key.
+2. Configure:
+
+   DATA_ENCRYPTION_CURRENT_VERSION=v2
+   DATA_ENCRYPTION_KEYS=v2:NEW_KEY,v1:OLD_KEY
+
+3. Restart the backend.
+4. Run `npm run security:encrypt-existing -- --apply` to re-encrypt old v1 rows as v2.
+5. Never remove the old key while database rows or backups still depend on it.

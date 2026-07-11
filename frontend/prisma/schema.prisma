@@ -1,0 +1,59 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  name      String
+  role      Role     @default(STUDENT)
+  createdAt DateTime @default(now())
+}
+
+model Product {
+  id        String   @id @default(uuid())
+  name      String
+  category  String
+  price     Decimal
+  stock     Int
+  status    String
+  createdAt DateTime @default(now())
+}
+
+model Reservation {
+  id        String            @id @default(uuid())
+  itemName  String
+  student   String
+  status    ReservationStatus @default(PENDING)
+  pickupAt  DateTime
+  createdAt DateTime          @default(now())
+}
+
+model Receipt {
+  id        String   @id @default(uuid())
+  code      String   @unique
+  student   String
+  total     Decimal
+  verified  Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+enum Role {
+  STUDENT
+  STAFF
+  ADMIN
+}
+
+enum ReservationStatus {
+  PENDING
+  CONFIRMED
+  READY_FOR_PICKUP
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}

@@ -1,0 +1,108 @@
+WESCOMM School Email OTP Login Setup
+====================================
+
+Current login direction:
+- No Microsoft Entra/App Registration needed for now.
+- User enters an official Wesleyan email.
+- Frontend blocks non-wesleyan.edu.ph emails before sending.
+- Supabase sends an email verification code when the Magic Link / OTP template
+  uses {{ .Token }}.
+- Backend verifies the Supabase session and blocks non-wesleyan.edu.ph emails again.
+- Existing test login is still available for development accounts in public.profiles.
+
+Supabase Dashboard Setup
+------------------------
+1. Open Supabase Dashboard.
+2. Go to Authentication > Providers.
+3. Enable Email provider.
+4. Go to Authentication > URL Configuration.
+5. Set Site URL:
+   http://localhost:3000
+6. Add Redirect URL:
+   http://localhost:3000/auth/callback
+7. For production later, also add:
+   https://YOUR-PRODUCTION-DOMAIN/auth/callback
+
+Email Template Setup
+--------------------
+Supabase sends a magic link by default because the default Magic Link / OTP
+template uses {{ .ConfirmationURL }}.
+
+To send a 6-digit code instead:
+1. Go to Authentication > Email Templates.
+2. Edit "Magic Link / OTP".
+3. Replace the default sign-in link content with the WESCOMM OTP template in:
+   SUPABASE_WESCOMM_EMAIL_TEMPLATES.txt
+4. Make sure the template includes:
+   {{ .Token }}
+5. Remove {{ .ConfirmationURL }} if you want code-only login.
+
+For first-time users, also edit "Confirm signup" and use the same OTP-style
+template with {{ .Token }}.
+
+Sender Branding
+---------------
+Default Supabase sender:
+noreply@mail.app.supabase.io
+
+For a real WESCOMM sender name/email, configure Custom SMTP in Supabase:
+- Sender name: WESCOMM
+- Sender email: no-reply@wescomm.wesleyan.edu.ph
+
+This requires a verified email sending domain or school SMTP access.
+
+Backend Local Environment
+-------------------------
+Use this in backend .env:
+
+AUTH_ALLOWED_AUTH_PROVIDERS=email
+AUTH_ALLOWED_EMAIL_DOMAINS=wesleyan.edu.ph
+
+For temporary database-profile test login only:
+
+AUTH_ENABLE_DEV_LOGIN=true
+AUTH_DEV_LOGIN_PASSWORD=1234Aa
+
+Turn off test login for production:
+
+AUTH_ENABLE_DEV_LOGIN=false
+
+Frontend Local Environment
+--------------------------
+Use this in frontend .env.local:
+
+NEXT_PUBLIC_AUTH_ALLOWED_EMAIL_DOMAIN=wesleyan.edu.ph
+
+Testing Notes
+-------------
+- Real OTP login needs access to the email inbox that receives the Supabase email.
+- The login modal remembers the email username only when the user leaves
+  "Remember this email" checked. This does not bypass OTP.
+- If the browser still has a valid Supabase session, WESCOMM restores the account
+  automatically without sending a new code.
+- After logout, expired session, or another browser/device, the user must request a
+  new OTP code again.
+- Code requests are limited in the frontend to once every 60 seconds and 5 times
+  per 15 minutes per email. Supabase/Brevo limits still apply server-side.
+- If the email still says "Sign in" and shows a link, the Supabase Magic Link / OTP
+  template is still using {{ .ConfirmationURL }}.
+- If the email says "Your sign-in link", you edited the wrong template or the
+  Magic Link / OTP template was not saved. Edit Authentication > Email Templates >
+  Magic Link / OTP, paste the OTP template in Source mode, then click Save changes.
+- Brevo may wrap links with a sendibt3.com tracking URL. That is only Brevo click
+  tracking. It does not create OTP codes. If a link appears, the Supabase template
+  still contains {{ .ConfirmationURL }} or has not been updated.
+- The login modal no longer shows Testing access. For production-like testing, use
+  real email OTP.
+- The backend development login can still be enabled locally for API testing:
+  student@wesleyan.edu.ph
+  staff@wesleyan.edu.ph
+  admin@wesleyan.edu.ph
+- Test password:
+  1234Aa
+
+Production Notes
+----------------
+- Email OTP is easier than Microsoft SSO because it does not require Microsoft Entra admin access.
+- Microsoft SSO can still be added later when Wesleyan IT approves App Registration access.
+- Keep backend domain enforcement enabled so Gmail, Yahoo, Outlook, and other public emails cannot access WESCOMM.

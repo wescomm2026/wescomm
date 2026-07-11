@@ -1,0 +1,62 @@
+Subject: Request for Microsoft Entra App Registration for WESCOMM School Account Login
+
+Dear Wesleyan University-Philippines IT/Admin Team,
+
+Good day.
+
+We are developing WESCOMM, the Wesleyan Integrated Commissary Management System, as part of our approved academic project. The system is intended to let students, commissary staff, and administrators access commissary services through a centralized web platform.
+
+To make login secure and consistent with university accounts, we would like to request assistance in enabling Microsoft Outlook / Microsoft Entra sign-in for WESCOMM using official Wesleyan school accounts.
+
+Purpose
+-------
+We need students, staff, and administrators to sign in using their official Wesleyan account only, such as:
+
+student@wesleyan.edu.ph
+staff@wesleyan.edu.ph
+
+This will help prevent unauthorized public account access and will allow the system to assign the correct user role after login.
+
+What We Need From IT/Admin
+--------------------------
+We respectfully request one of the following:
+
+Option A: IT creates the Microsoft Entra App Registration
+- Create an App Registration for WESCOMM in Microsoft Entra ID.
+- Set supported account type to:
+  Accounts in this organizational directory only
+- Add this Web redirect URI:
+  https://pffbftlyrovuprrebdsy.supabase.co/auth/v1/callback
+- Create a client secret.
+- Provide the following to the development team:
+  1. Application / Client ID
+  2. Directory / Tenant ID
+  3. Client secret value
+
+Option B: IT grants limited permission to a project representative
+- Allow one project representative to create/manage the WESCOMM App Registration.
+- The permission is only needed for configuring school-account login for this academic project.
+
+Security Notes
+--------------
+- The client secret will be stored only in the backend/auth provider configuration.
+- It will not be placed in public frontend code.
+- The system will restrict accepted login accounts to the approved Wesleyan email domain.
+- Staff and admin permissions will still be controlled separately inside WESCOMM.
+
+Project Details
+---------------
+Project Name: WESCOMM - Wesleyan Integrated Commissary Management System
+Frontend URL for local testing: http://localhost:3000
+Backend URL for local testing: http://localhost:4000
+Supabase Auth Callback URL:
+https://pffbftlyrovuprrebdsy.supabase.co/auth/v1/callback
+
+Thank you very much for your assistance. This integration will help make the system more secure and aligned with the university's official account system.
+
+Respectfully,
+
+[Your Name]
+[Course / Section]
+[Project Group Name]
+[Contact Number / Email]

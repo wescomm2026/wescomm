@@ -1,0 +1,139 @@
+WESCOMM DATABASE CLEANUP: DUPLICATE PRODUCTS
+===========================================
+
+Reason:
+Your /api/products test worked, but the result shows repeated products with different IDs.
+Example: Wesleyan Notebook, Wesleyan Ballpen, PE Shirt, ID Lace, and others appear many times.
+
+This usually happens when seed SQL was executed multiple times without a unique constraint.
+
+IMPORTANT:
+Run the PREVIEW queries first.
+Only run the CLEANUP transaction if the duplicates shown are correct.
+
+
+1. PREVIEW DUPLICATE PRODUCT NAMES
+----------------------------------
+
+select
+  lower(trim(name)) as product_key,
+  count(*) as duplicate_count,
+  min(created_at) as oldest_created_at,
+  max(created_at) as newest_created_at
+from products
+group by lower(trim(name))
+having count(*) > 1
+order by duplicate_count desc, product_key;
+
+
+2. PREVIEW WHICH PRODUCT ROW WILL BE KEPT
+-----------------------------------------
+
+-- rn = 1 means this is the row that will be kept.
+-- Older duplicate rows will be deleted.
+
+select
+  id,
+  name,
+  stock,
+  status,
+  created_at,
+  row_number() over (
+    partition by lower(trim(name))
+    order by created_at desc, id desc
+  ) as rn
+from products
+order by lower(trim(name)), rn;
+
+
+3. CLEAN DUPLICATES AND PREVENT FUTURE DUPLICATES
+-------------------------------------------------
+
+begin;
+
+-- Backup duplicate product rows before deleting.
+-- Keep this table until you are sure everything is correct.
+
+create table if not exists products_duplicate_backup_20260629 as
+select p.*
+from products p
+join (
+  select lower(trim(name)) as product_key
+  from products
+  group by lower(trim(name))
+  having count(*) > 1
+) d
+  on lower(trim(p.name)) = d.product_key;
+
+
+-- Delete duplicate products and keep the newest row per product name.
+-- Product variants attached to deleted duplicate products should be removed by FK cascade.
+
+with ranked_products as (
+  select
+    id,
+    row_number() over (
+      partition by lower(trim(name))
+      order by created_at desc, id desc
+    ) as rn
+  from products
+)
+delete from products p
+using ranked_products r
+where p.id = r.id
+  and r.rn > 1;
+
+
+-- Prevent active products with the same name from being inserted again.
+-- This still allows an archived product name to exist historically.
+
+drop index if exists products_name_unique_active_idx;
+
+create unique index products_name_unique_active_idx
+on products (lower(trim(name)))
+where is_active = true;
+
+
+-- Prevent duplicated variants for the same product option.
+
+drop index if exists product_variants_product_option_unique_idx;
+
+create unique index product_variants_product_option_unique_idx
+on product_variants (
+  product_id,
+  lower(trim(option_name)),
+  lower(trim(option_value))
+);
+
+commit;
+
+
+4. VERIFY AFTER CLEANUP
+----------------------
+
+select
+  lower(trim(name)) as product_key,
+  count(*) as product_count
+from products
+where is_active = true
+group by lower(trim(name))
+having count(*) > 1;
+
+-- Expected result: no rows.
+
+select count(*) as active_products
+from products
+where is_active = true;
+
+select count(*) as product_variants
+from product_variants;
+
+
+5. IF YOU NEED TO RESTORE BACKUP MANUALLY
+-----------------------------------------
+
+-- Do not run this unless you intentionally want to inspect/restore old duplicate rows.
+
+select *
+from products_duplicate_backup_20260629
+order by name, created_at;

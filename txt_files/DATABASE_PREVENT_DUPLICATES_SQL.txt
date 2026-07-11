@@ -1,0 +1,67 @@
+WESCOMM DATABASE DUPLICATE PREVENTION
+====================================
+
+Run this once in Supabase SQL Editor after cleanup.
+
+Purpose:
+- Prevent duplicate FAQ questions.
+- Prevent duplicate active product names.
+- Prevent duplicate product variants for the same product option.
+
+
+1. VERIFY NO DUPLICATES BEFORE CREATING INDEXES
+-----------------------------------------------
+
+select lower(trim(question)) as faq_question, count(*) as duplicate_count
+from faqs
+group by lower(trim(question))
+having count(*) > 1;
+
+select lower(trim(name)) as product_name, count(*) as duplicate_count
+from products
+where is_active = true
+group by lower(trim(name))
+having count(*) > 1;
+
+select
+  product_id,
+  lower(trim(option_name)) as option_name,
+  lower(trim(option_value)) as option_value,
+  count(*) as duplicate_count
+from product_variants
+group by product_id, lower(trim(option_name)), lower(trim(option_value))
+having count(*) > 1;
+
+-- Expected result for all 3 queries: no rows.
+
+
+2. CREATE UNIQUE INDEXES
+------------------------
+
+create unique index if not exists faqs_question_unique_idx
+on faqs (lower(trim(question)));
+
+create unique index if not exists products_name_unique_active_idx
+on products (lower(trim(name)))
+where is_active = true;
+
+create unique index if not exists product_variants_product_option_unique_idx
+on product_variants (
+  product_id,
+  lower(trim(option_name)),
+  lower(trim(option_value))
+);
+
+
+3. OPTIONAL INDEX CHECK
+-----------------------
+
+select indexname, indexdef
+from pg_indexes
+where schemaname = 'public'
+  and indexname in (
+    'faqs_question_unique_idx',
+    'products_name_unique_active_idx',
+    'product_variants_product_option_unique_idx'
+  )
+order by indexname;

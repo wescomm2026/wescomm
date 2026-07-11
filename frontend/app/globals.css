@@ -1,0 +1,148 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: 0 0% 99%;
+  --foreground: 220 28% 10%;
+  --card: 0 0% 100%;
+  --card-foreground: 220 28% 10%;
+  --muted: 130 22% 94%;
+  --muted-foreground: 220 9% 35%;
+  --primary: 145 86% 19%;
+  --primary-foreground: 0 0% 100%;
+  --border: 140 12% 86%;
+}
+
+* {
+  border-color: hsl(var(--border));
+}
+
+body {
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  overflow-x: hidden;
+  width: 100%;
+}
+
+html {
+  overflow-x: hidden;
+  width: 100%;
+}
+
+.table-card {
+  @apply rounded-lg border bg-card shadow-sm;
+}
+
+.wes-card {
+  @apply rounded-[18px] border border-[#dfe8df] bg-white shadow-[0_8px_24px_rgba(0,0,0,0.04)];
+}
+
+.price-range-clean + div {
+  display: none;
+}
+
+.welcome-gate-overlay {
+  animation: welcomeGateOverlayExit 2.05s ease forwards;
+}
+
+.welcome-gate-panel {
+  position: absolute;
+  inset-block: 0;
+  width: calc(50% + 1px);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(238, 248, 240, 0.96)),
+    radial-gradient(circle at center, rgba(0, 101, 47, 0.08), transparent 42%);
+  border-color: rgba(0, 101, 47, 0.16);
+  box-shadow: 0 0 60px rgba(0, 91, 43, 0.08);
+  animation-duration: 2.05s;
+  animation-timing-function: cubic-bezier(0.72, 0, 0.2, 1);
+  animation-fill-mode: forwards;
+}
+
+.welcome-gate-panel-left {
+  left: 0;
+  border-right-width: 1px;
+  animation-name: welcomeGateLeft;
+}
+
+.welcome-gate-panel-right {
+  right: 0;
+  border-left-width: 1px;
+  animation-name: welcomeGateRight;
+}
+
+.welcome-gate-content {
+  animation: welcomeGateContent 2.05s ease forwards;
+}
+
+@keyframes welcomeGateLeft {
+  0%,
+  36% {
+    transform: translateX(0);
+  }
+  76%,
+  100% {
+    transform: translateX(-104%);
+  }
+}
+
+@keyframes welcomeGateRight {
+  0%,
+  36% {
+    transform: translateX(0);
+  }
+  76%,
+  100% {
+    transform: translateX(104%);
+  }
+}
+
+@keyframes welcomeGateContent {
+  0% {
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
+  }
+  14%,
+  48% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  70%,
+  100% {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.98);
+  }
+}
+
+@keyframes welcomeGateOverlayExit {
+  0%,
+  78% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@media (max-width: 640px) {
+  .welcome-gate-panel {
+    width: calc(50% + 2px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .welcome-gate-overlay,
+  .welcome-gate-panel,
+  .welcome-gate-content {
+    animation-duration: 0.35s;
+  }
+
+  .welcome-gate-panel-left {
+    transform: translateX(-104%);
+  }
+
+  .welcome-gate-panel-right {
+    transform: translateX(104%);
+  }
+}

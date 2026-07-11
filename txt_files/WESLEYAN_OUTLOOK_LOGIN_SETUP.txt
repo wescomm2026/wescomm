@@ -1,0 +1,124 @@
+WESCOMM Wesleyan Outlook Login Setup
+====================================
+
+Status:
+- This is not the active login setup right now.
+- Current active setup is school email OTP/magic link.
+- Use WESLEYAN_EMAIL_OTP_LOGIN_SETUP.txt for the current setup.
+- Keep this file only for later Microsoft SSO work after Wesleyan IT/admin grants Entra access.
+
+Official references:
+- Supabase Azure/Microsoft Auth:
+  https://supabase.com/docs/guides/auth/social-login/auth-azure
+- Microsoft Entra app registration:
+  https://learn.microsoft.com/en-us/entra/identity-platform/quickstart-register-app
+
+App-side implementation is already done:
+- Login modal shows one button: Continue with Wesleyan Outlook
+- Login modal also has temporary Testing access for database profiles
+- Frontend uses Supabase OAuth provider: azure
+- OAuth callback page is: /auth/callback
+- Microsoft sign-in is hinted to work/school accounts by default
+- Backend can run in temporary testing mode with any Microsoft/Azure OAuth email domain
+- Production mode should block accounts outside @wesleyan.edu.ph
+- New Microsoft users are auto-created in profiles as STUDENT
+- Staff/Admin roles are assigned later from /admin/users
+
+What you need to configure in Supabase and Microsoft:
+
+Important:
+- This needs access to the school's Microsoft Entra tenant.
+- If your account cannot create App registrations, ask Wesleyan IT or the tenant admin to do steps 1-2.
+- Keep the Microsoft client secret private. Do not put it in frontend .env files.
+
+1. Microsoft Entra ID
+   - Open Microsoft Entra admin center / Azure portal.
+   - Go to App registrations.
+   - Create a new app registration for WESCOMM.
+   - Supported account types:
+     Use "Accounts in this organizational directory only" if Wesleyan owns the tenant.
+   - Redirect URI type: Web
+   - Redirect URI:
+     https://pffbftlyrovuprrebdsy.supabase.co/auth/v1/callback
+
+2. Microsoft Client Secret
+   - Open the created app registration.
+   - Go to Certificates & secrets.
+   - Create a new client secret.
+   - Copy the secret VALUE, not the Secret ID.
+
+3. Supabase Auth Provider
+   - Open Supabase Dashboard.
+   - Go to Authentication > Providers.
+   - Enable Azure / Microsoft provider.
+   - Add the Microsoft Application Client ID.
+   - Add the Microsoft Client Secret value.
+   - Add Azure Tenant URL:
+     https://login.microsoftonline.com/YOUR_TENANT_ID
+   - Do not use a personal Microsoft/Gmail account for this flow.
+   - Do not use /common or /consumers for production if this is school-only.
+
+4. Supabase Redirect URLs
+   - Go to Authentication > URL Configuration.
+   - Site URL for local dev:
+     http://localhost:3000
+   - Add redirect URL:
+     http://localhost:3000/auth/callback
+   - For production later, also add:
+     https://YOUR-PRODUCTION-DOMAIN/auth/callback
+
+5. Backend env
+   - Production school-only setup:
+     AUTH_ALLOWED_AUTH_PROVIDERS=azure
+     AUTH_ALLOWED_EMAIL_DOMAINS=wesleyan.edu.ph
+
+Temporary development option if school Entra access is not available yet:
+- You can allow any Microsoft/Azure OAuth email domain in backend .env:
+  AUTH_ALLOWED_AUTH_PROVIDERS=azure
+  AUTH_ALLOWED_EMAIL_DOMAINS=*
+- You can also enable database-profile test login:
+  AUTH_ENABLE_DEV_LOGIN=true
+  AUTH_DEV_LOGIN_PASSWORD=1234Aa
+- Test accounts must already exist in public.profiles:
+  student@wesleyan.edu.ph
+  staff@wesleyan.edu.ph
+  admin@wesleyan.edu.ph
+- If testing personal Outlook/Hotmail accounts, add this to frontend .env.local:
+  NEXT_PUBLIC_MICROSOFT_DOMAIN_HINT=
+- For production school-only login, keep or set:
+  NEXT_PUBLIC_MICROSOFT_DOMAIN_HINT=organizations
+- This is only for development/testing.
+- This does not prove the user is a Wesleyan student.
+- Do not use generic Outlook/Hotmail login for production deployment.
+- Do not keep AUTH_ENABLE_DEV_LOGIN=true in production.
+- Supabase/Microsoft still needs a Microsoft app registration/provider setup that allows those account types.
+
+6. Testing
+   - Run backend on http://localhost:4000
+   - Run frontend on http://localhost:3000
+   - Click Log in > Continue with Wesleyan Outlook.
+   - Microsoft should open.
+   - After login, Supabase redirects to /auth/callback.
+   - WESCOMM loads the backend profile and routes:
+     STUDENT -> /student/dashboard
+     STAFF -> /staff/dashboard
+     ADMIN -> /admin/dashboard
+
+Common errors:
+- "Provider not enabled"
+  Enable Azure provider in Supabase Auth settings.
+  While waiting for this setup, use the Testing access form in the login modal.
+
+- "redirect_uri mismatch"
+  Check Microsoft Redirect URI and Supabase Redirect URLs.
+
+- Browser opens signup.live.com or asks to create a Microsoft account
+  You are using a personal email/account or the Azure provider is not restricted to the Wesleyan organization tenant.
+  Use an official @wesleyan.edu.ph school account and set the Supabase Azure Tenant URL to the school's tenant ID.
+  For temporary testing with personal Microsoft accounts, set NEXT_PUBLIC_MICROSOFT_DOMAIN_HINT= and configure the Microsoft app to support personal accounts.
+
+- "User profile was not found"
+  This should now auto-create STUDENT profiles. Restart backend if still old code is running.
+
+- Student opened staff/admin dashboard
+  Go to /admin/users and change the user's role to STAFF or ADMIN.

@@ -1,0 +1,291 @@
+WESCOMM - GITHUB AND VERCEL QA DEPLOYMENT GUIDE
+================================================
+
+Purpose
+-------
+Push the clean WESCOMM monorepo to a private GitHub repository, deploy the API
+and frontend as separate Vercel projects, and give the QA group a stable test
+website.
+
+
+PART 0 - IMPORTANT SECURITY CHECK
+---------------------------------
+The QA website will be reachable from the internet. Before deployment, rotate
+any credential that has appeared in a chat, screenshot, document, or shared
+screen. At minimum review these:
+
+1. Supabase service-role/secret key
+2. Supabase database password and connection strings
+3. Brevo SMTP key
+4. VAPID private key
+5. DATA_ENCRYPTION_KEYS
+
+Do not paste secret values into GitHub files. Add them only through Vercel's
+Environment Variables page. Keep backend/.env and frontend/.env.local local.
+
+
+PART 1 - CREATE AN EMPTY GITHUB REPOSITORY
+------------------------------------------
+1. Sign in at https://github.com/.
+2. Click the plus button, then New repository.
+3. Suggested repository name: wescomm
+4. Set Visibility to Private while the system is under QA.
+5. Do not add a README, .gitignore, or license on GitHub. This local project
+   already contains the correct files.
+6. Click Create repository.
+7. Keep the page open. Copy its HTTPS URL, for example:
+
+   https://github.com/YOUR_USERNAME/wescomm.git
+
+
+PART 2 - MAKE THE FIRST LOCAL COMMIT
+------------------------------------
+Open PowerShell and run:
+
+  cd C:\Users\vjohn\Desktop\Wescomm
+  git status
+  git add .
+  git status
+
+Review the second status carefully. These must NOT appear:
+
+  backend/.env
+  frontend/.env.local
+  node_modules
+  .next
+  dist
+  frontend/codebase.zip
+  wescomm_assets
+
+Commit the clean source:
+
+  git commit -m "chore: prepare WESCOMM for QA deployment"
+
+If Git asks for your identity, run these once using your own details:
+
+  git config --global user.name "YOUR NAME"
+  git config --global user.email "YOUR_GITHUB_EMAIL"
+
+Then repeat the commit command.
+
+
+PART 3 - CONNECT AND PUSH TO GITHUB
+-----------------------------------
+Replace the example URL with the repository URL copied from GitHub:
+
+  git remote add origin https://github.com/YOUR_USERNAME/wescomm.git
+  git remote -v
+  git push -u origin main
+
+GitHub may open a browser to authenticate. Complete the prompt. Refresh the
+repository page and confirm that frontend, backend, txt_files, README.md,
+.gitignore, and .gitattributes are present.
+
+If origin was entered incorrectly:
+
+  git remote set-url origin https://github.com/YOUR_USERNAME/wescomm.git
+
+
+PART 4 - DEPLOY THE BACKEND FIRST
+---------------------------------
+1. Sign in at https://vercel.com/ with GitHub.
+2. Click Add New, then Project.
+3. Import the private wescomm repository.
+4. Set Project Name to wescomm-qa-api.
+5. Set Root Directory to backend.
+6. Leave Framework Preset/build output on automatic detection. The backend
+   exports its Express app from src/app.ts for Vercel detection.
+7. Open Environment Variables and add the following for Production and Preview:
+
+   NODE_ENV=production
+   FRONTEND_ORIGIN=https://YOUR_FRONTEND_PROJECT.vercel.app
+   FRONTEND_ORIGINS=https://YOUR_FRONTEND_PROJECT.vercel.app
+   TRUST_PROXY_HOPS=1
+
+   AUTH_ALLOWED_EMAIL_DOMAIN=wesleyan.edu.ph
+   AUTH_ALLOWED_EMAIL_DOMAINS=wesleyan.edu.ph
+   AUTH_ALLOWED_AUTH_PROVIDERS=email
+   AUTH_ENABLE_DEV_LOGIN=false
+   AUTH_SESSION_TTL_HOURS=168
+   AUTH_SESSION_MAX_PER_USER=5
+
+   NEXT_PUBLIC_SUPABASE_URL=<Supabase project URL>
+   NEXT_PUBLIC_SUPABASE_ANON_KEY=<public anon key>
+   SUPABASE_SERVICE_ROLE_KEY=<private service-role key>
+
+   DATABASE_URL=<Supavisor transaction URL, port 6543, sslmode=require>
+   DIRECT_URL=<valid direct/session URL, sslmode=require>
+
+   DATA_ENCRYPTION_CURRENT_VERSION=v1
+   DATA_ENCRYPTION_KEYS=<existing versioned encryption key list>
+
+   VAPID_PUBLIC_KEY=<public VAPID key>
+   VAPID_PRIVATE_KEY=<private VAPID key>
+   VAPID_SUBJECT=mailto:wescomm@wesleyan.edu.ph
+
+8. For FRONTEND_ORIGIN during the first deployment, use the expected frontend
+   project URL. It will be corrected after Part 5 if Vercel assigns another URL.
+9. Click Deploy.
+10. Test these URLs after deployment:
+
+   https://YOUR_API_PROJECT.vercel.app/api/health
+   https://YOUR_API_PROJECT.vercel.app/api/health/ready
+
+The second endpoint must return status ready. Never expose secret environment
+values in screenshots of the Vercel dashboard.
+
+
+PART 5 - DEPLOY THE FRONTEND
+----------------------------
+1. In Vercel, click Add New, then Project again.
+2. Import the same wescomm GitHub repository.
+3. Set Project Name to wescomm-qa.
+4. Set Root Directory to frontend.
+5. Vercel should detect Next.js automatically.
+6. Add these Environment Variables for Production and Preview:
+
+   NEXT_PUBLIC_APP_ENV=production
+   NEXT_PUBLIC_API_URL=/api/backend
+   BACKEND_API_URL=https://YOUR_API_PROJECT.vercel.app/api
+   NEXT_PUBLIC_SUPABASE_URL=<Supabase project URL>
+   NEXT_PUBLIC_SUPABASE_ANON_KEY=<public anon key>
+   NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=<public publishable key, if used>
+   NEXT_PUBLIC_AUTH_ALLOWED_EMAIL_DOMAIN=wesleyan.edu.ph
+   NEXT_PUBLIC_ENABLE_DEV_LOGIN=false
+   NEXT_PUBLIC_E2E_TEST=false
+
+7. Click Deploy.
+8. Open the assigned frontend URL and note its exact origin, for example:
+
+   https://wescomm-qa.vercel.app
+
+9. Return to the wescomm-qa-api project Environment Variables.
+10. Replace FRONTEND_ORIGIN and FRONTEND_ORIGINS with the exact frontend origin.
+11. Redeploy the latest backend deployment so CORS uses the final value.
+
+
+PART 6 - CONFIGURE SUPABASE AUTH REDIRECTS
+------------------------------------------
+In Supabase Dashboard:
+
+1. Open Authentication, then URL Configuration.
+2. Set Site URL to the stable QA frontend URL:
+
+   https://wescomm-qa.vercel.app
+
+3. Add these Redirect URLs:
+
+   http://localhost:3000/auth/callback
+   https://wescomm-qa.vercel.app/auth/callback
+
+4. Save.
+5. Keep the existing Brevo SMTP configuration enabled.
+
+Use the stable wescomm-qa.vercel.app URL for group QA. Do not rely on a random
+per-commit preview URL for email OTP callbacks unless that preview pattern is
+also explicitly allowed in Supabase.
+
+
+PART 7 - CREATE QA ACCESS
+-------------------------
+Recommended testers:
+
+  2 student accounts
+  1 staff account
+  1 admin account
+
+1. Each tester should log in with their own reachable Wesleyan email and OTP.
+2. Use the Admin Users page to assign STAFF or ADMIN only to approved testers.
+3. Do not share one staff/admin password with the group.
+4. Development password login remains disabled on Vercel. The fixed local test
+   accounts can still be used locally when explicitly enabled in local env files.
+5. Use fake QA names, addresses, orders, and reservations. Do not enter real
+   sensitive student records.
+
+
+PART 8 - QA WORKFLOW
+--------------------
+1. Send testers:
+
+   - the stable frontend URL
+   - their assigned role
+   - txt_files/WESCOMM_QA_STAGING_RUNBOOK.txt
+   - the bug report template below
+
+2. Ask them to test on separate devices and browsers.
+3. Create one GitHub Issue per reproducible bug.
+4. Do not put credentials or personal student data in an issue.
+
+Bug report template:
+
+  Title:
+  Severity: P0 / P1 / P2 / P3
+  Role: Student / Staff / Admin
+  Device and browser:
+  Page URL:
+  Steps to reproduce:
+  Expected result:
+  Actual result:
+  Screenshot or short recording:
+  Date and time:
+  Request ID, if shown:
+
+Severity guide:
+
+  P0 - security leak, wrong-user data, negative stock, or complete outage
+  P1 - login, checkout, reservation, role, or major workflow is broken
+  P2 - feature works incorrectly but has a workaround
+  P3 - cosmetic wording, spacing, or minor responsive problem
+
+
+PART 9 - NORMAL UPDATE FLOW AFTER FIRST DEPLOYMENT
+--------------------------------------------------
+Create a branch for each change:
+
+  git switch -c fix/short-description
+  git add .
+  git commit -m "fix: short description"
+  git push -u origin fix/short-description
+
+Open a Pull Request on GitHub. Vercel will create Preview deployments. After QA
+and review, merge the Pull Request into main. The stable QA projects will deploy
+the updated main branch automatically.
+
+
+PART 10 - RELEASE GATE
+----------------------
+Do not call the staging system production-ready until all are true:
+
+1. No open P0 or P1 bugs.
+2. Backend typecheck, tests, and build pass.
+3. Frontend typecheck and production build pass.
+4. OTP login and role routing pass.
+5. Checkout and concurrent stock tests pass.
+6. Reservation lifecycle and stock restoration pass.
+7. Message privacy between different student accounts passes.
+8. Push notifications are verified on at least one real phone.
+9. Backup and restore procedures have been tested.
+
+
+COMMON PROBLEMS
+---------------
+Backend health is 500:
+  Check Vercel Function Logs and confirm all backend environment variables.
+
+Frontend says services are unavailable:
+  Confirm BACKEND_API_URL ends in /api and the backend health URL is ready.
+
+CORS or request origin error:
+  FRONTEND_ORIGIN and FRONTEND_ORIGINS must exactly match the frontend origin,
+  without a trailing slash. Redeploy backend after changing them.
+
+OTP returns to localhost:
+  Correct Supabase Site URL and Redirect URLs, then request a new OTP.
+
+Prisma cannot connect:
+  Use the Supabase transaction pooler on port 6543 for DATABASE_URL and include
+  sslmode=require. Confirm the database password is URL-encoded if needed.
+
+Build contains a secret:
+  Stop the deployment, rotate the credential, remove it from the file and Git
+  history, and add the correct ignore rule before pushing again.

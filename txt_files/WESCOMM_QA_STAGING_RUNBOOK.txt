@@ -1,0 +1,231 @@
+WESCOMM QA AND STAGING RUNBOOK
+Last updated: July 11, 2026
+
+PURPOSE
+This runbook verifies the student, staff, and admin experiences without changing
+live inventory. Browser automation covers browsing, local cart behavior, login,
+logout, and role-based API access. Checkout, inventory writes, email OTP, push
+delivery, and database recovery remain controlled manual checks on staging.
+
+CURRENT AUTOMATED RESULT - JULY 11, 2026
+- Backend test suite: 22 passed, 0 failed.
+- Playwright desktop/mobile suite: 8 passed, 0 failed, 4 intentionally skipped.
+- Frontend production build: passed; all 37 routes generated.
+- Frontend and backend production dependency audits: 0 vulnerabilities.
+- QA servers on ports 3100 and 4100 stop automatically after the suite.
+
+The intentional skips prevent duplicate coverage: role tests run once on desktop,
+while the hamburger-menu test runs only in the mobile project.
+
+============================================================
+1. ONE-TIME LOCAL SETUP
+============================================================
+
+Requirements:
+- Node.js 20 or newer
+- Backend and frontend dependencies installed
+- backend/.env and frontend/.env.local configured
+- The three development profiles exist in Supabase:
+  student@wesleyan.edu.ph
+  staff@wesleyan.edu.ph
+  admin@wesleyan.edu.ph
+- Backend development login is enabled locally only:
+  AUTH_ENABLE_DEV_LOGIN=true
+  AUTH_DEV_LOGIN_PASSWORD=<your local test password>
+- Frontend development login is enabled locally only:
+  NEXT_PUBLIC_ENABLE_DEV_LOGIN=true
+
+Install the Playwright Chromium browser once:
+
+  cd C:\Users\vjohn\Desktop\Wescomm\frontend
+  npm run test:e2e:install
+
+Never commit the development password. In the PowerShell window that will run
+the tests, set the same password used by AUTH_DEV_LOGIN_PASSWORD:
+
+  $env:E2E_TEST_PASSWORD="<your local test password>"
+
+This environment variable lasts only for that PowerShell session.
+
+============================================================
+2. AUTOMATED QA COMMANDS
+============================================================
+
+Backend rules, security policies, rate limits, and reservation safety:
+
+  cd C:\Users\vjohn\Desktop\Wescomm\backend
+  npm run test:ci
+
+Frontend type safety and production build:
+
+  cd C:\Users\vjohn\Desktop\Wescomm\frontend
+  npm run typecheck
+  npm run build
+
+Desktop and mobile browser tests:
+
+  cd C:\Users\vjohn\Desktop\Wescomm\frontend
+  $env:E2E_TEST_PASSWORD="<your local test password>"
+  npm run test:e2e
+
+Playwright starts isolated QA servers on frontend port 3100 and backend port
+4100. Your normal localhost:3000/4000 preview can keep running independently.
+
+View the HTML report after a run:
+
+  npm run test:e2e:report
+
+Debug a visible browser run:
+
+  npm run test:e2e:headed
+
+Generated screenshots, videos, traces, and HTML reports are ignored by Git.
+
+============================================================
+3. WHAT THE AUTOMATED SUITE PROVES
+============================================================
+
+Public/student web:
+[ ] Anonymous users can load live products.
+[ ] Search works against the loaded catalog.
+[ ] Add to Cart and the cart drawer work without changing database stock.
+[ ] Anonymous checkout asks the user to log in.
+[ ] Mobile hamburger navigation opens and changes pages.
+
+Authentication and authorization:
+[ ] Student login opens /student/dashboard.
+[ ] Staff login opens /staff/dashboard.
+[ ] Admin login opens /admin/dashboard.
+[ ] Student receives 403 from staff and admin APIs.
+[ ] Staff can read staff inventory but receives 403 from admin-only APIs.
+[ ] Admin can read staff inventory, users, and audit logs.
+[ ] Logout revokes the server-side browser session.
+
+Backend rules:
+[ ] Invalid reservation status jumps are rejected.
+[ ] Completed/cancelled/no-show reservations cannot reopen.
+[ ] Available quantity derives the correct stock status.
+[ ] Rate limits block requests after their configured allowance.
+[ ] Cookie writes require an approved same-origin request.
+[ ] Checkout request hashes and idempotency retention remain stable.
+[ ] No-show warning and restriction escalation rules remain stable.
+
+============================================================
+4. CONTROLLED STAGING TESTS THAT CHANGE DATA
+============================================================
+
+Use a separate staging Supabase project or clearly named QA products. Do not run
+these checks against final production inventory.
+
+Student reservation lifecycle:
+1. Record the QA product's starting stock.
+2. Student reserves one item.
+3. Confirm stock decreases exactly once.
+4. Double-click/retry the same checkout and confirm no duplicate reservation or
+   second stock deduction is created.
+5. Staff moves PENDING -> CONFIRMED -> READY_FOR_PICKUP -> COMPLETED.
+6. Confirm the student receives in-app and push updates at each relevant state.
+7. Repeat with cancellation and confirm stock is restored exactly once.
+8. Attempt an invalid status jump and confirm the API returns 400.
+
+Concurrent last-stock check:
+1. Create a QA product with exactly one available item.
+2. Use two different student accounts/devices.
+3. Submit both reservations at nearly the same time.
+4. Exactly one request must succeed.
+5. The other must receive a stock conflict; stock must never become negative.
+
+Inventory management:
+1. Staff creates a QA product with an image and variants.
+2. Edit price, available quantity, and staff attention level.
+3. Confirm the student Shop updates without a hard refresh.
+4. Restock using both Add quantity and Set exact quantity.
+5. Archive the QA product and confirm it disappears from the public Shop.
+6. Confirm every write appears in Admin Audit Logs.
+
+Support privacy:
+1. Create conversations from two separate student accounts.
+2. Each student must see only their own threads.
+3. Staff/admin can see operational threads according to their role.
+4. Confirm typing indicators and new messages update without manual refresh.
+5. Inspect the database and confirm encrypted support fields do not contain the
+   original plaintext.
+
+============================================================
+5. PHONE AND BROWSER PUSH CHECK
+============================================================
+
+1. Use HTTPS staging. Localhost is acceptable only for desktop development.
+2. Log in on the phone and enable Phone notifications in Account Settings.
+3. Accept the browser permission prompt.
+4. Close or background WESCOMM.
+5. Change a reservation to Confirmed, Ready for pick-up, then Completed.
+6. Confirm a push appears for each expected event.
+7. Tap the push and confirm it opens the correct WESCOMM page.
+8. Disable notifications and confirm the subscription is revoked.
+
+On iPhone/iPad, install WESCOMM to the Home Screen before testing web push.
+Browser private/incognito mode is not a reliable push-notification test.
+
+============================================================
+6. HTTPS STAGING ENVIRONMENT
+============================================================
+
+Backend:
+  NODE_ENV=production
+  AUTH_ENABLE_DEV_LOGIN=false
+  FRONTEND_ORIGINS=https://<your-staging-frontend-domain>
+  DATABASE_URL=<TLS connection URL containing sslmode=require>
+  DIRECT_URL=<TLS connection URL containing sslmode=require>
+  DATA_ENCRYPTION_CURRENT_VERSION=v1
+  DATA_ENCRYPTION_KEYS=<preserve the current versioned key set>
+
+Frontend:
+  NEXT_PUBLIC_APP_ENV=production
+  NEXT_PUBLIC_ENABLE_DEV_LOGIN=false
+  NEXT_PUBLIC_E2E_TEST=false
+  NEXT_PUBLIC_API_URL=/api/backend
+  BACKEND_API_URL=https://<your-staging-backend-domain>/api
+
+After deployment:
+[ ] GET /api/health/ready returns status=ready and every check=true.
+[ ] Browser cookie is __Host-wescomm_session.
+[ ] Cookie has HttpOnly, Secure, SameSite=Lax, and Path=/.
+[ ] No real Supabase access token is stored in Local Storage or Session Storage.
+[ ] Wrong-origin POST/PATCH/DELETE requests return 403.
+[ ] Student/staff/admin wrong-role API requests return 403.
+
+============================================================
+7. BACKUP AND RECOVERY CHECK
+============================================================
+
+Before schema changes or a release:
+1. Create a database backup/export and record its UTC timestamp.
+2. Store it outside the application repository.
+3. Back up DATA_ENCRYPTION_KEYS separately in a secure offline location.
+4. Restore the database into a temporary Supabase/PostgreSQL project.
+5. Run Prisma generate and GET /api/health/ready against the restored database.
+6. Verify encrypted profile/support fields can still be read by the application.
+7. Delete the temporary restore only after verification.
+
+The database backup is not sufficient without the matching encryption key set.
+
+============================================================
+8. RELEASE ACCEPTANCE GATE
+============================================================
+
+Do not release until all are true:
+[ ] Backend test:ci passes.
+[ ] Frontend typecheck and production build pass.
+[ ] Playwright desktop and mobile tests pass.
+[ ] Controlled checkout/concurrency test passes on staging.
+[ ] OTP email and push notification checks pass on real devices.
+[ ] Backup restore has been tested.
+[ ] Exposed/shared service credentials have been rotated.
+[ ] Development login is disabled in the deployed environment.
+[ ] No real student data is used as QA fixture data.
+
+Credential rotation can wait during isolated local development, but it is a
+required gate before sharing staging publicly, accepting real student data, or
+deploying production. Preserve DATA_ENCRYPTION_KEYS during service credential
+rotation; use versioned encryption migration when rotating the data key itself.
