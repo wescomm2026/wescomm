@@ -58,8 +58,8 @@ npm run build
 
 ## Deployment and QA
 
-Use two Vercel projects connected to this repository: one with `backend` as its
-Root Directory and one with `frontend` as its Root Directory.
+Use one Vercel project with the `Services` preset. The root `vercel.json` builds
+`frontend` as Next.js and `backend` as Express, then serves both from one domain.
 
 - [GitHub and Vercel deployment guide](txt_files/WESCOMM_GITHUB_VERCEL_DEPLOYMENT.txt)
 - [QA staging runbook](txt_files/WESCOMM_QA_STAGING_RUNBOOK.txt)

@@ -3,9 +3,9 @@ WESCOMM - GITHUB AND VERCEL QA DEPLOYMENT GUIDE
 
 Purpose
 -------
-Push the clean WESCOMM monorepo to a private GitHub repository, deploy the API
-and frontend as separate Vercel projects, and give the QA group a stable test
-website.
+Push the clean WESCOMM monorepo to a private GitHub repository, deploy the
+frontend and API together with Vercel Services, and give the QA group one stable
+test website.
 
 
 PART 0 - IMPORTANT SECURITY CHECK
@@ -86,20 +86,30 @@ If origin was entered incorrectly:
   git remote set-url origin https://github.com/YOUR_USERNAME/wescomm.git
 
 
-PART 4 - DEPLOY THE BACKEND FIRST
----------------------------------
+PART 4 - DEPLOY AS ONE VERCEL SERVICES PROJECT
+----------------------------------------------
+WESCOMM uses Vercel Services so the Next.js frontend and Express backend build
+separately but deploy together under one project, domain, and release.
+
 1. Sign in at https://vercel.com/ with GitHub.
 2. Click Add New, then Project.
 3. Import the private wescomm repository.
-4. Set Project Name to wescomm-qa-api.
-5. Set Root Directory to backend.
-6. Leave Framework Preset/build output on automatic detection. The backend
-   exports its Express app from src/app.ts for Vercel detection.
-7. Open Environment Variables and add the following for Production and Preview:
+4. Set Project Name to wescomm.
+5. Keep Root Directory at the repository root: ./
+6. Set Application Preset to Services.
+7. Confirm Vercel detects:
+
+   frontend /    Next.js
+   backend  /api Express
+
+8. The root vercel.json is required. It routes /api/* to the Express service and
+   all other paths to the Next.js service. If Vercel says vercel.json is missing,
+   push the latest main branch and click Refresh before deploying.
+9. Open Environment Variables and add the following for Production and Preview:
 
    NODE_ENV=production
-   FRONTEND_ORIGIN=https://YOUR_FRONTEND_PROJECT.vercel.app
-   FRONTEND_ORIGINS=https://YOUR_FRONTEND_PROJECT.vercel.app
+   FRONTEND_ORIGIN=https://wescomm.vercel.app
+   FRONTEND_ORIGINS=https://wescomm.vercel.app
    TRUST_PROXY_HOPS=1
 
    AUTH_ALLOWED_EMAIL_DOMAIN=wesleyan.edu.ph
@@ -123,70 +133,56 @@ PART 4 - DEPLOY THE BACKEND FIRST
    VAPID_PRIVATE_KEY=<private VAPID key>
    VAPID_SUBJECT=mailto:wescomm@wesleyan.edu.ph
 
-8. For FRONTEND_ORIGIN during the first deployment, use the expected frontend
-   project URL. It will be corrected after Part 5 if Vercel assigns another URL.
-9. Click Deploy.
-10. Test these URLs after deployment:
-
-   https://YOUR_API_PROJECT.vercel.app/api/health
-   https://YOUR_API_PROJECT.vercel.app/api/health/ready
-
-The second endpoint must return status ready. Never expose secret environment
-values in screenshots of the Vercel dashboard.
-
-
-PART 5 - DEPLOY THE FRONTEND
-----------------------------
-1. In Vercel, click Add New, then Project again.
-2. Import the same wescomm GitHub repository.
-3. Set Project Name to wescomm-qa.
-4. Set Root Directory to frontend.
-5. Vercel should detect Next.js automatically.
-6. Add these Environment Variables for Production and Preview:
-
    NEXT_PUBLIC_APP_ENV=production
-   NEXT_PUBLIC_API_URL=/api/backend
-   BACKEND_API_URL=https://YOUR_API_PROJECT.vercel.app/api
-   NEXT_PUBLIC_SUPABASE_URL=<Supabase project URL>
-   NEXT_PUBLIC_SUPABASE_ANON_KEY=<public anon key>
+   NEXT_PUBLIC_API_URL=/api
    NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=<public publishable key, if used>
    NEXT_PUBLIC_AUTH_ALLOWED_EMAIL_DOMAIN=wesleyan.edu.ph
    NEXT_PUBLIC_ENABLE_DEV_LOGIN=false
    NEXT_PUBLIC_E2E_TEST=false
 
-7. Click Deploy.
-8. Open the assigned frontend URL and note its exact origin, for example:
+10. Do not add BACKEND_API_URL on Vercel Services. Browser API requests use the
+    same domain at /api, and Vercel routes them directly to Express.
+11. Click Deploy.
+12. Open the assigned project URL and note its exact origin, for example:
 
-   https://wescomm-qa.vercel.app
+   https://wescomm.vercel.app
 
-9. Return to the wescomm-qa-api project Environment Variables.
-10. Replace FRONTEND_ORIGIN and FRONTEND_ORIGINS with the exact frontend origin.
-11. Redeploy the latest backend deployment so CORS uses the final value.
+13. If Vercel assigned a different URL, update FRONTEND_ORIGIN and
+    FRONTEND_ORIGINS to that exact origin, without a trailing slash, then
+    redeploy the same project.
+14. Test:
+
+   https://YOUR_PROJECT.vercel.app/
+   https://YOUR_PROJECT.vercel.app/api/health
+   https://YOUR_PROJECT.vercel.app/api/health/ready
+
+The readiness endpoint must return status ready. Never expose secret environment
+values in screenshots of the Vercel dashboard.
 
 
-PART 6 - CONFIGURE SUPABASE AUTH REDIRECTS
+PART 5 - CONFIGURE SUPABASE AUTH REDIRECTS
 ------------------------------------------
 In Supabase Dashboard:
 
 1. Open Authentication, then URL Configuration.
 2. Set Site URL to the stable QA frontend URL:
 
-   https://wescomm-qa.vercel.app
+   https://wescomm.vercel.app
 
 3. Add these Redirect URLs:
 
    http://localhost:3000/auth/callback
-   https://wescomm-qa.vercel.app/auth/callback
+   https://wescomm.vercel.app/auth/callback
 
 4. Save.
 5. Keep the existing Brevo SMTP configuration enabled.
 
-Use the stable wescomm-qa.vercel.app URL for group QA. Do not rely on a random
+Use the stable wescomm.vercel.app URL for group QA. Do not rely on a random
 per-commit preview URL for email OTP callbacks unless that preview pattern is
 also explicitly allowed in Supabase.
 
 
-PART 7 - CREATE QA ACCESS
+PART 6 - CREATE QA ACCESS
 -------------------------
 Recommended testers:
 
@@ -203,7 +199,7 @@ Recommended testers:
    sensitive student records.
 
 
-PART 8 - QA WORKFLOW
+PART 7 - QA WORKFLOW
 --------------------
 1. Send testers:
 
@@ -238,7 +234,7 @@ Severity guide:
   P3 - cosmetic wording, spacing, or minor responsive problem
 
 
-PART 9 - NORMAL UPDATE FLOW AFTER FIRST DEPLOYMENT
+PART 8 - NORMAL UPDATE FLOW AFTER FIRST DEPLOYMENT
 --------------------------------------------------
 Create a branch for each change:
 
@@ -252,8 +248,8 @@ and review, merge the Pull Request into main. The stable QA projects will deploy
 the updated main branch automatically.
 
 
-PART 10 - RELEASE GATE
-----------------------
+PART 9 - RELEASE GATE
+---------------------
 Do not call the staging system production-ready until all are true:
 
 1. No open P0 or P1 bugs.
@@ -273,11 +269,11 @@ Backend health is 500:
   Check Vercel Function Logs and confirm all backend environment variables.
 
 Frontend says services are unavailable:
-  Confirm BACKEND_API_URL ends in /api and the backend health URL is ready.
+  Confirm NEXT_PUBLIC_API_URL is /api and /api/health/ready returns ready.
 
 CORS or request origin error:
   FRONTEND_ORIGIN and FRONTEND_ORIGINS must exactly match the frontend origin,
-  without a trailing slash. Redeploy backend after changing them.
+  without a trailing slash. Redeploy the project after changing them.
 
 OTP returns to localhost:
   Correct Supabase Site URL and Redirect URLs, then request a new OTP.

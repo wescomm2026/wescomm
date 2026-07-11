@@ -7,6 +7,7 @@ import { ZodError } from "zod";
 import { env } from "./config/env.js";
 import { requireTrustedCookieOrigin } from "./middleware/csrf.js";
 import { apiRoutes } from "./routes/index.js";
+import { allowedFrontendOrigins } from "./utils/allowed-origins.js";
 import { HttpError } from "./utils/http-error.js";
 
 export const app = express();
@@ -26,14 +27,9 @@ app.use((_request, response, next) => {
 
 app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
 
-const allowedOrigins = env.FRONTEND_ORIGINS
-  .split(",")
-  .map((origin) => origin.trim())
-  .filter(Boolean);
-
 app.use(cors({
   origin(origin, callback) {
-    if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+    if (!origin || allowedFrontendOrigins.has(origin)) return callback(null, true);
     return callback(new HttpError(403, "Origin is not allowed."));
   },
   credentials: true,
