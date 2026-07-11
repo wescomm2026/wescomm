@@ -71,6 +71,9 @@ const nextConfig = {
     ];
   },
   images: {
+    // Vercel Services currently routes the frontend image optimizer outside the
+    // Next.js service. Serve static and Supabase images directly instead.
+    unoptimized: true,
     remotePatterns: [
       {
         protocol: "https",
