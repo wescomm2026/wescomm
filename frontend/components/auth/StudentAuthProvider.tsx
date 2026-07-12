@@ -54,6 +54,10 @@ type StudentAuthContextValue = {
 
 const LEGACY_DEV_SESSION_KEY = "wescomm_dev_session";
 const LEGACY_SESSION_KEY = "wescomm_student_session";
+const PASSWORD_LOGIN_EMAILS = new Set(["admin@wesleyan.edu.ph", "staff@wesleyan.edu.ph", "student@wesleyan.edu.ph"]);
+const DEVELOPMENT_LOGIN_ENABLED =
+  process.env.NEXT_PUBLIC_ENABLE_DEV_LOGIN === "true" ||
+  (process.env.NEXT_PUBLIC_ENABLE_DEV_LOGIN !== "false" && process.env.NODE_ENV === "development");
 const WELCOME_GATE_DURATION_MS = process.env.NEXT_PUBLIC_E2E_TEST === "true" ? 0 : 6000;
 const ALLOWED_EMAIL_DOMAIN = process.env.NEXT_PUBLIC_AUTH_ALLOWED_EMAIL_DOMAIN ?? "wesleyan.edu.ph";
 const StudentAuthContext = createContext<StudentAuthContextValue | null>(null);
@@ -362,28 +366,53 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
   }, [saveSession]);
 
   const loginWithTestAccount = useCallback(async (email: string, password: string): Promise<AuthResult> => {
-    try {
-      const response = await fetch(`${API_BASE_URL}/auth/dev-login`, {
-        method: "POST",
-        credentials: "include",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({ email, password })
-      });
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!PASSWORD_LOGIN_EMAILS.has(normalizedEmail)) {
+      return { success: false, error: "Password login is not available for this account." };
+    }
 
-      const payload = await response.json().catch(() => null);
-      if (!response.ok) {
-        return { success: false, error: payload?.error ?? "Unable to sign in with this test account." };
+    try {
+      if (DEVELOPMENT_LOGIN_ENABLED) {
+        const response = await fetch(`${API_BASE_URL}/auth/dev-login`, {
+          method: "POST",
+          credentials: "include",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ email: normalizedEmail, password })
+        });
+
+        const payload = await response.json().catch(() => null);
+        if (!response.ok) {
+          return { success: false, error: payload?.error ?? "Unable to sign in with this account." };
+        }
+
+        const session = mapProfileToSession(payload.profile as BackendProfile);
+        saveSession(session);
+        return { success: true };
       }
 
-      const session = mapProfileToSession(payload.profile as BackendProfile);
+      if (!hasSupabaseBrowserConfig()) {
+        return { success: false, error: "Login is not available right now. Please try again later." };
+      }
+
+      const supabase = getSupabaseBrowserClient();
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: normalizedEmail,
+        password
+      });
+      if (error || !data.session?.access_token) {
+        return { success: false, error: "The email or password is incorrect." };
+      }
+
+      const session = await establishBackendSession(data.session.access_token);
+      await supabase.auth.signOut({ scope: "local" }).catch(() => undefined);
       saveSession(session);
       return { success: true };
     } catch (error) {
       return {
         success: false,
-        error: error instanceof Error ? error.message : "Unable to sign in with this test account."
+        error: getAuthErrorMessage(error, "Unable to sign in with this account.")
       };
     }
   }, [saveSession]);

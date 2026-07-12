@@ -15,9 +15,6 @@ const REMEMBER_EMAIL_KEY = "wescomm_remembered_email_name";
 const REMEMBER_EMAIL_ENABLED_KEY = "wescomm_remember_email_enabled";
 const SEND_ATTEMPTS_KEY_PREFIX = "wescomm_auth_send_attempts:";
 const PASSWORD_LOGIN_EMAILS = new Set(["admin@wesleyan.edu.ph", "staff@wesleyan.edu.ph", "student@wesleyan.edu.ph"]);
-const DEV_LOGIN_ENABLED =
-  process.env.NEXT_PUBLIC_ENABLE_DEV_LOGIN === "true" ||
-  (process.env.NEXT_PUBLIC_ENABLE_DEV_LOGIN !== "false" && process.env.NODE_ENV === "development");
 type AuthStep = "email" | "code" | "password";
 
 function getAttemptKey(email: string) {
@@ -139,9 +136,9 @@ export function StudentAuthModal({ open, onClose }: { open: boolean; onClose: ()
       window.localStorage.removeItem(REMEMBER_EMAIL_KEY);
     }
 
-    if (DEV_LOGIN_ENABLED && PASSWORD_LOGIN_EMAILS.has(normalizedEmail)) {
+    if (PASSWORD_LOGIN_EMAILS.has(normalizedEmail)) {
       setStep("password");
-      setNotice("Enter the password for this WESCOMM test account.");
+      setNotice("Enter the password for this WESCOMM account.");
       setLoading("");
       return;
     }
