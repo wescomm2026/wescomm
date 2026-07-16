@@ -215,14 +215,6 @@ export function StaffRestrictionManagement({ role }: { role: "STAFF" | "ADMIN" }
 
   return (
     <div className="relative space-y-5">
-      <ActionLoadingOverlay
-        active={submitting}
-        title="Updating student reservation access"
-        detail="WESCOMM is saving the review, updating access rules, and notifying the student."
-        steps={["Validating the staff action", "Saving the access record", "Sending the student update"]}
-        mode="fixed"
-      />
-
       <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p className="text-sm font-bold uppercase text-primary">Student access</p>
@@ -330,8 +322,13 @@ export function StaffRestrictionManagement({ role }: { role: "STAFF" | "ADMIN" }
 
       {noShowCandidate ? (
         <div className="fixed inset-0 z-[10000] grid place-items-center overflow-y-auto bg-[#101820]/55 p-3" onMouseDown={(event) => { if (!submitting && event.target === event.currentTarget) setNoShowCandidate(null); }}>
-          <section role="dialog" aria-modal="true" aria-labelledby="no-show-title" className="w-full max-w-lg rounded-lg border border-[#e0e6e0] bg-white p-5 shadow-2xl sm:p-6">
-            <div className="flex items-start gap-3"><span className="grid size-11 shrink-0 place-items-center rounded-md bg-red-50 text-red-700"><TriangleAlert className="size-6" /></span><div><p className="text-xs font-bold uppercase text-red-700">Staff confirmation required</p><h2 id="no-show-title" className="mt-1 text-xl font-extrabold text-[#17211b]">Record this pickup as unclaimed?</h2></div><button type="button" onClick={() => setNoShowCandidate(null)} className="ml-auto grid size-9 place-items-center rounded-md hover:bg-[#f1f5f1]" aria-label="Close"><X className="size-5" /></button></div>
+          <section role="dialog" aria-modal="true" aria-labelledby="no-show-title" className="relative w-full max-w-lg overflow-hidden rounded-lg border border-[#e0e6e0] bg-white p-5 shadow-2xl sm:p-6">
+            <ActionLoadingOverlay
+              active={submitting}
+              title="Recording unclaimed pickup"
+              detail="We are updating the reservation, stock, and student access record."
+            />
+            <div className="flex items-start gap-3"><span className="grid size-11 shrink-0 place-items-center rounded-md bg-red-50 text-red-700"><TriangleAlert className="size-6" /></span><div><p className="text-xs font-bold uppercase text-red-700">Staff confirmation required</p><h2 id="no-show-title" className="mt-1 text-xl font-extrabold text-[#17211b]">Record this pickup as unclaimed?</h2></div><button type="button" onClick={() => setNoShowCandidate(null)} disabled={submitting} className="ml-auto grid size-9 place-items-center rounded-md hover:bg-[#f1f5f1] disabled:opacity-50" aria-label="Close"><X className="size-5" /></button></div>
             <div className="mt-5 rounded-lg border border-[#e2e8e2] bg-[#f8faf8] p-4 text-sm"><p className="font-extrabold">{noShowCandidate.referenceCode}</p><p className="mt-1 text-primary">{noShowCandidate.student.fullName || noShowCandidate.student.email}</p><p className="mt-2 text-[#68746d]">Pickup ended {formatDateTime(noShowCandidate.pickupEnd)}. The 24-hour grace period has passed.</p></div>
             <p className="mt-4 text-sm leading-6 text-[#5f6b64]">Use this only after checking that the student did not collect the items. It records an offense, returns held stock to inventory, and may trigger a reservation restriction.</p>
             <div className="mt-6 grid grid-cols-2 gap-3"><Button variant="secondary" onClick={() => setNoShowCandidate(null)} disabled={submitting}>Go back</Button><Button onClick={() => void confirmNoShow()} disabled={submitting} className="bg-red-700 hover:bg-red-800"><Ban className="size-4" />Confirm no-show</Button></div>
@@ -341,8 +338,13 @@ export function StaffRestrictionManagement({ role }: { role: "STAFF" | "ADMIN" }
 
       {selectedStudent ? (
         <div className="fixed inset-0 z-[9999] grid place-items-center overflow-y-auto bg-[#101820]/55 p-3" onMouseDown={(event) => { if (!submitting && event.target === event.currentTarget) setSelectedStudent(null); }}>
-          <section role="dialog" aria-modal="true" aria-labelledby="student-access-title" className="my-4 w-full max-w-2xl overflow-hidden rounded-lg border border-[#e0e6e0] bg-white shadow-2xl">
-            <header className="flex items-start gap-3 border-b border-[#e7ece8] p-5 sm:p-6"><span className="grid size-11 shrink-0 place-items-center rounded-md bg-[#e8f4e8] text-primary">{selectedStudent.activeRestriction ? <Ban className="size-6" /> : <UserRoundCheck className="size-6" />}</span><div className="min-w-0"><p className="text-xs font-bold uppercase text-primary">Student reservation access</p><h2 id="student-access-title" className="mt-1 text-xl font-extrabold text-[#17211b]">{studentName(selectedStudent)}</h2><p className="truncate text-sm text-[#68746d]">{selectedStudent.email}</p></div><button type="button" onClick={() => setSelectedStudent(null)} aria-label="Close" className="ml-auto grid size-9 place-items-center rounded-md hover:bg-[#f1f5f1]"><X className="size-5" /></button></header>
+          <section role="dialog" aria-modal="true" aria-labelledby="student-access-title" className="relative my-4 w-full max-w-2xl overflow-hidden rounded-lg border border-[#e0e6e0] bg-white shadow-2xl">
+            <ActionLoadingOverlay
+              active={submitting}
+              title="Updating reservation access"
+              detail="We are saving the review and refreshing the student's access."
+            />
+            <header className="flex items-start gap-3 border-b border-[#e7ece8] p-5 sm:p-6"><span className="grid size-11 shrink-0 place-items-center rounded-md bg-[#e8f4e8] text-primary">{selectedStudent.activeRestriction ? <Ban className="size-6" /> : <UserRoundCheck className="size-6" />}</span><div className="min-w-0"><p className="text-xs font-bold uppercase text-primary">Student reservation access</p><h2 id="student-access-title" className="mt-1 text-xl font-extrabold text-[#17211b]">{studentName(selectedStudent)}</h2><p className="truncate text-sm text-[#68746d]">{selectedStudent.email}</p></div><button type="button" onClick={() => setSelectedStudent(null)} disabled={submitting} aria-label="Close" className="ml-auto grid size-9 place-items-center rounded-md hover:bg-[#f1f5f1] disabled:opacity-50"><X className="size-5" /></button></header>
             <div className="max-h-[calc(100svh-170px)] space-y-5 overflow-y-auto p-5 sm:p-6">
               <div className="grid gap-3 sm:grid-cols-3"><div className="rounded-md bg-[#f5f8f5] p-3"><p className="text-xs text-[#68746d]">Status</p><span className="mt-2 inline-block"><StatusBadge status={restrictionStatus(selectedStudent)} /></span></div><div className="rounded-md bg-[#f5f8f5] p-3"><p className="text-xs text-[#68746d]">Consecutive warnings</p><p className="mt-1 text-xl font-extrabold">{selectedStudent.consecutiveOffenses} / {overview?.policy.firstRestrictionAt ?? 3}</p></div><div className="rounded-md bg-[#f5f8f5] p-3"><p className="text-xs text-[#68746d]">Student number</p><p className="mt-1 font-extrabold">{selectedStudent.studentNumber || "Not provided"}</p></div></div>
 
@@ -350,7 +352,7 @@ export function StaffRestrictionManagement({ role }: { role: "STAFF" | "ADMIN" }
                 <form onSubmit={overturnOffense} className="rounded-lg border border-[#ead7a5] bg-[#fffaf0] p-4">
                   <p className="font-extrabold text-[#684900]">Remove this offense after review?</p><p className="mt-1 text-sm leading-6 text-[#685b3f]">{offenseToOverturn.reason}</p>
                   <label className="mt-4 grid gap-1.5 text-sm font-bold">Review reason<textarea required minLength={5} maxLength={500} value={reason} onChange={(event) => setReason(event.target.value)} className="min-h-24 rounded-md border border-[#d9c998] bg-white px-3 py-2 font-normal outline-none focus:border-primary" placeholder="Explain why this record should be removed" /></label>
-                  <div className="mt-4 flex justify-end gap-2"><Button type="button" variant="secondary" onClick={() => { setOffenseToOverturn(null); setReason(""); }}>Back</Button><Button type="submit" disabled={submitting}><Unlock className="size-4" />Remove offense</Button></div>
+                  <div className="mt-4 flex justify-end gap-2"><Button type="button" variant="secondary" onClick={() => { setOffenseToOverturn(null); setReason(""); }} disabled={submitting}>Back</Button><Button type="submit" disabled={submitting}><Unlock className="size-4" />Remove offense</Button></div>
                 </form>
               ) : selectedStudent.activeRestriction ? (
                 <form onSubmit={liftRestriction} className="rounded-lg border border-[#e6b8b8] bg-[#fff7f7] p-4">

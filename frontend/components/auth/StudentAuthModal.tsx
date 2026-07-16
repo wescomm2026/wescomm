@@ -295,18 +295,15 @@ export function StudentAuthModal({ open, onClose }: { open: boolean; onClose: ()
   const loadingCopy = {
     send: {
       title: "Sending verification code",
-      detail: "WESCOMM is sending your one-time code. This can take a few seconds depending on the email provider.",
-      steps: ["Checking email limit", "Sending secure code", "Preparing verification step"]
+      detail: "Your secure code is being sent to your school email."
     },
     verify: {
       title: "Verifying your code",
-      detail: "WESCOMM is confirming the latest code and loading your account session.",
-      steps: ["Checking code", "Creating secure session", "Opening your dashboard"]
+      detail: "We are confirming the code and opening your account."
     },
     password: {
       title: "Signing you in",
-      detail: "WESCOMM is checking your test account and preparing the correct dashboard.",
-      steps: ["Checking credentials", "Loading account role", "Opening WESCOMM"]
+      detail: "We are checking your account and opening the correct dashboard."
     }
   } as const;
   const activeLoadingCopy = loading ? loadingCopy[loading] : null;
@@ -329,7 +326,6 @@ export function StudentAuthModal({ open, onClose }: { open: boolean; onClose: ()
           active={Boolean(activeLoadingCopy)}
           title={activeLoadingCopy?.title ?? ""}
           detail={activeLoadingCopy?.detail ?? ""}
-          steps={activeLoadingCopy?.steps ?? []}
         />
         <div className="h-1.5 bg-primary" />
         <button

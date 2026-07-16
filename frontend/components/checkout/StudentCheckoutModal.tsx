@@ -127,7 +127,7 @@ export function StudentCheckoutModal({
     document.documentElement.style.overflow = "hidden";
 
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape" && !submitting) onClose();
     };
     window.addEventListener("keydown", onKeyDown);
 
@@ -136,7 +136,7 @@ export function StudentCheckoutModal({
       document.documentElement.style.overflow = previousHtmlOverflow;
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [product, onClose]);
+  }, [product, onClose, submitting]);
 
   const unitPrice = product ? parsePrice(product.price) : 0;
   const stockCount = product ? Number(product.count) : 0;
@@ -266,12 +266,11 @@ export function StudentCheckoutModal({
             </div>
           </div>
         ) : (
-          <form onSubmit={confirmReservation}>
+          <form className="relative" onSubmit={confirmReservation}>
             <ActionLoadingOverlay
               active={submitting}
               title="Submitting your reservation"
-              detail="WESCOMM is checking live stock, saving your pickup schedule, and notifying commissary staff."
-              steps={["Checking selected item and options", "Holding stock for your reservation", "Preparing reservation notification"]}
+              detail="We are checking stock and saving your pickup schedule."
             />
             <div className="border-b border-[#e6ece6] px-5 pb-5 pt-6 sm:px-8">
               <p className="text-sm font-bold uppercase text-primary">Item checkout</p>

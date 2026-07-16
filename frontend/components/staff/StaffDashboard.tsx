@@ -19,6 +19,7 @@ import {
   type BackendReservationStatus
 } from "@/lib/api";
 import { getStaffProducts, getStoredStaffSession, type StaffProduct } from "@/lib/staff-api";
+import { markWelcomeContentReady } from "@/lib/welcome-readiness";
 
 const emptySummary: BackendReportSummary = {
   totalSales: 0,
@@ -141,6 +142,7 @@ function useStaffDashboardData() {
   const { user, ready, openAuth } = useStudentAuth();
   const [data, setData] = useState<DashboardData>(emptyDashboardData);
   const [loading, setLoading] = useState(true);
+  const [initialLoadComplete, setInitialLoadComplete] = useState(false);
   const [error, setError] = useState("");
   const [hasCredential, setHasCredential] = useState(false);
 
@@ -154,6 +156,10 @@ function useStaffDashboardData() {
 
     if (!token) {
       setLoading(false);
+      if (!background) {
+        setInitialLoadComplete(true);
+        markWelcomeContentReady(window.location.pathname);
+      }
       return;
     }
 
@@ -177,7 +183,11 @@ function useStaffDashboardData() {
         setError(dashboardError instanceof Error ? dashboardError.message : "Unable to load staff dashboard.");
       }
     } finally {
-      if (!background) setLoading(false);
+      if (!background) {
+        setLoading(false);
+        setInitialLoadComplete(true);
+        markWelcomeContentReady(window.location.pathname);
+      }
     }
   }, [ready, user]);
 
@@ -203,7 +213,7 @@ function useStaffDashboardData() {
     };
   }, [hasCredential, loadDashboard]);
 
-  return { user, ready, openAuth, data, loading, error, hasCredential, reload: loadDashboard };
+  return { user, ready, openAuth, data, loading, initialLoadComplete, error, hasCredential, reload: loadDashboard };
 }
 
 function SectionHeader({
@@ -293,6 +303,24 @@ function EmptyPanel({ children }: { children: ReactNode }) {
   return <div className="p-5 text-sm font-semibold text-[#68746d]">{children}</div>;
 }
 
+function StaffDashboardLoading() {
+  return (
+    <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4" role="status" aria-live="polite">
+      <span className="sr-only">Loading live staff dashboard data.</span>
+      {Array.from({ length: 4 }).map((_, index) => (
+        <div key={index} className="rounded-lg border border-[#dce5dd] bg-white p-5 shadow-sm" aria-hidden="true">
+          <div className="animate-pulse space-y-3 motion-reduce:animate-none">
+            <div className="size-12 rounded-full bg-[#e7f0e7]" />
+            <div className="h-3 w-28 rounded-full bg-[#e4ece4]" />
+            <div className="h-8 w-20 rounded-md bg-[#d8e6d9]" />
+            <div className="h-2.5 w-36 max-w-full rounded-full bg-[#edf3ed]" />
+          </div>
+        </div>
+      ))}
+    </section>
+  );
+}
+
 function StaffAccessState({
   ready,
   loading,
@@ -307,7 +335,7 @@ function StaffAccessState({
   openAuth: () => void;
 }) {
   if (!ready || (loading && !hasCredential)) {
-    return <div className="rounded-lg border border-[#dce5dd] bg-white p-6 text-sm font-semibold text-[#68746d] shadow-sm">Loading staff dashboard...</div>;
+    return <StaffDashboardLoading />;
   }
 
   if (user?.role === "STUDENT") {
@@ -328,7 +356,7 @@ function StaffAccessState({
 }
 
 export function StaffDashboard() {
-  const { user, ready, openAuth, data, loading, error, hasCredential, reload } = useStaffDashboardData();
+  const { user, ready, openAuth, data, loading, initialLoadComplete, error, hasCredential, reload } = useStaffDashboardData();
   const accessState = (
     <StaffAccessState
       ready={ready}
@@ -423,6 +451,18 @@ export function StaffDashboard() {
 
   if (!ready || !hasCredential || user?.role === "STUDENT") return accessState;
 
+  if (!initialLoadComplete) {
+    return (
+      <div className="space-y-5">
+        <header>
+          <h1 className="text-3xl font-extrabold text-[#111a15] sm:text-4xl">Dashboard</h1>
+          <p className="mt-2 text-sm text-[#606c64] sm:text-base">Preparing live commissary data for {staffName}.</p>
+        </header>
+        <StaffDashboardLoading />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-5">
       <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
@@ -437,8 +477,6 @@ export function StaffDashboard() {
       </header>
 
       {error ? <p className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p> : null}
-      {loading ? <div className="rounded-lg border border-[#dce5dd] bg-white p-6 text-sm font-semibold text-[#68746d] shadow-sm">Loading live dashboard data...</div> : null}
-
       <section className="overflow-hidden rounded-lg border border-[#d8e4d9] bg-white shadow-sm">
         <div className="flex items-center gap-3 border-b border-[#e5ebe6] bg-[#f3f8f3] px-4 py-3 sm:px-5">
           <span className="grid size-10 shrink-0 place-items-center rounded-md bg-white text-primary shadow-sm">

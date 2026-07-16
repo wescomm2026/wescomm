@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -7,49 +8,50 @@ type ActionLoadingOverlayProps = {
   active: boolean;
   title: string;
   detail: string;
-  steps?: readonly string[];
-  mode?: "fixed" | "absolute";
   className?: string;
 };
+
+const LOADING_OVERLAY_DELAY_MS = 300;
 
 export function ActionLoadingOverlay({
   active,
   title,
   detail,
-  steps = [],
-  mode = "absolute",
   className
 }: ActionLoadingOverlayProps) {
-  if (!active) return null;
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    if (!active) {
+      setVisible(false);
+      return;
+    }
+
+    const timer = window.setTimeout(() => setVisible(true), LOADING_OVERLAY_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [active]);
+
+  if (!active || !visible) return null;
 
   return (
     <div
       className={cn(
-        mode === "fixed" ? "fixed inset-0 z-[12000]" : "absolute inset-0 z-30",
-        "grid place-items-center bg-white/82 p-4 backdrop-blur-[3px]",
+        "absolute inset-0 z-30 grid place-items-center bg-white/75 p-3 backdrop-blur-[2px]",
         className
       )}
       role="status"
       aria-live="polite"
+      aria-atomic="true"
       aria-busy="true"
     >
-      <div className="w-full max-w-sm rounded-lg border border-[#cfe0d1] bg-white p-5 text-center shadow-[0_24px_70px_rgba(0,65,31,0.18)]">
-        <span className="mx-auto grid size-14 place-items-center rounded-full bg-[#e8f4e9] text-primary">
-          <Loader2 className="size-7 animate-spin" />
+      <div className="flex w-full max-w-md items-center gap-3 rounded-lg border border-[#cfe0d1] bg-white px-4 py-3.5 text-left shadow-[0_18px_50px_rgba(0,65,31,0.16)]">
+        <span className="grid size-10 shrink-0 place-items-center rounded-full bg-[#e8f4e9] text-primary">
+          <Loader2 className="size-5 motion-safe:animate-spin" aria-hidden="true" />
         </span>
-        <h2 className="mt-4 text-lg font-extrabold text-[#17211b]">{title}</h2>
-        <p className="mt-2 text-sm leading-6 text-[#617069]">{detail}</p>
-        {steps.length ? (
-          <div className="mt-4 space-y-2 rounded-md bg-[#f5faf5] p-3 text-left">
-            {steps.map((step) => (
-              <div key={step} className="flex items-center gap-2 text-xs font-semibold text-[#536158]">
-                <span className="size-1.5 rounded-full bg-primary" />
-                {step}
-              </div>
-            ))}
-          </div>
-        ) : null}
-        <p className="mt-4 text-xs font-semibold text-[#7a857f]">Please keep this page open.</p>
+        <div className="min-w-0">
+          <p className="font-extrabold leading-5 text-[#17211b]">{title}</p>
+          <p className="mt-1 text-sm leading-5 text-[#617069]">{detail}</p>
+        </div>
       </div>
     </div>
   );

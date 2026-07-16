@@ -9,7 +9,7 @@ import {
   useState,
   type ReactNode
 } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { StudentAuthModal } from "@/components/auth/StudentAuthModal";
 import { WelcomeGateOverlay } from "@/components/auth/WelcomeGateOverlay";
 import { API_BASE_URL, COOKIE_SESSION_TOKEN } from "@/lib/api";
@@ -17,6 +17,12 @@ import { describeOtpSendError } from "@/lib/auth-errors";
 import { EMAIL_OTP_LENGTH, isCompleteEmailOtp, normalizeEmailOtp } from "@/lib/auth-otp";
 import { clearStaffSession, storeStaffSession } from "@/lib/staff-api";
 import { getSupabaseBrowserClient, hasSupabaseBrowserConfig } from "@/lib/supabase-browser";
+import {
+  getWelcomeContentReadyPath,
+  isWelcomeContentReady,
+  resetWelcomeContentReady,
+  WELCOME_CONTENT_READY_EVENT
+} from "@/lib/welcome-readiness";
 
 type AppRole = "STUDENT" | "STAFF" | "ADMIN";
 
@@ -62,7 +68,10 @@ const PASSWORD_LOGIN_EMAILS = new Set(["admin@wesleyan.edu.ph", "staff@wesleyan.
 const DEVELOPMENT_LOGIN_ENABLED =
   process.env.NEXT_PUBLIC_ENABLE_DEV_LOGIN === "true" ||
   (process.env.NEXT_PUBLIC_ENABLE_DEV_LOGIN !== "false" && process.env.NODE_ENV === "development");
-const WELCOME_GATE_DURATION_MS = process.env.NEXT_PUBLIC_E2E_TEST === "true" ? 0 : 6000;
+const E2E_TEST_ENABLED = process.env.NEXT_PUBLIC_E2E_TEST === "true";
+const WELCOME_GATE_MINIMUM_DURATION_MS = E2E_TEST_ENABLED ? 0 : 2200;
+const WELCOME_GATE_MAXIMUM_DURATION_MS = E2E_TEST_ENABLED ? 1000 : 4000;
+const READINESS_AWARE_DASHBOARD_PATHS = new Set(["/student/dashboard", "/staff", "/admin/dashboard"]);
 const ALLOWED_EMAIL_DOMAIN = process.env.NEXT_PUBLIC_AUTH_ALLOWED_EMAIL_DOMAIN ?? "wesleyan.edu.ph";
 const StudentAuthContext = createContext<StudentAuthContextValue | null>(null);
 const emptyStudentProfile: StudentUser = {
@@ -177,21 +186,33 @@ function clearLegacyBrowserAuthTokens() {
 
 export function StudentAuthProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
+  const pathname = usePathname();
   const [user, setUser] = useState<StudentUser | null>(null);
   const [ready, setReady] = useState(false);
   const [browserLoaded, setBrowserLoaded] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [welcomeGateUser, setWelcomeGateUser] = useState<StudentUser | "GUEST" | null>("GUEST");
+  const [welcomeGateTargetPath, setWelcomeGateTargetPath] = useState(pathname);
+  const [welcomeContentReady, setWelcomeContentReady] = useState(false);
+  const welcomeTargetNeedsContentReady = READINESS_AWARE_DASHBOARD_PATHS.has(welcomeGateTargetPath);
+  const dismissWelcomeGate = useCallback(() => setWelcomeGateUser(null), []);
 
-  const showWelcomeGate = useCallback((gateUser: StudentUser | "GUEST") => {
+  const showWelcomeGate = useCallback((gateUser: StudentUser | "GUEST", targetPath: string) => {
+    setWelcomeGateTargetPath(targetPath);
+    setWelcomeContentReady(
+      targetPath === window.location.pathname && isWelcomeContentReady(targetPath)
+    );
     setWelcomeGateUser(gateUser);
   }, []);
 
-  const showGuestWelcomeGate = useCallback(() => {
-    showWelcomeGate("GUEST");
+  const showGuestWelcomeGate = useCallback((targetPath: string) => {
+    showWelcomeGate("GUEST", targetPath);
   }, [showWelcomeGate]);
 
-  const persistSession = useCallback((session: StudentUser, options?: { showWelcomeGate?: boolean }) => {
+  const persistSession = useCallback((
+    session: StudentUser,
+    options?: { showWelcomeGate?: boolean; welcomeGateTargetPath?: string }
+  ) => {
     window.sessionStorage.removeItem(LEGACY_DEV_SESSION_KEY);
     window.localStorage.removeItem(LEGACY_SESSION_KEY);
     if (session.role === "STAFF" || session.role === "ADMIN") {
@@ -200,8 +221,38 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
       clearStaffSession();
     }
     setUser(session);
-    if (options?.showWelcomeGate) showWelcomeGate(session);
+    if (options?.showWelcomeGate) {
+      showWelcomeGate(session, options.welcomeGateTargetPath ?? window.location.pathname);
+    }
   }, [showWelcomeGate]);
+
+  useEffect(() => {
+    if (!welcomeGateUser) return undefined;
+
+    const syncReadiness = () => {
+      const currentPath = window.location.pathname;
+      const targetIsCurrent = welcomeGateTargetPath === currentPath && welcomeGateTargetPath === pathname;
+      setWelcomeContentReady(
+        targetIsCurrent && isWelcomeContentReady(welcomeGateTargetPath)
+      );
+    };
+
+    const handleContentReady = (event: Event) => {
+      const readyPath = getWelcomeContentReadyPath(event);
+      if (
+        readyPath === welcomeGateTargetPath &&
+        readyPath === window.location.pathname &&
+        isWelcomeContentReady(readyPath)
+      ) {
+        setWelcomeContentReady(true);
+      }
+    };
+
+    syncReadiness();
+    window.addEventListener(WELCOME_CONTENT_READY_EVENT, handleContentReady);
+
+    return () => window.removeEventListener(WELCOME_CONTENT_READY_EVENT, handleContentReady);
+  }, [pathname, welcomeGateTargetPath, welcomeGateUser]);
 
   useEffect(() => {
     if (document.readyState === "complete") {
@@ -234,13 +285,16 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
         const verifiedSession = await loadProfileSession();
         if (cancelled) return;
 
-        persistSession(verifiedSession, { showWelcomeGate: true });
+        persistSession(verifiedSession, {
+          showWelcomeGate: true,
+          welcomeGateTargetPath: window.location.pathname
+        });
       } catch {
         if (!cancelled) {
           window.sessionStorage.removeItem(LEGACY_DEV_SESSION_KEY);
           clearStaffSession();
           setUser(null);
-          if (!shouldOpenLogin) showGuestWelcomeGate();
+          if (!shouldOpenLogin) showGuestWelcomeGate(window.location.pathname);
         }
       } finally {
         if (!cancelled) setReady(true);
@@ -258,9 +312,16 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
   const closeAuth = useCallback(() => setModalOpen(false), []);
 
   const saveSession = useCallback((session: StudentUser) => {
-    persistSession(session, { showWelcomeGate: true });
+    const dashboardPath = getDashboardPath(session.role);
+    if (dashboardPath !== window.location.pathname) {
+      resetWelcomeContentReady(dashboardPath);
+    }
+    persistSession(session, {
+      showWelcomeGate: true,
+      welcomeGateTargetPath: dashboardPath
+    });
     setModalOpen(false);
-    router.replace(getDashboardPath(session.role));
+    router.replace(dashboardPath);
   }, [persistSession, router]);
 
   const sendEmailOtp = useCallback(async (email: string): Promise<AuthResult> => {
@@ -479,9 +540,10 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
       {welcomeGateUser ? (
         <WelcomeGateOverlay
           user={welcomeGateUser}
-          readyToFinish={ready && browserLoaded}
-          minimumDurationMs={WELCOME_GATE_DURATION_MS}
-          onFinish={() => setWelcomeGateUser(null)}
+          readyToFinish={ready && browserLoaded && (!welcomeTargetNeedsContentReady || welcomeContentReady)}
+          minimumDurationMs={WELCOME_GATE_MINIMUM_DURATION_MS}
+          maximumDurationMs={WELCOME_GATE_MAXIMUM_DURATION_MS}
+          onFinish={dismissWelcomeGate}
         />
       ) : null}
     </StudentAuthContext.Provider>

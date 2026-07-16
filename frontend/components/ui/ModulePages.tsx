@@ -1,6 +1,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { FaqExperience } from "@/components/faq/FaqExperience";
+import { DashboardProductsProvider } from "@/components/dashboard/DashboardProductsProvider";
 import { HomeActionCards } from "@/components/dashboard/HomeActionCards";
 import { HeroProductCarousel } from "@/components/dashboard/HeroProductCarousel";
 import { StockOverview } from "@/components/dashboard/StockOverview";
@@ -75,27 +76,29 @@ export function PageTitle({ title, eyebrow }: { title: string; eyebrow: string }
 
 export function StudentDashboard() {
   return (
-    <div className="space-y-5">
-      <StudentHero />
-      <HomeActionCards />
-      <div className="grid gap-5 lg:grid-cols-[1.45fr_0.75fr]">
-        <StockOverview />
-        <section className="wes-card flex flex-col gap-4 overflow-hidden bg-[#f1f8f1] p-5 sm:flex-row sm:items-center lg:flex-col lg:items-start xl:flex-row xl:items-center">
-          <Image src="/assets/chat-with-wesbot.svg" alt="" width={110} height={110} className="mx-auto size-24 shrink-0 object-contain sm:mx-0" />
-          <div className="min-w-0 flex-1 text-center sm:text-left">
-            <h2 className="text-lg font-bold leading-snug text-primary xl:text-xl">Need help? Chat with WesBot</h2>
-            <p className="mt-1 text-sm leading-5 text-[#3f4a44]">Our virtual assistant is here to help you 24/7.</p>
-          </div>
-          <Link href="/student/support">
-            <Button className="w-full shrink-0 sm:w-auto">
-              <AssetIcon src="/assets/live-chat.svg" className="size-6" />
-              Start Chat
-            </Button>
-          </Link>
-        </section>
+    <DashboardProductsProvider>
+      <div className="space-y-5">
+        <StudentHero />
+        <HomeActionCards />
+        <div className="grid gap-5 lg:grid-cols-[1.45fr_0.75fr]">
+          <StockOverview />
+          <section className="wes-card flex flex-col gap-4 overflow-hidden bg-[#f1f8f1] p-5 sm:flex-row sm:items-center lg:flex-col lg:items-start xl:flex-row xl:items-center">
+            <Image src="/assets/chat-with-wesbot.svg" alt="" width={110} height={110} className="mx-auto size-24 shrink-0 object-contain sm:mx-0" />
+            <div className="min-w-0 flex-1 text-center sm:text-left">
+              <h2 className="text-lg font-bold leading-snug text-primary xl:text-xl">Need help? Chat with WesBot</h2>
+              <p className="mt-1 text-sm leading-5 text-[#3f4a44]">Our virtual assistant is here to help you 24/7.</p>
+            </div>
+            <Link href="/student/support">
+              <Button className="w-full shrink-0 sm:w-auto">
+                <AssetIcon src="/assets/live-chat.svg" className="size-6" />
+                Start Chat
+              </Button>
+            </Link>
+          </section>
+        </div>
+        <StudentFooter />
       </div>
-      <StudentFooter />
-    </div>
+    </DashboardProductsProvider>
   );
 }
 

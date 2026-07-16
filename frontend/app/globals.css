@@ -43,7 +43,8 @@ html {
 }
 
 .welcome-gate-overlay {
-  animation: welcomeGateOverlayExit 2.05s ease forwards;
+  isolation: isolate;
+  opacity: 1;
 }
 
 .welcome-gate-panel {
@@ -55,73 +56,115 @@ html {
     radial-gradient(circle at center, rgba(0, 101, 47, 0.08), transparent 42%);
   border-color: rgba(0, 101, 47, 0.16);
   box-shadow: 0 0 60px rgba(0, 91, 43, 0.08);
-  animation-duration: 2.05s;
-  animation-timing-function: cubic-bezier(0.72, 0, 0.2, 1);
-  animation-fill-mode: forwards;
 }
 
 .welcome-gate-panel-left {
   left: 0;
   border-right-width: 1px;
-  animation-name: welcomeGateLeft;
 }
 
 .welcome-gate-panel-right {
   right: 0;
   border-left-width: 1px;
-  animation-name: welcomeGateRight;
 }
 
-.welcome-gate-content {
-  animation: welcomeGateContent 2.05s ease forwards;
+.welcome-gate-overlay[data-phase="entering"] {
+  animation: welcomeGateOverlayEnter 0.3s ease-out both;
 }
 
-@keyframes welcomeGateLeft {
-  0%,
-  36% {
-    transform: translateX(0);
+.welcome-gate-overlay[data-phase="entering"] .welcome-gate-content {
+  animation: welcomeGateContentEnter 0.3s ease-out both;
+}
+
+.welcome-gate-overlay[data-phase="holding"],
+.welcome-gate-overlay[data-phase="holding"] .welcome-gate-content {
+  opacity: 1;
+  transform: none;
+}
+
+.welcome-gate-overlay[data-phase="exiting"] {
+  animation: welcomeGateOverlayExit 0.33s ease-in both;
+  pointer-events: none;
+}
+
+.welcome-gate-overlay[data-phase="exiting"] .welcome-gate-panel {
+  animation-duration: 0.33s;
+  animation-fill-mode: both;
+  animation-timing-function: cubic-bezier(0.72, 0, 0.2, 1);
+}
+
+.welcome-gate-overlay[data-phase="exiting"] .welcome-gate-panel-left {
+  animation-name: welcomeGatePanelLeftExit;
+}
+
+.welcome-gate-overlay[data-phase="exiting"] .welcome-gate-panel-right {
+  animation-name: welcomeGatePanelRightExit;
+}
+
+.welcome-gate-overlay[data-phase="exiting"] .welcome-gate-content {
+  animation: welcomeGateContentExit 0.24s ease-in both;
+}
+
+.welcome-gate-skip {
+  animation: welcomeGateSkipEnter 0.2s ease-out both;
+}
+
+@keyframes welcomeGateOverlayEnter {
+  from {
+    opacity: 0;
   }
-  76%,
-  100% {
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes welcomeGateContentEnter {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes welcomeGatePanelLeftExit {
+  to {
     transform: translateX(-104%);
   }
 }
 
-@keyframes welcomeGateRight {
-  0%,
-  36% {
-    transform: translateX(0);
-  }
-  76%,
-  100% {
+@keyframes welcomeGatePanelRightExit {
+  to {
     transform: translateX(104%);
   }
 }
 
-@keyframes welcomeGateContent {
-  0% {
+@keyframes welcomeGateContentExit {
+  to {
     opacity: 0;
-    transform: translateY(10px) scale(0.98);
-  }
-  14%,
-  48% {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-  70%,
-  100% {
-    opacity: 0;
-    transform: translateY(-8px) scale(0.98);
+    transform: translateY(-6px) scale(0.99);
   }
 }
 
 @keyframes welcomeGateOverlayExit {
-  0%,
-  78% {
+  70% {
     opacity: 1;
   }
-  100% {
+  to {
     opacity: 0;
+  }
+}
+
+@keyframes welcomeGateSkipEnter {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
   }
 }
 
@@ -132,17 +175,24 @@ html {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .welcome-gate-overlay,
-  .welcome-gate-panel,
-  .welcome-gate-content {
-    animation-duration: 0.35s;
+  .welcome-gate-overlay[data-phase="entering"],
+  .welcome-gate-overlay[data-phase="entering"] .welcome-gate-content,
+  .welcome-gate-skip {
+    animation-duration: 0.01ms;
   }
 
-  .welcome-gate-panel-left {
-    transform: translateX(-104%);
+  .welcome-gate-overlay[data-phase="exiting"] {
+    animation-duration: 0.12s;
   }
 
-  .welcome-gate-panel-right {
-    transform: translateX(104%);
+  .welcome-gate-overlay[data-phase="exiting"] .welcome-gate-panel,
+  .welcome-gate-overlay[data-phase="exiting"] .welcome-gate-content {
+    animation: welcomeGateReducedExit 0.12s ease-out both;
+  }
+
+  @keyframes welcomeGateReducedExit {
+    to {
+      opacity: 0;
+    }
   }
 }

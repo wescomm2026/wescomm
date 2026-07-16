@@ -33,7 +33,7 @@ function statusClass(state: PushCapabilityState) {
 export function WebPushSettings({ compact = false }: { compact?: boolean }) {
   const { user } = useStudentAuth();
   const [state, setState] = useState<PushCapabilityState>("default");
-  const [busy, setBusy] = useState(false);
+  const [busyAction, setBusyAction] = useState<"enable" | "disable" | "test" | "">("");
   const [message, setMessage] = useState("");
 
   const refreshState = useCallback(async () => {
@@ -52,8 +52,8 @@ export function WebPushSettings({ compact = false }: { compact?: boolean }) {
   }, [refreshState]);
 
   const enable = async () => {
-    if (!user?.accessToken) return;
-    setBusy(true);
+    if (!user?.accessToken || busyAction) return;
+    setBusyAction("enable");
     setMessage("");
 
     try {
@@ -64,13 +64,13 @@ export function WebPushSettings({ compact = false }: { compact?: boolean }) {
       await refreshState();
       setMessage(error instanceof Error ? error.message : "Unable to enable phone notifications.");
     } finally {
-      setBusy(false);
+      setBusyAction("");
     }
   };
 
   const disable = async () => {
-    if (!user?.accessToken) return;
-    setBusy(true);
+    if (!user?.accessToken || busyAction) return;
+    setBusyAction("disable");
     setMessage("");
 
     try {
@@ -80,13 +80,13 @@ export function WebPushSettings({ compact = false }: { compact?: boolean }) {
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to disable phone notifications.");
     } finally {
-      setBusy(false);
+      setBusyAction("");
     }
   };
 
   const sendTest = async () => {
-    if (!user?.accessToken) return;
-    setBusy(true);
+    if (!user?.accessToken || busyAction) return;
+    setBusyAction("test");
     setMessage("");
 
     try {
@@ -95,10 +95,26 @@ export function WebPushSettings({ compact = false }: { compact?: boolean }) {
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to send a test notification.");
     } finally {
-      setBusy(false);
+      setBusyAction("");
     }
   };
 
+  const busy = Boolean(busyAction);
+  const loadingCopy = {
+    enable: {
+      title: "Enabling phone notifications",
+      detail: "We are registering this browser and sending a test notification."
+    },
+    disable: {
+      title: "Disabling phone notifications",
+      detail: "We are removing this browser from your notification devices."
+    },
+    test: {
+      title: "Sending test notification",
+      detail: "We are sending a notification to this browser."
+    }
+  } as const;
+  const activeLoadingCopy = busyAction ? loadingCopy[busyAction] : null;
   const canEnable = state === "default";
   const canDisable = state === "granted";
   const canSendTest = state === "granted";
@@ -107,9 +123,8 @@ export function WebPushSettings({ compact = false }: { compact?: boolean }) {
     <section className={compact ? "relative rounded-lg border border-[#dce5dd] bg-white p-4 shadow-sm" : "relative rounded-lg border border-[#dce5dd] bg-white p-5 shadow-sm"}>
       <ActionLoadingOverlay
         active={busy}
-        title="Updating phone notifications"
-        detail="WESCOMM is checking browser permission and syncing this device with your account."
-        steps={["Checking browser support", "Saving device permission", "Sending test update"]}
+        title={activeLoadingCopy?.title ?? ""}
+        detail={activeLoadingCopy?.detail ?? ""}
       />
       <div className="flex items-start gap-3">
         <span className="grid size-11 shrink-0 place-items-center rounded-md bg-[#eef6ee]">

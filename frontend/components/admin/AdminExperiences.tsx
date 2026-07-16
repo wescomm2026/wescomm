@@ -31,6 +31,7 @@ import {
   type BackendAppRole,
   type BackendReportSummary
 } from "@/lib/api";
+import { markWelcomeContentReady } from "@/lib/welcome-readiness";
 
 const emptySummary: BackendReportSummary = {
   totalSales: 0,
@@ -86,12 +87,17 @@ function useAdminSummary() {
   const { user, ready, openAuth } = useStudentAuth();
   const [summary, setSummary] = useState<BackendReportSummary>(emptySummary);
   const [loading, setLoading] = useState(true);
+  const [initialLoadComplete, setInitialLoadComplete] = useState(false);
   const [error, setError] = useState("");
 
   const loadSummary = useCallback(async ({ background = false }: { background?: boolean } = {}) => {
     if (!ready) return;
     if (!user?.accessToken) {
       setLoading(false);
+      if (!background) {
+        setInitialLoadComplete(true);
+        markWelcomeContentReady(window.location.pathname);
+      }
       return;
     }
 
@@ -108,7 +114,11 @@ function useAdminSummary() {
         setError(summaryError instanceof Error ? summaryError.message : "Unable to load admin summary.");
       }
     } finally {
-      if (!background) setLoading(false);
+      if (!background) {
+        setLoading(false);
+        setInitialLoadComplete(true);
+        markWelcomeContentReady(window.location.pathname);
+      }
     }
   }, [ready, user?.accessToken]);
 
@@ -134,7 +144,7 @@ function useAdminSummary() {
     };
   }, [loadSummary, user?.accessToken]);
 
-  return { user, ready, openAuth, summary, loading, error, reload: loadSummary };
+  return { user, ready, openAuth, summary, loading, initialLoadComplete, error, reload: loadSummary };
 }
 
 function AdminHeader({
@@ -205,6 +215,24 @@ function ChartPanel({ title, children }: { title: string; children: React.ReactN
   );
 }
 
+function AdminDashboardLoading() {
+  return (
+    <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4" role="status" aria-live="polite">
+      <span className="sr-only">Loading live admin dashboard data.</span>
+      {Array.from({ length: 4 }).map((_, index) => (
+        <div key={index} className="rounded-lg border border-[#dce5dd] bg-white p-5 shadow-sm" aria-hidden="true">
+          <div className="animate-pulse space-y-3 motion-reduce:animate-none">
+            <div className="size-12 rounded-full bg-[#e7f0e7]" />
+            <div className="h-3 w-28 rounded-full bg-[#e4ece4]" />
+            <div className="h-8 w-24 rounded-md bg-[#d8e6d9]" />
+            <div className="h-2.5 w-36 max-w-full rounded-full bg-[#edf3ed]" />
+          </div>
+        </div>
+      ))}
+    </section>
+  );
+}
+
 function AdminAccessState({
   ready,
   user,
@@ -215,7 +243,7 @@ function AdminAccessState({
   openAuth: () => void;
 }) {
   if (!ready) {
-    return <div className="rounded-lg border border-[#dce5dd] bg-white p-6 text-sm font-semibold text-[#68746d] shadow-sm">Loading admin account...</div>;
+    return <AdminDashboardLoading />;
   }
 
   if (!user) {
@@ -288,9 +316,22 @@ function SummaryCharts({ summary }: { summary: BackendReportSummary }) {
 }
 
 export function AdminDashboardExperience() {
-  const { user, ready, openAuth, summary, loading, error, reload } = useAdminSummary();
+  const { user, ready, openAuth, summary, loading, initialLoadComplete, error, reload } = useAdminSummary();
   const accessState = <AdminAccessState ready={ready} user={user} openAuth={openAuth} />;
   if (!ready || !user || user.role !== "ADMIN") return accessState;
+
+  if (!initialLoadComplete) {
+    return (
+      <div className="space-y-5">
+        <AdminHeader
+          eyebrow="Admin dashboard"
+          title="Commissary monitoring and decisions"
+          detail="Preparing live reports, inventory, users, and operations data."
+        />
+        <AdminDashboardLoading />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-5">
@@ -301,8 +342,6 @@ export function AdminDashboardExperience() {
         action={<Button variant="secondary" onClick={() => void reload()} disabled={loading}><RefreshCw className="size-4" /> Refresh</Button>}
       />
       {error ? <p className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p> : null}
-      {loading ? <div className="rounded-lg border border-[#dce5dd] bg-white p-6 text-sm font-semibold text-[#68746d] shadow-sm">Loading admin summary...</div> : null}
-
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <AdminStatCard title="Total Sales" value={formatCurrency(summary.totalSales)} detail={`${formatNumber(summary.totalReceipts)} receipts recorded`} iconSrc="/assets/cash.svg" href="/admin/reports" />
         <AdminStatCard title="Inventory Value" value={formatCurrency(summary.inventoryValue)} detail={`${formatNumber(summary.totalProducts)} active products`} iconSrc="/assets/all-items.svg" href="/admin/inventory" />

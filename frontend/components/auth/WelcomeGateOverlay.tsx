@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type AnimationEvent } from "react";
 
 type WelcomeGateUser = {
   role: "STUDENT" | "STAFF" | "ADMIN";
@@ -9,6 +9,10 @@ type WelcomeGateUser = {
 };
 
 type WelcomeGateMode = WelcomeGateUser | "GUEST";
+type WelcomeGatePhase = "entering" | "holding" | "exiting";
+
+const ENTER_FALLBACK_MS = 400;
+const EXIT_FALLBACK_MS = 450;
 
 function getGateCopy(user: WelcomeGateMode) {
   if (user === "GUEST") {
@@ -50,38 +54,90 @@ export function WelcomeGateOverlay({
   user,
   onFinish,
   readyToFinish = true,
-  minimumDurationMs = 6000
+  minimumDurationMs = 2200,
+  maximumDurationMs = 4000,
+  allowSkip = true,
+  skipDelayMs = 900
 }: {
   user: WelcomeGateMode;
   onFinish: () => void;
   readyToFinish?: boolean;
   minimumDurationMs?: number;
+  maximumDurationMs?: number;
+  allowSkip?: boolean;
+  skipDelayMs?: number;
 }) {
   const copy = getGateCopy(user);
-  const [minimumElapsed, setMinimumElapsed] = useState(false);
-  const canEnter = readyToFinish && minimumElapsed;
+  const [phase, setPhase] = useState<WelcomeGatePhase>("entering");
+  const [minimumElapsed, setMinimumElapsed] = useState(minimumDurationMs <= 0);
+  const [skipVisible, setSkipVisible] = useState(allowSkip && skipDelayMs <= 0);
+  const finishedRef = useRef(false);
+
+  const beginExit = useCallback(() => {
+    setPhase((current) => (current === "exiting" ? current : "exiting"));
+  }, []);
+
+  const finish = useCallback(() => {
+    if (finishedRef.current) return;
+    finishedRef.current = true;
+    onFinish();
+  }, [onFinish]);
 
   useEffect(() => {
+    if (minimumDurationMs <= 0) return undefined;
     const timeout = window.setTimeout(() => setMinimumElapsed(true), minimumDurationMs);
     return () => window.clearTimeout(timeout);
   }, [minimumDurationMs]);
 
   useEffect(() => {
-    if (!canEnter) return undefined;
-    const timeout = window.setTimeout(onFinish, 300);
+    if (!allowSkip || skipDelayMs <= 0) return undefined;
+    const timeout = window.setTimeout(() => setSkipVisible(true), skipDelayMs);
     return () => window.clearTimeout(timeout);
-  }, [canEnter, onFinish]);
+  }, [allowSkip, skipDelayMs]);
+
+  useEffect(() => {
+    if (minimumElapsed && readyToFinish) beginExit();
+  }, [beginExit, minimumElapsed, readyToFinish]);
+
+  useEffect(() => {
+    const timeout = window.setTimeout(beginExit, Math.max(0, maximumDurationMs));
+    return () => window.clearTimeout(timeout);
+  }, [beginExit, maximumDurationMs]);
+
+  useEffect(() => {
+    const fallbackMs = phase === "entering" ? ENTER_FALLBACK_MS : phase === "exiting" ? EXIT_FALLBACK_MS : null;
+    if (fallbackMs === null) return undefined;
+
+    const timeout = window.setTimeout(() => {
+      if (phase === "entering") setPhase("holding");
+      else finish();
+    }, fallbackMs);
+
+    return () => window.clearTimeout(timeout);
+  }, [finish, phase]);
+
+  const handleOverlayAnimationEnd = (event: AnimationEvent<HTMLDivElement>) => {
+    if (event.currentTarget !== event.target) return;
+    if (phase === "entering") setPhase("holding");
+    else if (phase === "exiting") finish();
+  };
 
   return (
     <div
       className="welcome-gate-overlay fixed inset-0 z-[12000] grid place-items-center overflow-hidden bg-[#f7fbf7]/95 px-4 backdrop-blur-[5px]"
+      data-phase={phase}
       role="status"
       aria-live="polite"
+      aria-atomic="true"
+      onAnimationEnd={handleOverlayAnimationEnd}
     >
       <div className="welcome-gate-panel welcome-gate-panel-left" aria-hidden="true" />
       <div className="welcome-gate-panel welcome-gate-panel-right" aria-hidden="true" />
 
-      <section className="welcome-gate-content relative z-10 mx-auto flex w-full max-w-[560px] flex-col items-center text-center">
+      <section
+        className="welcome-gate-content relative z-10 mx-auto flex w-full max-w-[560px] flex-col items-center text-center"
+        aria-labelledby="welcome-gate-title"
+      >
         <div className="grid size-24 place-items-center rounded-full border border-[#cfe2d1] bg-white shadow-[0_20px_60px_rgba(0,91,43,0.12)] sm:size-28">
           <Image
             src="/assets/wescomm-logo.png"
@@ -93,27 +149,24 @@ export function WelcomeGateOverlay({
           />
         </div>
         <p className="mt-7 text-xs font-extrabold uppercase tracking-[0.16em] text-primary">{copy.eyebrow}</p>
-        <h1 className="mt-3 text-3xl font-extrabold leading-tight text-[#101820] sm:text-5xl">
+        <h1 id="welcome-gate-title" className="mt-3 text-3xl font-extrabold leading-tight text-[#101820] sm:text-5xl">
           {copy.title}
         </h1>
         <p className="mt-4 text-base font-semibold text-[#304039] sm:text-lg">{copy.detail}</p>
         <p className="mt-2 max-w-md text-sm leading-6 text-[#5f6d66]">{copy.line}</p>
-        {!canEnter ? (
-          <div className="mt-6 flex items-center gap-3 text-sm font-bold text-primary">
-            <span className="size-2.5 animate-pulse rounded-full bg-primary" />
-            Loading WESCOMM data...
-          </div>
+        <div className="mt-6 flex items-center gap-3 text-sm font-bold text-primary">
+          <span className="size-2.5 animate-pulse rounded-full bg-primary motion-reduce:animate-none" aria-hidden="true" />
+          {readyToFinish ? "Your dashboard is ready" : "Preparing your dashboard..."}
+        </div>
+        {skipVisible && phase !== "exiting" ? (
+          <button
+            type="button"
+            onClick={beginExit}
+            className="welcome-gate-skip mt-5 min-h-11 rounded-md px-4 text-sm font-bold text-[#3f5b4c] underline decoration-[#9db8a6] underline-offset-4 transition hover:text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+          >
+            Skip intro
+          </button>
         ) : null}
-        <button
-          type="button"
-          onClick={() => {
-            if (canEnter) onFinish();
-          }}
-          disabled={!canEnter}
-          className="mt-7 min-h-11 rounded-md bg-primary px-5 text-sm font-bold text-white shadow-[0_12px_28px_rgba(0,91,43,0.22)] transition hover:bg-[#004320] focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:cursor-wait disabled:bg-primary/70"
-        >
-          {canEnter ? "Enter WESCOMM" : "Preparing WESCOMM"}
-        </button>
       </section>
     </div>
   );

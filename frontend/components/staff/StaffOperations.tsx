@@ -414,13 +414,18 @@ function ReceiptActionModal({
 
   return (
     <div className="fixed inset-0 z-[10001] grid place-items-center bg-[#101820]/60 p-4">
-      <section className="w-full max-w-md rounded-lg bg-white p-5 shadow-2xl">
+      <section className="relative w-full max-w-md overflow-hidden rounded-lg bg-white p-5 shadow-2xl">
+        <ActionLoadingOverlay
+          active={submitting}
+          title={isVoid ? "Voiding receipt" : "Verifying receipt"}
+          detail={isVoid ? "We are saving the reason and updating the receipt." : "We are saving the verification and updating the receipt."}
+        />
         <div className="flex items-start gap-3">
           <div>
             <p className="text-sm font-bold uppercase text-primary">{isVoid ? "Void receipt" : "Verify receipt"}</p>
             <h2 className="mt-1 text-xl font-extrabold text-[#101820]">{action.row.code}</h2>
           </div>
-          <button type="button" onClick={onClose} aria-label="Close confirmation" className="ml-auto grid size-9 place-items-center rounded-md hover:bg-[#eef3ee]">
+          <button type="button" onClick={onClose} disabled={submitting} aria-label="Close confirmation" className="ml-auto grid size-9 place-items-center rounded-md hover:bg-[#eef3ee] disabled:opacity-50">
             <X className="size-5" />
           </button>
         </div>
@@ -468,6 +473,7 @@ export function StaffInventoryExperience() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [archivingProductId, setArchivingProductId] = useState("");
   const [adding, setAdding] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [restockingProduct, setRestockingProduct] = useState<Product | null>(null);
@@ -623,6 +629,7 @@ export function StaffInventoryExperience() {
   const archiveProduct = async (product: Product) => {
     if (!window.confirm(`Archive ${product.name}? It will be hidden from student shop.`)) return;
     setSubmitting(true);
+    setArchivingProductId(product.id);
     setError("");
 
     try {
@@ -632,6 +639,7 @@ export function StaffInventoryExperience() {
     } catch (archiveError) {
       setError(archiveError instanceof Error ? archiveError.message : "Unable to archive product.");
     } finally {
+      setArchivingProductId("");
       setSubmitting(false);
     }
   };
@@ -670,13 +678,6 @@ export function StaffInventoryExperience() {
 
   return (
     <div className="relative space-y-5">
-      <ActionLoadingOverlay
-        active={submitting && !adding && !editingProduct && !restockingProduct}
-        title="Saving inventory change"
-        detail="WESCOMM is updating live stock records and refreshing the student shop."
-        steps={["Updating product data", "Recording inventory activity", "Refreshing live inventory"]}
-        mode="fixed"
-      />
       <PageHeading
         eyebrow="Inventory"
         title="Centralized stock management"
@@ -698,7 +699,12 @@ export function StaffInventoryExperience() {
           {loading ? (
             <div className="p-6 text-sm font-semibold text-[#68746d]">Loading live inventory...</div>
           ) : filtered.length ? filtered.map((product) => (
-            <article key={product.id} className="grid gap-3 px-4 py-4 md:grid-cols-[1.35fr_1fr_.7fr_.75fr_.6fr_.85fr_auto] md:items-center">
+            <article key={product.id} className="relative grid gap-3 overflow-hidden px-4 py-4 md:grid-cols-[1.35fr_1fr_.7fr_.75fr_.6fr_.85fr_auto] md:items-center">
+              <ActionLoadingOverlay
+                active={archivingProductId === product.id}
+                title="Archiving product"
+                detail="We are removing this item from the student shop."
+              />
               <div><p className="font-bold">{product.name}</p><p className="text-xs text-[#68746d]">{product.id}</p></div>
               <p className="text-sm">{product.category}</p>
               <p className="text-sm"><span className="text-[#68746d] md:hidden">Current Stock: </span><span className="font-extrabold">{product.stock} pcs</span></p>
@@ -762,10 +768,9 @@ export function StaffInventoryExperience() {
             <ActionLoadingOverlay
               active={submitting}
               title="Saving new product"
-              detail="WESCOMM is uploading the image if needed, creating the product, and making it available in inventory."
-              steps={["Saving product details", "Uploading product image", "Refreshing staff inventory"]}
+              detail="We are saving the product and uploading its image if needed."
             />
-            <div className="flex items-center"><h2 className="text-xl font-extrabold">Add product</h2><button type="button" onClick={closeAddProduct} className="ml-auto grid size-9 place-items-center rounded-md hover:bg-[#eef3ee]"><X /></button></div>
+            <div className="flex items-center"><h2 className="text-xl font-extrabold">Add product</h2><button type="button" onClick={closeAddProduct} disabled={submitting} aria-label="Close product form" className="ml-auto grid size-9 place-items-center rounded-md hover:bg-[#eef3ee] disabled:opacity-50"><X /></button></div>
             <div className="mt-4 grid gap-3">
               <label className="grid gap-1.5 text-sm font-semibold">
                 WUP product template
@@ -860,15 +865,14 @@ export function StaffInventoryExperience() {
             <ActionLoadingOverlay
               active={submitting}
               title="Saving product changes"
-              detail="WESCOMM is updating this item and syncing the live student shop."
-              steps={["Saving edited fields", "Uploading replacement image if selected", "Refreshing product list"]}
+              detail="We are updating this item and syncing the student shop."
             />
             <div className="flex items-start gap-3">
               <div>
                 <h2 className="text-xl font-extrabold">Edit product</h2>
                 <p className="mt-1 text-sm text-[#68746d]">{editingProduct.id}</p>
               </div>
-              <button type="button" onClick={closeEditor} aria-label="Close editor" className="ml-auto grid size-9 place-items-center rounded-md hover:bg-[#eef3ee]"><X /></button>
+              <button type="button" onClick={closeEditor} disabled={submitting} aria-label="Close editor" className="ml-auto grid size-9 place-items-center rounded-md hover:bg-[#eef3ee] disabled:opacity-50"><X /></button>
             </div>
             <div className="mt-5 grid gap-4">
               <label className="grid gap-1.5 text-sm font-semibold">Product name<input name="name" required defaultValue={editingProduct.name} className="h-11 rounded-md border px-3 font-normal outline-none focus:border-primary" /></label>
@@ -903,7 +907,7 @@ export function StaffInventoryExperience() {
               </div>
               <datalist id="staff-edit-category-options">{categoryOptions.map((category) => <option key={category} value={category} />)}</datalist>
               <div className="mt-1 flex justify-end gap-2">
-                <Button type="button" variant="secondary" onClick={closeEditor}>Cancel</Button>
+                <Button type="button" variant="secondary" onClick={closeEditor} disabled={submitting}>Cancel</Button>
                 <Button type="submit" disabled={submitting}>{submitting ? "Saving..." : "Save changes"}</Button>
               </div>
             </div>
@@ -922,15 +926,14 @@ export function StaffInventoryExperience() {
             <ActionLoadingOverlay
               active={submitting}
               title="Updating stock"
-              detail="WESCOMM is saving the new stock count and checking if restock alerts should change."
-              steps={["Updating current stock", "Recording inventory movement", "Refreshing stock status"]}
+              detail="We are saving the stock count and refreshing its status."
             />
             <div className="flex items-start gap-3">
               <div>
                 <h2 className="text-xl font-extrabold">Update stock</h2>
                 <p className="mt-1 text-sm text-[#68746d]">{restockingProduct.name}</p>
               </div>
-              <button type="button" onClick={() => setRestockingProduct(null)} aria-label="Close stock editor" className="ml-auto grid size-9 place-items-center rounded-md hover:bg-[#eef3ee]"><X /></button>
+              <button type="button" onClick={() => setRestockingProduct(null)} disabled={submitting} aria-label="Close stock editor" className="ml-auto grid size-9 place-items-center rounded-md hover:bg-[#eef3ee] disabled:opacity-50"><X /></button>
             </div>
 
             <div className="mt-5 grid grid-cols-2 gap-2 rounded-md bg-[#f2f7f2] p-1">
@@ -960,7 +963,7 @@ export function StaffInventoryExperience() {
 
             <p className="mt-3 text-xs leading-5 text-[#68746d]">When stock is {restockingProduct.minimum} pcs or lower, WESCOMM marks this item as Needs Restock.</p>
             <div className="mt-5 flex justify-end gap-2">
-              <Button type="button" variant="secondary" onClick={() => setRestockingProduct(null)}>Cancel</Button>
+              <Button type="button" variant="secondary" onClick={() => setRestockingProduct(null)} disabled={submitting}>Cancel</Button>
               <Button type="submit" disabled={submitting || !restockQuantity || (restockMode === "add" && Number(restockQuantity) < 1)}>
                 {submitting ? "Saving..." : "Save stock"}
               </Button>
@@ -1056,18 +1059,11 @@ export function StaffReservationsExperience() {
 
   return (
     <div className="relative space-y-5">
-      <ActionLoadingOverlay
-        active={Boolean(submittingId)}
-        title="Updating reservation"
-        detail="WESCOMM is saving the status, updating the reservation timeline, and notifying the student."
-        steps={["Saving reservation status", "Creating student notification", "Refreshing reservation queue"]}
-        mode="fixed"
-      />
       <PageHeading
         eyebrow="Reservations"
         title="Reservation queue"
         detail="Confirm requests and prepare scheduled pickups from live student checkout data."
-        action={<Button variant="secondary" onClick={() => void loadReservations()} disabled={loading}>Refresh</Button>}
+        action={<Button variant="secondary" onClick={() => void loadReservations()} disabled={loading || Boolean(submittingId)}>Refresh</Button>}
       />
       <Toolbar search={search} onSearch={setSearch} status={status} onStatus={setStatus} placeholder="Search reference, student, or item" statuses={["Pending", "Confirmed", "Ready for Pick-up", "Completed", "Cancelled", "No-show"]} />
       {error ? <p className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p> : null}
@@ -1078,7 +1074,12 @@ export function StaffReservationsExperience() {
           const nextStatus = getNextReservationStatus(row.backendStatus);
           const noShowEligible = row.backendStatus === "READY_FOR_PICKUP" && Boolean(row.pickupEnd) && Date.now() >= new Date(row.pickupEnd!).getTime() + 24 * 60 * 60 * 1000;
           return (
-            <article key={row.id} className="grid gap-4 rounded-lg border border-[#dce5dd] bg-white p-4 shadow-sm lg:grid-cols-[1fr_1.2fr_1.2fr_1fr_auto_auto] lg:items-center">
+            <article key={row.id} className="relative grid gap-4 overflow-hidden rounded-lg border border-[#dce5dd] bg-white p-4 shadow-sm lg:grid-cols-[1fr_1.2fr_1.2fr_1fr_auto_auto] lg:items-center">
+              <ActionLoadingOverlay
+                active={submittingId === row.id}
+                title="Updating reservation"
+                detail="We are saving the status and updating the reservation timeline."
+              />
               <div><p className="font-extrabold">{row.reference}</p><p className="text-xs text-[#68746d]">{row.student}</p></div>
               <div><p className="text-sm font-bold">{row.item}</p><p className="text-xs text-[#68746d]">Quantity: {row.quantity}</p></div>
               <p className="text-sm"><span className="font-bold text-primary">Pickup:</span> {row.pickup}</p>
@@ -1086,7 +1087,7 @@ export function StaffReservationsExperience() {
               <StatusBadge status={row.status} />
               <div className="flex flex-wrap gap-2">
                 {nextStatus ? (
-                  <Button className="h-10" disabled={submittingId === row.id} onClick={() => void updateStatus(row, nextStatus)}>
+                  <Button className="h-10" disabled={Boolean(submittingId)} onClick={() => void updateStatus(row, nextStatus)}>
                     {submittingId === row.id
                       ? "Saving..."
                       : row.backendStatus === "PENDING"
@@ -1104,7 +1105,7 @@ export function StaffReservationsExperience() {
                   </Link>
                 ) : null}
                 {row.backendStatus !== "COMPLETED" && row.backendStatus !== "CANCELLED" && row.backendStatus !== "NO_SHOW" ? (
-                  <Button variant="ghost" className="h-10 text-red-600" disabled={submittingId === row.id} onClick={() => void updateStatus(row, "CANCELLED")}>
+                  <Button variant="ghost" className="h-10 text-red-600" disabled={Boolean(submittingId)} onClick={() => void updateStatus(row, "CANCELLED")}>
                     Cancel
                   </Button>
                 ) : null}
@@ -1248,13 +1249,6 @@ export function StaffReceiptsExperience() {
 
   return (
     <div className="relative space-y-5">
-      <ActionLoadingOverlay
-        active={Boolean(submittingId)}
-        title="Saving receipt action"
-        detail="WESCOMM is updating receipt verification records and notifying the student if needed."
-        steps={["Saving receipt status", "Refreshing receipt queue", "Updating report data"]}
-        mode="fixed"
-      />
       <PageHeading
         eyebrow="Receipt verification"
         title="Verify digital receipts"

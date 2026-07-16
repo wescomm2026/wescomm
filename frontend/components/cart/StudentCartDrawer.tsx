@@ -83,7 +83,7 @@ export function StudentCartDrawer() {
     document.documentElement.style.overflow = "hidden";
 
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") closeCart();
+      if (event.key === "Escape" && !submitting) closeCart();
     };
     window.addEventListener("keydown", onKeyDown);
 
@@ -92,7 +92,7 @@ export function StudentCartDrawer() {
       document.documentElement.style.overflow = previousHtmlOverflow;
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [open, closeCart]);
+  }, [open, closeCart, submitting]);
 
   useEffect(() => {
     if (!open) {
@@ -238,12 +238,11 @@ export function StudentCartDrawer() {
             </Link>
           </div>
         ) : checkout ? (
-          <form className="flex min-h-0 flex-1 flex-col" onSubmit={confirmCart}>
+          <form className="relative flex min-h-0 flex-1 flex-col" onSubmit={confirmCart}>
             <ActionLoadingOverlay
               active={submitting}
               title="Submitting cart reservation"
-              detail="WESCOMM is checking stock for each item, saving your pickup schedule, and notifying commissary staff."
-              steps={["Checking all cart items", "Holding available stock", "Creating one reservation reference"]}
+              detail="We are checking each item and saving one pickup schedule."
             />
             <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-5 sm:p-6">
               <section className="rounded-md border border-[#dce5dd] bg-[#f7faf7] p-4">
