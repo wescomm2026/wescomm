@@ -14,6 +14,7 @@ import { StudentAuthModal } from "@/components/auth/StudentAuthModal";
 import { WelcomeGateOverlay } from "@/components/auth/WelcomeGateOverlay";
 import { API_BASE_URL, COOKIE_SESSION_TOKEN } from "@/lib/api";
 import { describeOtpSendError } from "@/lib/auth-errors";
+import { EMAIL_OTP_LENGTH, isCompleteEmailOtp, normalizeEmailOtp } from "@/lib/auth-otp";
 import { clearStaffSession, storeStaffSession } from "@/lib/staff-api";
 import { getSupabaseBrowserClient, hasSupabaseBrowserConfig } from "@/lib/supabase-browser";
 
@@ -313,11 +314,16 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
       return { success: false, error: `Please use your official @${ALLOWED_EMAIL_DOMAIN} account.` };
     }
 
+    const normalizedToken = normalizeEmailOtp(token);
+    if (!isCompleteEmailOtp(normalizedToken)) {
+      return { success: false, error: `Enter the complete ${EMAIL_OTP_LENGTH}-digit verification code.` };
+    }
+
     try {
       const supabase = getSupabaseBrowserClient();
       const { data, error } = await supabase.auth.verifyOtp({
         email: normalizedEmail,
-        token: token.trim(),
+        token: normalizedToken,
         type: "email"
       });
 

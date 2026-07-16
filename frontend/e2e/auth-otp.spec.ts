@@ -54,6 +54,32 @@ async function mockOtpResponse(page: Page, response: MockOtpResponse) {
   return requests;
 }
 
+async function mockVerifyResponse(page: Page, response: MockOtpResponse) {
+  const requests: CapturedOtpRequest[] = [];
+
+  await page.route("**/auth/v1/verify**", async (route) => {
+    const request = route.request();
+    const headers = request.headers();
+
+    requests.push({
+      method: request.method(),
+      url: request.url(),
+      body: request.postDataJSON() as Record<string, unknown>,
+      hasApiKey: Boolean(headers.apikey),
+      contentType: headers["content-type"] ?? ""
+    });
+
+    await route.fulfill({
+      status: response.status,
+      contentType: "application/json",
+      headers: response.headers,
+      body: JSON.stringify(response.body)
+    });
+  });
+
+  return requests;
+}
+
 async function openLoginDialog(page: Page) {
   await page.goto("/student/dashboard?auth=login");
   await dismissWelcomeGate(page);
@@ -81,7 +107,7 @@ test.describe("personal school email OTP requests", () => {
     const dialog = await requestOtp(page);
 
     await expect(dialog.getByRole("heading", { name: "Enter verification code" })).toBeVisible();
-    await expect(dialog.getByRole("status")).toHaveText("Verification code sent. Enter the full code from your inbox.");
+    await expect(dialog.getByRole("status")).toHaveText("6-digit verification code sent. Use your phone's autofill or paste the full code.");
 
     const resendButton = dialog.getByRole("button", { name: /Resend in \d+s/ });
     await expect(resendButton).toBeVisible();
@@ -100,6 +126,46 @@ test.describe("personal school email OTP requests", () => {
       create_user: true
     });
     expect(request.body).not.toHaveProperty("phone");
+    expect(request.hasApiKey).toBe(true);
+    expect(request.contentType).toContain("application/json");
+  });
+
+  test("normalizes a pasted code and verifies an exact six-digit token", async ({ page }) => {
+    await mockOtpResponse(page, { status: 200, body: {} });
+    const verifyRequests = await mockVerifyResponse(page, {
+      status: 403,
+      body: { code: "otp_expired", message: "Token has expired or is invalid" }
+    });
+    const dialog = await requestOtp(page);
+    const codeInput = dialog.getByLabel("6-digit verification code");
+    const verifyButton = dialog.getByRole("button", { name: "Verify and continue" });
+
+    await codeInput.fill("01234");
+    await expect(verifyButton).toBeDisabled();
+    await codeInput.press("Enter");
+    expect(verifyRequests).toEqual([]);
+
+    await codeInput.evaluate((element) => {
+      const clipboardData = new DataTransfer();
+      clipboardData.setData("text/plain", "01 23-45 67");
+      element.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, clipboardData }));
+    });
+    await expect(codeInput).toHaveValue("012345");
+    await expect(verifyButton).toBeEnabled();
+    await verifyButton.click();
+    await expect(dialog.getByRole("alert")).toHaveText("That code is invalid or expired. Please request a new code and try again.");
+
+    expect(verifyRequests).toHaveLength(1);
+    const [request] = verifyRequests;
+    expect(request.method).toBe("POST");
+    expect(new URL(request.url).pathname).toBe("/auth/v1/verify");
+    expect(request.body).toMatchObject({
+      email: SCHOOL_EMAIL,
+      token: "012345",
+      type: "email"
+    });
+    expect(request.body).not.toHaveProperty("phone");
+    expect(request.body).not.toHaveProperty("token_hash");
     expect(request.hasApiKey).toBe(true);
     expect(request.contentType).toContain("application/json");
   });
@@ -143,4 +209,28 @@ test.describe("personal school email OTP requests", () => {
     await expect(dialog.getByRole("button", { name: /Try again in \d+s/ })).toBeDisabled();
     expect(requests).toHaveLength(1);
   });
+});
+
+test("mobile code entry exposes OTP autofill and full-code paste", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "mobile-chromium", "Mobile OTP entry runs once in the mobile project.");
+  await mockGuestSession(page);
+  await mockOtpResponse(page, { status: 200, body: {} });
+
+  const dialog = await requestOtp(page);
+  const codeInput = dialog.getByLabel("6-digit verification code");
+
+  await expect(codeInput).toHaveAttribute("type", "text");
+  await expect(codeInput).toHaveAttribute("inputmode", "numeric");
+  await expect(codeInput).toHaveAttribute("autocomplete", "one-time-code");
+  await expect(codeInput).toHaveAttribute("enterkeyhint", "done");
+  await expect(codeInput).toHaveAttribute("maxlength", "6");
+  await expect(codeInput).toHaveAttribute("pattern", "[0-9]*");
+
+  await codeInput.evaluate((element) => {
+    const clipboardData = new DataTransfer();
+    clipboardData.setData("text/plain", "01 23-45 67");
+    element.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, clipboardData }));
+  });
+  await expect(codeInput).toHaveValue("012345");
+  await expect(dialog.getByRole("button", { name: "Verify and continue" })).toBeEnabled();
 });

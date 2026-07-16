@@ -1,13 +1,13 @@
 "use client";
 
 import Image from "next/image";
-import { type FormEvent, useEffect, useState } from "react";
+import { type ClipboardEvent, type FormEvent, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { KeyRound, LockKeyhole, Mail, ShieldCheck, X } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import { ActionLoadingOverlay } from "@/components/ui/ActionLoadingOverlay";
+import { EMAIL_OTP_LENGTH, isCompleteEmailOtp, normalizeEmailOtp } from "@/lib/auth-otp";
 
-const OTP_MAX_LENGTH = 8;
 const RESEND_COOLDOWN_SECONDS = 60;
 const SEND_LIMIT_COUNT = 5;
 const SEND_LIMIT_WINDOW_MS = 15 * 60 * 1000;
@@ -199,18 +199,26 @@ export function StudentAuthModal({ open, onClose }: { open: boolean; onClose: ()
 
     recordSendAttempt(normalizedEmail);
     setStep("code");
-    setNotice("Verification code sent. Enter the full code from your inbox.");
+    setNotice(`${EMAIL_OTP_LENGTH}-digit verification code sent. Use your phone's autofill or paste the full code.`);
     setResendSeconds(RESEND_COOLDOWN_SECONDS);
     setLoading("");
   };
 
   const handleVerifyOtp = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    const normalizedCode = normalizeEmailOtp(code);
+    setCode(normalizedCode);
+    if (!isCompleteEmailOtp(normalizedCode)) {
+      setError(`Enter the complete ${EMAIL_OTP_LENGTH}-digit verification code.`);
+      setNotice("");
+      return;
+    }
+
     setLoading("verify");
     setError("");
     setNotice("");
 
-    const result = await verifyEmailOtp(sentEmail, code);
+    const result = await verifyEmailOtp(sentEmail, normalizedCode);
     if (!result.success) {
       setError(result.error ?? "Unable to verify the email code.");
       setLoading("");
@@ -260,7 +268,7 @@ export function StudentAuthModal({ open, onClose }: { open: boolean; onClose: ()
     }
 
     recordSendAttempt(sentEmail);
-    setNotice("New verification code sent. Use the latest code from your inbox.");
+    setNotice(`New ${EMAIL_OTP_LENGTH}-digit verification code sent. Use the latest code from your inbox.`);
     setResendSeconds(RESEND_COOLDOWN_SECONDS);
     setLoading("");
   };
@@ -273,6 +281,13 @@ export function StudentAuthModal({ open, onClose }: { open: boolean; onClose: ()
     setError("");
     setNotice("");
     setResendSeconds(0);
+  };
+
+  const handleCodePaste = (event: ClipboardEvent<HTMLInputElement>) => {
+    event.preventDefault();
+    const pastedCode = normalizeEmailOtp(event.clipboardData.getData("text"));
+    setCode(pastedCode);
+    setError("");
   };
 
   if (!open || !mounted) return null;
@@ -360,7 +375,7 @@ export function StudentAuthModal({ open, onClose }: { open: boolean; onClose: ()
 
           <div className="mt-6">
             {error ? (
-              <p className="mb-3 rounded-md border border-[#f0b9b9] bg-[#fff3f3] px-3 py-2.5 text-sm font-medium text-[#a22828]" role="alert">
+              <p id="student-auth-error" className="mb-3 rounded-md border border-[#f0b9b9] bg-[#fff3f3] px-3 py-2.5 text-sm font-medium text-[#a22828]" role="alert">
                 {error}
               </p>
             ) : null}
@@ -425,24 +440,39 @@ export function StudentAuthModal({ open, onClose }: { open: boolean; onClose: ()
             ) : step === "code" ? (
               <form onSubmit={handleVerifyOtp} className="space-y-3 rounded-md border border-[#dce6dc] bg-[#fbfdfb] p-3">
                 <label className="block">
-                  <span className="text-xs font-bold text-[#25322b]">Verification code</span>
+                  <span className="text-xs font-bold text-[#25322b]">{EMAIL_OTP_LENGTH}-digit verification code</span>
                   <div className="mt-1 flex h-12 items-center gap-2 rounded-md border border-[#cbd8cb] bg-white px-3 transition focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/15">
                     <KeyRound className="size-5 shrink-0 text-primary" />
                     <input
+                      type="text"
+                      name="one-time-code"
+                      required
                       inputMode="numeric"
                       autoComplete="one-time-code"
+                      enterKeyHint="done"
+                      pattern="[0-9]*"
+                      minLength={EMAIL_OTP_LENGTH}
+                      maxLength={EMAIL_OTP_LENGTH}
+                      autoFocus
                       value={code}
-                      onChange={(event) => setCode(event.target.value.replace(/\D/g, "").slice(0, OTP_MAX_LENGTH))}
+                      onChange={(event) => {
+                        setCode(normalizeEmailOtp(event.target.value));
+                        setError("");
+                      }}
+                      onPaste={handleCodePaste}
                       disabled={Boolean(loading)}
+                      aria-describedby="student-auth-code-help"
+                      aria-invalid={Boolean(error)}
+                      aria-errormessage={error ? "student-auth-error" : undefined}
                       className="h-full min-w-0 flex-1 bg-transparent text-center text-xl font-extrabold tracking-[0.22em] text-[#101820] outline-none disabled:opacity-60"
-                      placeholder="00000000"
+                      placeholder="000000"
                     />
                   </div>
                 </label>
 
                 <button
                   type="submit"
-                  disabled={Boolean(loading) || code.length < 6}
+                  disabled={Boolean(loading) || !isCompleteEmailOtp(code)}
                   className="flex h-12 w-full items-center justify-center gap-2 rounded-md bg-primary px-5 text-sm font-bold text-white shadow-[0_12px_24px_rgba(0,102,51,0.18)] transition hover:bg-[#00552a] disabled:cursor-not-allowed disabled:opacity-70"
                 >
                   <ShieldCheck className="size-5" />
@@ -469,8 +499,8 @@ export function StudentAuthModal({ open, onClose }: { open: boolean; onClose: ()
                   </button>
                 </div>
 
-                <p className="text-xs leading-5 text-[#657169]">
-                  Use the latest code from your inbox. If it does not arrive, you can request another one after a short wait.
+                <p id="student-auth-code-help" className="text-xs leading-5 text-[#657169]">
+                  Paste all {EMAIL_OTP_LENGTH} digits into this single field, or tap the code suggestion above your mobile keyboard. Spaces and hyphens are removed automatically.
                 </p>
               </form>
             ) : (
