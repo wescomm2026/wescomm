@@ -13,6 +13,7 @@ import { useRouter } from "next/navigation";
 import { StudentAuthModal } from "@/components/auth/StudentAuthModal";
 import { WelcomeGateOverlay } from "@/components/auth/WelcomeGateOverlay";
 import { API_BASE_URL, COOKIE_SESSION_TOKEN } from "@/lib/api";
+import { describeOtpSendError } from "@/lib/auth-errors";
 import { clearStaffSession, storeStaffSession } from "@/lib/staff-api";
 import { getSupabaseBrowserClient, hasSupabaseBrowserConfig } from "@/lib/supabase-browser";
 
@@ -36,6 +37,8 @@ export type StudentProfileInput = Pick<StudentUser, "fullName" | "phone" | "depa
 export type AuthResult = {
   success: boolean;
   error?: string;
+  errorCode?: string;
+  retryAfterSeconds?: number;
 };
 
 type StudentAuthContextValue = {
@@ -142,7 +145,11 @@ async function establishBackendSession(accessToken: string): Promise<StudentUser
 }
 
 function isAllowedEmail(email: string) {
-  return email.trim().toLowerCase().endsWith(`@${ALLOWED_EMAIL_DOMAIN.toLowerCase()}`);
+  const normalizedEmail = email.trim().toLowerCase();
+  const normalizedDomain = ALLOWED_EMAIL_DOMAIN.trim().toLowerCase().replace(/^@/, "");
+  const parts = normalizedEmail.split("@");
+
+  return parts.length === 2 && Boolean(parts[0]) && !/\s/.test(parts[0]) && parts[1] === normalizedDomain;
 }
 
 function getAuthErrorMessage(error: unknown, fallback: string) {
@@ -270,27 +277,28 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
       const { error } = await supabase.auth.signInWithOtp({
         email: normalizedEmail,
         options: {
-          emailRedirectTo: `${window.location.origin}/auth/callback`
+          emailRedirectTo: `${window.location.origin}/auth/callback`,
+          shouldCreateUser: true
         }
       });
 
       if (error) {
+        const failure = describeOtpSendError(error);
         return {
           success: false,
-          error: getAuthErrorMessage(
-            error,
-            "We could not send your verification code right now. Please try again later."
-          )
+          error: failure.message,
+          errorCode: failure.code,
+          retryAfterSeconds: failure.retryAfterSeconds
         };
       }
       return { success: true };
     } catch (error) {
+      const failure = describeOtpSendError(error);
       return {
         success: false,
-        error: getAuthErrorMessage(
-          error,
-          "We could not send your verification code right now. Please try again later."
-        )
+        error: failure.message,
+        errorCode: failure.code,
+        retryAfterSeconds: failure.retryAfterSeconds
       };
     }
   }, []);

@@ -62,7 +62,10 @@ export default defineConfig({
           env: {
             ...process.env,
             NEXT_PUBLIC_E2E_TEST: "true",
-            BACKEND_API_URL: `http://127.0.0.1:${backendPort}/api`
+            BACKEND_API_URL: `http://127.0.0.1:${backendPort}/api`,
+            NEXT_PUBLIC_SUPABASE_URL: "https://wescomm-otp-e2e.invalid",
+            NEXT_PUBLIC_SUPABASE_ANON_KEY: "e2e-public-key",
+            NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "e2e-public-key"
           },
           url: baseURL,
           reuseExistingServer: !process.env.CI,

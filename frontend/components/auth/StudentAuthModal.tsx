@@ -17,6 +17,37 @@ const SEND_ATTEMPTS_KEY_PREFIX = "wescomm_auth_send_attempts:";
 const PASSWORD_LOGIN_EMAILS = new Set(["admin@wesleyan.edu.ph", "staff@wesleyan.edu.ph", "student@wesleyan.edu.ph"]);
 type AuthStep = "email" | "code" | "password";
 
+function schoolEmailDomainSuffix(allowedEmailDomain: string) {
+  return `@${allowedEmailDomain.trim().toLowerCase().replace(/^@/, "")}`;
+}
+
+function stripSchoolEmailDomain(value: string, allowedEmailDomain: string) {
+  const normalizedInput = value.trim().toLowerCase();
+  const domainSuffix = schoolEmailDomainSuffix(allowedEmailDomain);
+  return normalizedInput.endsWith(domainSuffix)
+    ? normalizedInput.slice(0, -domainSuffix.length)
+    : normalizedInput;
+}
+
+function normalizeSchoolEmailInput(value: string, allowedEmailDomain: string) {
+  const normalizedInput = value.trim().toLowerCase();
+  const domainSuffix = schoolEmailDomainSuffix(allowedEmailDomain);
+  const hasDomain = normalizedInput.includes("@");
+
+  if (hasDomain && !normalizedInput.endsWith(domainSuffix)) return null;
+
+  const emailName = hasDomain
+    ? normalizedInput.slice(0, -domainSuffix.length)
+    : normalizedInput;
+
+  if (!emailName || /[\s@]/.test(emailName)) return null;
+
+  return {
+    emailName,
+    email: `${emailName}${domainSuffix}`
+  };
+}
+
 function getAttemptKey(email: string) {
   return `${SEND_ATTEMPTS_KEY_PREFIX}${email.toLowerCase()}`;
 }
@@ -119,12 +150,20 @@ export function StudentAuthModal({ open, onClose }: { open: boolean; onClose: ()
 
   const handleSendOtp = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (resendSeconds > 0 || loading) return;
+
     setLoading("send");
     setError("");
     setNotice("");
 
-    const normalizedName = emailName.trim().toLowerCase().replace(new RegExp(`@${allowedEmailDomain}$`, "i"), "");
-    const normalizedEmail = `${normalizedName}@${allowedEmailDomain}`.toLowerCase();
+    const normalizedSchoolEmail = normalizeSchoolEmailInput(emailName, allowedEmailDomain);
+    if (!normalizedSchoolEmail) {
+      setError(`Please use your official @${allowedEmailDomain} account.`);
+      setLoading("");
+      return;
+    }
+
+    const { emailName: normalizedName, email: normalizedEmail } = normalizedSchoolEmail;
     setEmailName(normalizedName);
     setSentEmail(normalizedEmail);
 
@@ -153,6 +192,7 @@ export function StudentAuthModal({ open, onClose }: { open: boolean; onClose: ()
     const result = await sendEmailOtp(normalizedEmail);
     if (!result.success) {
       setError(result.error ?? "Unable to send the verification email.");
+      setResendSeconds(result.retryAfterSeconds ?? 0);
       setLoading("");
       return;
     }
@@ -179,7 +219,7 @@ export function StudentAuthModal({ open, onClose }: { open: boolean; onClose: ()
 
     if (rememberEmail) {
       window.localStorage.setItem(REMEMBER_EMAIL_ENABLED_KEY, "true");
-      window.localStorage.setItem(REMEMBER_EMAIL_KEY, sentEmail.replace(new RegExp(`@${allowedEmailDomain}$`, "i"), ""));
+      window.localStorage.setItem(REMEMBER_EMAIL_KEY, stripSchoolEmailDomain(sentEmail, allowedEmailDomain));
     }
   };
 
@@ -214,6 +254,7 @@ export function StudentAuthModal({ open, onClose }: { open: boolean; onClose: ()
     const result = await sendEmailOtp(sentEmail);
     if (!result.success) {
       setError(result.error ?? "Unable to resend the verification email.");
+      setResendSeconds(result.retryAfterSeconds ?? 0);
       setLoading("");
       return;
     }
@@ -231,6 +272,7 @@ export function StudentAuthModal({ open, onClose }: { open: boolean; onClose: ()
     setPassword("");
     setError("");
     setNotice("");
+    setResendSeconds(0);
   };
 
   if (!open || !mounted) return null;
@@ -340,11 +382,7 @@ export function StudentAuthModal({ open, onClose }: { open: boolean; onClose: ()
                       required
                       value={emailName}
                       onChange={(event) => {
-                        const value = event.target.value
-                          .trim()
-                          .toLowerCase()
-                          .replace(new RegExp(`@${allowedEmailDomain}$`, "i"), "");
-                        setEmailName(value);
+                        setEmailName(stripSchoolEmailDomain(event.target.value, allowedEmailDomain));
                       }}
                       disabled={Boolean(loading)}
                       className="h-full min-w-0 flex-1 bg-transparent text-sm outline-none disabled:opacity-60"
@@ -373,11 +411,15 @@ export function StudentAuthModal({ open, onClose }: { open: boolean; onClose: ()
 
                 <button
                   type="submit"
-                  disabled={Boolean(loading)}
+                  disabled={Boolean(loading) || resendSeconds > 0}
                   className="flex h-12 w-full items-center justify-center gap-2 rounded-md bg-primary px-5 text-sm font-bold text-white shadow-[0_12px_24px_rgba(0,102,51,0.20)] transition hover:bg-[#00552a] disabled:cursor-wait disabled:opacity-70"
                 >
                   <Mail className="size-5" />
-                  {loading === "send" ? "Sending verification..." : "Send verification code"}
+                  {loading === "send"
+                    ? "Sending verification..."
+                    : resendSeconds > 0
+                      ? `Try again in ${resendSeconds}s`
+                      : "Send verification code"}
                 </button>
               </form>
             ) : step === "code" ? (
