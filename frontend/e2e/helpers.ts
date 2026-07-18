@@ -25,8 +25,16 @@ export async function loginWithDevelopmentAccount(
 
   await expect(dialog.getByRole("heading", { name: "Enter account password" })).toBeVisible();
   await dialog.getByLabel("Password").fill(TEST_PASSWORD);
+  const loginResponsePromise = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return response.request().method() === "POST" && url.pathname.endsWith("/auth/dev-login");
+  });
   await dialog.getByRole("button", { name: "Sign in" }).click();
 
+  const loginResponse = await loginResponsePromise;
+  expect(loginResponse.status(), "development login should establish a server session").toBe(200);
+  await loginResponse.finished();
+  await expect(dialog).toBeHidden({ timeout: 45_000 });
   await expect(page).toHaveURL(expectedPath, { timeout: 45_000 });
   await dismissWelcomeGate(page);
 }

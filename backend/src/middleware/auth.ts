@@ -4,9 +4,11 @@ import { supabaseAdmin } from "../lib/supabase.js";
 import {
   clearAuthSessionCookie,
   readAuthSessionToken,
+  revokeAuthSessionsForUser,
   resolveAuthSession
 } from "../services/auth-session.service.js";
 import { type AppRole, type Profile, type RawProfile, mapProfile } from "../types/app.js";
+import { isEmailAllowedForDomains, normalizeAllowedEmailDomains } from "../utils/auth-email-policy.js";
 import { HttpError } from "../utils/http-error.js";
 import { verifyDevAuthToken } from "../utils/dev-auth-token.js";
 
@@ -36,6 +38,12 @@ function normalizeCsv(value: string) {
     .filter(Boolean);
 }
 
+const allowedEmailDomains = normalizeAllowedEmailDomains(env.AUTH_ALLOWED_EMAIL_DOMAINS);
+
+function approvedSchoolEmailError() {
+  return new HttpError(403, `Use an approved school account email domain: ${allowedEmailDomains.join(", ")}.`);
+}
+
 async function loadProfileById(id: string) {
   const { data: profileRow, error: profileError } = await supabaseAdmin
     .from("profiles")
@@ -61,6 +69,10 @@ export async function requireAuth(request: AuthenticatedRequest, response: Respo
         clearAuthSessionCookie(response);
         return next(new HttpError(401, "Session is invalid or expired."));
       }
+      if (!isEmailAllowedForDomains(session.profile.email, allowedEmailDomains)) {
+        clearAuthSessionCookie(response);
+        return next(approvedSchoolEmailError());
+      }
 
       request.auth = {
         id: session.profile.id,
@@ -82,6 +94,9 @@ export async function requireAuth(request: AuthenticatedRequest, response: Respo
       const profile = await loadProfileById(payload.sub);
       if (!profile || profile.email.toLowerCase() !== payload.email.toLowerCase()) {
         return next(new HttpError(401, "Development login profile was not found."));
+      }
+      if (!isEmailAllowedForDomains(profile.email, allowedEmailDomains)) {
+        return next(approvedSchoolEmailError());
       }
 
       request.auth = {
@@ -113,12 +128,9 @@ export async function requireAuth(request: AuthenticatedRequest, response: Respo
     }
 
     const email = data.user.email.toLowerCase();
-    const allowedDomains = normalizeCsv(env.AUTH_ALLOWED_EMAIL_DOMAINS);
-
-    const allowsAnyDomain = allowedDomains.length === 0 || allowedDomains.includes("*");
-    const isAllowedEmail = allowsAnyDomain || allowedDomains.some((domain) => email.endsWith(`@${domain}`));
+    const isAllowedEmail = isEmailAllowedForDomains(email, allowedEmailDomains);
     if (!isAllowedEmail) {
-      return next(new HttpError(403, `Use an approved school account email domain: ${allowedDomains.join(", ")}.`));
+      return next(approvedSchoolEmailError());
     }
 
     let profile = await loadProfileById(data.user.id);
@@ -142,6 +154,24 @@ export async function requireAuth(request: AuthenticatedRequest, response: Respo
 
       if (createProfileError) return next(new HttpError(500, createProfileError.message));
       profile = mapProfile(createdProfileRow as RawProfile);
+    } else if (profile.email.toLowerCase() !== email) {
+      const { data: updatedProfileRow, error: updateProfileError } = await supabaseAdmin
+        .from("profiles")
+        .update({ email, updated_at: new Date().toISOString() })
+        .eq("id", data.user.id)
+        .select("*")
+        .single();
+
+      if (updateProfileError) {
+        if (updateProfileError.code === "23505") {
+          return next(new HttpError(409, "This school email is already linked to another account."));
+        }
+        return next(new HttpError(500, updateProfileError.message));
+      }
+
+      await revokeAuthSessionsForUser(data.user.id);
+      clearAuthSessionCookie(response);
+      profile = mapProfile(updatedProfileRow as RawProfile);
     }
 
     if (!profile) return next(new HttpError(403, "User profile was not found."));

@@ -947,8 +947,16 @@ export async function updateReservationStatus(reservationId: string, status: Res
     )
     .catch((error) => {
       if (error instanceof HttpError) throw error;
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034") {
-        throw new HttpError(409, "Reservation changed while processing. Please try again.");
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        (error.code === "P2002" || error.code === "P2034")
+      ) {
+        throw new HttpError(
+          409,
+          "Reservation changed while processing. Please try again.",
+          "RESERVATION_STATUS_CONFLICT",
+          { retryable: true }
+        );
       }
       throw error;
     });

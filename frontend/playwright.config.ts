@@ -43,7 +43,7 @@ export default defineConfig({
   webServer: startLocalServers
     ? [
         {
-          command: useProductionServers ? "npm run build && npm start" : "npm run dev",
+          command: useProductionServers ? "npm run build && npm start" : "npx tsx src/server.ts",
           cwd: backendRoot,
           env: {
             ...process.env,

@@ -6,13 +6,32 @@ function originOf(value) {
   }
 }
 
+export function isProductionDeploymentEnvironment(environment = process.env) {
+  return (
+    environment.NEXT_PUBLIC_APP_ENV === "production" ||
+    environment.VERCEL_ENV === "production"
+  );
+}
+
+export function assertSafeProductionPublicFlags(environment = process.env) {
+  if (!isProductionDeploymentEnvironment(environment)) return;
+
+  if (environment.NEXT_PUBLIC_ENABLE_DEV_LOGIN === "true") {
+    throw new Error("NEXT_PUBLIC_ENABLE_DEV_LOGIN must be false in production.");
+  }
+  if (environment.NEXT_PUBLIC_E2E_TEST === "true") {
+    throw new Error("NEXT_PUBLIC_E2E_TEST must be false in production.");
+  }
+}
+
 const apiUrl = process.env.NEXT_PUBLIC_API_URL?.trim() ?? "";
 const apiOrigin = originOf(apiUrl);
 const usesSameOriginApi = apiUrl.startsWith("/") && !apiUrl.startsWith("//");
 const supabaseOrigin = originOf(process.env.NEXT_PUBLIC_SUPABASE_URL);
 const supabaseWebSocketOrigin = supabaseOrigin.replace(/^http/, "ws");
 const isProductionBuild = process.env.NODE_ENV === "production";
-const isProductionDeployment = process.env.NEXT_PUBLIC_APP_ENV === "production";
+const isProductionDeployment = isProductionDeploymentEnvironment();
+assertSafeProductionPublicFlags();
 if (
   isProductionDeployment
   && ((!usesSameOriginApi && !apiOrigin.startsWith("https://")) || !supabaseOrigin.startsWith("https://"))

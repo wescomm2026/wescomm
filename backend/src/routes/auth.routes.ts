@@ -12,6 +12,7 @@ import {
   revokeAuthSession
 } from "../services/auth-session.service.js";
 import { type RawProfile, mapProfile } from "../types/app.js";
+import { isEmailAllowedForDomains, normalizeAllowedEmailDomains } from "../utils/auth-email-policy.js";
 import { asyncHandler } from "../utils/async-handler.js";
 import { HttpError } from "../utils/http-error.js";
 
@@ -41,6 +42,7 @@ const sessionExchangeLimiter = createRateLimiter({
 const allowedDevEmails = new Set(
   env.AUTH_DEV_LOGIN_EMAILS.split(",").map((email) => email.trim().toLowerCase()).filter(Boolean)
 );
+const allowedEmailDomains = normalizeAllowedEmailDomains(env.AUTH_ALLOWED_EMAIL_DOMAINS);
 
 function secretsMatch(left: string, right: string) {
   const leftBuffer = Buffer.from(left);
@@ -57,6 +59,9 @@ authRoutes.post(
     }
 
     const input = devLoginSchema.parse(request.body);
+    if (!isEmailAllowedForDomains(input.email, allowedEmailDomains)) {
+      throw new HttpError(403, `Use an approved school account email domain: ${allowedEmailDomains.join(", ")}.`);
+    }
     if (!allowedDevEmails.has(input.email) || !secretsMatch(input.password, env.AUTH_DEV_LOGIN_PASSWORD)) {
       throw new HttpError(401, "Invalid test account credentials.");
     }

@@ -29,7 +29,8 @@ const tones: Record<string, string> = {
   Open: "bg-sky-50 text-sky-700 ring-sky-200",
   Unread: "bg-rose-50 text-rose-700 ring-rose-200",
   Resolved: "bg-emerald-50 text-emerald-700 ring-emerald-200",
-  "Ready for Pick-up": "bg-indigo-50 text-indigo-700 ring-indigo-200"
+  "Ready for Pick-up": "bg-indigo-50 text-indigo-700 ring-indigo-200",
+  "Ready for Pickup": "bg-indigo-50 text-indigo-700 ring-indigo-200"
 };
 
 export function StatusBadge({ status }: { status: string }) {

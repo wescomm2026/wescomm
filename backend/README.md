@@ -160,7 +160,13 @@ The suite also covers reservation status transitions, stock-status derivation, c
 
 ## Student Reservation Access Policy
 
-Run `../txt_files/DATABASE_STUDENT_RESERVATION_RESTRICTIONS_SQL.txt` once in the Supabase SQL Editor before using these routes.
+For a fresh database, first run `../txt_files/DATABASE_STUDENT_RESERVATION_RESTRICTIONS_SQL.txt` once in the Supabase SQL Editor. Then, for both fresh and existing environments, apply the checked-in Prisma migrations before deploying the backend:
+
+```powershell
+npm run prisma:migrate:deploy
+```
+
+The active-restriction migration expires stale rows, deterministically resolves any duplicate active restrictions, and adds the database-level invariant that each student can have at most one `ACTIVE` restriction. Run migrations as an explicit release step; application builds do not mutate the production database automatically.
 
 The restriction affects reservation submission only. Students can still browse items, view receipts, use Support, and manage their profile.
 

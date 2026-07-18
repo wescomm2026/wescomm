@@ -1,0 +1,471 @@
+WESCOMM GROUP QA CHECKLIST
+Prepared for: Yasmien, Gio, and Cherry
+Last updated: July 12, 2026
+
+PURPOSE
+This document divides WESCOMM quality assurance into three clear areas:
+
+- Yasmien: Frontend, responsive design, usability, and visual quality
+- Gio: Backend, database behavior, APIs, and business workflows
+- Cherry: Security, privacy, authorization, and abuse protection
+
+Staging website:
+  https://wescomm.vercel.app
+
+Test accounts:
+  student@wesleyan.edu.ph
+  staff@wesleyan.edu.ph
+  admin@wesleyan.edu.ph
+
+Share the test password privately. Never place passwords, API keys, OTP codes,
+database credentials, cookies, or access tokens in screenshots or bug reports.
+
+============================================================
+1. RULES BEFORE TESTING
+============================================================
+
+[ ] Use only the staging deployment and designated test accounts.
+[ ] Do not enter real student personal information.
+[ ] Prefix temporary records with QA, for example: QA Test Product.
+[ ] Record the starting stock before testing checkout, cancellation, or restock.
+[ ] Do not delete records created by another tester without permission.
+[ ] Capture a screenshot or short screen recording for every confirmed defect.
+[ ] Retest a fixed defect using the same steps before marking it Passed.
+[ ] Test on a normal browser window. Use Incognito only for clean-session tests.
+[ ] Do not run destructive database commands against production.
+
+RECOMMENDED TEST DEVICES
+
+[ ] Desktop Chrome at 1920 x 1080
+[ ] Laptop Chrome or Edge at approximately 1366 x 768
+[ ] Mobile Chrome at approximately 390 x 844
+[ ] Another physical Android phone, when available
+[ ] Safari/iPhone for basic responsive and push checks, when available
+
+============================================================
+2. BUG REPORT FORMAT - REQUIRED FOR EVERY ISSUE
+============================================================
+
+Bug ID: WES-QA-001
+Reported by:
+Date and time:
+Area: Frontend / Backend / Security
+User role: Guest / Student / Staff / Admin
+Page or API:
+Device and browser:
+Precondition:
+Steps to reproduce:
+1.
+2.
+3.
+Expected result:
+Actual result:
+Severity: Critical / High / Medium / Low
+Evidence: Screenshot, recording, request ID, or console log
+Repeatability: Always / Sometimes / Once
+Status: New / Confirmed / Fixed / Retest / Passed / Reopened
+
+SEVERITY GUIDE
+
+- Critical: Data leak, account takeover, unauthorized admin access, lost or
+  corrupted inventory, or the whole system is unavailable.
+- High: Login, checkout, reservation, staff inventory, or another main workflow
+  cannot be completed.
+- Medium: A feature works incorrectly but has a workaround.
+- Low: Visual, wording, alignment, spacing, or minor usability issue.
+
+============================================================
+3. YASMIEN - FRONTEND AND UX QA
+============================================================
+
+A. PUBLIC AND LOGIN EXPERIENCE
+
+[ ] Homepage loads without blank sections, broken images, or console errors.
+[ ] WESCOMM logo, navigation icons, hero images, and product images load.
+[ ] Welcome/loading overlay finishes without trapping the user.
+[ ] Log in button opens the login modal and Close works.
+[ ] Email input already displays the @wesleyan.edu.ph suffix clearly.
+[ ] OTP flow moves from email entry to verification code entry.
+[ ] Resend code has a visible cooldown and cannot be spam-clicked.
+[ ] Student, staff, and admin test accounts open the correct dashboard.
+[ ] Incorrect password or OTP displays a useful message without exposing details.
+[ ] Logout returns to the guest state and protected information disappears.
+
+B. DESKTOP NAVIGATION
+
+[ ] Active navigation tab is clearly highlighted.
+[ ] Home, Shop, Reservations, Receipts, FAQ, and Support links work.
+[ ] Staff and admin sidebars highlight the current page.
+[ ] Notification, cart, account menu, and sign-out controls work.
+[ ] No duplicated navigation, search bar, action, or View all button appears.
+[ ] Header remains readable and aligned at common desktop widths.
+[ ] Browser Back and Forward buttons preserve the correct active page.
+[ ] Unknown URL displays the custom WESCOMM 404 page.
+
+C. MOBILE WEB RESPONSIVENESS
+
+[ ] Header fits without horizontal scrolling or clipped controls.
+[ ] Hamburger menu opens, shows every allowed page, and closes properly.
+[ ] Menu does not cover content incorrectly or leave a dark overlay behind.
+[ ] Cards stack into one column with comfortable spacing.
+[ ] Product cards, buttons, text, prices, and badges do not overlap.
+[ ] Shop search and category controls remain usable with one hand.
+[ ] Tables become readable cards or horizontally safe layouts.
+[ ] Forms use one column and inputs remain visible above the keyboard.
+[ ] Support page resembles a web chat and the composer stays accessible.
+[ ] Account settings remain readable and usable on a narrow screen.
+[ ] No app-style bottom navigation appears.
+
+D. STUDENT SHOP
+
+[ ] Search filters products by name and relevant description.
+[ ] Category controls show only matching products.
+[ ] Sorting and availability filters produce correct visible results.
+[ ] Empty search results have a clear message and Reset action.
+[ ] Product card buttons align consistently on desktop.
+[ ] Available quantity is understandable to students.
+[ ] Uniform cloth products explain that cloth is sold, not ready-to-wear attire.
+[ ] Product details modal shows image, price, stock, variants, and quantity.
+[ ] Uniform size or option selection is required where applicable.
+[ ] Add to Cart shows confirmation and does not reopen an unnecessary modal.
+[ ] Cart count, quantity controls, removal, subtotal, and total update correctly.
+[ ] Buy Now and Checkout display clear loading, success, and failure states.
+[ ] Out-of-stock products cannot be reserved or added to cart.
+
+E. STUDENT MODULES
+
+[ ] Guest Reservations page shows a login prompt, not another user's data.
+[ ] Reservation cards show product image, status, pickup schedule, and total.
+[ ] Important pickup information is visually prominent.
+[ ] Receipt preview resembles a real receipt and all values fit.
+[ ] Receipt PNG download matches the on-screen receipt layout.
+[ ] FAQ questions expand and collapse without layout jumps.
+[ ] View all FAQ opens the FAQ page.
+[ ] Support conversations update without pressing Refresh.
+[ ] Typing indicator appears and disappears naturally.
+[ ] Profile values, reservation summary, and notification setting are aligned.
+[ ] Restriction or suspension notice is understandable when applicable.
+
+F. STAFF AND ADMIN UI
+
+[ ] Dashboard data cards show loading, loaded, empty, and error states clearly.
+[ ] Inventory create, edit, restock, archive, and image upload dialogs fit.
+[ ] Restock supports Add quantity and Set exact quantity.
+[ ] Available stock and Restock alert at are understandable and distinct.
+[ ] Reservation status actions are clear and cannot be double-submitted.
+[ ] Staff/admin message layout is consistent with the student chat experience.
+[ ] Reports charts have labels, legends, and readable values.
+[ ] Export buttons provide visible progress and completion feedback.
+[ ] Collapsible dashboard/report sections work and reduce clutter.
+[ ] User management, student access, audit logs, and settings are usable.
+[ ] Staff pages never display admin-only navigation or actions.
+
+G. VISUAL QUALITY AND ACCESSIBILITY
+
+[ ] Colors match WESCOMM green, yellow, white, and neutral palette.
+[ ] Text contrast is readable and disabled controls look disabled.
+[ ] Buttons use the correct icon for their action.
+[ ] Icons and images are crisp, not stretched, cropped, or blurred.
+[ ] Every clickable control has a visible hover and keyboard focus state.
+[ ] Tab key follows a logical order through forms, menus, and dialogs.
+[ ] Enter submits forms and Escape closes dismissible dialogs.
+[ ] Dialogs keep keyboard focus and return it after closing.
+[ ] Images have appropriate alternative text or are marked decorative.
+[ ] No visible technical wording, raw JSON, route errors, or stack traces appear.
+
+YASMIEN SIGN-OFF
+
+[ ] Desktop frontend passed
+[ ] Mobile frontend passed
+[ ] Main student workflow passed
+[ ] Staff/admin visual review passed
+[ ] All frontend defects documented
+
+Tester signature/name:
+Date:
+
+============================================================
+4. GIO - BACKEND, DATABASE, AND API QA
+============================================================
+
+A. SERVICE HEALTH AND DATA LOADING
+
+[ ] GET /api/health returns 200 and status ok.
+[ ] GET /api/health/ready returns 200 and all checks are true.
+[ ] GET /api/products returns active database products without duplicates.
+[ ] Categories and product images match the current catalog.
+[ ] API responses contain valid JSON and a request ID on errors.
+[ ] Empty database results return empty arrays, not server errors.
+[ ] Backend does not require a manual Refresh to expose committed updates.
+
+B. AUTHENTICATION AND ROLE ROUTING
+
+[ ] Student account creates a valid secure server session.
+[ ] Staff account creates a valid secure server session.
+[ ] Admin account creates a valid secure server session.
+[ ] Each account opens the correct role dashboard.
+[ ] Invalid credentials return 401 or a safe validation response.
+[ ] Expired or revoked sessions return 401.
+[ ] Logout revokes the session; reusing the old cookie fails.
+[ ] Maximum active sessions per user is enforced.
+
+C. INVENTORY MANAGEMENT
+
+[ ] Staff can create a QA product with valid fields.
+[ ] Product name duplicate is rejected or handled safely.
+[ ] Product image upload returns a usable public URL.
+[ ] Product variants save with correct option and available quantity.
+[ ] Staff can edit name, category, description, price, old price, and image.
+[ ] Add quantity increases stock by exactly the entered amount.
+[ ] Set exact quantity changes stock to exactly the entered amount.
+[ ] Stock never becomes negative.
+[ ] Product status is recalculated from available quantity and alert level.
+[ ] Archive hides a product from students without breaking old transactions.
+[ ] Every inventory change creates the correct inventory movement record.
+[ ] Admin can perform allowed inventory actions.
+
+D. RESERVATION WORKFLOW
+
+[ ] Student checkout creates one reservation with correct items and total.
+[ ] Stock decreases exactly once after a successful checkout.
+[ ] Repeated or double-clicked checkout does not create duplicates.
+[ ] Two students competing for the last unit cannot produce negative stock.
+[ ] Valid flow works: Pending -> Confirmed -> Ready for Pickup -> Completed.
+[ ] Cancellation restores stock exactly once when required.
+[ ] Invalid status jumps return 400 and do not alter data.
+[ ] Completed, Cancelled, and No Show reservations cannot reopen.
+[ ] Pickup start and end times are stored and returned correctly.
+[ ] Student sees only reservations belonging to that student.
+
+E. RESTRICTIONS AND NO-SHOW RULES
+
+[ ] First and second consecutive no-shows create warnings only.
+[ ] Third consecutive no-show creates a seven-day restriction.
+[ ] Later offenses escalate to 30 days and admin review as designed.
+[ ] Existing restriction does not create an overlapping restriction.
+[ ] Staff/admin can lift an allowed restriction with a recorded reason.
+[ ] Restricted student cannot create a new reservation.
+[ ] Restriction expiration restores reservation access automatically.
+
+F. RECEIPTS AND REPORTS
+
+[ ] Receipt is linked to the correct student and reservation.
+[ ] Receipt total and line items match reservation values.
+[ ] Verification status transitions are valid and persisted.
+[ ] Public receipt verification exposes only safe information.
+[ ] Voided receipt is excluded from valid sales totals.
+[ ] Dashboard and report totals match direct database calculations.
+[ ] Category sales, inventory value, and reservation counts are accurate.
+[ ] Excel export opens correctly with formatted columns and worksheets.
+[ ] Exported values match the selected date range.
+
+G. SUPPORT, FAQ, AND NOTIFICATIONS
+
+[ ] Student can create a conversation and send a message.
+[ ] Staff/admin reply persists and appears without manual refresh.
+[ ] Messages retain correct sender, timestamp, and thread ownership.
+[ ] Typing state expires and does not remain permanently active.
+[ ] FAQ create, update, publish, unpublish, and duplicate prevention work.
+[ ] Reservation status updates create in-app notifications.
+[ ] Push notification is sent for configured reservation events.
+[ ] Notification click opens the correct page.
+[ ] Disabling push revokes the subscription.
+
+H. ERROR HANDLING AND PERFORMANCE
+
+[ ] Invalid IDs return 400 or 404, not 500.
+[ ] Invalid JSON and oversized requests are rejected safely.
+[ ] Database failure produces a safe error without credentials or SQL details.
+[ ] Slow checkout keeps one transaction and does not partially deduct stock.
+[ ] Main read APIs respond within an acceptable staging time.
+[ ] Logs include request ID, method, safe path, status, and response time.
+[ ] No password, OTP, token, cookie, or encryption key appears in logs.
+
+GIO DEPLOYED WEBSITE CHECKS
+
+[ ] Open https://wescomm.vercel.app/api/health and confirm status is ok.
+[ ] Open https://wescomm.vercel.app/api/health/ready and confirm status is ready.
+[ ] Confirm database, secureSessions, and fieldEncryption are all true.
+[ ] Use the deployed Staff and Admin pages for all write-operation tests.
+[ ] Use the browser Network panel to record failed API status and request ID.
+[ ] Confirm the deployed website remains usable after every data change.
+
+GIO SIGN-OFF
+
+[ ] Health and authentication passed
+[ ] Inventory workflow passed
+[ ] Reservation lifecycle passed
+[ ] Receipts/reports passed
+[ ] Messaging/notification backend passed
+[ ] All backend defects documented
+
+Tester signature/name:
+Date:
+
+============================================================
+5. CHERRY - SECURITY AND PRIVACY QA
+============================================================
+
+IMPORTANT
+Perform only authorized, non-destructive testing against WESCOMM staging. Do not
+run denial-of-service tools, automated password attacks, or destructive SQL.
+
+A. SESSION AND CREDENTIAL SECURITY
+
+[ ] Production login uses Supabase verification/password authentication.
+[ ] Session cookie name is __Host-wescomm_session.
+[ ] Cookie has HttpOnly, Secure, SameSite=Lax, and Path=/.
+[ ] No Supabase access token is stored in Local Storage or Session Storage.
+[ ] Password and OTP fields are masked or handled appropriately.
+[ ] OTP cannot be reused after successful verification.
+[ ] Expired OTP returns a safe error.
+[ ] Logout invalidates the server session.
+[ ] Closing/reopening the browser follows the intended remember-session policy.
+[ ] Development login endpoint is disabled in production.
+
+B. ROLE-BASED ACCESS CONTROL
+
+[ ] Guest cannot access student-private, staff, or admin APIs.
+[ ] Student receives 403 from every staff and admin API.
+[ ] Staff receives 403 from admin-only users and audit-log APIs.
+[ ] Admin can access authorized admin APIs.
+[ ] Manually entering a staff/admin URL does not bypass authorization.
+[ ] Changing a role value in browser storage does not grant access.
+[ ] Backend authorizes every protected action, not only the frontend UI.
+
+C. OBJECT-LEVEL PRIVACY AND IDOR TESTS
+
+[ ] Student A cannot read Student B reservations by changing an ID.
+[ ] Student A cannot read Student B receipts by changing an ID.
+[ ] Student A cannot read or post in Student B support conversation.
+[ ] Student cannot mark another user's notification as read.
+[ ] Uploaded private/account content is not exposed through predictable IDs.
+[ ] Staff access is limited to operational data required by the role.
+
+D. INPUT, FILE, AND API PROTECTION
+
+[ ] Script-like text is displayed as text and never executed.
+[ ] SQL-like input does not alter queries or expose database errors.
+[ ] Invalid enum, quantity, price, date, and UUID values are rejected.
+[ ] Negative quantity and extremely large quantity are rejected.
+[ ] Upload rejects unsupported file types and oversized files.
+[ ] Uploaded filename cannot change server paths.
+[ ] API rejects malformed JSON with a safe 400 response.
+[ ] Error messages do not expose stack traces, keys, table names, or SQL.
+
+E. CSRF, CORS, RATE LIMITING, AND HEADERS
+
+[ ] Cookie-authenticated POST/PATCH/DELETE requires the approved origin.
+[ ] Cross-origin write request receives 403.
+[ ] CORS allows only the configured WESCOMM frontend origin.
+[ ] Repeated login attempts trigger the expected rate limit.
+[ ] Repeated OTP/session requests trigger cooldown or 429 response.
+[ ] Rate-limit response includes safe Retry-After information.
+[ ] Content-Security-Policy header is present.
+[ ] Strict-Transport-Security is present on production HTTPS.
+[ ] X-Content-Type-Options is nosniff.
+[ ] X-Frame-Options is DENY or CSP frame-ancestors blocks framing.
+[ ] Referrer-Policy and Permissions-Policy are present.
+
+F. DATABASE AND SENSITIVE DATA
+
+[ ] Supabase database rejects non-SSL connections when SSL enforcement is on.
+[ ] Sensitive profile phone/address fields are encrypted where configured.
+[ ] Support message plaintext is not visible in encrypted database columns.
+[ ] DATA_ENCRYPTION_KEYS is not committed to Git.
+[ ] Existing encrypted data can still be decrypted after deployment.
+[ ] Row Level Security is enabled on direct-access tables where required.
+[ ] Push subscriptions cannot be selected directly by anonymous clients.
+[ ] Database unique indexes prevent duplicate products, variants, and FAQs.
+[ ] Backup and matching encryption keys are stored separately.
+
+G. BUSINESS ABUSE AND AUDITABILITY
+
+[ ] Double-click checkout creates one reservation only.
+[ ] Reusing an idempotency key with changed data is rejected.
+[ ] Student cannot reserve unavailable or negative stock.
+[ ] Student restriction cannot be bypassed by calling the API directly.
+[ ] Staff/admin manual restriction actions require a valid reason.
+[ ] Admin audit log records product, user, restriction, and receipt changes.
+[ ] Audit records identify actor, action, entity, and timestamp.
+[ ] Staff cannot delete or alter audit records through available APIs.
+
+H. PUSH NOTIFICATION PRIVACY
+
+[ ] Browser requests notification permission only after a user action.
+[ ] Subscription is associated with the authenticated user only.
+[ ] Push content does not expose unnecessary private student information.
+[ ] Signing out does not expose another user's notification list.
+[ ] Revoked subscription no longer receives notifications.
+
+CHERRY DEPLOYED WEBSITE CHECKS
+
+[ ] Open Chrome DevTools on https://wescomm.vercel.app.
+[ ] Check Application -> Cookies -> https://wescomm.vercel.app.
+[ ] Check Application -> Local Storage and Session Storage.
+[ ] Check Network -> select an API request -> Headers and Response.
+[ ] Perform role-isolation tests using only the three designated test accounts.
+[ ] Record the HTTP status and request ID for every security-related failure.
+
+CHERRY SIGN-OFF
+
+[ ] Authentication/session security passed
+[ ] RBAC and IDOR privacy passed
+[ ] Input/upload security passed
+[ ] Headers, CORS, CSRF, and rate limits passed
+[ ] Encryption and audit checks passed
+[ ] All security defects documented
+
+Tester signature/name:
+Date:
+
+============================================================
+6. SHARED END-TO-END TEST - ALL THREE TESTERS
+============================================================
+
+Run this together using the staging environment:
+
+1. Yasmien logs in as Student and reserves one clearly named QA product.
+2. Gio verifies one reservation and one stock deduction in the backend/database.
+3. Yasmien confirms the student reservation card and loading states are correct.
+4. Gio logs in as Staff and moves it to Confirmed, then Ready for Pickup.
+5. Cherry confirms Student cannot call the staff status-update API.
+6. Yasmien verifies in-app and phone notification presentation.
+7. Gio marks the reservation Completed and verifies the receipt data.
+8. Yasmien previews and downloads the receipt PNG.
+9. Cherry checks that the receipt verification page exposes only safe data.
+10. Gio confirms audit logs and reports include the completed transaction.
+11. Repeat once with cancellation and confirm stock restoration.
+12. Remove or archive QA-only records after all evidence is collected.
+
+SHARED RESULT
+
+[ ] Complete reservation path passed
+[ ] Cancellation and stock restoration passed
+[ ] Receipt and reporting passed
+[ ] Role isolation passed
+[ ] Desktop and mobile presentation passed
+
+============================================================
+7. FINAL QA RELEASE DECISION
+============================================================
+
+[ ] No open Critical defect
+[ ] No open High defect affecting login, checkout, inventory, or privacy
+[ ] Medium defects have an owner and target fix date
+[ ] Backend automated tests pass
+[ ] Frontend typecheck and production build pass
+[ ] Desktop and mobile checks pass
+[ ] Security and role isolation checks pass
+[ ] OTP email works with the configured sender
+[ ] Push notification works on at least one real phone
+[ ] Backup and recovery procedure is documented
+
+FINAL DECISION: PASS / PASS WITH CONDITIONS / FAIL
+
+Yasmien:
+Gio:
+Cherry:
+Project lead:
+Decision date:
+Release notes or conditions:

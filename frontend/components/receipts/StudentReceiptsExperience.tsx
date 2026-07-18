@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type MutableRefObject } from "react";
 import { createPortal } from "react-dom";
 import { Download, Eye, ShieldCheck, X } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
@@ -11,7 +11,7 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { getReceiptsFromApi, type BackendPaymentMethod, type BackendReceipt, type BackendReceiptStatus } from "@/lib/api";
 
 type Receipt = {
-  id?: string;
+  id: string;
   code: string;
   student: string;
   studentNumber: string;
@@ -532,7 +532,15 @@ async function downloadReceiptPng(receipt: Receipt) {
   }, "image/png");
 }
 
-function ReceiptPaper({ receipt, compact = false }: { receipt: Receipt; compact?: boolean }) {
+function ReceiptPaper({
+  receipt,
+  compact = false,
+  headingId
+}: {
+  receipt: Receipt;
+  compact?: boolean;
+  headingId?: string;
+}) {
   return (
     <div className={compact ? "relative bg-white px-5 py-6" : "relative bg-white px-6 py-8 sm:px-9"}>
       <div className="absolute inset-x-0 top-0 h-2 bg-[radial-gradient(circle_at_8px_-2px,transparent_8px,#fff_9px)] bg-[length:16px_10px]" />
@@ -552,7 +560,10 @@ function ReceiptPaper({ receipt, compact = false }: { receipt: Receipt; compact?
         ) : null}
         <div className="my-4 border-t border-dashed border-[#bfc9c1]" />
         <p className="text-xs font-bold uppercase text-[#68746d]">Digital Receipt</p>
-        <h2 className="mt-1 text-xl font-extrabold text-primary">{receipt.code}</h2>
+        <h2 id={headingId} className="mt-1 text-xl font-extrabold text-primary">
+          <span className="sr-only">Digital receipt </span>
+          {receipt.code}
+        </h2>
       </div>
 
       <dl className="mt-5 grid grid-cols-[1fr_auto] gap-x-5 gap-y-2 text-sm">
@@ -596,48 +607,121 @@ function ReceiptPaper({ receipt, compact = false }: { receipt: Receipt; compact?
 
 function ReceiptModal({
   receipt,
-  onClose
+  onClose,
+  returnFocusRef
 }: {
   receipt: Receipt | null;
   onClose: () => void;
+  returnFocusRef: MutableRefObject<HTMLButtonElement | null>;
 }) {
   const [mounted, setMounted] = useState(false);
+  const overlayRef = useRef<HTMLDivElement>(null);
+  const dialogRef = useRef<HTMLElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const receiptIdentity = receipt?.id ?? null;
 
   useEffect(() => setMounted(true), []);
   useEffect(() => {
-    if (!receipt) return;
+    if (!receiptIdentity) return;
+    const returnFocusElement = returnFocusRef.current;
+    const overlay = overlayRef.current;
+    const backgroundElements = overlay
+      ? Array.from(document.body.children).filter((element): element is HTMLElement => (
+          element instanceof HTMLElement && element !== overlay
+        ))
+      : [];
+    const previousBackgroundState = backgroundElements.map((element) => ({
+      element,
+      inert: element.hasAttribute("inert"),
+      ariaHidden: element.getAttribute("aria-hidden")
+    }));
+    previousBackgroundState.forEach(({ element }) => {
+      element.setAttribute("inert", "");
+      element.setAttribute("aria-hidden", "true");
+    });
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
+    const focusFrame = window.requestAnimationFrame(() => closeButtonRef.current?.focus());
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+        return;
+      }
+
+      if (event.key !== "Tab") return;
+      const dialog = dialogRef.current;
+      if (!dialog) return;
+
+      const focusableElements = Array.from(
+        dialog.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        )
+      ).filter((element) => element.getAttribute("aria-hidden") !== "true");
+      const firstElement = focusableElements[0];
+      const lastElement = focusableElements.at(-1);
+      if (!firstElement || !lastElement) {
+        event.preventDefault();
+        return;
+      }
+
+      if (event.shiftKey && (document.activeElement === firstElement || !dialog.contains(document.activeElement))) {
+        event.preventDefault();
+        lastElement.focus();
+      } else if (
+        !event.shiftKey &&
+        (document.activeElement === lastElement || !dialog.contains(document.activeElement))
+      ) {
+        event.preventDefault();
+        firstElement.focus();
+      }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => {
+      window.cancelAnimationFrame(focusFrame);
       document.body.style.overflow = previousOverflow;
       window.removeEventListener("keydown", onKeyDown);
+      previousBackgroundState.forEach(({ element, inert, ariaHidden }) => {
+        if (inert) element.setAttribute("inert", "");
+        else element.removeAttribute("inert");
+        if (ariaHidden === null) element.removeAttribute("aria-hidden");
+        else element.setAttribute("aria-hidden", ariaHidden);
+      });
+      window.requestAnimationFrame(() => {
+        if (returnFocusElement?.isConnected) returnFocusElement.focus();
+      });
     };
-  }, [receipt, onClose]);
+  }, [receiptIdentity, onClose, returnFocusRef]);
 
   if (!mounted || !receipt) return null;
 
   return createPortal(
     <div
+      ref={overlayRef}
       className="fixed inset-0 z-[9000] grid place-items-center overflow-y-auto bg-[#101820]/55 p-3 backdrop-blur-[2px] sm:p-6"
+      role="presentation"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}
     >
-      <section className="relative my-auto w-full max-w-[590px] overflow-hidden rounded-lg bg-[#edf2ed] p-3 shadow-[0_30px_90px_rgba(0,0,0,0.28)] sm:p-6">
+      <section
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="selected-receipt-title"
+        className="relative my-auto w-full max-w-[590px] overflow-hidden rounded-lg bg-[#edf2ed] p-3 shadow-[0_30px_90px_rgba(0,0,0,0.28)] sm:p-6"
+      >
         <button
+          ref={closeButtonRef}
           type="button"
           onClick={onClose}
-          aria-label="Close receipt"
+          aria-label={`Close receipt ${receipt.code}`}
           className="absolute right-5 top-5 z-10 grid size-10 place-items-center rounded-md border border-[#d6dfd7] bg-white shadow-sm hover:bg-[#eef6ee]"
         >
           <X className="size-5" />
         </button>
         <div className="max-h-[calc(100svh-155px)] overflow-y-auto shadow-[0_10px_35px_rgba(0,0,0,0.12)]">
-          <ReceiptPaper receipt={receipt} />
+          <ReceiptPaper receipt={receipt} headingId="selected-receipt-title" />
           <div className="bg-white px-6 pb-8 sm:px-9">
             <div className="border-t border-dashed border-[#bfc9c1] pt-5 text-center">
               <p className="text-xs font-bold uppercase text-[#68746d]">Verification Reference</p>
@@ -673,14 +757,21 @@ export function StudentReceiptsExperience() {
   const [receipts, setReceipts] = useState<Receipt[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [selectedReceipt, setSelectedReceipt] = useState<Receipt | null>(null);
-  const closeReceipt = useCallback(() => setSelectedReceipt(null), []);
+  const [selectedReceiptId, setSelectedReceiptId] = useState<string | null>(null);
+  const receiptTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const requestSequenceRef = useRef(0);
+  const selectedReceipt = selectedReceiptId
+    ? receipts.find((receipt) => receipt.id === selectedReceiptId) ?? null
+    : null;
+  const closeReceipt = useCallback(() => setSelectedReceiptId(null), []);
 
   const loadReceipts = useCallback(async ({ background = false }: { background?: boolean } = {}) => {
     if (!authReady) return;
+    const requestSequence = ++requestSequenceRef.current;
 
     if (!user?.accessToken) {
       setReceipts([]);
+      setSelectedReceiptId(null);
       setLoading(false);
       return;
     }
@@ -692,19 +783,28 @@ export function StudentReceiptsExperience() {
 
     try {
       const rows = await getReceiptsFromApi(user.accessToken);
-      setReceipts(rows.map(mapBackendReceipt));
+      if (requestSequence !== requestSequenceRef.current) return;
+      const nextReceipts = rows.map(mapBackendReceipt);
+      setReceipts(nextReceipts);
+      setSelectedReceiptId((currentId) => (
+        currentId && nextReceipts.some((receipt) => receipt.id === currentId) ? currentId : null
+      ));
     } catch (receiptError) {
-      if (!background) {
+      if (requestSequence === requestSequenceRef.current && !background) {
         setReceipts([]);
+        setSelectedReceiptId(null);
         setError(receiptError instanceof Error ? receiptError.message : "Unable to load receipts.");
       }
     } finally {
-      if (!background) setLoading(false);
+      if (requestSequence === requestSequenceRef.current && !background) setLoading(false);
     }
   }, [authReady, user?.accessToken]);
 
   useEffect(() => {
     void loadReceipts();
+    return () => {
+      requestSequenceRef.current += 1;
+    };
   }, [loadReceipts]);
 
   useEffect(() => {
@@ -726,7 +826,8 @@ export function StudentReceiptsExperience() {
   }, [authReady, loadReceipts, user?.accessToken]);
 
   return (
-    <div className="space-y-6">
+    <>
+      <div className="space-y-6">
       <header>
         <p className="text-sm font-bold uppercase text-primary">Digital Receipts</p>
         <h1 className="mt-1 text-3xl font-extrabold text-[#101820] sm:text-4xl">My receipt history</h1>
@@ -764,16 +865,31 @@ export function StudentReceiptsExperience() {
           {receipts.length ? (
             <div className="grid gap-6 lg:grid-cols-2 xl:grid-cols-3">
               {receipts.map((receipt) => (
-                <article key={receipt.code} className="overflow-hidden rounded-lg border border-[#dce5dd] bg-[#edf2ed] p-3 shadow-sm">
+                <article key={receipt.id} className="overflow-hidden rounded-lg border border-[#dce5dd] bg-[#edf2ed] p-3 shadow-sm">
                   <div className="overflow-hidden shadow-[0_8px_24px_rgba(0,0,0,0.09)]">
                     <ReceiptPaper receipt={receipt} compact />
                   </div>
                   <div className="mt-3 grid grid-cols-2 gap-2">
-                    <Button variant="secondary" className="h-11" onClick={() => setSelectedReceipt(receipt)}>
+                    <Button
+                      variant="secondary"
+                      className="h-11"
+                      aria-label={`View receipt ${receipt.code}`}
+                      onClick={(event) => {
+                        receiptTriggerRef.current = event.currentTarget;
+                        // Avoid leaving focus inside content that becomes aria-hidden
+                        // before the dialog takes focus on the next animation frame.
+                        event.currentTarget.blur();
+                        setSelectedReceiptId(receipt.id);
+                      }}
+                    >
                       <Eye className="size-4" />
                       View Receipt
                     </Button>
-                    <Button className="h-11" onClick={() => downloadReceiptPng(receipt)}>
+                    <Button
+                      className="h-11"
+                      aria-label={`Download receipt ${receipt.code} as PNG`}
+                      onClick={() => downloadReceiptPng(receipt)}
+                    >
                       <Download className="size-4" />
                       PNG
                     </Button>
@@ -792,7 +908,8 @@ export function StudentReceiptsExperience() {
         </>
       )}
 
-      <ReceiptModal receipt={selectedReceipt} onClose={closeReceipt} />
-    </div>
+      </div>
+      <ReceiptModal receipt={selectedReceipt} onClose={closeReceipt} returnFocusRef={receiptTriggerRef} />
+    </>
   );
 }

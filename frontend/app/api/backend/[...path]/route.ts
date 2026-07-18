@@ -45,7 +45,19 @@ async function proxy(request: NextRequest, context: { params: { path: string[] }
   const hostOrigin = requestHostOrigin(request);
   const fetchSite = request.headers.get("sec-fetch-site");
   const acceptedOrigins = new Set([request.nextUrl.origin, hostOrigin]);
-  if (isMutation && browserOrigin && (fetchSite === "cross-site" || !acceptedOrigins.has(browserOrigin))) {
+  const hasAuthorizationHeader = Boolean(request.headers.get("authorization")?.trim());
+  const hasSessionCookie =
+    request.cookies.has("wescomm_session") || request.cookies.has("__Host-wescomm_session");
+  const needsCookieOriginProof = isMutation && hasSessionCookie && !hasAuthorizationHeader;
+  const hasTrustedOrigin = Boolean(browserOrigin && acceptedOrigins.has(browserOrigin));
+
+  if (
+    isMutation &&
+    (
+      (browserOrigin && (fetchSite === "cross-site" || !hasTrustedOrigin)) ||
+      (needsCookieOriginProof && !hasTrustedOrigin)
+    )
+  ) {
     return NextResponse.json({ error: "Request origin is not allowed." }, { status: 403 });
   }
 
@@ -62,9 +74,6 @@ async function proxy(request: NextRequest, context: { params: { path: string[] }
     const value = request.headers.get(name);
     if (value) headers.set(name, value);
   });
-  if (!headers.has("origin") && isMutation) {
-    headers.set("origin", hostOrigin);
-  }
 
   let backendResponse: Response;
   try {

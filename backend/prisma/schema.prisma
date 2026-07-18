@@ -312,6 +312,8 @@ model AccountRestriction {
   createdBy   Profile?          @relation("CreatedRestrictions", fields: [createdById], references: [id], onDelete: SetNull)
   liftedBy    Profile?          @relation("LiftedRestrictions", fields: [liftedById], references: [id], onDelete: SetNull)
 
+  // A partial unique index on student_id WHERE status = 'ACTIVE' is maintained
+  // in SQL migrations because Prisma schema syntax cannot represent it.
   @@index([studentId, status, endsAt])
   @@index([source, level])
   @@map("account_restrictions")

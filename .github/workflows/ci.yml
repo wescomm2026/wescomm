@@ -70,5 +70,8 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Check production configuration safeguards
+        run: npm run test:config
+
       - name: Build
         run: npm run build

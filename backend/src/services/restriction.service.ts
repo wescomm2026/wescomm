@@ -6,6 +6,11 @@ import {
 } from "../domain/reservation-policy.js";
 import { prisma } from "../lib/prisma.js";
 import { HttpError } from "../utils/http-error.js";
+import {
+  assertSingleRestrictionMutation,
+  runRestrictionReadTransaction,
+  runRestrictionWriteTransaction
+} from "../utils/restriction-transaction.js";
 import { safelyRecordAuditLog } from "./audit-log.service.js";
 import { createNotification } from "./notification.service.js";
 
@@ -101,27 +106,27 @@ function mapOffense(row: {
   };
 }
 
-async function expireRestrictions(tx: Prisma.TransactionClient, studentId?: string) {
+async function expireRestrictions(tx: Prisma.TransactionClient, studentId?: string, now = new Date()) {
   await tx.accountRestriction.updateMany({
     where: {
       ...(studentId ? { studentId } : {}),
       status: "ACTIVE",
-      endsAt: { lte: new Date() }
+      endsAt: { lte: now }
     },
     data: {
       status: "EXPIRED",
-      updatedAt: new Date()
+      updatedAt: now
     }
   });
 }
 
-async function findActiveRestriction(tx: Prisma.TransactionClient, studentId: string) {
-  await expireRestrictions(tx, studentId);
+async function findActiveRestriction(tx: Prisma.TransactionClient, studentId: string, now = new Date()) {
+  await expireRestrictions(tx, studentId, now);
   return tx.accountRestriction.findFirst({
     where: {
       studentId,
       status: "ACTIVE",
-      OR: [{ endsAt: null }, { endsAt: { gt: new Date() } }]
+      OR: [{ endsAt: null }, { endsAt: { gt: now } }]
     },
     orderBy: [{ level: "desc" }, { createdAt: "desc" }]
   });
@@ -287,7 +292,7 @@ export async function notifyStudentOfPolicyOutcome(outcome: NoShowPolicyOutcome)
 }
 
 export async function getStudentRestrictionSummary(studentId: string) {
-  return prisma.$transaction(async (tx) => {
+  return runRestrictionReadTransaction(prisma, async (tx) => {
     const activeRestriction = await findActiveRestriction(tx, studentId);
     const [offenses, restrictions, consecutiveOffenses] = await Promise.all([
       tx.studentOffense.findMany({
@@ -316,12 +321,23 @@ export async function getStudentRestrictionSummary(studentId: string) {
 }
 
 export async function listRestrictionOverview(filters: { query?: string; status?: "ALL" | "RESTRICTED" | "CLEAR" } = {}) {
-  return prisma.$transaction(async (tx) => {
-    await expireRestrictions(tx);
-    const cutoff = new Date(Date.now() - RESERVATION_RESTRICTION_POLICY.noShowGraceHours * 60 * 60 * 1000);
+  return runRestrictionReadTransaction(prisma, async (tx) => {
+    const now = new Date();
+    await expireRestrictions(tx, undefined, now);
+    const cutoff = new Date(now.getTime() - RESERVATION_RESTRICTION_POLICY.noShowGraceHours * 60 * 60 * 1000);
+    const activeRestrictionWhere: Prisma.AccountRestrictionWhereInput = {
+      status: "ACTIVE",
+      OR: [{ endsAt: null }, { endsAt: { gt: now } }]
+    };
+    const restrictionStatusWhere: Prisma.ProfileWhereInput = filters.status === "RESTRICTED"
+      ? { restrictions: { some: activeRestrictionWhere } }
+      : filters.status === "CLEAR"
+        ? { restrictions: { none: activeRestrictionWhere } }
+        : {};
     const students = await tx.profile.findMany({
       where: {
         role: "STUDENT",
+        ...restrictionStatusWhere,
         ...(filters.query
           ? {
               OR: [
@@ -341,7 +357,7 @@ export async function listRestrictionOverview(filters: { query?: string; status?
         studentNumber: true,
         department: true,
         restrictions: {
-          where: { status: "ACTIVE", OR: [{ endsAt: null }, { endsAt: { gt: new Date() } }] },
+          where: activeRestrictionWhere,
           orderBy: [{ level: "desc" }, { createdAt: "desc" }],
           take: 1
         },
@@ -359,11 +375,32 @@ export async function listRestrictionOverview(filters: { query?: string; status?
       }
     });
 
+    const studentIds = students.map((student) => student.id);
+    const activeNoShowOffenses = studentIds.length > 0
+      ? await tx.studentOffense.findMany({
+          where: {
+            studentId: { in: studentIds },
+            type: "NO_SHOW",
+            status: "ACTIVE"
+          },
+          select: { studentId: true, occurredAt: true }
+        })
+      : [];
+    const latestCompletedAtByStudent = new Map(
+      students.map((student) => [student.id, student.reservations[0]?.updatedAt] as const)
+    );
+    const consecutiveOffenseCountByStudent = new Map<string, number>();
+
+    for (const offense of activeNoShowOffenses) {
+      const latestCompletedAt = latestCompletedAtByStudent.get(offense.studentId);
+      if (latestCompletedAt && offense.occurredAt <= latestCompletedAt) continue;
+      consecutiveOffenseCountByStudent.set(
+        offense.studentId,
+        (consecutiveOffenseCountByStudent.get(offense.studentId) ?? 0) + 1
+      );
+    }
+
     const mappedStudents = students.map((student) => {
-      const latestCompletedAt = student.reservations[0]?.updatedAt;
-      const consecutiveOffenses = student.studentOffenses.filter(
-        (offense) => offense.type === "NO_SHOW" && offense.status === "ACTIVE" && (!latestCompletedAt || offense.occurredAt > latestCompletedAt)
-      ).length;
       return {
         id: student.id,
         fullName: student.fullName,
@@ -371,15 +408,9 @@ export async function listRestrictionOverview(filters: { query?: string; status?
         studentNumber: student.studentNumber,
         department: student.department,
         activeRestriction: student.restrictions[0] ? mapRestriction(student.restrictions[0]) : null,
-        consecutiveOffenses,
+        consecutiveOffenses: consecutiveOffenseCountByStudent.get(student.id) ?? 0,
         offenses: student.studentOffenses.map(mapOffense)
       };
-    });
-
-    const filteredStudents = mappedStudents.filter((student) => {
-      if (filters.status === "RESTRICTED") return Boolean(student.activeRestriction);
-      if (filters.status === "CLEAR") return !student.activeRestriction;
-      return true;
     });
 
     const candidates = await tx.reservation.findMany({
@@ -401,7 +432,7 @@ export async function listRestrictionOverview(filters: { query?: string; status?
 
     return {
       policy: RESERVATION_RESTRICTION_POLICY,
-      students: filteredStudents,
+      students: mappedStudents,
       noShowCandidates: candidates.map((reservation) => ({
         id: reservation.id,
         referenceCode: reservation.referenceCode,
@@ -429,10 +460,8 @@ export async function createManualRestriction(input: {
   }
 
   const level = input.duration === "7_DAYS" ? 1 : input.duration === "30_DAYS" ? 2 : 3;
-  const startsAt = new Date();
-  const endsAt = getRestrictionEndDate(level, startsAt);
 
-  const restriction = await prisma.$transaction(async (tx) => {
+  const restriction = await runRestrictionWriteTransaction(prisma, async (tx) => {
     const student = await tx.profile.findFirst({
       where: { id: input.studentId, role: "STUDENT" },
       select: { id: true, email: true }
@@ -440,8 +469,16 @@ export async function createManualRestriction(input: {
     if (!student) throw new HttpError(404, "Student account not found.");
 
     const existing = await findActiveRestriction(tx, input.studentId);
-    if (existing) throw new HttpError(409, "This student already has an active reservation restriction.");
+    if (existing) {
+      throw new HttpError(
+        409,
+        "This student already has an active reservation restriction.",
+        "ACTIVE_RESTRICTION_EXISTS"
+      );
+    }
 
+    const startsAt = new Date();
+    const endsAt = getRestrictionEndDate(level, startsAt);
     return tx.accountRestriction.create({
       data: {
         studentId: input.studentId,
@@ -459,9 +496,9 @@ export async function createManualRestriction(input: {
     studentId: input.studentId,
     offenseId: "",
     consecutiveOffenses: 0,
-    restriction: { id: restriction.id, level, endsAt },
-    notificationTitle: level === 3 ? "Reservation access suspended for review" : "Reservation access temporarily suspended",
-    notificationMessage: `Your reservation access was suspended ${restrictionDurationLabel(level, endsAt)}. Reason: ${restriction.reason}. You can contact Support for assistance.`
+    restriction: { id: restriction.id, level: restriction.level, endsAt: restriction.endsAt },
+    notificationTitle: restriction.level === 3 ? "Reservation access suspended for review" : "Reservation access temporarily suspended",
+    notificationMessage: `Your reservation access was suspended ${restrictionDurationLabel(restriction.level, restriction.endsAt)}. Reason: ${restriction.reason}. You can contact Support for assistance.`
   });
 
   await safelyRecordAuditLog({
@@ -469,8 +506,8 @@ export async function createManualRestriction(input: {
     action: "STUDENT_RESTRICTION_CREATED",
     entityType: "account_restriction",
     entityId: restriction.id,
-    summary: `Applied a level ${level} reservation restriction to ${input.studentId}.`,
-    metadata: { studentId: input.studentId, level, duration: input.duration, reason: restriction.reason }
+    summary: `Applied a level ${restriction.level} reservation restriction to ${input.studentId}.`,
+    metadata: { studentId: input.studentId, level: restriction.level, duration: input.duration, reason: restriction.reason }
   });
 
   return mapRestriction(restriction);
@@ -482,19 +519,21 @@ export async function liftRestriction(input: {
   liftedById: string;
   actorRole: AppRole;
 }) {
-  const result = await prisma.$transaction(async (tx) => {
+  const result = await runRestrictionWriteTransaction(prisma, async (tx) => {
     const restriction = await tx.accountRestriction.findUnique({
       where: { id: input.restrictionId },
       include: { student: { select: { id: true, email: true } } }
     });
     if (!restriction) throw new HttpError(404, "Restriction not found.");
-    if (restriction.status !== "ACTIVE") throw new HttpError(409, "This restriction is no longer active.");
+    if (restriction.status !== "ACTIVE") {
+      throw new HttpError(409, "This restriction is no longer active.", "RESTRICTION_ALREADY_INACTIVE");
+    }
     if (restriction.level === 3 && input.actorRole !== "ADMIN") {
       throw new HttpError(403, "Only administrators can lift an indefinite restriction.");
     }
 
-    const updated = await tx.accountRestriction.update({
-      where: { id: restriction.id },
+    const mutation = await tx.accountRestriction.updateMany({
+      where: { id: restriction.id, status: "ACTIVE" },
       data: {
         status: "LIFTED",
         liftedById: input.liftedById,
@@ -503,6 +542,14 @@ export async function liftRestriction(input: {
         updatedAt: new Date()
       }
     });
+    assertSingleRestrictionMutation(
+      mutation,
+      "This restriction is no longer active.",
+      "RESTRICTION_ALREADY_INACTIVE"
+    );
+
+    const updated = await tx.accountRestriction.findUnique({ where: { id: restriction.id } });
+    if (!updated) throw new HttpError(404, "Restriction not found.");
     return { updated, studentId: restriction.student.id };
   });
 
@@ -530,28 +577,34 @@ export async function liftRestriction(input: {
 }
 
 export async function overturnOffense(input: { offenseId: string; reason: string; overturnedById: string }) {
-  const result = await prisma.$transaction(async (tx) => {
+  const result = await runRestrictionWriteTransaction(prisma, async (tx) => {
     const offense = await tx.studentOffense.findUnique({
       where: { id: input.offenseId },
       include: { restriction: true }
     });
     if (!offense) throw new HttpError(404, "Offense not found.");
-    if (offense.status === "OVERTURNED") throw new HttpError(409, "This offense was already overturned.");
+    if (offense.status === "OVERTURNED") {
+      throw new HttpError(409, "This offense was already overturned.", "OFFENSE_ALREADY_OVERTURNED");
+    }
 
-    const updatedOffense = await tx.studentOffense.update({
-      where: { id: offense.id },
+    const offenseMutation = await tx.studentOffense.updateMany({
+      where: { id: offense.id, status: "ACTIVE" },
       data: {
         status: "OVERTURNED",
         overturnedById: input.overturnedById,
         overturnedAt: new Date(),
         overturnReason: input.reason.trim()
-      },
-      include: { reservation: { select: { referenceCode: true } } }
+      }
     });
+    assertSingleRestrictionMutation(
+      offenseMutation,
+      "This offense was already overturned.",
+      "OFFENSE_ALREADY_OVERTURNED"
+    );
 
     if (offense.restriction?.status === "ACTIVE") {
-      await tx.accountRestriction.update({
-        where: { id: offense.restriction.id },
+      await tx.accountRestriction.updateMany({
+        where: { id: offense.restriction.id, status: "ACTIVE" },
         data: {
           status: "LIFTED",
           liftedById: input.overturnedById,
@@ -562,6 +615,11 @@ export async function overturnOffense(input: { offenseId: string; reason: string
       });
     }
 
+    const updatedOffense = await tx.studentOffense.findUnique({
+      where: { id: offense.id },
+      include: { reservation: { select: { referenceCode: true } } }
+    });
+    if (!updatedOffense) throw new HttpError(404, "Offense not found.");
     return updatedOffense;
   });
 

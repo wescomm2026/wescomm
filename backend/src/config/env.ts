@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { z } from "zod";
+import { validateAllowedEmailDomains } from "../utils/auth-email-policy.js";
 
 const booleanEnv = z.preprocess((value) => {
   if (typeof value !== "string") return value;
@@ -35,6 +36,10 @@ const envSchema = z.object({
 });
 
 const parsedEnv = envSchema.parse(process.env);
+const allowedEmailDomains = validateAllowedEmailDomains(
+  parsedEnv.AUTH_ALLOWED_EMAIL_DOMAINS ?? parsedEnv.AUTH_ALLOWED_EMAIL_DOMAIN,
+  parsedEnv.NODE_ENV
+);
 
 function validateEncryptionKeys(value: string | undefined, currentVersion: string) {
   if (!value) return false;
@@ -106,6 +111,5 @@ if (parsedEnv.NODE_ENV === "production") {
 export const env = {
   ...parsedEnv,
   FRONTEND_ORIGINS: parsedEnv.FRONTEND_ORIGINS ?? parsedEnv.FRONTEND_ORIGIN,
-  AUTH_ALLOWED_EMAIL_DOMAINS:
-    parsedEnv.AUTH_ALLOWED_EMAIL_DOMAINS ?? parsedEnv.AUTH_ALLOWED_EMAIL_DOMAIN
+  AUTH_ALLOWED_EMAIL_DOMAINS: allowedEmailDomains.join(",")
 };

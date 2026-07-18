@@ -1,5 +1,38 @@
 import { expect, test } from "@playwright/test";
-import { apiStatuses, loginWithDevelopmentAccount, revokeQaSession, TEST_PASSWORD } from "./helpers";
+import {
+  apiStatuses,
+  dismissWelcomeGate,
+  loginWithDevelopmentAccount,
+  revokeQaSession,
+  TEST_PASSWORD
+} from "./helpers";
+
+test("school email login rejects another domain without requesting an OTP", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "Email validation runs once in the desktop project.");
+
+  const otpRequests: string[] = [];
+  page.on("request", (request) => {
+    if (/\/auth\/v1\/otp(?:\?|$)/.test(request.url())) otpRequests.push(request.url());
+  });
+
+  await page.goto("/student/dashboard?auth=login");
+  await dismissWelcomeGate(page);
+
+  const dialog = page.getByRole("dialog");
+  const emailInput = dialog.getByRole("textbox");
+  await emailInput.fill("student@gmail.com");
+  await dialog.getByRole("button", { name: "Send verification code" }).click();
+
+  await expect(dialog.getByRole("alert")).toHaveText("Please use your official @wesleyan.edu.ph account.");
+  await expect(dialog.getByRole("heading", { name: "Log in with your school email" })).toBeVisible();
+  expect(otpRequests).toEqual([]);
+
+  await emailInput.fill("student@wesleyan.edu.ph");
+  await dialog.getByRole("button", { name: "Send verification code" }).click();
+
+  await expect(dialog.getByRole("heading", { name: "Enter account password" })).toBeVisible();
+  await expect(dialog.getByText("student@wesleyan.edu.ph", { exact: true })).toBeVisible();
+});
 
 test.describe("development account role boundaries", () => {
   test.describe.configure({ timeout: 90_000 });
@@ -13,10 +46,24 @@ test.describe("development account role boundaries", () => {
     test.skip(testInfo.project.name !== "desktop-chromium", "Role matrix runs once in the desktop project.");
     await loginWithDevelopmentAccount(page, "student@wesleyan.edu.ph", /\/student\/dashboard/);
 
-    const sessionCookie = (await page.context().cookies()).find((cookie) => cookie.name === "wescomm_session");
-    expect(sessionCookie?.httpOnly).toBe(true);
-    expect(sessionCookie?.sameSite).toBe("Lax");
-    expect(sessionCookie?.path).toBe("/");
+    const sessionCookies = (await page.context().cookies()).filter((cookie) =>
+      cookie.name === "wescomm_session" || cookie.name === "__Host-wescomm_session"
+    );
+    expect(sessionCookies, "login should issue exactly one recognized WESCOMM session cookie").toHaveLength(1);
+
+    const [sessionCookie] = sessionCookies;
+    expect(sessionCookie.value).not.toBe("");
+    expect(sessionCookie.httpOnly).toBe(true);
+    expect(sessionCookie.sameSite).toBe("Lax");
+    expect(sessionCookie.path).toBe("/");
+
+    if (sessionCookie.name === "__Host-wescomm_session") {
+      expect(sessionCookie.secure).toBe(true);
+    }
+    if (new URL(page.url()).protocol === "https:") {
+      expect(sessionCookie.name).toBe("__Host-wescomm_session");
+      expect(sessionCookie.secure).toBe(true);
+    }
 
     const statuses = await apiStatuses(page, [
       "/api/backend/products",

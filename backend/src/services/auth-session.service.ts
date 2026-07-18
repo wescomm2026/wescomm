@@ -155,3 +155,10 @@ export async function revokeAuthSession(rawToken: string | null) {
     data: { revokedAt: new Date() }
   });
 }
+
+export async function revokeAuthSessionsForUser(userId: string) {
+  await prisma.authSession.updateMany({
+    where: { userId, revokedAt: null },
+    data: { revokedAt: new Date() }
+  });
+}

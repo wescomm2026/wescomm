@@ -6,13 +6,14 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode
 } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { StudentAuthModal } from "@/components/auth/StudentAuthModal";
 import { WelcomeGateOverlay } from "@/components/auth/WelcomeGateOverlay";
-import { API_BASE_URL, COOKIE_SESSION_TOKEN, onlineFetch } from "@/lib/api";
+import { API_BASE_URL, BackendApiError, COOKIE_SESSION_TOKEN, onlineFetch } from "@/lib/api";
 import { describeOtpSendError } from "@/lib/auth-errors";
 import { EMAIL_OTP_LENGTH, isCompleteEmailOtp, normalizeEmailOtp } from "@/lib/auth-otp";
 import { disableWebPushNotifications } from "@/lib/push-notifications";
@@ -97,6 +98,12 @@ type BackendProfile = {
   avatarUrl: string | null;
 };
 
+type ProfileCheckResult =
+  | { status: "authenticated"; session: StudentUser }
+  | { status: "unauthorized" }
+  | { status: "transient" }
+  | { status: "stale" };
+
 function normalizeSession(value: Partial<StudentUser>): StudentUser {
   return {
     ...emptyStudentProfile,
@@ -136,7 +143,12 @@ async function loadProfileSession(accessToken?: string): Promise<StudentUser> {
   });
   const profilePayload = await profileResponse.json().catch(() => null);
   if (!profileResponse.ok) {
-    throw new Error(profilePayload?.error ?? "Unable to load account profile.");
+    throw new BackendApiError(
+      profileResponse.status,
+      profilePayload?.error ?? "Unable to load account profile.",
+      profilePayload?.code,
+      profilePayload?.details
+    );
   }
 
   return mapProfileToSession(profilePayload.profile as BackendProfile);
@@ -195,6 +207,9 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
   const [welcomeGateUser, setWelcomeGateUser] = useState<StudentUser | "GUEST" | null>("GUEST");
   const [welcomeGateTargetPath, setWelcomeGateTargetPath] = useState(pathname);
   const [welcomeContentReady, setWelcomeContentReady] = useState(false);
+  const mountedRef = useRef(false);
+  const profileCheckRef = useRef<Promise<ProfileCheckResult> | null>(null);
+  const sessionGenerationRef = useRef(0);
   const welcomeTargetNeedsContentReady = READINESS_AWARE_DASHBOARD_PATHS.has(welcomeGateTargetPath);
   const dismissWelcomeGate = useCallback(() => setWelcomeGateUser(null), []);
 
@@ -226,6 +241,60 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
       showWelcomeGate(session, options.welcomeGateTargetPath ?? window.location.pathname);
     }
   }, [showWelcomeGate]);
+
+  const clearConfirmedSession = useCallback(() => {
+    sessionGenerationRef.current += 1;
+    profileCheckRef.current = null;
+    window.sessionStorage.removeItem(LEGACY_DEV_SESSION_KEY);
+    window.localStorage.removeItem(LEGACY_SESSION_KEY);
+    clearLegacyBrowserAuthTokens();
+    clearStaffSession();
+    setUser(null);
+    setWelcomeGateUser(null);
+  }, []);
+
+  const revalidateProfileSession = useCallback(() => {
+    if (profileCheckRef.current) return profileCheckRef.current;
+    const sessionGeneration = sessionGenerationRef.current;
+
+    const profileCheck = (async (): Promise<ProfileCheckResult> => {
+      try {
+        const session = await loadProfileSession();
+        if (sessionGeneration !== sessionGenerationRef.current) return { status: "stale" };
+        if (mountedRef.current) persistSession(session);
+        return { status: "authenticated", session };
+      } catch (error) {
+        if (sessionGeneration !== sessionGenerationRef.current) return { status: "stale" };
+        const confirmedUnauthorized =
+          error instanceof BackendApiError && (error.status === 401 || error.status === 403);
+
+        if (confirmedUnauthorized) {
+          if (mountedRef.current && sessionGeneration === sessionGenerationRef.current) {
+            clearConfirmedSession();
+          }
+          return { status: "unauthorized" };
+        }
+
+        // Offline, network, rate-limit, and server failures do not prove that
+        // the HttpOnly session is invalid. Keep the current account in memory
+        // and retry when the browser reconnects or becomes active again.
+        return { status: "transient" };
+      }
+    })();
+
+    profileCheckRef.current = profileCheck;
+    void profileCheck.finally(() => {
+      if (profileCheckRef.current === profileCheck) profileCheckRef.current = null;
+    });
+    return profileCheck;
+  }, [clearConfirmedSession, persistSession]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!welcomeGateUser) return undefined;
@@ -279,27 +348,19 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
     }
 
     async function restoreSession() {
-      try {
-        window.sessionStorage.removeItem(LEGACY_DEV_SESSION_KEY);
-        window.localStorage.removeItem(LEGACY_SESSION_KEY);
-        clearLegacyBrowserAuthTokens();
-        const verifiedSession = await loadProfileSession();
-        if (cancelled) return;
+      window.sessionStorage.removeItem(LEGACY_DEV_SESSION_KEY);
+      window.localStorage.removeItem(LEGACY_SESSION_KEY);
+      clearLegacyBrowserAuthTokens();
 
-        persistSession(verifiedSession, {
-          showWelcomeGate: true,
-          welcomeGateTargetPath: window.location.pathname
-        });
-      } catch {
-        if (!cancelled) {
-          window.sessionStorage.removeItem(LEGACY_DEV_SESSION_KEY);
-          clearStaffSession();
-          setUser(null);
-          if (!shouldOpenLogin) showGuestWelcomeGate(window.location.pathname);
-        }
-      } finally {
-        if (!cancelled) setReady(true);
+      const result = await revalidateProfileSession();
+      if (cancelled) return;
+
+      if (result.status === "authenticated") {
+        showWelcomeGate(result.session, window.location.pathname);
+      } else if (result.status !== "stale" && !shouldOpenLogin) {
+        showGuestWelcomeGate(window.location.pathname);
       }
+      setReady(true);
     }
 
     void restoreSession();
@@ -307,12 +368,35 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [persistSession, showGuestWelcomeGate]);
+  }, [revalidateProfileSession, showGuestWelcomeGate, showWelcomeGate]);
+
+  useEffect(() => {
+    if (!ready) return;
+
+    const refreshSession = () => {
+      void revalidateProfileSession();
+    };
+    const refreshVisibleSession = () => {
+      if (document.visibilityState === "visible") refreshSession();
+    };
+
+    window.addEventListener("online", refreshSession);
+    window.addEventListener("focus", refreshSession);
+    document.addEventListener("visibilitychange", refreshVisibleSession);
+
+    return () => {
+      window.removeEventListener("online", refreshSession);
+      window.removeEventListener("focus", refreshSession);
+      document.removeEventListener("visibilitychange", refreshVisibleSession);
+    };
+  }, [ready, revalidateProfileSession]);
 
   const openAuth = useCallback(() => setModalOpen(true), []);
   const closeAuth = useCallback(() => setModalOpen(false), []);
 
   const saveSession = useCallback((session: StudentUser) => {
+    sessionGenerationRef.current += 1;
+    profileCheckRef.current = null;
     const dashboardPath = getDashboardPath(session.role);
     if (dashboardPath !== window.location.pathname) {
       resetWelcomeContentReady(dashboardPath);
@@ -503,6 +587,9 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(async () => {
     if (!navigator.onLine) return false;
+
+    sessionGenerationRef.current += 1;
+    profileCheckRef.current = null;
 
     const accessToken = user?.accessToken ?? "";
     if (accessToken) {
