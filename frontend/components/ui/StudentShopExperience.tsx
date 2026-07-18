@@ -166,8 +166,8 @@ export function StudentShopExperience() {
       })
       .catch((productsError) => {
         if (!cancelled) {
-          setProducts([]);
           if (!background) {
+            setProducts([]);
             setError(productsError instanceof Error ? productsError.message : "Unable to load shop items.");
           }
         }
@@ -187,6 +187,7 @@ export function StudentShopExperience() {
 
   useEffect(() => {
     const refreshProducts = () => {
+      if (!navigator.onLine) return;
       loadProducts({ background: true });
     };
 

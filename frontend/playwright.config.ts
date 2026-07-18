@@ -8,6 +8,7 @@ const backendPort = Number(process.env.E2E_BACKEND_PORT ?? 4100);
 const baseURL = process.env.E2E_BASE_URL ?? `http://127.0.0.1:${frontendPort}`;
 const backendHealthURL = process.env.E2E_BACKEND_HEALTH_URL ?? `http://127.0.0.1:${backendPort}/api/health/ready`;
 const startLocalServers = process.env.E2E_SKIP_WEBSERVER !== "true";
+const useProductionServers = process.env.E2E_USE_PRODUCTION === "true";
 
 export default defineConfig({
   testDir: "./e2e",
@@ -42,7 +43,7 @@ export default defineConfig({
   webServer: startLocalServers
     ? [
         {
-          command: "npm run dev",
+          command: useProductionServers ? "npm run build && npm start" : "npm run dev",
           cwd: backendRoot,
           env: {
             ...process.env,
@@ -52,12 +53,14 @@ export default defineConfig({
           },
           url: backendHealthURL,
           reuseExistingServer: !process.env.CI,
-          timeout: 120_000,
+          timeout: useProductionServers ? 240_000 : 120_000,
           stdout: "pipe",
           stderr: "pipe"
         },
         {
-          command: `npm run dev -- -p ${frontendPort}`,
+          command: useProductionServers
+            ? `npm run build && npm run start -- -p ${frontendPort}`
+            : `npm run dev -- -p ${frontendPort}`,
           cwd: frontendRoot,
           env: {
             ...process.env,
@@ -69,7 +72,7 @@ export default defineConfig({
           },
           url: baseURL,
           reuseExistingServer: !process.env.CI,
-          timeout: 120_000,
+          timeout: useProductionServers ? 240_000 : 120_000,
           stdout: "pipe",
           stderr: "pipe"
         }

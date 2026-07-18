@@ -1,4 +1,4 @@
-import { API_BASE_URL, COOKIE_SESSION_TOKEN } from "@/lib/api";
+import { API_BASE_URL, COOKIE_SESSION_TOKEN, onlineFetch } from "@/lib/api";
 
 const STAFF_TOKEN_KEY = "wescomm_staff_access_token";
 const STAFF_EMAIL_KEY = "wescomm_staff_email";
@@ -105,7 +105,7 @@ export function clearStaffSession() {
 }
 
 async function staffFetch<T>(path: string, token: string, init?: RequestInit) {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const response = await onlineFetch(`${API_BASE_URL}${path}`, {
     ...init,
     credentials: "include",
     headers: {

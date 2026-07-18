@@ -12,9 +12,10 @@ import {
 import { usePathname, useRouter } from "next/navigation";
 import { StudentAuthModal } from "@/components/auth/StudentAuthModal";
 import { WelcomeGateOverlay } from "@/components/auth/WelcomeGateOverlay";
-import { API_BASE_URL, COOKIE_SESSION_TOKEN } from "@/lib/api";
+import { API_BASE_URL, COOKIE_SESSION_TOKEN, onlineFetch } from "@/lib/api";
 import { describeOtpSendError } from "@/lib/auth-errors";
 import { EMAIL_OTP_LENGTH, isCompleteEmailOtp, normalizeEmailOtp } from "@/lib/auth-otp";
+import { disableWebPushNotifications } from "@/lib/push-notifications";
 import { clearStaffSession, storeStaffSession } from "@/lib/staff-api";
 import { getSupabaseBrowserClient, hasSupabaseBrowserConfig } from "@/lib/supabase-browser";
 import {
@@ -59,7 +60,7 @@ type StudentAuthContextValue = {
   loginWithTestAccount: (email: string, password: string) => Promise<AuthResult>;
   completeEmailLogin: () => Promise<AuthResult>;
   updateProfile: (input: StudentProfileInput) => void;
-  logout: () => void;
+  logout: () => Promise<boolean>;
 };
 
 const LEGACY_DEV_SESSION_KEY = "wescomm_dev_session";
@@ -127,7 +128,7 @@ function getDashboardPath(role: AppRole) {
 }
 
 async function loadProfileSession(accessToken?: string): Promise<StudentUser> {
-  const profileResponse = await fetch(`${API_BASE_URL}/auth/me`, {
+  const profileResponse = await onlineFetch(`${API_BASE_URL}/auth/me`, {
     credentials: "include",
     headers: accessToken && accessToken !== COOKIE_SESSION_TOKEN
       ? { Authorization: `Bearer ${accessToken}` }
@@ -142,7 +143,7 @@ async function loadProfileSession(accessToken?: string): Promise<StudentUser> {
 }
 
 async function establishBackendSession(accessToken: string): Promise<StudentUser> {
-  const response = await fetch(`${API_BASE_URL}/auth/session`, {
+  const response = await onlineFetch(`${API_BASE_URL}/auth/session`, {
     method: "POST",
     credentials: "include",
     headers: {
@@ -448,7 +449,7 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
 
     try {
       if (DEVELOPMENT_LOGIN_ENABLED) {
-        const response = await fetch(`${API_BASE_URL}/auth/dev-login`, {
+        const response = await onlineFetch(`${API_BASE_URL}/auth/dev-login`, {
           method: "POST",
           credentials: "include",
           headers: {
@@ -500,21 +501,36 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  const logout = useCallback(() => {
-    void fetch(`${API_BASE_URL}/auth/logout`, {
-      method: "POST",
-      credentials: "include",
-      keepalive: true
-    });
+  const logout = useCallback(async () => {
+    if (!navigator.onLine) return false;
+
+    const accessToken = user?.accessToken ?? "";
+    if (accessToken) {
+      await disableWebPushNotifications(accessToken).catch(() => undefined);
+    }
+
+    let response: Response;
+    try {
+      response = await onlineFetch(`${API_BASE_URL}/auth/logout`, {
+        method: "POST",
+        credentials: "include",
+        keepalive: true
+      });
+    } catch {
+      return false;
+    }
+
+    if (!response.ok && response.status !== 401) return false;
     if (hasSupabaseBrowserConfig()) {
-      void getSupabaseBrowserClient().auth.signOut({ scope: "local" });
+      await getSupabaseBrowserClient().auth.signOut({ scope: "local" }).catch(() => undefined);
     }
     window.sessionStorage.removeItem(LEGACY_DEV_SESSION_KEY);
     window.localStorage.removeItem(LEGACY_SESSION_KEY);
     clearStaffSession();
     setUser(null);
     setWelcomeGateUser(null);
-  }, []);
+    return true;
+  }, [user?.accessToken]);
 
   const value = useMemo(
     () => ({

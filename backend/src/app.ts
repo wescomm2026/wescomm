@@ -46,7 +46,11 @@ app.use(morgan(
 ));
 app.use(requireTrustedCookieOrigin);
 
-app.use("/api", apiRoutes);
+app.use("/api", (_request, response, next) => {
+  response.setHeader("Cache-Control", "no-store");
+  response.setHeader("Pragma", "no-cache");
+  next();
+}, apiRoutes);
 
 app.use((_request, _response, next) => {
   next(new HttpError(404, "Route not found."));

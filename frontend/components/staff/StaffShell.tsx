@@ -274,8 +274,9 @@ export function StaffShell({
     router.push(`${routeBase}/inventory?query=${encodeURIComponent(query)}`);
   };
 
-  const signOut = () => {
-    logout();
+  const signOut = async () => {
+    const signedOut = await logout();
+    if (!signedOut) return;
     clearStaffSession();
     router.push("/");
   };

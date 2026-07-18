@@ -32,23 +32,38 @@ export function DashboardProductsProvider({ children }: { children: ReactNode })
   useEffect(() => {
     let cancelled = false;
 
-    loadDashboardProducts()
-      .then((nextProducts) => {
-        if (cancelled) return;
-        setProducts(nextProducts);
-        setStatus("success");
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setProducts([]);
-        setStatus("error");
-      })
-      .finally(() => {
-        if (!cancelled) markWelcomeContentReady(window.location.pathname);
-      });
+    const refreshProducts = (background = false) => {
+      if (!navigator.onLine) {
+        if (!background) {
+          setStatus("error");
+          markWelcomeContentReady(window.location.pathname);
+        }
+        return;
+      }
+
+      void loadDashboardProducts()
+        .then((nextProducts) => {
+          if (cancelled) return;
+          setProducts(nextProducts);
+          setStatus("success");
+        })
+        .catch(() => {
+          if (cancelled || background) return;
+          setProducts([]);
+          setStatus("error");
+        })
+        .finally(() => {
+          if (!cancelled && !background) markWelcomeContentReady(window.location.pathname);
+        });
+    };
+
+    const onProductsRefresh = () => refreshProducts(true);
+    refreshProducts();
+    window.addEventListener("wescomm:products-refresh", onProductsRefresh);
 
     return () => {
       cancelled = true;
+      window.removeEventListener("wescomm:products-refresh", onProductsRefresh);
     };
   }, []);
 

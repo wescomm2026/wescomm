@@ -8,6 +8,7 @@
   "scripts": {
     "dev": "next dev",
     "start": "next start",
+    "prebuild": "npm run pwa:prepare",
     "build": "next build",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
@@ -16,6 +17,8 @@
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:report": "playwright show-report",
     "test:e2e:install": "playwright install chromium",
+    "icons:pwa": "node scripts/generate-pwa-icons.cjs",
+    "pwa:prepare": "node scripts/generate-pwa-icons.cjs && node scripts/prepare-service-worker.cjs",
     "icons:vectorize": "node scripts/vectorize-icons.cjs"
   },
   "dependencies": {

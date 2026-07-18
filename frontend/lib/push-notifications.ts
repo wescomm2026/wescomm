@@ -4,6 +4,7 @@ import {
   savePushSubscriptionToApi,
   sendPushTestFromApi
 } from "@/lib/api";
+import { registerWescommServiceWorker } from "@/lib/service-worker";
 
 export type PushCapabilityState =
   | "unsupported"
@@ -49,7 +50,7 @@ export async function getWebPushState(): Promise<PushCapabilityState> {
 }
 
 async function getServiceWorkerRegistration() {
-  const registration = await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+  const registration = await registerWescommServiceWorker();
   await registration.update().catch(() => undefined);
   await navigator.serviceWorker.ready;
   return registration;
@@ -60,16 +61,16 @@ export async function enableWebPushNotifications(token: string) {
     throw new Error("This browser does not support web push notifications.");
   }
 
-  const config = await getPushPublicConfigFromApi();
-  if (!config.enabled || !config.publicKey) {
-    throw new Error("Web push is not configured yet. Add VAPID keys on the backend first.");
-  }
-
   const permission = await Notification.requestPermission();
   if (permission !== "granted") {
     throw new Error(permission === "denied"
       ? "Notifications are blocked. Enable them in your browser or phone site settings."
       : "Notification permission was not granted.");
+  }
+
+  const config = await getPushPublicConfigFromApi();
+  if (!config.enabled || !config.publicKey) {
+    throw new Error("Web push is not configured yet. Add VAPID keys on the backend first.");
   }
 
   const registration = await getServiceWorkerRegistration();
@@ -91,8 +92,10 @@ export async function disableWebPushNotifications(token: string) {
   const subscription = await registration?.pushManager.getSubscription();
   if (!subscription) return;
 
-  await removePushSubscriptionFromApi(token, subscription.endpoint);
-  await subscription.unsubscribe();
+  await Promise.all([
+    removePushSubscriptionFromApi(token, subscription.endpoint).catch(() => undefined),
+    subscription.unsubscribe()
+  ]);
 }
 
 export async function sendWebPushTest(token: string) {

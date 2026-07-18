@@ -260,6 +260,28 @@ export class BackendApiError extends Error {
   }
 }
 
+export const OFFLINE_API_MESSAGE =
+  "You are offline. Connect to the internet, then try again.";
+
+export async function onlineFetch(input: RequestInfo | URL, init?: RequestInit) {
+  if (typeof navigator !== "undefined" && !navigator.onLine) {
+    throw new BackendApiError(0, OFFLINE_API_MESSAGE, "OFFLINE");
+  }
+
+  try {
+    return await fetch(input, { ...init, cache: "no-store" });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") throw error;
+    throw new BackendApiError(
+      0,
+      typeof navigator !== "undefined" && !navigator.onLine
+        ? OFFLINE_API_MESSAGE
+        : "Unable to reach WESCOMM services. Check your connection and try again.",
+      "NETWORK_UNAVAILABLE"
+    );
+  }
+}
+
 export type BackendConversationMessage = {
   id: string;
   conversationId: string;
@@ -408,7 +430,7 @@ export function mapBackendProduct(product: BackendProduct): CartProduct {
 }
 
 export async function apiFetch<T>(path: string, init?: RequestInit) {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const response = await onlineFetch(`${API_BASE_URL}${path}`, {
     ...init,
     credentials: "include",
     headers: {
@@ -426,7 +448,7 @@ export async function apiFetch<T>(path: string, init?: RequestInit) {
 }
 
 export async function authApiFetch<T>(path: string, token: string, init?: RequestInit) {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const response = await onlineFetch(`${API_BASE_URL}${path}`, {
     ...init,
     credentials: "include",
     headers: {

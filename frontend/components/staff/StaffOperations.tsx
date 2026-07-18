@@ -508,7 +508,7 @@ export function StaffInventoryExperience() {
       if (message.toLowerCase().includes("token") || message.toLowerCase().includes("access")) {
         clearStaffSession();
         setToken("");
-        logout();
+        void logout();
         openAuth();
       }
     } finally {
@@ -1774,9 +1774,10 @@ export function StaffSettingsExperience() {
     ["Reservation reminders", "Notify this account when reservations need staff action.", reservations, setReservations],
     ["Receipt verification queue", "Notify this account when receipts are waiting for verification.", receipts, setReceipts]
   ];
-  const signOut = () => {
+  const signOut = async () => {
+    const signedOut = await logout();
+    if (!signedOut) return;
     clearStaffSession();
-    logout();
     window.location.assign("/");
   };
 

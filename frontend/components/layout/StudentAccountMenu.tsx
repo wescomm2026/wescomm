@@ -12,7 +12,7 @@ export function StudentAccountMenu({
   onLogout
 }: {
   user: StudentUser;
-  onLogout: () => void;
+  onLogout: () => Promise<boolean>;
 }) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -85,7 +85,7 @@ export function StudentAccountMenu({
             type="button"
             onClick={() => {
               setOpen(false);
-              onLogout();
+              void onLogout();
             }}
             className="flex min-h-12 w-full items-center gap-3 rounded-md px-3 text-sm font-semibold text-red-600 hover:bg-red-50"
           >
