@@ -62,6 +62,7 @@ Use one Vercel project with the `Services` preset. The root `vercel.json` builds
 `frontend` as Next.js and `backend` as Express, then serves both from one domain.
 
 - [GitHub and Vercel deployment guide](txt_files/WESCOMM_GITHUB_VERCEL_DEPLOYMENT.txt)
+- [Backend database migration guide](backend/README.md#database-migrations)
 - [QA staging runbook](txt_files/WESCOMM_QA_STAGING_RUNBOOK.txt)
 - [Security setup](txt_files/WESCOMM_FREE_SECURITY_SETUP.txt)
 

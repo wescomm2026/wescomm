@@ -32,12 +32,21 @@ npm run prisma:generate
 npm run dev
 ```
 
-6. Run additional SQL files in Supabase SQL Editor when a feature table is added:
+6. For a new Supabase project, run the platform bootstrap and feature SQL files
+   in the documented order before recording the Prisma baseline. These files own
+   Supabase Auth integration, RLS, storage, Realtime, checks, and seed data that
+   Prisma cannot fully represent:
 
 ```txt
-../txt_files/DATABASE_AUDIT_LOGS_SQL.txt
+../txt_files/SUPABASE_SQL_EDITOR_COMMANDS.txt
+../txt_files/DATABASE_WEB_PUSH_NOTIFICATIONS_SQL.txt
 ../txt_files/DATABASE_AUTH_SESSIONS_SQL.txt
+../txt_files/DATABASE_RESERVATION_IDEMPOTENCY_SQL.txt
+../txt_files/DATABASE_STUDENT_RESERVATION_RESTRICTIONS_SQL.txt
+../txt_files/DATABASE_AUDIT_LOGS_SQL.txt
 ```
+
+After the SQL bootstrap is complete, follow **Database migrations** below.
 
 Complete free security setup and key-rotation instructions:
 
@@ -158,15 +167,49 @@ npm run test:ci
 
 The suite also covers reservation status transitions, stock-status derivation, cookie-origin CSRF policy, field encryption, and per-user rate limiting. Browser role and UX checks are documented in `../txt_files/WESCOMM_QA_STAGING_RUNBOOK.txt`.
 
-## Student Reservation Access Policy
+## Database migrations
 
-For a fresh database, first run `../txt_files/DATABASE_STUDENT_RESERVATION_RESTRICTIONS_SQL.txt` once in the Supabase SQL Editor. Then, for both fresh and existing environments, apply the checked-in Prisma migrations before deploying the backend:
+The Supabase database existed before Prisma Migrate was introduced. The
+`0_init` migration is its Prisma-managed baseline; it must be recorded as
+already applied once on every existing or externally bootstrapped database.
+
+Before the one-time baseline, create a backup and confirm that the SQL bootstrap
+above completed. Then run:
+
+```powershell
+cd backend
+npm run prisma:migrate:baseline:existing
+npm run prisma:migrate:deploy
+npm run prisma:migrate:verify
+```
+
+The baseline command first performs a read-only schema preflight. It refuses to
+record `0_init` if required tables, columns, or enum values are missing, or if
+the pending restriction index appears to have been manually applied already.
+
+For every later release, do not baseline again. Run only:
 
 ```powershell
 npm run prisma:migrate:deploy
+npm run prisma:migrate:verify
 ```
 
-The active-restriction migration expires stale rows, deterministically resolves any duplicate active restrictions, and adds the database-level invariant that each student can have at most one `ACTIVE` restriction. Run migrations as an explicit release step; application builds do not mutate the production database automatically.
+Never mark `20260718000000_enforce_single_active_restriction` as applied unless
+its SQL was executed manually and its exact partial unique index was verified.
+`migrate deploy` does not detect schema drift, and `db push` is not a production
+migration workflow.
+
+The Prisma baseline recreates the Prisma-managed structure for CI and local
+PostgreSQL. It does not replace the Supabase SQL bootstrap for Auth triggers,
+RLS policies, storage, Realtime, custom checks, or `audit_logs`.
+
+## Student Reservation Access Policy
+
+The active-restriction migration expires stale rows, deterministically resolves
+any duplicate active restrictions, and adds the database-level invariant that
+each student can have at most one `ACTIVE` restriction. It briefly blocks writes
+to that table, so apply it during a low-traffic release window. Application
+builds do not mutate the production database automatically.
 
 The restriction affects reservation submission only. Students can still browse items, view receipts, use Support, and manage their profile.
 

@@ -142,15 +142,38 @@ separately but deploy together under one project, domain, and release.
 
 10. Do not add BACKEND_API_URL on Vercel Services. Browser API requests use the
     same domain at /api, and Vercel routes them directly to Express.
-11. Click Deploy.
-12. Open the assigned project URL and note its exact origin, for example:
+11. Before the first backend release to an existing Supabase database, create a
+    database backup and run this one-time baseline flow locally with the same
+    DATABASE_URL and DIRECT_URL configured in backend/.env:
+
+      cd backend
+      npm run prisma:migrate:baseline:existing
+      npm run prisma:migrate:deploy
+      npm run prisma:migrate:verify
+
+    The baseline preflight is read-only. The deploy step applies the pending
+    migration, can update restriction status rows, and briefly locks restriction
+    writes. Use a low-traffic release window. Do not mark the restriction
+    migration itself as applied unless its SQL was already run and verified.
+
+    On later releases, run only:
+
+      cd backend
+      npm run prisma:migrate:deploy
+      npm run prisma:migrate:verify
+
+    A new Supabase project must first receive the SQL bootstrap described in
+    backend/README.md. Prisma migrations alone do not provision all Supabase RLS,
+    Auth triggers, storage policies, Realtime settings, checks, or seed data.
+12. Click Deploy.
+13. Open the assigned project URL and note its exact origin, for example:
 
    https://wescomm.vercel.app
 
-13. If Vercel assigned a different URL, update FRONTEND_ORIGIN and
+14. If Vercel assigned a different URL, update FRONTEND_ORIGIN and
     FRONTEND_ORIGINS to that exact origin, without a trailing slash, then
     redeploy the same project.
-14. Test:
+15. Test:
 
    https://YOUR_PROJECT.vercel.app/
    https://YOUR_PROJECT.vercel.app/api/health
