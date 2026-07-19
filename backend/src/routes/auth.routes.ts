@@ -64,7 +64,7 @@ authRoutes.post(
   "/dev-login",
   devLoginLimiter,
   asyncHandler(async (request, response) => {
-    if (env.NODE_ENV === "production" || !env.AUTH_ENABLE_DEV_LOGIN || !env.AUTH_DEV_LOGIN_PASSWORD) {
+    if (env.IS_PRODUCTION_DEPLOYMENT || !env.AUTH_ENABLE_DEV_LOGIN || !env.AUTH_DEV_LOGIN_PASSWORD) {
       throw new HttpError(403, "Development login is disabled.");
     }
 

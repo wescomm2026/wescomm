@@ -73,6 +73,9 @@ jobs:
       NEXT_TELEMETRY_DISABLED: "1"
       NEXT_PUBLIC_APP_ENV: development
       NEXT_PUBLIC_API_URL: /api/backend
+      NEXT_PUBLIC_SUPABASE_URL: https://wescomm-ci.invalid
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: wescomm-ci-public-key
+      NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: wescomm-ci-public-key
     steps:
       - name: Check out repository
         uses: actions/checkout@v4

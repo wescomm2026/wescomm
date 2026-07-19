@@ -156,7 +156,7 @@ Frontend production variable:
 
 BACKEND_API_URL is server-only. The browser uses the same-origin /api/backend proxy so secure cookies continue working even when the backend is deployed on a different free-host domain.
 
-The three fixed test accounts intentionally work only when NODE_ENV is not production and AUTH_ENABLE_DEV_LOGIN=true.
+The three fixed test accounts use password login only in local development or an isolated Vercel Preview/QA deployment. Preview still uses NODE_ENV=production for secure cookies and TLS; verified Vercel System Environment Variables (VERCEL=1 and VERCEL_ENV=preview) provide the deployment boundary. Production must keep AUTH_ENABLE_DEV_LOGIN=false.
 
 Key rotation later
 ------------------

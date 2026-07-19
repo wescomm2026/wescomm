@@ -61,7 +61,8 @@ AUTH_ALLOWED_EMAIL_DOMAINS=wesleyan.edu.ph
 For temporary database-profile test login only:
 
 AUTH_ENABLE_DEV_LOGIN=true
-AUTH_DEV_LOGIN_PASSWORD=1234Aa
+# Server-only; provision privately; never commit.
+AUTH_DEV_LOGIN_PASSWORD=
 
 Turn off test login for production:
 
@@ -98,8 +99,7 @@ Testing Notes
   student@wesleyan.edu.ph
   staff@wesleyan.edu.ph
   admin@wesleyan.edu.ph
-- Test password:
-  1234Aa
+- Test password: distribute through an approved password manager; never store it in Git.
 
 Production Notes
 ----------------

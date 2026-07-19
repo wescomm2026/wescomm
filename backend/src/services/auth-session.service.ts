@@ -4,10 +4,19 @@ import { env } from "../config/env.js";
 import { prisma } from "../lib/prisma.js";
 import type { AppRole, Profile } from "../types/app.js";
 import { decryptSensitiveText } from "../utils/field-encryption.js";
+import {
+  isTransientPrismaConnectionError,
+  withTransientPrismaReadRetry
+} from "../utils/prisma-retry.js";
 
 const DEVELOPMENT_COOKIE_NAME = "wescomm_session";
 const PRODUCTION_COOKIE_NAME = "__Host-wescomm_session";
 const LAST_SEEN_WRITE_INTERVAL_MS = 15 * 60 * 1000;
+
+export const AUTH_SESSION_TRANSACTION_OPTIONS = Object.freeze({
+  maxWait: 10_000,
+  timeout: 20_000
+});
 
 function cookieName() {
   return env.NODE_ENV === "production" ? PRODUCTION_COOKIE_NAME : DEVELOPMENT_COOKIE_NAME;
@@ -118,7 +127,7 @@ export async function issueAuthSession(input: {
         expiresAt
       }
     });
-  });
+  }, AUTH_SESSION_TRANSACTION_OPTIONS);
 
   input.response.append(
     "Set-Cookie",
@@ -128,18 +137,24 @@ export async function issueAuthSession(input: {
 
 export async function resolveAuthSession(rawToken: string) {
   const now = new Date();
-  const session = await prisma.authSession.findUnique({
+  const session = await withTransientPrismaReadRetry(() => prisma.authSession.findUnique({
     where: { tokenHash: hashToken(rawToken) },
     include: { user: true }
-  });
+  }));
 
   if (!session || session.revokedAt || session.expiresAt <= now) return null;
 
   if (now.getTime() - session.lastSeenAt.getTime() >= LAST_SEEN_WRITE_INTERVAL_MS) {
-    await prisma.authSession.update({
-      where: { id: session.id },
-      data: { lastSeenAt: now }
-    });
+    try {
+      await prisma.authSession.update({
+        where: { id: session.id },
+        data: { lastSeenAt: now }
+      });
+    } catch (error) {
+      // Activity telemetry must not invalidate an otherwise verified session
+      // during a brief database connection or pool-acquisition failure.
+      if (!isTransientPrismaConnectionError(error)) throw error;
+    }
   }
 
   return {

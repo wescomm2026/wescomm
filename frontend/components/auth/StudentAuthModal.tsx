@@ -297,6 +297,11 @@ export function StudentAuthModal({ open, onClose }: { open: boolean; onClose: ()
 
   if (!open || !mounted) return null;
 
+  const enteredSchoolEmail = normalizeSchoolEmailInput(emailName, allowedEmailDomain);
+  const willUsePassword = Boolean(
+    enteredSchoolEmail && isPasswordLoginAvailable(enteredSchoolEmail.email)
+  );
+
   const loadingCopy = {
     send: {
       title: "Sending verification code",
@@ -432,10 +437,10 @@ export function StudentAuthModal({ open, onClose }: { open: boolean; onClose: ()
                 >
                   <Mail className="size-5" />
                   {loading === "send"
-                    ? "Sending verification..."
+                    ? willUsePassword ? "Continuing..." : "Sending verification..."
                     : resendSeconds > 0
                       ? `Try again in ${resendSeconds}s`
-                      : "Send verification code"}
+                      : willUsePassword ? "Continue to password" : "Send verification code"}
                 </button>
               </form>
             ) : step === "code" ? (

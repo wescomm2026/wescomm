@@ -21,7 +21,7 @@ export async function loginWithDevelopmentAccount(
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByRole("heading", { name: "Log in with your school email" })).toBeVisible();
   await dialog.getByRole("textbox").fill(email.split("@")[0]);
-  await dialog.getByRole("button", { name: "Send verification code" }).click();
+  await dialog.getByRole("button", { name: "Continue to password" }).click();
 
   await expect(dialog.getByRole("heading", { name: "Enter account password" })).toBeVisible();
   await dialog.getByLabel("Password").fill(TEST_PASSWORD);

@@ -9,8 +9,9 @@ This document divides WESCOMM quality assurance into three clear areas:
 - Gio: Backend, database behavior, APIs, and business workflows
 - Cherry: Security, privacy, authorization, and abuse protection
 
-Staging website:
-  https://wescomm.vercel.app
+QA Preview website:
+  Use the current branch-specific Vercel Preview URL shared by the project owner.
+  Do not use the public Production URL for shared-password testing.
 
 Test accounts:
   student@wesleyan.edu.ph

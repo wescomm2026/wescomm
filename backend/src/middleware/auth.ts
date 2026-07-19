@@ -14,14 +14,13 @@ import {
 import { type AppRole, type Profile, type RawProfile, mapProfile } from "../types/app.js";
 import { isEmailAllowedForDomains, normalizeAllowedEmailDomains } from "../utils/auth-email-policy.js";
 import { HttpError } from "../utils/http-error.js";
-import { verifyDevAuthToken } from "../utils/dev-auth-token.js";
 
 export type AuthContext = {
   id: string;
   email: string;
   role: AppRole;
   profile: Profile;
-  method: "COOKIE" | "BEARER" | "DEV_BEARER";
+  method: "COOKIE" | "BEARER";
   sessionId?: string;
 };
 
@@ -87,31 +86,6 @@ export async function requireAuth(request: AuthenticatedRequest, response: Respo
         method: "COOKIE",
         sessionId: session.sessionId
       };
-      return next();
-    }
-
-    if (token.startsWith("dev.")) {
-      if (!env.AUTH_ENABLE_DEV_LOGIN) return next(new HttpError(401, "Development login is disabled."));
-
-      const payload = verifyDevAuthToken(token);
-      if (!payload) return next(new HttpError(401, "Invalid or expired development token."));
-
-      const profile = await loadProfileById(payload.sub);
-      if (!profile || profile.email.toLowerCase() !== payload.email.toLowerCase()) {
-        return next(new HttpError(401, "Development login profile was not found."));
-      }
-      if (!isEmailAllowedForDomains(profile.email, allowedEmailDomains)) {
-        return next(approvedSchoolEmailError());
-      }
-
-      request.auth = {
-        id: profile.id,
-        email: profile.email,
-        role: profile.role,
-        profile,
-        method: "DEV_BEARER"
-      };
-
       return next();
     }
 

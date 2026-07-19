@@ -28,7 +28,7 @@ test("school email login rejects another domain without requesting an OTP", asyn
   expect(otpRequests).toEqual([]);
 
   await emailInput.fill("student@wesleyan.edu.ph");
-  await dialog.getByRole("button", { name: "Send verification code" }).click();
+  await dialog.getByRole("button", { name: "Continue to password" }).click();
 
   await expect(dialog.getByRole("heading", { name: "Enter account password" })).toBeVisible();
   await expect(dialog.getByText("student@wesleyan.edu.ph", { exact: true })).toBeVisible();

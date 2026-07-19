@@ -1,6 +1,10 @@
 import "dotenv/config";
 import { z } from "zod";
 import { normalizeAllowedAuthMethods } from "../domain/auth-method-policy.js";
+import {
+  assertSafeDevelopmentLoginEnvironment,
+  isProductionDeploymentEnvironment
+} from "../domain/deployment-environment.js";
 import { validateAllowedEmailDomains } from "../utils/auth-email-policy.js";
 
 const booleanEnv = z.preprocess((value) => {
@@ -10,6 +14,9 @@ const booleanEnv = z.preprocess((value) => {
 
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
+  VERCEL: z.literal("1").optional(),
+  VERCEL_ENV: z.enum(["production", "preview", "development"]).optional(),
+  VERCEL_TARGET_ENV: z.string().trim().min(1).optional(),
   PORT: z.coerce.number().default(4000),
   FRONTEND_ORIGIN: z.string().url().default("http://localhost:3000"),
   FRONTEND_ORIGINS: z.string().trim().optional(),
@@ -19,7 +26,7 @@ const envSchema = z.object({
   AUTH_ALLOWED_AUTH_PROVIDERS: z.string().trim().default("email"),
   AUTH_ALLOWED_AUTH_METHODS: z.string().trim().default("otp,magiclink,email/signup,token_refresh"),
   AUTH_ENABLE_DEV_LOGIN: booleanEnv.default(false),
-  AUTH_DEV_LOGIN_PASSWORD: z.string().min(6).max(128).optional(),
+  AUTH_DEV_LOGIN_PASSWORD: z.string().max(128).optional(),
   AUTH_DEV_LOGIN_EMAILS: z.string().trim().default(
     "student@wesleyan.edu.ph,staff@wesleyan.edu.ph,admin@wesleyan.edu.ph"
   ),
@@ -43,6 +50,9 @@ const allowedEmailDomains = validateAllowedEmailDomains(
   parsedEnv.NODE_ENV
 );
 const allowedAuthMethods = normalizeAllowedAuthMethods(parsedEnv.AUTH_ALLOWED_AUTH_METHODS);
+const isProductionDeployment = isProductionDeploymentEnvironment(parsedEnv);
+
+assertSafeDevelopmentLoginEnvironment(parsedEnv);
 
 if (allowedAuthMethods.length === 0 || allowedAuthMethods.includes("*") || allowedAuthMethods.includes("password")) {
   throw new Error("AUTH_ALLOWED_AUTH_METHODS must list approved passwordless methods and cannot include '*' or 'password'.");
@@ -83,14 +93,6 @@ function requiresDatabaseTls(value: string) {
   return /[?&]sslmode=(require|verify-ca|verify-full)(?:&|$)/i.test(value);
 }
 
-if (parsedEnv.NODE_ENV === "production" && parsedEnv.AUTH_ENABLE_DEV_LOGIN) {
-  throw new Error("AUTH_ENABLE_DEV_LOGIN must be false in production.");
-}
-
-if (parsedEnv.AUTH_ENABLE_DEV_LOGIN && !parsedEnv.AUTH_DEV_LOGIN_PASSWORD) {
-  throw new Error("AUTH_DEV_LOGIN_PASSWORD is required when development login is enabled.");
-}
-
 if (parsedEnv.NODE_ENV === "production") {
   if (!hasEncryptionKeys) throw new Error("DATA_ENCRYPTION_KEYS is required in production.");
   if (!requiresDatabaseTls(parsedEnv.DATABASE_URL)) {
@@ -117,6 +119,7 @@ if (parsedEnv.NODE_ENV === "production") {
 
 export const env = {
   ...parsedEnv,
+  IS_PRODUCTION_DEPLOYMENT: isProductionDeployment,
   FRONTEND_ORIGINS: parsedEnv.FRONTEND_ORIGINS ?? parsedEnv.FRONTEND_ORIGIN,
   AUTH_ALLOWED_EMAIL_DOMAINS: allowedEmailDomains.join(","),
   AUTH_ALLOWED_AUTH_METHODS: allowedAuthMethods.join(",")

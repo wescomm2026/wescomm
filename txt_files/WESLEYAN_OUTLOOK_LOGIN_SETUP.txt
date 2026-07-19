@@ -78,7 +78,8 @@ Temporary development option if school Entra access is not available yet:
   AUTH_ALLOWED_EMAIL_DOMAINS=*
 - You can also enable database-profile test login:
   AUTH_ENABLE_DEV_LOGIN=true
-  AUTH_DEV_LOGIN_PASSWORD=1234Aa
+  # Server-only; provision privately; never commit.
+  AUTH_DEV_LOGIN_PASSWORD=
 - Test accounts must already exist in public.profiles:
   student@wesleyan.edu.ph
   staff@wesleyan.edu.ph

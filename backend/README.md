@@ -109,7 +109,7 @@ The browser exchanges its Supabase access token once through `POST /api/auth/ses
 
 ## Security Configuration
 
-Development test login is restricted to the exact emails in `AUTH_DEV_LOGIN_EMAILS`. It is rate-limited and the backend refuses to start when `AUTH_ENABLE_DEV_LOGIN=true` with `NODE_ENV=production`.
+Development test login is restricted to the exact emails in `AUTH_DEV_LOGIN_EMAILS` and is rate-limited. It is allowed only locally or on an isolated Vercel Preview/QA deployment. The backend refuses to start when it is enabled on Vercel Production or on a non-Vercel production runtime.
 
 Recommended local values:
 
@@ -117,7 +117,8 @@ Recommended local values:
 NODE_ENV=development
 AUTH_ENABLE_DEV_LOGIN=true
 AUTH_DEV_LOGIN_EMAILS=student@wesleyan.edu.ph,staff@wesleyan.edu.ph,admin@wesleyan.edu.ph
-AUTH_DEV_LOGIN_PASSWORD=USE_A_LOCAL_TEST_PASSWORD
+# Generate a random 20+ character value and store it only in .env/password manager.
+AUTH_DEV_LOGIN_PASSWORD=
 TRUST_PROXY_HOPS=0
 ```
 
@@ -137,6 +138,8 @@ DATA_ENCRYPTION_KEYS=v1:YOUR_PRIVATE_32_BYTE_BASE64_KEY
 ```
 
 `AUTH_ALLOWED_AUTH_METHODS` is checked against the verified Supabase JWT `amr` claim. Password-authenticated bearer tokens are rejected, and `token_refresh` is accepted only alongside an approved primary method. Add an explicitly reviewed method such as `oauth`, `sso`, or `saml` only when that provider is intentionally enabled.
+
+For Vercel Preview/QA, enable access to Vercel System Environment Variables, keep `NODE_ENV=production`, and scope `AUTH_ENABLE_DEV_LOGIN=true`, a newly rotated sensitive `AUTH_DEV_LOGIN_PASSWORD`, and the exact QA email allowlist to one dedicated QA branch only. Protect that Preview deployment with Vercel access control and use its stable branch URL in `FRONTEND_ORIGINS`. Use a separate QA Supabase project/database containing fake data. Production must keep `AUTH_ENABLE_DEV_LOGIN=false` and must not contain the test password. The backend verifies `VERCEL=1` and uses `VERCEL_ENV`/`VERCEL_TARGET_ENV` to distinguish Preview from Production without weakening secure-cookie and TLS validation.
 
 The API applies request IDs, strict CORS, CSRF origin checks, security headers, no-store caching for authenticated data, action-specific rate limits, bounded request schemas, image signature validation, encrypted sensitive fields, revocable hashed sessions, privacy-safe push notifications, and privacy-safe public receipt verification. For a multi-instance deployment, replace the in-memory rate-limit store with a shared rate-limit store.
 

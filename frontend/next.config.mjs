@@ -7,10 +7,15 @@ function originOf(value) {
 }
 
 export function isProductionDeploymentEnvironment(environment = process.env) {
-  return (
-    environment.NEXT_PUBLIC_APP_ENV === "production" ||
-    environment.VERCEL_ENV === "production"
-  );
+  if (environment.NEXT_PUBLIC_APP_ENV === "production") return true;
+
+  const hasVercelSystemEnvironment = environment.VERCEL === "1";
+  if (hasVercelSystemEnvironment) {
+    if (environment.VERCEL_ENV === "production" || environment.VERCEL_TARGET_ENV === "production") return true;
+    if (environment.VERCEL_ENV === "preview") return false;
+  }
+
+  return environment.NODE_ENV === "production";
 }
 
 export function assertSafeProductionPublicFlags(environment = process.env) {

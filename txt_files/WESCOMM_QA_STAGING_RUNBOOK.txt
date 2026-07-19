@@ -168,21 +168,29 @@ On iPhone/iPad, install WESCOMM to the Home Screen before testing web push.
 Browser private/incognito mode is not a reliable push-notification test.
 
 ============================================================
-6. HTTPS STAGING ENVIRONMENT
+6. HTTPS QA PREVIEW ENVIRONMENT
 ============================================================
 
 Backend:
   NODE_ENV=production
-  AUTH_ENABLE_DEV_LOGIN=false
-  FRONTEND_ORIGINS=https://<your-staging-frontend-domain>
-  DATABASE_URL=<TLS connection URL containing sslmode=require>
-  DIRECT_URL=<TLS connection URL containing sslmode=require>
+  VERCEL_ENV=preview (system-provided; do not set NODE_ENV=development)
+  AUTH_ENABLE_DEV_LOGIN=true
+  AUTH_DEV_LOGIN_EMAILS=student@wesleyan.edu.ph,staff@wesleyan.edu.ph,admin@wesleyan.edu.ph
+  AUTH_DEV_LOGIN_PASSWORD=
+    Set this through Vercel as a Sensitive, Preview-only, QA-branch-only random secret.
+    Do not paste a placeholder. Use at least 20 random characters and store it in the approved password manager.
+  FRONTEND_ORIGINS=https://<stable-qa-branch-domain>
+  NEXT_PUBLIC_SUPABASE_URL=<separate QA Supabase project URL>
+  NEXT_PUBLIC_SUPABASE_ANON_KEY=<separate QA anon key>
+  SUPABASE_SERVICE_ROLE_KEY=<separate QA service-role key>
+  DATABASE_URL=<separate QA TLS pooler URL containing sslmode=require>
+  DIRECT_URL=<separate QA TLS direct URL containing sslmode=require>
   DATA_ENCRYPTION_CURRENT_VERSION=v1
-  DATA_ENCRYPTION_KEYS=<preserve the current versioned key set>
+  DATA_ENCRYPTION_KEYS=<new QA-only versioned encryption key; never copy Production>
 
 Frontend:
-  NEXT_PUBLIC_APP_ENV=production
-  NEXT_PUBLIC_ENABLE_DEV_LOGIN=false
+  NEXT_PUBLIC_APP_ENV=staging
+  NEXT_PUBLIC_ENABLE_DEV_LOGIN=true
   NEXT_PUBLIC_E2E_TEST=false
   NEXT_PUBLIC_API_URL=/api
 
@@ -190,6 +198,12 @@ Vercel project:
   Application Preset=Services
   Root Directory=./
   vercel.json routes /api/* to backend and all other paths to frontend
+  Enable access to System Environment Variables in Project Settings.
+  Enable Deployment Protection/access control for the QA Preview.
+  Scope the test-login flags and password to Preview and the dedicated QA branch only.
+  Use a separate QA Supabase project/database containing fake test data.
+  Production keeps AUTH_ENABLE_DEV_LOGIN=false and NEXT_PUBLIC_ENABLE_DEV_LOGIN=false.
+  Remove the Preview password and disable both test-login flags after QA is complete.
 
 After deployment:
 [ ] GET /api/health/ready returns status=ready and every check=true.
