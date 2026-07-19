@@ -7,7 +7,6 @@ BEGIN;
 DO $block$
 DECLARE
   client_role text;
-  owner_role text;
 BEGIN
   FOREACH client_role IN ARRAY ARRAY['anon', 'authenticated']
   LOOP
@@ -28,30 +27,21 @@ BEGIN
       client_role
     );
 
-    -- Supabase grants public-schema access through default privileges owned by
-    -- both roles. Revoke those defaults so future migrations stay backend-only.
-    FOREACH owner_role IN ARRAY ARRAY['postgres', 'supabase_admin']
-    LOOP
-      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = owner_role) THEN
-        CONTINUE;
-      END IF;
-
-      EXECUTE format(
-        'ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public REVOKE ALL PRIVILEGES ON TABLES FROM %I',
-        owner_role,
-        client_role
-      );
-      EXECUTE format(
-        'ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public REVOKE ALL PRIVILEGES ON SEQUENCES FROM %I',
-        owner_role,
-        client_role
-      );
-      EXECUTE format(
-        'ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM %I',
-        owner_role,
-        client_role
-      );
-    END LOOP;
+    -- Default privileges are scoped to the current Prisma migration owner.
+    -- Supabase's platform-owned supabase_admin defaults cannot be changed by
+    -- the project postgres role and do not own WESCOMM migration objects.
+    EXECUTE format(
+      'ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL PRIVILEGES ON TABLES FROM %I',
+      client_role
+    );
+    EXECUTE format(
+      'ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL PRIVILEGES ON SEQUENCES FROM %I',
+      client_role
+    );
+    EXECUTE format(
+      'ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM %I',
+      client_role
+    );
   END LOOP;
 
   -- PostgreSQL grants function execution to PUBLIC by default, which would
@@ -60,25 +50,11 @@ BEGIN
   REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM PUBLIC;
   REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA public FROM PUBLIC;
 
-  FOREACH owner_role IN ARRAY ARRAY['postgres', 'supabase_admin']
-  LOOP
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = owner_role) THEN
-      CONTINUE;
-    END IF;
-
-    EXECUTE format(
-      'ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public REVOKE ALL PRIVILEGES ON TABLES FROM PUBLIC',
-      owner_role
-    );
-    EXECUTE format(
-      'ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public REVOKE ALL PRIVILEGES ON SEQUENCES FROM PUBLIC',
-      owner_role
-    );
-    EXECUTE format(
-      'ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC',
-      owner_role
-    );
-  END LOOP;
+  ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL PRIVILEGES ON TABLES FROM PUBLIC;
+  ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL PRIVILEGES ON SEQUENCES FROM PUBLIC;
+  -- PostgreSQL grants EXECUTE on new functions to PUBLIC globally by default;
+  -- a schema-scoped REVOKE cannot undo that built-in global grant.
+  ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
 
   -- The server-only Supabase client still needs access. Make that boundary
   -- explicit instead of relying on inherited or historical default grants.
@@ -87,25 +63,9 @@ BEGIN
     GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO service_role;
     GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO service_role;
 
-    FOREACH owner_role IN ARRAY ARRAY['postgres', 'supabase_admin']
-    LOOP
-      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = owner_role) THEN
-        CONTINUE;
-      END IF;
-
-      EXECUTE format(
-        'ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public GRANT ALL PRIVILEGES ON TABLES TO service_role',
-        owner_role
-      );
-      EXECUTE format(
-        'ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public GRANT ALL PRIVILEGES ON SEQUENCES TO service_role',
-        owner_role
-      );
-      EXECUTE format(
-        'ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO service_role',
-        owner_role
-      );
-    END LOOP;
+    ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL PRIVILEGES ON TABLES TO service_role;
+    ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL PRIVILEGES ON SEQUENCES TO service_role;
+    ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO service_role;
   END IF;
 END
 $block$;

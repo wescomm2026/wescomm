@@ -679,47 +679,32 @@ revoke all privileges on all tables in schema public from public;
 revoke all privileges on all sequences in schema public from public;
 revoke execute on all functions in schema public from public;
 
-alter default privileges for role postgres in schema public
+-- These defaults apply to the current WESCOMM migration owner. Supabase's
+-- platform-managed supabase_admin defaults are intentionally not modified.
+alter default privileges in schema public
 revoke all privileges on tables from anon, authenticated;
-alter default privileges for role postgres in schema public
+alter default privileges in schema public
 revoke all privileges on sequences from anon, authenticated;
-alter default privileges for role postgres in schema public
+alter default privileges in schema public
 revoke execute on functions from anon, authenticated;
-alter default privileges for role postgres in schema public
+alter default privileges in schema public
 revoke all privileges on tables from public;
-alter default privileges for role postgres in schema public
+alter default privileges in schema public
 revoke all privileges on sequences from public;
-alter default privileges for role postgres in schema public
-revoke execute on functions from public;
-
-alter default privileges for role supabase_admin in schema public
-revoke all privileges on tables from anon, authenticated;
-alter default privileges for role supabase_admin in schema public
-revoke all privileges on sequences from anon, authenticated;
-alter default privileges for role supabase_admin in schema public
-revoke execute on functions from anon, authenticated;
-alter default privileges for role supabase_admin in schema public
-revoke all privileges on tables from public;
-alter default privileges for role supabase_admin in schema public
-revoke all privileges on sequences from public;
-alter default privileges for role supabase_admin in schema public
+-- Function EXECUTE is granted to PUBLIC globally by PostgreSQL, so this revoke
+-- must also be global for the current migration owner.
+alter default privileges
 revoke execute on functions from public;
 
 -- Preserve the explicit server-only service-role boundary.
 grant all privileges on all tables in schema public to service_role;
 grant all privileges on all sequences in schema public to service_role;
 grant execute on all functions in schema public to service_role;
-alter default privileges for role postgres in schema public
+alter default privileges in schema public
 grant all privileges on tables to service_role;
-alter default privileges for role postgres in schema public
+alter default privileges in schema public
 grant all privileges on sequences to service_role;
-alter default privileges for role postgres in schema public
-grant execute on functions to service_role;
-alter default privileges for role supabase_admin in schema public
-grant all privileges on tables to service_role;
-alter default privileges for role supabase_admin in schema public
-grant all privileges on sequences to service_role;
-alter default privileges for role supabase_admin in schema public
+alter default privileges in schema public
 grant execute on functions to service_role;
 
 -- Prisma migration history is internal metadata. The table owner keeps access,

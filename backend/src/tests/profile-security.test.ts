@@ -47,9 +47,11 @@ test("database migration makes public application data access backend-only", () 
   assert.match(sql, /REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public/);
   assert.match(sql, /REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA public/);
   assert.match(sql, /REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA public FROM PUBLIC/);
-  assert.match(sql, /ARRAY\['postgres', 'supabase_admin'\]/);
-  assert.match(sql, /ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public REVOKE ALL PRIVILEGES ON TABLES/);
-  assert.match(sql, /ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS/);
+  assert.match(sql, /ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL PRIVILEGES ON TABLES/);
+  assert.match(sql, /ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS/);
+  assert.match(sql, /ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC/);
+  assert.doesNotMatch(sql, /IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC/);
+  assert.doesNotMatch(sql, /ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin/i);
   assert.match(sql, /GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO service_role/);
   assert.match(sql, /GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO service_role/);
   assert.match(sql, /ALTER TABLE public\._prisma_migrations ENABLE ROW LEVEL SECURITY/);
@@ -72,7 +74,10 @@ test("Supabase bootstrap guides preserve the backend-only database boundary", ()
     const sql = readFileSync(path.resolve(process.cwd(), "../txt_files", fileName), "utf8");
     assert.match(sql, /revoke all privileges on all tables in schema public from anon, authenticated/i);
     assert.match(sql, /revoke execute on all functions in schema public from public/i);
-    assert.match(sql, /alter default privileges for role supabase_admin in schema public/i);
+    assert.match(sql, /alter default privileges in schema public/i);
+    assert.doesNotMatch(sql, /alter default privileges for role supabase_admin/i);
+    assert.match(sql, /alter default privileges\s+revoke execute on functions from public/i);
+    assert.doesNotMatch(sql, /in schema public\s+revoke execute on functions from public/i);
     assert.match(sql, /alter table public\._prisma_migrations enable row level security/i);
     assert.match(sql, /revoke all privileges on table public\._prisma_migrations from service_role/i);
     assert.doesNotMatch(sql, /force row level security/i);

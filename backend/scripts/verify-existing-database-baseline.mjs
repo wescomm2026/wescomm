@@ -191,7 +191,7 @@ try {
       CROSS JOIN LATERAL aclexplode(defaults.defaclacl) AS privilege
       LEFT JOIN pg_roles AS grantee ON grantee.oid = privilege.grantee
       WHERE namespace.nspname = 'public'
-        AND owner.rolname IN ('postgres', 'supabase_admin')
+        AND owner.rolname = current_user
         AND (privilege.grantee = 0 OR grantee.rolname IN ('anon', 'authenticated'))
         AND defaults.defaclobjtype IN ('r', 'S', 'f')
     `,
@@ -248,6 +248,25 @@ try {
         ) AS service_role_migration_history_privileges,
         (
           SELECT COUNT(*)::integer
+          FROM pg_roles AS migration_owner
+          CROSS JOIN LATERAL aclexplode(
+            COALESCE(
+              (
+                SELECT defaults.defaclacl
+                FROM pg_default_acl AS defaults
+                WHERE defaults.defaclrole = migration_owner.oid
+                  AND defaults.defaclnamespace = 0
+                  AND defaults.defaclobjtype = 'f'
+              ),
+              acldefault('f', migration_owner.oid)
+            )
+          ) AS privilege
+          WHERE migration_owner.rolname = current_user
+            AND privilege.grantee = 0
+            AND privilege.privilege_type = 'EXECUTE'
+        ) AS public_function_execute_defaults,
+        (
+          SELECT COUNT(*)::integer
           FROM pg_policies
           WHERE schemaname = 'storage'
             AND tablename = 'objects'
@@ -295,7 +314,10 @@ try {
       console.error(`Client database privileges remain after migration: ${sample}`);
       process.exitCode = 1;
     } else if (verifyAppliedMigration && defaultPrivilegeRows.length > 0) {
-      console.error("Dangerous anon/authenticated/PUBLIC default privileges remain in the public schema.");
+      console.error("Dangerous anon/authenticated/PUBLIC defaults remain for the Prisma migration owner.");
+      process.exitCode = 1;
+    } else if (verifyAppliedMigration && authBoundary.public_function_execute_defaults > 0) {
+      console.error("New functions created by the Prisma migration owner still grant EXECUTE to PUBLIC.");
       process.exitCode = 1;
     } else if (verifyAppliedMigration && authBoundary.profile_update_policies > 0) {
       console.error("The profiles_update_own policy still permits direct profile mutation.");
