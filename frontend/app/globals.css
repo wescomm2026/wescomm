@@ -83,12 +83,12 @@ html {
 }
 
 .welcome-gate-overlay[data-phase="exiting"] {
-  animation: welcomeGateOverlayExit 0.33s ease-in both;
+  animation: welcomeGateOverlayExit 0.7s ease-in both;
   pointer-events: none;
 }
 
 .welcome-gate-overlay[data-phase="exiting"] .welcome-gate-panel {
-  animation-duration: 0.33s;
+  animation-duration: 0.7s;
   animation-fill-mode: both;
   animation-timing-function: cubic-bezier(0.72, 0, 0.2, 1);
 }
@@ -102,7 +102,7 @@ html {
 }
 
 .welcome-gate-overlay[data-phase="exiting"] .welcome-gate-content {
-  animation: welcomeGateContentExit 0.24s ease-in both;
+  animation: welcomeGateContentExit 0.32s ease-in both;
 }
 
 .welcome-gate-skip {

@@ -12,7 +12,7 @@ type WelcomeGateMode = WelcomeGateUser | "GUEST";
 type WelcomeGatePhase = "entering" | "holding" | "exiting";
 
 const ENTER_FALLBACK_MS = 400;
-const EXIT_FALLBACK_MS = 450;
+const EXIT_FALLBACK_MS = 850;
 
 function getGateCopy(user: WelcomeGateMode) {
   if (user === "GUEST") {
