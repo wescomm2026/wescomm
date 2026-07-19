@@ -52,3 +52,37 @@ test("the parsed Vercel Production environment rejects the test login", () => {
   assert.notEqual(result.status, 0);
   assert.match(`${result.stdout}\n${result.stderr}`, /AUTH_ENABLE_DEV_LOGIN must be false in production deployments/);
 });
+
+test("the parsed Vercel Production environment accepts only synchronized temporary staff login settings", () => {
+  const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+  const result = loadConfig({
+    VERCEL_ENV: "production",
+    VERCEL_TARGET_ENV: "production",
+    AUTH_ENABLE_DEV_LOGIN: "false",
+    AUTH_ENABLE_TEMP_PRODUCTION_STAFF_LOGIN: "true",
+    AUTH_TEMP_PRODUCTION_STAFF_LOGIN_PASSWORD: "temporary-production-password",
+    AUTH_TEMP_PRODUCTION_STAFF_LOGIN_EXPIRES_AT: expiresAt,
+    NEXT_PUBLIC_ENABLE_TEMP_PRODUCTION_STAFF_LOGIN: "true",
+    NEXT_PUBLIC_TEMP_PRODUCTION_STAFF_LOGIN_EXPIRES_AT: expiresAt
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, "true");
+});
+
+test("the parsed Vercel Production environment rejects a one-sided temporary staff login flag", () => {
+  const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+  const result = loadConfig({
+    VERCEL_ENV: "production",
+    VERCEL_TARGET_ENV: "production",
+    AUTH_ENABLE_DEV_LOGIN: "false",
+    AUTH_ENABLE_TEMP_PRODUCTION_STAFF_LOGIN: "true",
+    AUTH_TEMP_PRODUCTION_STAFF_LOGIN_PASSWORD: "temporary-production-password",
+    AUTH_TEMP_PRODUCTION_STAFF_LOGIN_EXPIRES_AT: expiresAt,
+    NEXT_PUBLIC_ENABLE_TEMP_PRODUCTION_STAFF_LOGIN: "false",
+    NEXT_PUBLIC_TEMP_PRODUCTION_STAFF_LOGIN_EXPIRES_AT: expiresAt
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(`${result.stdout}\n${result.stderr}`, /flags must be enabled together/);
+});

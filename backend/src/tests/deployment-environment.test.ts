@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   assertSafeDevelopmentLoginEnvironment,
-  isProductionDeploymentEnvironment
+  isProductionDeploymentEnvironment,
+  isVerifiedVercelProductionEnvironment
 } from "../domain/deployment-environment.js";
 
 test("production runtimes fail closed when no hosting environment is available", () => {
@@ -21,6 +22,15 @@ test("Vercel production is always treated as production", () => {
     VERCEL: "1",
     VERCEL_TARGET_ENV: "production"
   }), true);
+  assert.equal(isVerifiedVercelProductionEnvironment({
+    VERCEL: "1",
+    VERCEL_ENV: "production",
+    VERCEL_TARGET_ENV: "production"
+  }), true);
+  assert.equal(isVerifiedVercelProductionEnvironment({
+    VERCEL: "1",
+    VERCEL_ENV: "production"
+  }), false);
 });
 
 test("Vercel preview and custom staging remain non-production with production Node builds", () => {

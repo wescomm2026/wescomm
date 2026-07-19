@@ -27,7 +27,8 @@ export async function loginWithDevelopmentAccount(
   await dialog.getByLabel("Password").fill(TEST_PASSWORD);
   const loginResponsePromise = page.waitForResponse((response) => {
     const url = new URL(response.url());
-    return response.request().method() === "POST" && url.pathname.endsWith("/auth/dev-login");
+    return response.request().method() === "POST"
+      && /\/auth\/(?:dev-login|temporary-staff-login)$/.test(url.pathname);
   });
   await dialog.getByRole("button", { name: "Sign in" }).click();
 

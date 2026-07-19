@@ -158,6 +158,8 @@ BACKEND_API_URL is server-only. The browser uses the same-origin /api/backend pr
 
 The three fixed test accounts use password login only in local development or an isolated Vercel Preview/QA deployment. Preview still uses NODE_ENV=production for secure cookies and TLS; verified Vercel System Environment Variables (VERCEL=1 and VERCEL_ENV=preview) provide the deployment boundary. Production must keep AUTH_ENABLE_DEV_LOGIN=false.
 
+An owner-authorized public Production exception uses a separate temporary staff-only flag, never AUTH_ENABLE_DEV_LOGIN. It must use a new Sensitive password, an absolute expiry no more than 24 hours away, exact staff email and per-request STAFF-role checks, and sessions capped at 30 minutes. Student and admin remain OTP-only. For an immediate early shutdown, block POST /api/auth/temporary-staff-login at the project WAF, disable the flags and redeploy, make old enabled deployment URLs inaccessible, and revoke staff sessions; immutable Vercel deployments retain their original environment values.
+
 Key rotation later
 ------------------
 1. Generate a new 32-byte key.

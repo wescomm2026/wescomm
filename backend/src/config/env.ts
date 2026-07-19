@@ -5,6 +5,7 @@ import {
   assertSafeDevelopmentLoginEnvironment,
   isProductionDeploymentEnvironment
 } from "../domain/deployment-environment.js";
+import { assertSafeTemporaryStaffLoginEnvironment } from "../domain/temporary-staff-login-policy.js";
 import { validateAllowedEmailDomains } from "../utils/auth-email-policy.js";
 
 const booleanEnv = z.preprocess((value) => {
@@ -30,6 +31,11 @@ const envSchema = z.object({
   AUTH_DEV_LOGIN_EMAILS: z.string().trim().default(
     "student@wesleyan.edu.ph,staff@wesleyan.edu.ph,admin@wesleyan.edu.ph"
   ),
+  AUTH_ENABLE_TEMP_PRODUCTION_STAFF_LOGIN: booleanEnv.default(false),
+  AUTH_TEMP_PRODUCTION_STAFF_LOGIN_PASSWORD: z.string().max(128).optional(),
+  AUTH_TEMP_PRODUCTION_STAFF_LOGIN_EXPIRES_AT: z.string().trim().optional(),
+  NEXT_PUBLIC_ENABLE_TEMP_PRODUCTION_STAFF_LOGIN: booleanEnv.default(false),
+  NEXT_PUBLIC_TEMP_PRODUCTION_STAFF_LOGIN_EXPIRES_AT: z.string().trim().optional(),
   AUTH_SESSION_TTL_HOURS: z.coerce.number().int().min(1).max(24 * 30).default(24 * 7),
   AUTH_SESSION_MAX_PER_USER: z.coerce.number().int().min(1).max(20).default(5),
   DATA_ENCRYPTION_KEYS: z.string().trim().optional(),
@@ -53,6 +59,7 @@ const allowedAuthMethods = normalizeAllowedAuthMethods(parsedEnv.AUTH_ALLOWED_AU
 const isProductionDeployment = isProductionDeploymentEnvironment(parsedEnv);
 
 assertSafeDevelopmentLoginEnvironment(parsedEnv);
+assertSafeTemporaryStaffLoginEnvironment(parsedEnv);
 
 if (allowedAuthMethods.length === 0 || allowedAuthMethods.includes("*") || allowedAuthMethods.includes("password")) {
   throw new Error("AUTH_ALLOWED_AUTH_METHODS must list approved passwordless methods and cannot include '*' or 'password'.");

@@ -25,6 +25,10 @@ import {
 import { describeOtpSendError } from "@/lib/auth-errors";
 import { EMAIL_OTP_LENGTH, isCompleteEmailOtp, normalizeEmailOtp } from "@/lib/auth-otp";
 import { unsubscribeWebPushFromBrowser } from "@/lib/push-notifications";
+import {
+  passwordLoginTarget,
+  temporaryStaffLoginExpirationTimestamp
+} from "@/lib/password-login-policy.mjs";
 import { clearStaffSession, storeStaffSession } from "@/lib/staff-api";
 import { getSupabaseBrowserClient, hasSupabaseBrowserConfig } from "@/lib/supabase-browser";
 import {
@@ -76,10 +80,13 @@ type StudentAuthContextValue = {
 const LEGACY_DEV_SESSION_KEY = "wescomm_dev_session";
 const LEGACY_SESSION_KEY = "wescomm_student_session";
 const LOGOUT_PENDING_KEY = "wescomm_logout_pending";
-const PASSWORD_LOGIN_EMAILS = new Set(["admin@wesleyan.edu.ph", "staff@wesleyan.edu.ph", "student@wesleyan.edu.ph"]);
 const DEVELOPMENT_LOGIN_ENABLED =
   process.env.NEXT_PUBLIC_ENABLE_DEV_LOGIN === "true" ||
   (process.env.NEXT_PUBLIC_ENABLE_DEV_LOGIN !== "false" && process.env.NODE_ENV === "development");
+const TEMPORARY_PRODUCTION_STAFF_LOGIN_ENABLED =
+  process.env.NEXT_PUBLIC_ENABLE_TEMP_PRODUCTION_STAFF_LOGIN === "true";
+const TEMPORARY_PRODUCTION_STAFF_LOGIN_EXPIRES_AT =
+  process.env.NEXT_PUBLIC_TEMP_PRODUCTION_STAFF_LOGIN_EXPIRES_AT;
 const E2E_TEST_ENABLED = process.env.NEXT_PUBLIC_E2E_TEST === "true";
 const WELCOME_GATE_MINIMUM_DURATION_MS = E2E_TEST_ENABLED ? 0 : 2200;
 const WELCOME_GATE_MAXIMUM_DURATION_MS = E2E_TEST_ENABLED ? 1000 : 4000;
@@ -213,12 +220,27 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
   const [welcomeGateUser, setWelcomeGateUser] = useState<StudentUser | "GUEST" | null>("GUEST");
   const [welcomeGateTargetPath, setWelcomeGateTargetPath] = useState(pathname);
   const [welcomeContentReady, setWelcomeContentReady] = useState(false);
+  const [, refreshTemporaryLoginPolicy] = useState(0);
   const mountedRef = useRef(false);
   const profileCheckRef = useRef<Promise<ProfileCheckResult> | null>(null);
   const pendingLogoutRef = useRef<Promise<boolean> | null>(null);
   const sessionGenerationRef = useRef(0);
   const welcomeTargetNeedsContentReady = READINESS_AWARE_DASHBOARD_PATHS.has(welcomeGateTargetPath);
   const dismissWelcomeGate = useCallback(() => setWelcomeGateUser(null), []);
+
+  useEffect(() => {
+    if (!TEMPORARY_PRODUCTION_STAFF_LOGIN_ENABLED) return;
+    const expirationMs = temporaryStaffLoginExpirationTimestamp(
+      TEMPORARY_PRODUCTION_STAFF_LOGIN_EXPIRES_AT
+    );
+    const delayMs = expirationMs - Date.now();
+    if (!Number.isFinite(delayMs) || delayMs <= 0) return;
+
+    const timer = window.setTimeout(() => {
+      refreshTemporaryLoginPolicy((version) => version + 1);
+    }, delayMs + 50);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   const showWelcomeGate = useCallback((gateUser: StudentUser | "GUEST", targetPath: string) => {
     setWelcomeGateTargetPath(targetPath);
@@ -653,13 +675,21 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
     }
   }, [prepareForNewSession, saveSession]);
 
+  const getPasswordLoginTarget = useCallback((email: string) => passwordLoginTarget({
+    email,
+    developmentEnabled: DEVELOPMENT_LOGIN_ENABLED,
+    temporaryStaffEnabled: TEMPORARY_PRODUCTION_STAFF_LOGIN_ENABLED,
+    temporaryStaffExpiresAt: TEMPORARY_PRODUCTION_STAFF_LOGIN_EXPIRES_AT
+  }), []);
+
   const isPasswordLoginAvailable = useCallback((email: string) => (
-    DEVELOPMENT_LOGIN_ENABLED && PASSWORD_LOGIN_EMAILS.has(email.trim().toLowerCase())
-  ), []);
+    getPasswordLoginTarget(email) !== null
+  ), [getPasswordLoginTarget]);
 
   const loginWithTestAccount = useCallback(async (email: string, password: string): Promise<AuthResult> => {
     const normalizedEmail = email.trim().toLowerCase();
-    if (!isPasswordLoginAvailable(normalizedEmail)) {
+    const loginTarget = getPasswordLoginTarget(normalizedEmail);
+    if (!loginTarget) {
       return { success: false, error: "Password login is not available for this account." };
     }
 
@@ -671,7 +701,7 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
         if (window.localStorage.getItem(LOGOUT_PENDING_KEY) === "true") {
           throw new Error("A sign out is still in progress.");
         }
-        return onlineFetch(`${API_BASE_URL}/auth/dev-login`, {
+        return onlineFetch(`${API_BASE_URL}/auth/${loginTarget}`, {
           method: "POST",
           credentials: "include",
           headers: {
@@ -697,7 +727,7 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
         error: getAuthErrorMessage(error, "Unable to sign in with this account.")
       };
     }
-  }, [isPasswordLoginAvailable, prepareForNewSession, saveSession]);
+  }, [getPasswordLoginTarget, prepareForNewSession, saveSession]);
 
   const updateProfile = useCallback(async (input: StudentProfileInput): Promise<AuthResult> => {
     if (!user?.id) return { success: false, error: "Log in again before updating your profile." };

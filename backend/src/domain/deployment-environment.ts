@@ -1,9 +1,15 @@
-type DeploymentEnvironment = {
+export type DeploymentEnvironment = {
   NODE_ENV?: string;
   VERCEL?: string;
   VERCEL_ENV?: string;
   VERCEL_TARGET_ENV?: string;
 };
+
+export function isVerifiedVercelProductionEnvironment(environment: DeploymentEnvironment) {
+  return environment.VERCEL?.trim() === "1"
+    && environment.VERCEL_ENV?.trim().toLowerCase() === "production"
+    && environment.VERCEL_TARGET_ENV?.trim().toLowerCase() === "production";
+}
 
 type DevelopmentLoginEnvironment = DeploymentEnvironment & {
   AUTH_ENABLE_DEV_LOGIN?: boolean;

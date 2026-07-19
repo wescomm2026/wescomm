@@ -1,3 +1,8 @@
+import {
+  MAX_TEMPORARY_STAFF_LOGIN_WINDOW_MS,
+  temporaryStaffLoginExpirationTimestamp
+} from "./lib/password-login-policy.mjs";
+
 function originOf(value) {
   try {
     return value ? new URL(value).origin : "";
@@ -18,7 +23,29 @@ export function isProductionDeploymentEnvironment(environment = process.env) {
   return environment.NODE_ENV === "production";
 }
 
-export function assertSafeProductionPublicFlags(environment = process.env) {
+export function isVerifiedVercelProductionEnvironment(environment = process.env) {
+  return environment.VERCEL === "1"
+    && environment.VERCEL_ENV === "production"
+    && environment.VERCEL_TARGET_ENV === "production";
+}
+
+export function assertSafeProductionPublicFlags(environment = process.env, nowMs = Date.now()) {
+  if (environment.NEXT_PUBLIC_ENABLE_TEMP_PRODUCTION_STAFF_LOGIN === "true") {
+    if (!isVerifiedVercelProductionEnvironment(environment)) {
+      throw new Error("Temporary Production staff login requires verified Vercel Production system variables.");
+    }
+
+    const expiresAtMs = temporaryStaffLoginExpirationTimestamp(
+      environment.NEXT_PUBLIC_TEMP_PRODUCTION_STAFF_LOGIN_EXPIRES_AT
+    );
+    if (!Number.isFinite(expiresAtMs) || expiresAtMs <= nowMs) {
+      throw new Error("Temporary Production staff login requires a future ISO-8601 expiry.");
+    }
+    if (expiresAtMs - nowMs > MAX_TEMPORARY_STAFF_LOGIN_WINDOW_MS) {
+      throw new Error("Temporary Production staff login cannot be enabled for more than 24 hours.");
+    }
+  }
+
   if (!isProductionDeploymentEnvironment(environment)) return;
 
   if (environment.NEXT_PUBLIC_ENABLE_DEV_LOGIN === "true") {

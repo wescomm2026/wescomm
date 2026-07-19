@@ -213,6 +213,28 @@ After deployment:
 [ ] Wrong-origin POST/PATCH/DELETE requests return 403.
 [ ] Student/staff/admin wrong-role API requests return 403.
 
+Temporary public Production staff test (owner approval required):
+  AUTH_ENABLE_DEV_LOGIN=false
+  NEXT_PUBLIC_ENABLE_DEV_LOGIN=false
+  AUTH_ENABLE_TEMP_PRODUCTION_STAFF_LOGIN=true
+  AUTH_TEMP_PRODUCTION_STAFF_LOGIN_PASSWORD=
+    Add a new random 32-byte value as a Vercel Production Sensitive variable.
+  AUTH_TEMP_PRODUCTION_STAFF_LOGIN_EXPIRES_AT=<absolute UTC deadline, maximum 24 hours>
+  NEXT_PUBLIC_ENABLE_TEMP_PRODUCTION_STAFF_LOGIN=true
+  NEXT_PUBLIC_TEMP_PRODUCTION_STAFF_LOGIN_EXPIRES_AT=<the exact same UTC deadline>
+
+  Only staff@wesleyan.edu.ph may use this flow, and its profile must still have role STAFF.
+  Student/admin remain OTP-only. Temporary sessions expire after at most 30 minutes.
+  Stage and review a Vercel WAF rate-limit rule for POST /api/auth/temporary-staff-login.
+
+  Stop/rollback:
+  1. Publish a project WAF block for POST /api/auth/temporary-staff-login.
+  2. Set both temporary enable flags to false and remove the password/expiry variables.
+  3. Redeploy Production because NEXT_PUBLIC values are embedded during build.
+  4. Make every previously enabled immutable deployment URL inaccessible (or delete it after confirming the replacement is healthy); old deployments retain their original environment values.
+  5. Revoke all active sessions for staff@wesleyan.edu.ph and verify password login returns 403.
+  The absolute UTC expiry is the final fail-safe if immediate shutdown work is delayed.
+
 ============================================================
 7. BACKUP AND RECOVERY CHECK
 ============================================================

@@ -9,12 +9,16 @@ process.env.DATABASE_URL ??= "postgresql://postgres:postgres@localhost:5432/wesc
 process.env.DIRECT_URL ??= process.env.DATABASE_URL;
 process.env.AUTH_ENABLE_DEV_LOGIN = "false";
 process.env.AUTH_DEV_LOGIN_PASSWORD = "wescomm-ci-test-password";
+process.env.AUTH_ENABLE_TEMP_PRODUCTION_STAFF_LOGIN = "false";
+process.env.NEXT_PUBLIC_ENABLE_TEMP_PRODUCTION_STAFF_LOGIN = "false";
 
 await import("./auth-email-policy.test.js");
 await import("./auth-method-policy.test.js");
 await import("./auth-session.test.js");
+await import("./session-exchange-security.test.js");
 await import("./deployment-environment.test.js");
 await import("./env-config.test.js");
+await import("./temporary-staff-login-policy.test.js");
 await import("./rate-limit.test.js");
 await import("./request-security.test.js");
 await import("./profile-security.test.js");

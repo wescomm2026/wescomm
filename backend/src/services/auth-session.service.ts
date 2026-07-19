@@ -1,9 +1,14 @@
 import { createHash, randomBytes } from "node:crypto";
 import type { Request, Response } from "express";
 import { env } from "../config/env.js";
+import {
+  isTemporaryProductionStaffIdentity,
+  temporaryStaffLoginExpirationMs
+} from "../domain/temporary-staff-login-policy.js";
 import { prisma } from "../lib/prisma.js";
 import type { AppRole, Profile } from "../types/app.js";
 import { decryptSensitiveText } from "../utils/field-encryption.js";
+import { HttpError } from "../utils/http-error.js";
 import {
   isTransientPrismaConnectionError,
   withTransientPrismaReadRetry
@@ -12,11 +17,51 @@ import {
 const DEVELOPMENT_COOKIE_NAME = "wescomm_session";
 const PRODUCTION_COOKIE_NAME = "__Host-wescomm_session";
 const LAST_SEEN_WRITE_INTERVAL_MS = 15 * 60 * 1000;
+const TEMPORARY_STAFF_SESSION_TOKEN_PREFIX = "tmp_staff.";
+
+export type AuthSessionKind = "STANDARD" | "TEMPORARY_STAFF";
 
 export const AUTH_SESSION_TRANSACTION_OPTIONS = Object.freeze({
   maxWait: 10_000,
   timeout: 20_000
 });
+
+export function authSessionExpiration(
+  now: Date,
+  ttlHours: number,
+  maximumExpiresAt?: Date
+) {
+  const configuredExpirationMs = now.getTime() + ttlHours * 60 * 60 * 1000;
+  const expiresAtMs = maximumExpiresAt
+    ? Math.min(configuredExpirationMs, maximumExpiresAt.getTime())
+    : configuredExpirationMs;
+  return new Date(expiresAtMs);
+}
+
+export function authSessionIssueError(error: unknown) {
+  if (isTransientPrismaConnectionError(error)) {
+    return new HttpError(
+      503,
+      "Sign-in is temporarily unavailable. Please try again.",
+      "AUTH_SESSION_UNAVAILABLE"
+    );
+  }
+  return error;
+}
+
+export function isTemporaryStaffSessionToken(rawToken: string) {
+  return rawToken.startsWith(TEMPORARY_STAFF_SESSION_TOKEN_PREFIX);
+}
+
+export function isAuthSessionProfileAllowed(
+  rawToken: string,
+  profile: { email: string; role: string },
+  temporaryStaffGateActive: boolean
+) {
+  if (!isTemporaryStaffSessionToken(rawToken)) return true;
+  return temporaryStaffGateActive
+    && isTemporaryProductionStaffIdentity(profile.email, profile.role);
+}
 
 function cookieName() {
   return env.NODE_ENV === "production" ? PRODUCTION_COOKIE_NAME : DEVELOPMENT_COOKIE_NAME;
@@ -90,48 +135,63 @@ export async function issueAuthSession(input: {
   request: Request;
   response: Response;
   userId: string;
+  maximumExpiresAt?: Date;
+  kind?: AuthSessionKind;
 }) {
-  const rawToken = randomBytes(32).toString("base64url");
+  const tokenEntropy = randomBytes(32).toString("base64url");
+  const rawToken = input.kind === "TEMPORARY_STAFF"
+    ? `${TEMPORARY_STAFF_SESSION_TOKEN_PREFIX}${tokenEntropy}`
+    : tokenEntropy;
   const now = new Date();
-  const expiresAt = new Date(now.getTime() + env.AUTH_SESSION_TTL_HOURS * 60 * 60 * 1000);
+  const expiresAt = authSessionExpiration(now, env.AUTH_SESSION_TTL_HOURS, input.maximumExpiresAt);
+  if (expiresAt.getTime() <= now.getTime()) {
+    throw new HttpError(403, "The temporary login window has expired.");
+  }
   const userAgent = String(input.request.get("user-agent") ?? "").slice(0, 500) || null;
 
-  await prisma.$transaction(async (tx) => {
-    await tx.authSession.deleteMany({
-      where: {
-        OR: [
-          { expiresAt: { lte: now } },
-          { revokedAt: { not: null }, createdAt: { lt: new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000) } }
-        ]
-      }
-    });
-
-    const activeSessions = await tx.authSession.findMany({
-      where: { userId: input.userId, revokedAt: null, expiresAt: { gt: now } },
-      orderBy: { createdAt: "desc" },
-      select: { id: true }
-    });
-    const sessionsToRevoke = activeSessions.slice(Math.max(0, env.AUTH_SESSION_MAX_PER_USER - 1));
-    if (sessionsToRevoke.length) {
-      await tx.authSession.updateMany({
-        where: { id: { in: sessionsToRevoke.map((session) => session.id) } },
-        data: { revokedAt: now }
+  try {
+    await prisma.$transaction(async (tx) => {
+      await tx.authSession.deleteMany({
+        where: {
+          OR: [
+            { expiresAt: { lte: now } },
+            { revokedAt: { not: null }, createdAt: { lt: new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000) } }
+          ]
+        }
       });
-    }
 
-    await tx.authSession.create({
-      data: {
-        userId: input.userId,
-        tokenHash: hashToken(rawToken),
-        userAgent,
-        expiresAt
+      const activeSessions = await tx.authSession.findMany({
+        where: { userId: input.userId, revokedAt: null, expiresAt: { gt: now } },
+        orderBy: { createdAt: "desc" },
+        select: { id: true }
+      });
+      const sessionsToRevoke = activeSessions.slice(Math.max(0, env.AUTH_SESSION_MAX_PER_USER - 1));
+      if (sessionsToRevoke.length) {
+        await tx.authSession.updateMany({
+          where: { id: { in: sessionsToRevoke.map((session) => session.id) } },
+          data: { revokedAt: now }
+        });
       }
-    });
-  }, AUTH_SESSION_TRANSACTION_OPTIONS);
+
+      await tx.authSession.create({
+        data: {
+          userId: input.userId,
+          tokenHash: hashToken(rawToken),
+          userAgent,
+          expiresAt
+        }
+      });
+    }, AUTH_SESSION_TRANSACTION_OPTIONS);
+  } catch (error) {
+    // Retrying a write transaction after an ambiguous connection failure can
+    // create duplicate sessions. Return a retryable response to the client
+    // instead and let a fresh sign-in attempt create a new bounded session.
+    throw authSessionIssueError(error);
+  }
 
   input.response.append(
     "Set-Cookie",
-    serializeCookie(rawToken, env.AUTH_SESSION_TTL_HOURS * 60 * 60)
+    serializeCookie(rawToken, (expiresAt.getTime() - now.getTime()) / 1000)
   );
 }
 
@@ -143,6 +203,13 @@ export async function resolveAuthSession(rawToken: string) {
   }));
 
   if (!session || session.revokedAt || session.expiresAt <= now) return null;
+  if (!isAuthSessionProfileAllowed(
+    rawToken,
+    session.user,
+    Boolean(temporaryStaffLoginExpirationMs(env, now.getTime()))
+  )) {
+    return null;
+  }
 
   if (now.getTime() - session.lastSeenAt.getTime() >= LAST_SEEN_WRITE_INTERVAL_MS) {
     try {

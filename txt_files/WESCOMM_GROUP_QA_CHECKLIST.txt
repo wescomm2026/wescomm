@@ -12,6 +12,7 @@ This document divides WESCOMM quality assurance into three clear areas:
 QA Preview website:
   Use the current branch-specific Vercel Preview URL shared by the project owner.
   Do not use the public Production URL for shared-password testing.
+  Exception: an explicitly owner-approved, auto-expiring staff-only Production test window.
 
 Test accounts:
   student@wesleyan.edu.ph
