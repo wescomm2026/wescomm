@@ -53,37 +53,52 @@ export function StudentNotifications({ onRequireAuth }: { onRequireAuth?: () => 
   const { user } = useStudentAuth();
   const [open, setOpen] = useState(false);
   const [notifications, setNotifications] = useState<BackendNotification[]>([]);
+  const [notificationOwnerId, setNotificationOwnerId] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const containerRef = useRef<HTMLDivElement>(null);
-  const unreadCount = notifications.filter((notification) => !notification.readAt).length;
+  const requestSequenceRef = useRef(0);
+  const accountId = user?.id ?? "";
+  const visibleNotifications = notificationOwnerId === accountId ? notifications : [];
+  const unreadCount = visibleNotifications.filter((notification) => !notification.readAt).length;
 
   const loadNotifications = useCallback(async () => {
-    if (!user?.accessToken) return;
+    if (!user?.accessToken || !accountId) return;
+    const requestSequence = ++requestSequenceRef.current;
     setLoading(true);
     setError("");
 
     try {
       const rows = await getNotificationsFromApi(user.accessToken);
+      if (requestSequence !== requestSequenceRef.current) return;
       setNotifications(rows);
+      setNotificationOwnerId(accountId);
     } catch (notificationError) {
+      if (requestSequence !== requestSequenceRef.current) return;
       setError(notificationError instanceof Error ? notificationError.message : "Unable to load notifications.");
     } finally {
-      setLoading(false);
+      if (requestSequence === requestSequenceRef.current) setLoading(false);
     }
-  }, [user?.accessToken]);
+  }, [accountId, user?.accessToken]);
 
   useEffect(() => {
-    if (!user?.accessToken) {
+    setOpen(false);
+    setNotifications([]);
+    setNotificationOwnerId(accountId);
+    if (!user?.accessToken || !accountId) {
       setNotifications([]);
       setError("");
+      setLoading(false);
       return;
     }
 
     void loadNotifications();
     const timer = window.setInterval(() => void loadNotifications(), 15000);
-    return () => window.clearInterval(timer);
-  }, [loadNotifications, user?.accessToken]);
+    return () => {
+      requestSequenceRef.current += 1;
+      window.clearInterval(timer);
+    };
+  }, [accountId, loadNotifications, user?.accessToken]);
 
   useEffect(() => {
     if (!open) return;
@@ -199,7 +214,7 @@ export function StudentNotifications({ onRequireAuth }: { onRequireAuth?: () => 
               <p className="px-4 py-6 text-sm font-semibold text-[#68746d]">Loading notifications...</p>
             ) : error ? (
               <p className="px-4 py-6 text-sm font-semibold text-red-700">{error}</p>
-            ) : notifications.length ? notifications.map((notification) => (
+            ) : visibleNotifications.length ? visibleNotifications.map((notification) => (
               <Link
                 key={notification.id}
                 href={notificationHref(notification.type)}

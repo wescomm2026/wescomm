@@ -1,5 +1,9 @@
 import type { NextFunction, Request, Response } from "express";
 import { env } from "../config/env.js";
+import {
+  evaluateAuthenticationMethods,
+  normalizeAllowedAuthMethods
+} from "../domain/auth-method-policy.js";
 import { supabaseAdmin } from "../lib/supabase.js";
 import {
   clearAuthSessionCookie,
@@ -39,6 +43,7 @@ function normalizeCsv(value: string) {
 }
 
 const allowedEmailDomains = normalizeAllowedEmailDomains(env.AUTH_ALLOWED_EMAIL_DOMAINS);
+const allowedAuthMethods = normalizeAllowedAuthMethods(env.AUTH_ALLOWED_AUTH_METHODS);
 
 function approvedSchoolEmailError() {
   return new HttpError(403, `Use an approved school account email domain: ${allowedEmailDomains.join(", ")}.`);
@@ -110,8 +115,28 @@ export async function requireAuth(request: AuthenticatedRequest, response: Respo
       return next();
     }
 
-    const { data, error } = await supabaseAdmin.auth.getUser(token);
-    if (error || !data.user?.email) return next(new HttpError(401, "Invalid or expired token."));
+    const [{ data, error }, claimsResult] = await Promise.all([
+      supabaseAdmin.auth.getUser(token),
+      supabaseAdmin.auth.getClaims(token)
+    ]);
+    if (error || claimsResult.error || !data.user?.email || !claimsResult.data?.claims) {
+      return next(new HttpError(401, "Invalid or expired token."));
+    }
+    if (claimsResult.data.claims.sub !== data.user.id) {
+      return next(new HttpError(401, "Token identity could not be verified."));
+    }
+
+    const authMethodPolicy = evaluateAuthenticationMethods(
+      claimsResult.data.claims.amr,
+      allowedAuthMethods
+    );
+    if (!authMethodPolicy.allowed) {
+      return next(new HttpError(
+        403,
+        "Use the approved WESCOMM passwordless sign-in method.",
+        "AUTH_METHOD_NOT_ALLOWED"
+      ));
+    }
 
     const allowedProviders = normalizeCsv(env.AUTH_ALLOWED_AUTH_PROVIDERS);
     const metadata = data.user.app_metadata as Record<string, unknown>;

@@ -300,11 +300,13 @@ function ReservationCard({ reservation }: { reservation: StoredReservation }) {
 
 export function StudentReservationsExperience() {
   const [savedReservations, setSavedReservations] = useState<StoredReservation[]>([]);
+  const [reservationsOwnerId, setReservationsOwnerId] = useState("");
   const [activeFilter, setActiveFilter] = useState<ReservationFilter>("All");
   const [ready, setReady] = useState(false);
   const [error, setError] = useState("");
   const requestSequenceRef = useRef(0);
   const { user, ready: authReady, openAuth } = useStudentAuth();
+  const accountId = user?.id ?? "";
 
   const loadReservations = useCallback(async ({ background = false }: { background?: boolean } = {}) => {
     if (!authReady) return;
@@ -315,11 +317,12 @@ export function StudentReservationsExperience() {
       setError("");
     }
 
-    if (user?.accessToken) {
+    if (user?.accessToken && accountId) {
       try {
         const rows = await getReservationsFromApi(user.accessToken);
         if (requestSequence !== requestSequenceRef.current) return;
         setSavedReservations(mapBackendReservations(rows));
+        setReservationsOwnerId(accountId);
       } catch (reservationError) {
         if (requestSequence === requestSequenceRef.current && !background) {
           setError(reservationError instanceof Error ? reservationError.message : "Unable to load reservations.");
@@ -332,15 +335,18 @@ export function StudentReservationsExperience() {
     }
 
     setSavedReservations([]);
+    setReservationsOwnerId(accountId);
     if (!background) setReady(true);
-  }, [authReady, user?.accessToken]);
+  }, [accountId, authReady, user?.accessToken]);
 
   useEffect(() => {
+    setSavedReservations([]);
+    setReservationsOwnerId(accountId);
     void loadReservations();
     return () => {
       requestSequenceRef.current += 1;
     };
-  }, [loadReservations]);
+  }, [accountId, loadReservations]);
 
   useEffect(() => {
     if (!authReady || !user?.accessToken) return;
@@ -358,9 +364,12 @@ export function StudentReservationsExperience() {
       window.removeEventListener("focus", refreshInBackground);
       document.removeEventListener("visibilitychange", refreshInBackground);
     };
-  }, [authReady, loadReservations, user?.accessToken]);
+  }, [accountId, authReady, loadReservations, user?.accessToken]);
 
-  const reservations = savedReservations;
+  const reservations = useMemo(
+    () => reservationsOwnerId === accountId ? savedReservations : [],
+    [accountId, reservationsOwnerId, savedReservations]
+  );
 
   const filteredReservations = useMemo(
     () => activeFilter === "All"

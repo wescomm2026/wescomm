@@ -74,7 +74,15 @@ function collectMissing(actual, required) {
 }
 
 try {
-  const [columnRows, enumRows, indexRows, impactRows] = await Promise.all([
+  const [
+    columnRows,
+    enumRows,
+    indexRows,
+    impactRows,
+    clientPrivilegeRows,
+    defaultPrivilegeRows,
+    authBoundaryRows,
+  ] = await Promise.all([
     prisma.$queryRaw`
       SELECT table_name, column_name
       FROM information_schema.columns
@@ -114,6 +122,146 @@ try {
           ) AS duplicate_groups
         ) AS duplicate_active_rows
     `,
+    prisma.$queryRaw`
+      WITH client_roles AS (
+        SELECT rolname AS role_name
+        FROM pg_roles
+        WHERE rolname IN ('anon', 'authenticated')
+      ),
+      public_relations AS (
+        SELECT class.relname AS object_name, class.relkind
+        FROM pg_class AS class
+        JOIN pg_namespace AS namespace ON namespace.oid = class.relnamespace
+        WHERE namespace.nspname = 'public'
+          AND class.relkind IN ('r', 'p', 'v', 'm', 'f', 'S')
+      ),
+      table_privileges(privilege_type) AS (
+        VALUES ('SELECT'), ('INSERT'), ('UPDATE'), ('DELETE'), ('TRUNCATE'), ('REFERENCES'), ('TRIGGER')
+      ),
+      sequence_privileges(privilege_type) AS (
+        VALUES ('SELECT'), ('UPDATE'), ('USAGE')
+      ),
+      relation_access AS (
+        SELECT role.role_name, relation.object_name, privilege.privilege_type
+        FROM client_roles AS role
+        CROSS JOIN public_relations AS relation
+        CROSS JOIN table_privileges AS privilege
+        WHERE relation.relkind <> 'S'
+          AND has_table_privilege(
+            role.role_name,
+            format('public.%I', relation.object_name),
+            privilege.privilege_type
+          )
+
+        UNION ALL
+
+        SELECT role.role_name, relation.object_name, privilege.privilege_type
+        FROM client_roles AS role
+        CROSS JOIN public_relations AS relation
+        CROSS JOIN sequence_privileges AS privilege
+        WHERE relation.relkind = 'S'
+          AND has_sequence_privilege(
+            role.role_name,
+            format('public.%I', relation.object_name),
+            privilege.privilege_type
+          )
+      ),
+      function_access AS (
+        SELECT role.role_name, routine.oid::regprocedure::text AS object_name, 'EXECUTE' AS privilege_type
+        FROM client_roles AS role
+        CROSS JOIN pg_proc AS routine
+        JOIN pg_namespace AS namespace ON namespace.oid = routine.pronamespace
+        WHERE namespace.nspname = 'public'
+          AND has_function_privilege(role.role_name, routine.oid, 'EXECUTE')
+      )
+      SELECT role_name, object_name, privilege_type FROM relation_access
+      UNION ALL
+      SELECT role_name, object_name, privilege_type FROM function_access
+      ORDER BY role_name, object_name, privilege_type
+    `,
+    prisma.$queryRaw`
+      SELECT
+        owner.rolname AS owner_role,
+        COALESCE(grantee.rolname, 'PUBLIC') AS grantee_role,
+        defaults.defaclobjtype AS object_type,
+        privilege.privilege_type
+      FROM pg_default_acl AS defaults
+      JOIN pg_roles AS owner ON owner.oid = defaults.defaclrole
+      JOIN pg_namespace AS namespace ON namespace.oid = defaults.defaclnamespace
+      CROSS JOIN LATERAL aclexplode(defaults.defaclacl) AS privilege
+      LEFT JOIN pg_roles AS grantee ON grantee.oid = privilege.grantee
+      WHERE namespace.nspname = 'public'
+        AND owner.rolname IN ('postgres', 'supabase_admin')
+        AND (privilege.grantee = 0 OR grantee.rolname IN ('anon', 'authenticated'))
+        AND defaults.defaclobjtype IN ('r', 'S', 'f')
+    `,
+    prisma.$queryRaw`
+      SELECT
+        (
+          SELECT COUNT(*)::integer
+          FROM pg_policies
+          WHERE schemaname = 'public'
+            AND tablename = 'profiles'
+            AND policyname = 'profiles_update_own'
+        ) AS profile_update_policies,
+        (
+          SELECT COUNT(*)::integer
+          FROM pg_constraint AS constraint_record
+          JOIN pg_class AS child_table ON child_table.oid = constraint_record.conrelid
+          JOIN pg_namespace AS child_schema ON child_schema.oid = child_table.relnamespace
+          WHERE constraint_record.contype = 'f'
+            AND child_schema.nspname = 'public'
+            AND child_table.relname = 'profiles'
+            AND LOWER(REPLACE(pg_get_constraintdef(constraint_record.oid), '"', ''))
+              LIKE '%foreign key (id) references auth.users(id)%on delete cascade%'
+        ) AS auth_profile_foreign_keys,
+        (
+          SELECT COUNT(*)::integer
+          FROM pg_trigger AS trigger_record
+          JOIN pg_class AS source_table ON source_table.oid = trigger_record.tgrelid
+          JOIN pg_namespace AS source_schema ON source_schema.oid = source_table.relnamespace
+          JOIN pg_proc AS trigger_function ON trigger_function.oid = trigger_record.tgfoid
+          JOIN pg_namespace AS function_schema ON function_schema.oid = trigger_function.pronamespace
+          WHERE NOT trigger_record.tgisinternal
+            AND trigger_record.tgenabled <> 'D'
+            AND source_schema.nspname = 'auth'
+            AND source_table.relname = 'users'
+            AND function_schema.nspname = 'public'
+            AND trigger_function.proname = 'handle_new_user'
+        ) AS auth_profile_triggers,
+        (
+          SELECT COUNT(*)::integer
+          FROM pg_class AS migration_table
+          JOIN pg_namespace AS migration_schema ON migration_schema.oid = migration_table.relnamespace
+          WHERE migration_schema.nspname = 'public'
+            AND migration_table.relname = '_prisma_migrations'
+            AND migration_table.relkind IN ('r', 'p')
+            AND migration_table.relrowsecurity
+            AND NOT migration_table.relforcerowsecurity
+        ) AS migration_history_rls_tables,
+        (
+          SELECT COUNT(*)::integer
+          FROM information_schema.table_privileges
+          WHERE table_schema = 'public'
+            AND table_name = '_prisma_migrations'
+            AND grantee = 'service_role'
+        ) AS service_role_migration_history_privileges,
+        (
+          SELECT COUNT(*)::integer
+          FROM pg_policies
+          WHERE schemaname = 'storage'
+            AND tablename = 'objects'
+            AND policyname IN (
+              'product_images_staff_upload',
+              'product_images_staff_update',
+              'avatars_user_read_own',
+              'avatars_user_upload_own',
+              'avatars_user_update_own',
+              'receipts_staff_upload',
+              'receipts_staff_read'
+            )
+        ) AS storage_write_policies
+    `,
   ]);
 
   const columns = toSetMap(columnRows, "table_name", "column_name");
@@ -133,12 +281,41 @@ try {
     process.exitCode = 1;
   } else {
     const indexDefinition = indexRows[0]?.indexdef ?? "";
+    const authBoundary = authBoundaryRows[0] ?? {};
     const hasExpectedIndex =
       /CREATE UNIQUE INDEX/i.test(indexDefinition) &&
       /\(student_id\)/i.test(indexDefinition.replaceAll('"', "")) &&
       /WHERE.*status.*ACTIVE/i.test(indexDefinition.replaceAll('"', ""));
 
-    if (verifyAppliedMigration && !hasExpectedIndex) {
+    if (verifyAppliedMigration && clientPrivilegeRows.length > 0) {
+      const sample = clientPrivilegeRows
+        .slice(0, 10)
+        .map((row) => `${row.role_name}:${row.object_name}:${row.privilege_type}`)
+        .join(", ");
+      console.error(`Client database privileges remain after migration: ${sample}`);
+      process.exitCode = 1;
+    } else if (verifyAppliedMigration && defaultPrivilegeRows.length > 0) {
+      console.error("Dangerous anon/authenticated/PUBLIC default privileges remain in the public schema.");
+      process.exitCode = 1;
+    } else if (verifyAppliedMigration && authBoundary.profile_update_policies > 0) {
+      console.error("The profiles_update_own policy still permits direct profile mutation.");
+      process.exitCode = 1;
+    } else if (verifyAppliedMigration && authBoundary.storage_write_policies > 0) {
+      console.error("Direct authenticated private Storage policies remain after migration.");
+      process.exitCode = 1;
+    } else if (verifyAppliedMigration && authBoundary.auth_profile_foreign_keys !== 1) {
+      console.error("profiles.id must reference auth.users.id with ON DELETE CASCADE.");
+      process.exitCode = 1;
+    } else if (verifyAppliedMigration && authBoundary.auth_profile_triggers !== 1) {
+      console.error("The enabled auth.users -> public.handle_new_user trigger is missing or duplicated.");
+      process.exitCode = 1;
+    } else if (verifyAppliedMigration && authBoundary.migration_history_rls_tables !== 1) {
+      console.error("RLS must be enabled, but not forced, on public._prisma_migrations.");
+      process.exitCode = 1;
+    } else if (verifyAppliedMigration && authBoundary.service_role_migration_history_privileges > 0) {
+      console.error("service_role must not have direct privileges on public._prisma_migrations.");
+      process.exitCode = 1;
+    } else if (verifyAppliedMigration && !hasExpectedIndex) {
       console.error("The active-restriction unique index is missing or has the wrong definition.");
       process.exitCode = 1;
     } else if (!verifyAppliedMigration && indexRows.length > 0) {

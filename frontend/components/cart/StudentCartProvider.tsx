@@ -9,6 +9,7 @@ import {
   useState,
   type ReactNode
 } from "react";
+import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import { StudentCartDrawer } from "@/components/cart/StudentCartDrawer";
 
 export type CartProduct = {
@@ -46,8 +47,14 @@ type StudentCartContextValue = {
   clearCart: () => void;
 };
 
-const CART_KEY = "wescomm_student_cart";
+const LEGACY_CART_KEY = "wescomm_student_cart";
+const CART_KEY_PREFIX = "wescomm_student_cart:v2";
+const EMPTY_CART_ITEMS: CartItem[] = [];
 const StudentCartContext = createContext<StudentCartContextValue | null>(null);
+
+function cartStorageKey(ownerId: string) {
+  return `${CART_KEY_PREFIX}:${ownerId}`;
+}
 
 function createCartItemId(productName: string, selectedOptions: Record<string, string>, productId?: string) {
   const optionKey = Object.entries(selectedOptions)
@@ -58,13 +65,24 @@ function createCartItemId(productName: string, selectedOptions: Record<string, s
 }
 
 export function StudentCartProvider({ children }: { children: ReactNode }) {
+  const { user, ready: authReady } = useStudentAuth();
   const [items, setItems] = useState<CartItem[]>([]);
   const [open, setOpen] = useState(false);
-  const [ready, setReady] = useState(false);
+  const [loadedOwnerId, setLoadedOwnerId] = useState("");
+  const ownerId = authReady ? user?.id ?? "guest" : "";
+  const visibleItems = loadedOwnerId === ownerId ? items : EMPTY_CART_ITEMS;
 
   useEffect(() => {
+    setOpen(false);
+    setItems([]);
+    setLoadedOwnerId("");
+    if (!ownerId) return;
+
     try {
-      const saved = window.localStorage.getItem(CART_KEY);
+      // The legacy global key could expose one student's cart to another
+      // account on the same device, so it is deliberately not migrated.
+      window.localStorage.removeItem(LEGACY_CART_KEY);
+      const saved = window.localStorage.getItem(cartStorageKey(ownerId));
       if (saved) {
         const parsed = JSON.parse(saved) as Array<Partial<CartItem> & Pick<CartItem, "product" | "quantity">>;
         setItems(
@@ -83,20 +101,25 @@ export function StudentCartProvider({ children }: { children: ReactNode }) {
         );
       }
     } catch {
-      window.localStorage.removeItem(CART_KEY);
+      window.localStorage.removeItem(cartStorageKey(ownerId));
     }
-    setReady(true);
-  }, []);
+    setLoadedOwnerId(ownerId);
+  }, [ownerId]);
 
   useEffect(() => {
-    if (!ready) return;
-    window.localStorage.setItem(CART_KEY, JSON.stringify(items));
-  }, [items, ready]);
+    if (!ownerId || loadedOwnerId !== ownerId) return;
+    try {
+      window.localStorage.setItem(cartStorageKey(ownerId), JSON.stringify(items));
+    } catch {
+      // Storage can be unavailable or full; the active in-memory cart remains usable.
+    }
+  }, [items, loadedOwnerId, ownerId]);
 
   const openCart = useCallback(() => setOpen(true), []);
   const closeCart = useCallback(() => setOpen(false), []);
 
   const addItem = useCallback((product: CartProduct, selectedOptions: Record<string, string>, quantity = 1) => {
+    if (!ownerId || loadedOwnerId !== ownerId) return;
     const id = createCartItemId(product.name, selectedOptions, product.id);
     setItems((current) => {
       const existing = current.find((item) => item.id === id);
@@ -109,9 +132,10 @@ export function StudentCartProvider({ children }: { children: ReactNode }) {
           : item
       );
     });
-  }, []);
+  }, [loadedOwnerId, ownerId]);
 
   const updateQuantity = useCallback((id: string, quantity: number) => {
+    if (!ownerId || loadedOwnerId !== ownerId) return;
     setItems((current) =>
       current.map((item) => {
         if (item.id !== id) return item;
@@ -119,18 +143,22 @@ export function StudentCartProvider({ children }: { children: ReactNode }) {
         return { ...item, quantity: Math.max(1, Math.min(limit, quantity)) };
       })
     );
-  }, []);
+  }, [loadedOwnerId, ownerId]);
 
   const removeItem = useCallback((id: string) => {
+    if (!ownerId || loadedOwnerId !== ownerId) return;
     setItems((current) => current.filter((item) => item.id !== id));
-  }, []);
+  }, [loadedOwnerId, ownerId]);
 
-  const clearCart = useCallback(() => setItems([]), []);
-  const itemCount = useMemo(() => items.reduce((total, item) => total + item.quantity, 0), [items]);
+  const clearCart = useCallback(() => {
+    if (!ownerId || loadedOwnerId !== ownerId) return;
+    setItems([]);
+  }, [loadedOwnerId, ownerId]);
+  const itemCount = useMemo(() => visibleItems.reduce((total, item) => total + item.quantity, 0), [visibleItems]);
 
   const value = useMemo(
-    () => ({ items, itemCount, open, openCart, closeCart, addItem, updateQuantity, removeItem, clearCart }),
-    [items, itemCount, open, openCart, closeCart, addItem, updateQuantity, removeItem, clearCart]
+    () => ({ items: visibleItems, itemCount, open, openCart, closeCart, addItem, updateQuantity, removeItem, clearCart }),
+    [visibleItems, itemCount, open, openCart, closeCart, addItem, updateQuantity, removeItem, clearCart]
   );
 
   return (

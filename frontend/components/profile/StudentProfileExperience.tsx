@@ -2,17 +2,26 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useRef, useState, type ChangeEvent } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
-  Camera,
   Check,
   ChevronRight,
   X
 } from "lucide-react";
-import { useStudentAuth, type StudentProfileInput } from "@/components/auth/StudentAuthProvider";
+import {
+  useStudentAuth,
+  type StudentProfileInput,
+  type StudentUser
+} from "@/components/auth/StudentAuthProvider";
 import { WebPushSettings } from "@/components/notifications/WebPushSettings";
 import { AssetIcon } from "@/components/ui/AssetIcon";
 import { Button } from "@/components/ui/button";
+import {
+  getReceiptsFromApi,
+  getReservationsFromApi,
+  type BackendReceipt,
+  type BackendReservation
+} from "@/lib/api";
 
 type ProfileDraft = StudentProfileInput;
 
@@ -20,31 +29,70 @@ const emptyDraft: ProfileDraft = {
   fullName: "",
   phone: "",
   department: "",
-  address: "",
-  avatarDataUrl: ""
+  address: ""
 };
 
-function Toggle({
-  checked,
-  label,
-  onChange
-}: {
-  checked: boolean;
-  label: string;
-  onChange: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      aria-label={label}
-      onClick={onChange}
-      className={`relative h-7 w-12 shrink-0 rounded-full transition ${checked ? "bg-primary" : "bg-[#cdd6cf]"}`}
-    >
-      <span className={`absolute top-1 size-5 rounded-full bg-white shadow-sm transition ${checked ? "left-6" : "left-1"}`} />
-    </button>
-  );
+type AccountSummary = {
+  upcoming: number;
+  pending: number;
+  completed: number;
+  cancelled: number;
+  monthlyReceiptTotal: number;
+};
+
+type AccountSummaryState = {
+  ownerId: string;
+  data: AccountSummary;
+  loading: boolean;
+  error: string;
+};
+
+const emptyAccountSummary: AccountSummary = {
+  upcoming: 0,
+  pending: 0,
+  completed: 0,
+  cancelled: 0,
+  monthlyReceiptTotal: 0
+};
+
+const manilaMonthFormatter = new Intl.DateTimeFormat("en-CA", {
+  year: "numeric",
+  month: "2-digit",
+  timeZone: "Asia/Manila"
+});
+
+function profileDraftFromUser(user: StudentUser): ProfileDraft {
+  return {
+    fullName: user.fullName,
+    phone: user.phone,
+    department: user.department,
+    address: user.address
+  };
+}
+
+function manilaMonthKey(value: Date) {
+  if (Number.isNaN(value.getTime())) return null;
+  return manilaMonthFormatter.format(value);
+}
+
+function summarizeAccount(reservations: BackendReservation[], receipts: BackendReceipt[]): AccountSummary {
+  const currentMonth = manilaMonthKey(new Date());
+  return {
+    upcoming: reservations.filter((row) => row.status === "CONFIRMED" || row.status === "READY_FOR_PICKUP").length,
+    pending: reservations.filter((row) => row.status === "PENDING").length,
+    completed: reservations.filter((row) => row.status === "COMPLETED").length,
+    cancelled: reservations.filter((row) => row.status === "CANCELLED" || row.status === "NO_SHOW").length,
+    monthlyReceiptTotal: receipts.reduce((total, receipt) => {
+      const receiptMonth = manilaMonthKey(new Date(receipt.issuedAt));
+      if (!receiptMonth || receipt.status === "VOIDED" || receiptMonth !== currentMonth) return total;
+      const amount = Number(receipt.totalAmount);
+      return total + (Number.isFinite(amount) ? amount : 0);
+    }, 0)
+  };
+}
+
+function formatPeso(value: number) {
+  return `PHP ${value.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 function InformationRow({
@@ -119,53 +167,136 @@ export function StudentProfileExperience() {
   const { user, ready, openAuth, updateProfile, logout } = useStudentAuth();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<ProfileDraft>(emptyDraft);
-  const [reservationReminders, setReservationReminders] = useState(true);
-  const [restockAlerts, setRestockAlerts] = useState(true);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [draftOwnerId, setDraftOwnerId] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
+  const [saveNotice, setSaveNotice] = useState("");
+  const [accountSummaryState, setAccountSummaryState] = useState<AccountSummaryState>({
+    ownerId: "",
+    data: emptyAccountSummary,
+    loading: false,
+    error: ""
+  });
+  const summaryRequestRef = useRef(0);
+  const profileOwnerRef = useRef("");
+  const activeDraft = user && draftOwnerId === user.id ? draft : user ? profileDraftFromUser(user) : emptyDraft;
+  const accountSummary = user && accountSummaryState.ownerId === user.id
+    ? accountSummaryState.data
+    : emptyAccountSummary;
+  const summaryLoading = Boolean(user) && (
+    accountSummaryState.ownerId !== user?.id || accountSummaryState.loading
+  );
+  const summaryError = accountSummaryState.ownerId === user?.id ? accountSummaryState.error : "";
 
   useEffect(() => {
-    if (!user) return;
-    setDraft({
-      fullName: user.fullName,
-      phone: user.phone,
-      department: user.department,
-      address: user.address,
-      avatarDataUrl: user.avatarDataUrl ?? ""
-    });
+    const nextOwnerId = user?.id ?? "";
+    const accountChanged = profileOwnerRef.current !== nextOwnerId;
+    profileOwnerRef.current = nextOwnerId;
+    if (accountChanged) {
+      setEditing(false);
+      setSaving(false);
+      setSaveError("");
+      setSaveNotice("");
+    }
+    if (!user) {
+      setDraft(emptyDraft);
+      setDraftOwnerId("");
+      return;
+    }
+    setDraft(profileDraftFromUser(user));
+    setDraftOwnerId(user.id);
   }, [user]);
 
-  const updateDraft = (key: keyof ProfileDraft) => (value: string) => {
-    setDraft((current) => ({ ...current, [key]: value }));
-  };
+  useEffect(() => {
+    const ownerId = user?.id ?? "";
+    const accessToken = user?.accessToken;
 
-  const handlePhoto = (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file || !file.type.startsWith("image/")) return;
+    if (!ownerId || !accessToken) {
+      summaryRequestRef.current += 1;
+      setAccountSummaryState({ ownerId: "", data: emptyAccountSummary, loading: false, error: "" });
+      return undefined;
+    }
 
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === "string") {
-        setDraft((current) => ({ ...current, avatarDataUrl: reader.result as string }));
+    setAccountSummaryState({ ownerId, data: emptyAccountSummary, loading: true, error: "" });
+    const loadSummary = async () => {
+      const requestSequence = ++summaryRequestRef.current;
+      try {
+        const [reservations, receipts] = await Promise.all([
+          getReservationsFromApi(accessToken),
+          getReceiptsFromApi(accessToken)
+        ]);
+        if (requestSequence !== summaryRequestRef.current) return;
+        setAccountSummaryState({
+          ownerId,
+          data: summarizeAccount(reservations, receipts),
+          loading: false,
+          error: ""
+        });
+      } catch (error) {
+        if (requestSequence !== summaryRequestRef.current) return;
+        setAccountSummaryState((current) => ({
+          ownerId,
+          data: current.ownerId === ownerId ? current.data : emptyAccountSummary,
+          loading: false,
+          error: error instanceof Error ? error.message : "Unable to load live account totals."
+        }));
       }
     };
-    reader.readAsDataURL(file);
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") void loadSummary();
+    };
+    const timer = window.setInterval(refreshWhenVisible, 30_000);
+    window.addEventListener("focus", refreshWhenVisible);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    void loadSummary();
+
+    return () => {
+      summaryRequestRef.current += 1;
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refreshWhenVisible);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, [user?.accessToken, user?.id]);
+
+  const updateDraft = (key: keyof ProfileDraft) => (value: string) => {
+    if (!user) return;
+    setDraft((current) => ({
+      ...(draftOwnerId === user.id ? current : profileDraftFromUser(user)),
+      [key]: value
+    }));
+    setDraftOwnerId(user.id);
+    setSaveError("");
+    setSaveNotice("");
   };
 
-  const saveProfile = () => {
-    updateProfile(draft);
+  const saveProfile = async () => {
+    if (!user) return;
+    if (!activeDraft.fullName.trim()) {
+      setSaveError("Full name is required.");
+      return;
+    }
+
+    setSaving(true);
+    setSaveError("");
+    setSaveNotice("");
+    const ownerId = user.id;
+    const result = await updateProfile(activeDraft);
+    if (profileOwnerRef.current !== ownerId) return;
+    setSaving(false);
+    if (!result.success) {
+      setSaveError(result.error ?? "Unable to save your profile.");
+      return;
+    }
     setEditing(false);
+    setSaveNotice("Profile changes saved.");
   };
 
   const cancelEditing = () => {
     if (user) {
-      setDraft({
-        fullName: user.fullName,
-        phone: user.phone,
-        department: user.department,
-        address: user.address,
-        avatarDataUrl: user.avatarDataUrl ?? ""
-      });
+      setDraft(profileDraftFromUser(user));
+      setDraftOwnerId(user.id);
     }
+    setSaveError("");
     setEditing(false);
   };
 
@@ -209,25 +340,12 @@ export function StudentProfileExperience() {
       <section className="grid gap-6 rounded-lg border border-[#dce5dd] bg-white p-4 shadow-sm sm:p-7 lg:grid-cols-[auto_1fr_auto] lg:items-center">
         <div className="relative mx-auto size-32 shrink-0 sm:size-36 lg:mx-0">
           <div className="relative size-full overflow-hidden rounded-full border-2 border-primary bg-[#e9f3e9]">
-            {draft.avatarDataUrl ? (
-              <Image src={draft.avatarDataUrl} alt={user.fullName} fill unoptimized className="object-cover" />
+            {user.avatarDataUrl ? (
+              <Image src={user.avatarDataUrl} alt={user.fullName} fill unoptimized className="object-cover" />
             ) : (
               <span className="grid size-full place-items-center text-4xl font-extrabold text-primary">{initials}</span>
             )}
           </div>
-          <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handlePhoto} />
-          <button
-            type="button"
-            onClick={() => {
-              setEditing(true);
-              fileInputRef.current?.click();
-            }}
-            aria-label="Choose profile photo"
-            title="Choose profile photo"
-            className="absolute bottom-1 right-0 grid size-11 place-items-center rounded-full border-4 border-white bg-primary text-white shadow-md hover:bg-[#004320]"
-          >
-            <Camera className="size-5" />
-          </button>
         </div>
 
         <div className="text-center lg:text-left">
@@ -237,11 +355,11 @@ export function StudentProfileExperience() {
           <div className="mt-5 grid gap-2 sm:flex sm:flex-wrap sm:justify-center lg:justify-start">
             {editing ? (
               <>
-                <Button className="h-11 w-full sm:w-auto" onClick={saveProfile}>
+                <Button className="h-11 w-full sm:w-auto" onClick={() => void saveProfile()} disabled={saving}>
                   <Check className="size-4" />
-                  Save changes
+                  {saving ? "Saving..." : "Save changes"}
                 </Button>
-                <Button variant="secondary" className="h-11 w-full sm:w-auto" onClick={cancelEditing}>
+                <Button variant="secondary" className="h-11 w-full sm:w-auto" onClick={cancelEditing} disabled={saving}>
                   <X className="size-4" />
                   Cancel
                 </Button>
@@ -253,6 +371,8 @@ export function StudentProfileExperience() {
               </Button>
             )}
           </div>
+          {saveError ? <p className="mt-3 text-sm font-semibold text-red-700" role="alert">{saveError}</p> : null}
+          {saveNotice ? <p className="mt-3 text-sm font-semibold text-primary" role="status">{saveNotice}</p> : null}
         </div>
 
         <div className="hidden rounded-lg bg-[#f1f7f1] p-4 text-right lg:block">
@@ -268,45 +388,36 @@ export function StudentProfileExperience() {
             <AssetIcon src="/assets/my-profile.svg" className="size-8" />
             <h2 className="text-xl font-extrabold text-[#17211b]">Account Information</h2>
           </div>
-          <InformationRow iconSrc="/assets/my-profile.svg" label="Full Name" value={draft.fullName} editing={editing} onChange={updateDraft("fullName")} />
-          <InformationRow iconSrc="/assets/contact-us.svg" label="Phone Number" value={draft.phone} editing={editing} onChange={updateDraft("phone")} />
+          <InformationRow iconSrc="/assets/my-profile.svg" label="Full Name" value={activeDraft.fullName} editing={editing} onChange={updateDraft("fullName")} />
+          <InformationRow iconSrc="/assets/contact-us.svg" label="Phone Number" value={activeDraft.phone} editing={editing} onChange={updateDraft("phone")} />
           <InformationRow iconSrc="/assets/id-accessories.svg" label="Student Number" value={user.studentNumber} />
-          <InformationRow iconSrc="/assets/textbooks.svg" label="Department" value={draft.department} editing={editing} onChange={updateDraft("department")} />
+          <InformationRow iconSrc="/assets/textbooks.svg" label="Department" value={activeDraft.department} editing={editing} onChange={updateDraft("department")} />
           <InformationRow iconSrc="/assets/messages.svg" label="Email Address" value={user.email} />
-          <InformationRow iconSrc="/assets/contact-us.svg" label="Address" value={draft.address} editing={editing} multiline onChange={updateDraft("address")} />
+          <InformationRow iconSrc="/assets/contact-us.svg" label="Address" value={activeDraft.address} editing={editing} multiline onChange={updateDraft("address")} />
         </section>
 
         <div className="grid content-start gap-5">
           <SummaryLink href="/student/reservations" iconSrc="/assets/my-reservations.svg" title="My Reservations Summary">
             <div className="grid grid-cols-2 gap-3 text-sm">
-              <span className="flex items-center justify-between">Upcoming <strong className="rounded-md bg-[#fff0ce] px-2.5 py-1 text-[#b86d00]">2</strong></span>
-              <span className="flex items-center justify-between">Pending <strong className="rounded-md bg-[#fff0ce] px-2.5 py-1 text-[#b86d00]">1</strong></span>
-              <span className="flex items-center justify-between">Completed <strong className="rounded-md bg-[#e4f3e5] px-2.5 py-1 text-primary">8</strong></span>
-              <span className="flex items-center justify-between">Cancelled <strong className="rounded-md bg-[#edf0ee] px-2.5 py-1">1</strong></span>
+              <span className="flex items-center justify-between">Upcoming <strong className="rounded-md bg-[#fff0ce] px-2.5 py-1 text-[#b86d00]">{summaryLoading || summaryError ? "—" : accountSummary.upcoming}</strong></span>
+              <span className="flex items-center justify-between">Pending <strong className="rounded-md bg-[#fff0ce] px-2.5 py-1 text-[#b86d00]">{summaryLoading || summaryError ? "—" : accountSummary.pending}</strong></span>
+              <span className="flex items-center justify-between">Completed <strong className="rounded-md bg-[#e4f3e5] px-2.5 py-1 text-primary">{summaryLoading || summaryError ? "—" : accountSummary.completed}</strong></span>
+              <span className="flex items-center justify-between">Cancelled <strong className="rounded-md bg-[#edf0ee] px-2.5 py-1">{summaryLoading || summaryError ? "—" : accountSummary.cancelled}</strong></span>
             </div>
           </SummaryLink>
 
           <SummaryLink href="/student/receipts" iconSrc="/assets/digital-receipts.svg" title="Digital Receipts Summary">
             <div className="flex items-end justify-between gap-3">
               <span className="text-sm text-[#667169]">This month</span>
-              <strong className="text-2xl text-primary">PHP 1,230.00</strong>
+              <strong className="text-2xl text-primary">{summaryLoading || summaryError ? "—" : formatPeso(accountSummary.monthlyReceiptTotal)}</strong>
             </div>
           </SummaryLink>
 
-          <section className="rounded-lg border border-[#dce5dd] bg-white p-5 shadow-sm">
-            <div className="flex items-center gap-3">
-              <AssetIcon src="/assets/notifications.svg" className="size-8" />
-              <h2 className="font-extrabold text-[#17211b]">Notification Settings</h2>
-            </div>
-            <div className="mt-5 flex items-center justify-between gap-4">
-              <span className="text-sm text-[#4f5b54]">Reservation reminders</span>
-              <Toggle checked={reservationReminders} label="Reservation reminders" onChange={() => setReservationReminders((value) => !value)} />
-            </div>
-            <div className="mt-4 flex items-center justify-between gap-4">
-              <span className="text-sm text-[#4f5b54]">Restock notifications</span>
-              <Toggle checked={restockAlerts} label="Restock notifications" onChange={() => setRestockAlerts((value) => !value)} />
-            </div>
-          </section>
+          {summaryError ? (
+            <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-semibold leading-5 text-amber-800" role="status">
+              Live account totals are temporarily unavailable. Refresh when the connection is stable.
+            </p>
+          ) : null}
 
           <WebPushSettings />
         </div>

@@ -792,6 +792,94 @@ on public.app_settings for select
 using (public.is_staff_or_admin());
 
 
+-- BACKEND-ONLY PUBLIC DATA ACCESS
+----------------------------------
+-- Supabase is used client-side for Auth only. All public-schema reads and
+-- writes pass through the WESCOMM backend. Never expose the service-role key.
+
+revoke all privileges on all tables in schema public from anon, authenticated;
+revoke all privileges on all sequences in schema public from anon, authenticated;
+revoke execute on all functions in schema public from anon, authenticated;
+revoke all privileges on all tables in schema public from public;
+revoke all privileges on all sequences in schema public from public;
+revoke execute on all functions in schema public from public;
+
+alter default privileges for role postgres in schema public
+revoke all privileges on tables from anon, authenticated;
+alter default privileges for role postgres in schema public
+revoke all privileges on sequences from anon, authenticated;
+alter default privileges for role postgres in schema public
+revoke execute on functions from anon, authenticated;
+alter default privileges for role postgres in schema public
+revoke all privileges on tables from public;
+alter default privileges for role postgres in schema public
+revoke all privileges on sequences from public;
+alter default privileges for role postgres in schema public
+revoke execute on functions from public;
+
+alter default privileges for role supabase_admin in schema public
+revoke all privileges on tables from anon, authenticated;
+alter default privileges for role supabase_admin in schema public
+revoke all privileges on sequences from anon, authenticated;
+alter default privileges for role supabase_admin in schema public
+revoke execute on functions from anon, authenticated;
+alter default privileges for role supabase_admin in schema public
+revoke all privileges on tables from public;
+alter default privileges for role supabase_admin in schema public
+revoke all privileges on sequences from public;
+alter default privileges for role supabase_admin in schema public
+revoke execute on functions from public;
+
+-- Preserve the explicit server-only service-role boundary.
+grant all privileges on all tables in schema public to service_role;
+grant all privileges on all sequences in schema public to service_role;
+grant execute on all functions in schema public to service_role;
+alter default privileges for role postgres in schema public
+grant all privileges on tables to service_role;
+alter default privileges for role postgres in schema public
+grant all privileges on sequences to service_role;
+alter default privileges for role postgres in schema public
+grant execute on functions to service_role;
+alter default privileges for role supabase_admin in schema public
+grant all privileges on tables to service_role;
+alter default privileges for role supabase_admin in schema public
+grant all privileges on sequences to service_role;
+alter default privileges for role supabase_admin in schema public
+grant execute on functions to service_role;
+
+-- Prisma migration history is internal metadata. The table owner keeps access,
+-- while PostgREST roles have no policies or grants on it.
+do $block$
+begin
+  if to_regclass('public._prisma_migrations') is not null then
+    alter table public._prisma_migrations enable row level security;
+    revoke all privileges on table public._prisma_migrations from public;
+    revoke all privileges on table public._prisma_migrations from anon, authenticated;
+    revoke all privileges on table public._prisma_migrations from service_role;
+  end if;
+end
+$block$;
+
+drop policy if exists "profiles_update_own" on public.profiles;
+drop policy if exists "profiles_admin_update_all" on public.profiles;
+drop policy if exists "categories_staff_manage" on public.categories;
+drop policy if exists "products_staff_manage" on public.products;
+drop policy if exists "product_variants_staff_manage" on public.product_variants;
+drop policy if exists "inventory_movements_staff_insert" on public.inventory_movements;
+drop policy if exists "reservations_student_insert_own" on public.reservations;
+drop policy if exists "reservations_staff_update_all" on public.reservations;
+drop policy if exists "reservation_items_student_insert_own" on public.reservation_items;
+drop policy if exists "reservation_items_staff_manage" on public.reservation_items;
+drop policy if exists "receipts_staff_manage" on public.receipts;
+drop policy if exists "notifications_user_update_own" on public.notifications;
+drop policy if exists "notifications_staff_insert" on public.notifications;
+drop policy if exists "conversations_student_insert_own" on public.conversations;
+drop policy if exists "conversations_staff_update_all" on public.conversations;
+drop policy if exists "conversation_messages_insert_access" on public.conversation_messages;
+drop policy if exists "faqs_staff_manage" on public.faqs;
+drop policy if exists "app_settings_admin_manage" on public.app_settings;
+
+
 -- SEED DATA
 ------------
 
@@ -1083,6 +1171,15 @@ using (
   bucket_id = 'receipts'
   and public.is_staff_or_admin()
 );
+
+-- Private Storage access is backend-only. Public product-image reads remain.
+drop policy if exists "product_images_staff_upload" on storage.objects;
+drop policy if exists "product_images_staff_update" on storage.objects;
+drop policy if exists "avatars_user_read_own" on storage.objects;
+drop policy if exists "avatars_user_upload_own" on storage.objects;
+drop policy if exists "avatars_user_update_own" on storage.objects;
+drop policy if exists "receipts_staff_upload" on storage.objects;
+drop policy if exists "receipts_staff_read" on storage.objects;
 
 
 PART 11 - ENABLE REALTIME

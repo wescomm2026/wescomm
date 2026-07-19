@@ -3,6 +3,28 @@ import { resolveShopProductAsset } from "@/lib/shop-assets";
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "/api/backend";
 export const COOKIE_SESSION_TOKEN = "cookie-session";
+export const AUTH_UNAUTHORIZED_EVENT = "wescomm:auth-unauthorized";
+
+export type BackendAuthProfile = {
+  id: string;
+  role: "STUDENT" | "STAFF" | "ADMIN";
+  studentNumber: string | null;
+  fullName: string;
+  email: string;
+  phone: string | null;
+  department: string | null;
+  address: string | null;
+  avatarUrl: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type UpdateMyProfilePayload = {
+  fullName: string;
+  phone: string | null;
+  department: string | null;
+  address: string | null;
+};
 
 export type BackendCategory = {
   id: string;
@@ -461,10 +483,21 @@ export async function authApiFetch<T>(path: string, token: string, init?: Reques
   const payload = await response.json().catch(() => null);
 
   if (!response.ok) {
+    if (response.status === 401 && typeof window !== "undefined") {
+      window.dispatchEvent(new Event(AUTH_UNAUTHORIZED_EVENT));
+    }
     throw new BackendApiError(response.status, payload?.error ?? `API request failed: ${response.status}`, payload?.code, payload?.details);
   }
 
   return payload as T;
+}
+
+export async function updateMyProfileFromApi(token: string, payload: UpdateMyProfilePayload) {
+  const data = await authApiFetch<{ profile: BackendAuthProfile }>("/auth/me", token, {
+    method: "PATCH",
+    body: JSON.stringify(payload)
+  });
+  return data.profile;
 }
 
 export async function getProductsFromApi() {

@@ -65,6 +65,7 @@ http://localhost:4000/api
 - `GET /api/health`
 - `GET /api/health/ready`
 - `POST /api/auth/session`
+- `PATCH /api/auth/me`
 - `POST /api/auth/logout`
 - `GET /api/products`
 - `GET /api/products/:id`
@@ -130,9 +131,12 @@ FRONTEND_ORIGINS=https://YOUR_FRONTEND_DOMAIN
 TRUST_PROXY_HOPS=1
 AUTH_SESSION_TTL_HOURS=168
 AUTH_SESSION_MAX_PER_USER=5
+AUTH_ALLOWED_AUTH_METHODS=otp,magiclink,email/signup,token_refresh
 DATA_ENCRYPTION_CURRENT_VERSION=v1
 DATA_ENCRYPTION_KEYS=v1:YOUR_PRIVATE_32_BYTE_BASE64_KEY
 ```
+
+`AUTH_ALLOWED_AUTH_METHODS` is checked against the verified Supabase JWT `amr` claim. Password-authenticated bearer tokens are rejected, and `token_refresh` is accepted only alongside an approved primary method. Add an explicitly reviewed method such as `oauth`, `sso`, or `saml` only when that provider is intentionally enabled.
 
 The API applies request IDs, strict CORS, CSRF origin checks, security headers, no-store caching for authenticated data, action-specific rate limits, bounded request schemas, image signature validation, encrypted sensitive fields, revocable hashed sessions, privacy-safe push notifications, and privacy-safe public receipt verification. For a multi-instance deployment, replace the in-memory rate-limit store with a shared rate-limit store.
 

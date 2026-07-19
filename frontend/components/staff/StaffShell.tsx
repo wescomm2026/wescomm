@@ -185,13 +185,17 @@ export function StaffShell({
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [notifications, setNotifications] = useState<BackendNotification[]>([]);
+  const [notificationOwnerId, setNotificationOwnerId] = useState("");
   const [notificationsLoading, setNotificationsLoading] = useState(false);
   const [notificationsError, setNotificationsError] = useState("");
   const notificationRef = useRef<HTMLDivElement>(null);
   const profileRef = useRef<HTMLDivElement>(null);
+  const notificationRequestRef = useRef(0);
   const router = useRouter();
   const { user, ready, openAuth, logout } = useStudentAuth();
-  const unreadCount = notifications.filter((notification) => !notification.readAt).length;
+  const accountId = user?.id ?? "";
+  const visibleNotifications = notificationOwnerId === accountId ? notifications : [];
+  const unreadCount = visibleNotifications.filter((notification) => !notification.readAt).length;
   const displayName = user?.fullName || user?.email?.split("@")[0] || (role === "ADMIN" ? "Admin" : "Staff");
   const initials = displayName
     .split(/\s+/)
@@ -201,19 +205,23 @@ export function StaffShell({
     .join("") || (role === "ADMIN" ? "AD" : "ST");
 
   const loadNotifications = useCallback(async () => {
-    if (!user?.accessToken || user.role !== role) return;
+    if (!user?.accessToken || user.role !== role || !accountId) return;
+    const requestSequence = ++notificationRequestRef.current;
     setNotificationsLoading(true);
     setNotificationsError("");
 
     try {
       const rows = await getNotificationsFromApi(user.accessToken);
+      if (requestSequence !== notificationRequestRef.current) return;
       setNotifications(rows);
+      setNotificationOwnerId(accountId);
     } catch (notificationError) {
+      if (requestSequence !== notificationRequestRef.current) return;
       setNotificationsError(notificationError instanceof Error ? notificationError.message : "Unable to load notifications.");
     } finally {
-      setNotificationsLoading(false);
+      if (requestSequence === notificationRequestRef.current) setNotificationsLoading(false);
     }
-  }, [role, user?.accessToken, user?.role]);
+  }, [accountId, role, user?.accessToken, user?.role]);
 
   useEffect(() => {
     const closeMenus = (event: MouseEvent) => {
@@ -256,6 +264,9 @@ export function StaffShell({
   }, [openAuth, ready, role, router, user]);
 
   useEffect(() => {
+    setNotificationsOpen(false);
+    setNotifications([]);
+    setNotificationOwnerId(accountId);
     if (!user?.accessToken || user.role !== role) {
       setNotifications([]);
       setNotificationsError("");
@@ -264,8 +275,11 @@ export function StaffShell({
 
     void loadNotifications();
     const timer = window.setInterval(() => void loadNotifications(), 15000);
-    return () => window.clearInterval(timer);
-  }, [loadNotifications, role, user?.accessToken, user?.role]);
+    return () => {
+      notificationRequestRef.current += 1;
+      window.clearInterval(timer);
+    };
+  }, [accountId, loadNotifications, role, user?.accessToken, user?.role]);
 
   const submitSearch = (event: FormEvent) => {
     event.preventDefault();
@@ -419,7 +433,7 @@ export function StaffShell({
                       <p className="px-4 py-6 text-sm font-semibold text-[#68746d]">Loading notifications...</p>
                     ) : notificationsError ? (
                       <p className="px-4 py-6 text-sm font-semibold text-red-700">{notificationsError}</p>
-                    ) : notifications.length ? notifications.map((notification) => (
+                    ) : visibleNotifications.length ? visibleNotifications.map((notification) => (
                       <Link
                         key={notification.id}
                         href={staffNotificationHref(notification.type, routeBase, homeHref)}

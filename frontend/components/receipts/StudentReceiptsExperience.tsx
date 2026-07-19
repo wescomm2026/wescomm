@@ -755,13 +755,16 @@ function ReceiptModal({
 export function StudentReceiptsExperience() {
   const { user, ready: authReady, openAuth } = useStudentAuth();
   const [receipts, setReceipts] = useState<Receipt[]>([]);
+  const [receiptsOwnerId, setReceiptsOwnerId] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [selectedReceiptId, setSelectedReceiptId] = useState<string | null>(null);
   const receiptTriggerRef = useRef<HTMLButtonElement | null>(null);
   const requestSequenceRef = useRef(0);
+  const accountId = user?.id ?? "";
+  const visibleReceipts = receiptsOwnerId === accountId ? receipts : [];
   const selectedReceipt = selectedReceiptId
-    ? receipts.find((receipt) => receipt.id === selectedReceiptId) ?? null
+    ? visibleReceipts.find((receipt) => receipt.id === selectedReceiptId) ?? null
     : null;
   const closeReceipt = useCallback(() => setSelectedReceiptId(null), []);
 
@@ -769,8 +772,9 @@ export function StudentReceiptsExperience() {
     if (!authReady) return;
     const requestSequence = ++requestSequenceRef.current;
 
-    if (!user?.accessToken) {
+    if (!user?.accessToken || !accountId) {
       setReceipts([]);
+      setReceiptsOwnerId(accountId);
       setSelectedReceiptId(null);
       setLoading(false);
       return;
@@ -786,6 +790,7 @@ export function StudentReceiptsExperience() {
       if (requestSequence !== requestSequenceRef.current) return;
       const nextReceipts = rows.map(mapBackendReceipt);
       setReceipts(nextReceipts);
+      setReceiptsOwnerId(accountId);
       setSelectedReceiptId((currentId) => (
         currentId && nextReceipts.some((receipt) => receipt.id === currentId) ? currentId : null
       ));
@@ -798,14 +803,17 @@ export function StudentReceiptsExperience() {
     } finally {
       if (requestSequence === requestSequenceRef.current && !background) setLoading(false);
     }
-  }, [authReady, user?.accessToken]);
+  }, [accountId, authReady, user?.accessToken]);
 
   useEffect(() => {
+    setReceipts([]);
+    setReceiptsOwnerId(accountId);
+    setSelectedReceiptId(null);
     void loadReceipts();
     return () => {
       requestSequenceRef.current += 1;
     };
-  }, [loadReceipts]);
+  }, [accountId, loadReceipts]);
 
   useEffect(() => {
     if (!authReady || !user?.accessToken) return;
@@ -823,7 +831,7 @@ export function StudentReceiptsExperience() {
       window.removeEventListener("focus", refreshInBackground);
       document.removeEventListener("visibilitychange", refreshInBackground);
     };
-  }, [authReady, loadReceipts, user?.accessToken]);
+  }, [accountId, authReady, loadReceipts, user?.accessToken]);
 
   return (
     <>
@@ -862,9 +870,9 @@ export function StudentReceiptsExperience() {
             <p className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p>
           ) : null}
 
-          {receipts.length ? (
+          {visibleReceipts.length ? (
             <div className="grid gap-6 lg:grid-cols-2 xl:grid-cols-3">
-              {receipts.map((receipt) => (
+              {visibleReceipts.map((receipt) => (
                 <article key={receipt.id} className="overflow-hidden rounded-lg border border-[#dce5dd] bg-[#edf2ed] p-3 shadow-sm">
                   <div className="overflow-hidden shadow-[0_8px_24px_rgba(0,0,0,0.09)]">
                     <ReceiptPaper receipt={receipt} compact />

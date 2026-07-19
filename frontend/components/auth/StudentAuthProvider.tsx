@@ -13,10 +13,18 @@ import {
 import { usePathname, useRouter } from "next/navigation";
 import { StudentAuthModal } from "@/components/auth/StudentAuthModal";
 import { WelcomeGateOverlay } from "@/components/auth/WelcomeGateOverlay";
-import { API_BASE_URL, BackendApiError, COOKIE_SESSION_TOKEN, onlineFetch } from "@/lib/api";
+import {
+  API_BASE_URL,
+  AUTH_UNAUTHORIZED_EVENT,
+  BackendApiError,
+  COOKIE_SESSION_TOKEN,
+  onlineFetch,
+  updateMyProfileFromApi,
+  type BackendAuthProfile
+} from "@/lib/api";
 import { describeOtpSendError } from "@/lib/auth-errors";
 import { EMAIL_OTP_LENGTH, isCompleteEmailOtp, normalizeEmailOtp } from "@/lib/auth-otp";
-import { disableWebPushNotifications } from "@/lib/push-notifications";
+import { unsubscribeWebPushFromBrowser } from "@/lib/push-notifications";
 import { clearStaffSession, storeStaffSession } from "@/lib/staff-api";
 import { getSupabaseBrowserClient, hasSupabaseBrowserConfig } from "@/lib/supabase-browser";
 import {
@@ -41,7 +49,7 @@ export type StudentUser = {
   avatarDataUrl?: string;
 };
 
-export type StudentProfileInput = Pick<StudentUser, "fullName" | "phone" | "department" | "address" | "avatarDataUrl">;
+export type StudentProfileInput = Pick<StudentUser, "fullName" | "phone" | "department" | "address">;
 
 export type AuthResult = {
   success: boolean;
@@ -59,13 +67,15 @@ type StudentAuthContextValue = {
   sendEmailOtp: (email: string) => Promise<AuthResult>;
   verifyEmailOtp: (email: string, token: string) => Promise<AuthResult>;
   loginWithTestAccount: (email: string, password: string) => Promise<AuthResult>;
+  isPasswordLoginAvailable: (email: string) => boolean;
   completeEmailLogin: () => Promise<AuthResult>;
-  updateProfile: (input: StudentProfileInput) => void;
+  updateProfile: (input: StudentProfileInput) => Promise<AuthResult>;
   logout: () => Promise<boolean>;
 };
 
 const LEGACY_DEV_SESSION_KEY = "wescomm_dev_session";
 const LEGACY_SESSION_KEY = "wescomm_student_session";
+const LOGOUT_PENDING_KEY = "wescomm_logout_pending";
 const PASSWORD_LOGIN_EMAILS = new Set(["admin@wesleyan.edu.ph", "staff@wesleyan.edu.ph", "student@wesleyan.edu.ph"]);
 const DEVELOPMENT_LOGIN_ENABLED =
   process.env.NEXT_PUBLIC_ENABLE_DEV_LOGIN === "true" ||
@@ -75,6 +85,7 @@ const WELCOME_GATE_MINIMUM_DURATION_MS = E2E_TEST_ENABLED ? 0 : 2200;
 const WELCOME_GATE_MAXIMUM_DURATION_MS = E2E_TEST_ENABLED ? 1000 : 4000;
 const READINESS_AWARE_DASHBOARD_PATHS = new Set(["/student/dashboard", "/staff", "/admin/dashboard"]);
 const ALLOWED_EMAIL_DOMAIN = process.env.NEXT_PUBLIC_AUTH_ALLOWED_EMAIL_DOMAIN ?? "wesleyan.edu.ph";
+const AUTH_SESSION_LOCK_NAME = "wescomm-auth-session";
 const StudentAuthContext = createContext<StudentAuthContextValue | null>(null);
 const emptyStudentProfile: StudentUser = {
   id: "",
@@ -86,23 +97,18 @@ const emptyStudentProfile: StudentUser = {
   department: "",
   address: ""
 };
-type BackendProfile = {
-  id: string;
-  role: AppRole;
-  studentNumber: string | null;
-  fullName: string;
-  email: string;
-  phone: string | null;
-  department: string | null;
-  address: string | null;
-  avatarUrl: string | null;
-};
-
 type ProfileCheckResult =
   | { status: "authenticated"; session: StudentUser }
   | { status: "unauthorized" }
   | { status: "transient" }
   | { status: "stale" };
+
+async function withAuthSessionLock<T>(operation: () => Promise<T>): Promise<T> {
+  if (typeof navigator !== "undefined" && navigator.locks) {
+    return navigator.locks.request(AUTH_SESSION_LOCK_NAME, operation);
+  }
+  return operation();
+}
 
 function normalizeSession(value: Partial<StudentUser>): StudentUser {
   return {
@@ -113,7 +119,7 @@ function normalizeSession(value: Partial<StudentUser>): StudentUser {
   };
 }
 
-function mapProfileToSession(profile: BackendProfile, accessToken = COOKIE_SESSION_TOKEN): StudentUser {
+function mapProfileToSession(profile: BackendAuthProfile, accessToken = COOKIE_SESSION_TOKEN): StudentUser {
   return normalizeSession({
     id: profile.id,
     role: profile.role,
@@ -151,7 +157,7 @@ async function loadProfileSession(accessToken?: string): Promise<StudentUser> {
     );
   }
 
-  return mapProfileToSession(profilePayload.profile as BackendProfile);
+  return mapProfileToSession(profilePayload.profile as BackendAuthProfile);
 }
 
 async function establishBackendSession(accessToken: string): Promise<StudentUser> {
@@ -164,7 +170,7 @@ async function establishBackendSession(accessToken: string): Promise<StudentUser
   });
   const payload = await response.json().catch(() => null);
   if (!response.ok) throw new Error(payload?.error ?? "Unable to establish a secure session.");
-  return mapProfileToSession(payload.profile as BackendProfile);
+  return mapProfileToSession(payload.profile as BackendAuthProfile);
 }
 
 function isAllowedEmail(email: string) {
@@ -209,6 +215,7 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
   const [welcomeContentReady, setWelcomeContentReady] = useState(false);
   const mountedRef = useRef(false);
   const profileCheckRef = useRef<Promise<ProfileCheckResult> | null>(null);
+  const pendingLogoutRef = useRef<Promise<boolean> | null>(null);
   const sessionGenerationRef = useRef(0);
   const welcomeTargetNeedsContentReady = READINESS_AWARE_DASHBOARD_PATHS.has(welcomeGateTargetPath);
   const dismissWelcomeGate = useCallback(() => setWelcomeGateUser(null), []);
@@ -253,7 +260,66 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
     setWelcomeGateUser(null);
   }, []);
 
+  const flushPendingLogout = useCallback((expectedGeneration = sessionGenerationRef.current) => {
+    if (pendingLogoutRef.current) return pendingLogoutRef.current;
+    if (window.localStorage.getItem(LOGOUT_PENDING_KEY) !== "true") return Promise.resolve(true);
+    if (!navigator.onLine) return Promise.resolve(false);
+
+    const pendingLogout = withAuthSessionLock(async () => {
+      if (window.localStorage.getItem(LOGOUT_PENDING_KEY) !== "true") return true;
+      let response: Response;
+      try {
+        response = await onlineFetch(`${API_BASE_URL}/auth/logout`, {
+          method: "POST",
+          credentials: "include",
+          keepalive: true
+        });
+      } catch {
+        return false;
+      }
+
+      if (!response.ok && response.status !== 401) return false;
+      if (
+        expectedGeneration !== sessionGenerationRef.current ||
+        window.localStorage.getItem(LOGOUT_PENDING_KEY) !== "true"
+      ) {
+        return true;
+      }
+
+      // Session revocation takes priority. Browser push cleanup is best-effort
+      // afterward and cannot delay or accidentally target a newer login.
+      await unsubscribeWebPushFromBrowser().catch(() => undefined);
+      if (
+        expectedGeneration !== sessionGenerationRef.current ||
+        window.localStorage.getItem(LOGOUT_PENDING_KEY) !== "true"
+      ) {
+        return true;
+      }
+      if (hasSupabaseBrowserConfig()) {
+        await getSupabaseBrowserClient().auth.signOut({ scope: "local" }).catch(() => undefined);
+      }
+      window.localStorage.removeItem(LOGOUT_PENDING_KEY);
+      return true;
+    });
+
+    pendingLogoutRef.current = pendingLogout;
+    void pendingLogout.finally(() => {
+      if (pendingLogoutRef.current === pendingLogout) pendingLogoutRef.current = null;
+    });
+    return pendingLogout;
+  }, []);
+
+  const prepareForNewSession = useCallback(async () => {
+    if (window.localStorage.getItem(LOGOUT_PENDING_KEY) !== "true") return true;
+    if (!navigator.onLine) return false;
+    const completed = await flushPendingLogout();
+    return completed && window.localStorage.getItem(LOGOUT_PENDING_KEY) !== "true";
+  }, [flushPendingLogout]);
+
   const revalidateProfileSession = useCallback(() => {
+    if (window.localStorage.getItem(LOGOUT_PENDING_KEY) === "true") {
+      return Promise.resolve<ProfileCheckResult>({ status: "stale" });
+    }
     if (profileCheckRef.current) return profileCheckRef.current;
     const sessionGeneration = sessionGenerationRef.current;
 
@@ -295,6 +361,27 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
       mountedRef.current = false;
     };
   }, []);
+
+  useEffect(() => {
+    const verifyUnauthorizedSession = () => {
+      // A delayed request from a previous account can return 401 after a new
+      // cookie session is active. Verify the current cookie before clearing it.
+      if (window.localStorage.getItem(LOGOUT_PENDING_KEY) === "true") return;
+      void revalidateProfileSession();
+    };
+    window.addEventListener(AUTH_UNAUTHORIZED_EVENT, verifyUnauthorizedSession);
+    return () => window.removeEventListener(AUTH_UNAUTHORIZED_EVENT, verifyUnauthorizedSession);
+  }, [revalidateProfileSession]);
+
+  useEffect(() => {
+    const handleCrossTabLogout = (event: StorageEvent) => {
+      if (event.key !== LOGOUT_PENDING_KEY || event.newValue !== "true") return;
+      if (user) clearConfirmedSession();
+      if (navigator.onLine) void flushPendingLogout();
+    };
+    window.addEventListener("storage", handleCrossTabLogout);
+    return () => window.removeEventListener("storage", handleCrossTabLogout);
+  }, [clearConfirmedSession, flushPendingLogout, user]);
 
   useEffect(() => {
     if (!welcomeGateUser) return undefined;
@@ -352,6 +439,16 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
       window.localStorage.removeItem(LEGACY_SESSION_KEY);
       clearLegacyBrowserAuthTokens();
 
+      if (window.localStorage.getItem(LOGOUT_PENDING_KEY) === "true") {
+        clearConfirmedSession();
+        const logoutGeneration = sessionGenerationRef.current;
+        await flushPendingLogout(logoutGeneration);
+        if (cancelled) return;
+        if (!shouldOpenLogin) showGuestWelcomeGate(window.location.pathname);
+        setReady(true);
+        return;
+      }
+
       const result = await revalidateProfileSession();
       if (cancelled) return;
 
@@ -368,33 +465,41 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [revalidateProfileSession, showGuestWelcomeGate, showWelcomeGate]);
+  }, [clearConfirmedSession, flushPendingLogout, revalidateProfileSession, showGuestWelcomeGate, showWelcomeGate]);
 
   useEffect(() => {
     if (!ready) return;
 
-    const refreshSession = () => {
-      void revalidateProfileSession();
+    const refreshSession = async () => {
+      if (window.localStorage.getItem(LOGOUT_PENDING_KEY) === "true") {
+        if (user) clearConfirmedSession();
+        await flushPendingLogout();
+        return;
+      }
+      await revalidateProfileSession();
     };
     const refreshVisibleSession = () => {
-      if (document.visibilityState === "visible") refreshSession();
+      if (document.visibilityState === "visible") void refreshSession();
     };
+    const sessionTimer = window.setInterval(refreshVisibleSession, 60_000);
 
-    window.addEventListener("online", refreshSession);
-    window.addEventListener("focus", refreshSession);
+    window.addEventListener("online", refreshVisibleSession);
+    window.addEventListener("focus", refreshVisibleSession);
     document.addEventListener("visibilitychange", refreshVisibleSession);
 
     return () => {
-      window.removeEventListener("online", refreshSession);
-      window.removeEventListener("focus", refreshSession);
+      window.clearInterval(sessionTimer);
+      window.removeEventListener("online", refreshVisibleSession);
+      window.removeEventListener("focus", refreshVisibleSession);
       document.removeEventListener("visibilitychange", refreshVisibleSession);
     };
-  }, [ready, revalidateProfileSession]);
+  }, [clearConfirmedSession, flushPendingLogout, ready, revalidateProfileSession, user]);
 
   const openAuth = useCallback(() => setModalOpen(true), []);
   const closeAuth = useCallback(() => setModalOpen(false), []);
 
   const saveSession = useCallback((session: StudentUser) => {
+    if (window.localStorage.getItem(LOGOUT_PENDING_KEY) === "true") return false;
     sessionGenerationRef.current += 1;
     profileCheckRef.current = null;
     const dashboardPath = getDashboardPath(session.role);
@@ -407,6 +512,7 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
     });
     setModalOpen(false);
     router.replace(dashboardPath);
+    return true;
   }, [persistSession, router]);
 
   const sendEmailOtp = useCallback(async (email: string): Promise<AuthResult> => {
@@ -478,9 +584,20 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
       const accessToken = data.session?.access_token;
       if (!accessToken) return { success: false, error: "We could not verify your login. Please request a new code and try again." };
 
-      const session = await establishBackendSession(accessToken);
+      if (!await prepareForNewSession()) {
+        await supabase.auth.signOut({ scope: "local" }).catch(() => undefined);
+        return { success: false, error: "Please wait for the previous account to finish signing out, then try again." };
+      }
+      const session = await withAuthSessionLock(async () => {
+        if (window.localStorage.getItem(LOGOUT_PENDING_KEY) === "true") {
+          throw new Error("A sign out is still in progress.");
+        }
+        return establishBackendSession(accessToken);
+      });
       await supabase.auth.signOut({ scope: "local" }).catch(() => undefined);
-      saveSession(session);
+      if (!saveSession(session)) {
+        return { success: false, error: "A sign out was requested before login completed. Please try again." };
+      }
       return { success: true };
     } catch (error) {
       return {
@@ -488,7 +605,7 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
         error: "We could not verify your login. Please request a new code and try again."
       };
     }
-  }, [saveSession]);
+  }, [prepareForNewSession, saveSession]);
 
   const completeEmailLogin = useCallback(async (): Promise<AuthResult> => {
     if (!hasSupabaseBrowserConfig()) {
@@ -513,9 +630,20 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
       }
       if (!accessToken) return { success: false, error: "We could not complete your login. Please try again." };
 
-      const session = await establishBackendSession(accessToken);
+      if (!await prepareForNewSession()) {
+        await supabase.auth.signOut({ scope: "local" }).catch(() => undefined);
+        return { success: false, error: "Please wait for the previous account to finish signing out, then try again." };
+      }
+      const session = await withAuthSessionLock(async () => {
+        if (window.localStorage.getItem(LOGOUT_PENDING_KEY) === "true") {
+          throw new Error("A sign out is still in progress.");
+        }
+        return establishBackendSession(accessToken);
+      });
       await supabase.auth.signOut({ scope: "local" }).catch(() => undefined);
-      saveSession(session);
+      if (!saveSession(session)) {
+        return { success: false, error: "A sign out was requested before login completed. Please try again." };
+      }
       return { success: true };
     } catch (error) {
       return {
@@ -523,17 +651,27 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
         error: "We could not complete your login. Please try again."
       };
     }
-  }, [saveSession]);
+  }, [prepareForNewSession, saveSession]);
+
+  const isPasswordLoginAvailable = useCallback((email: string) => (
+    DEVELOPMENT_LOGIN_ENABLED && PASSWORD_LOGIN_EMAILS.has(email.trim().toLowerCase())
+  ), []);
 
   const loginWithTestAccount = useCallback(async (email: string, password: string): Promise<AuthResult> => {
     const normalizedEmail = email.trim().toLowerCase();
-    if (!PASSWORD_LOGIN_EMAILS.has(normalizedEmail)) {
+    if (!isPasswordLoginAvailable(normalizedEmail)) {
       return { success: false, error: "Password login is not available for this account." };
     }
 
     try {
-      if (DEVELOPMENT_LOGIN_ENABLED) {
-        const response = await onlineFetch(`${API_BASE_URL}/auth/dev-login`, {
+      if (!await prepareForNewSession()) {
+        return { success: false, error: "Please wait for the previous account to finish signing out, then try again." };
+      }
+      const response = await withAuthSessionLock(async () => {
+        if (window.localStorage.getItem(LOGOUT_PENDING_KEY) === "true") {
+          throw new Error("A sign out is still in progress.");
+        }
+        return onlineFetch(`${API_BASE_URL}/auth/dev-login`, {
           method: "POST",
           credentials: "include",
           headers: {
@@ -541,33 +679,17 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
           },
           body: JSON.stringify({ email: normalizedEmail, password })
         });
-
-        const payload = await response.json().catch(() => null);
-        if (!response.ok) {
-          return { success: false, error: payload?.error ?? "Unable to sign in with this account." };
-        }
-
-        const session = mapProfileToSession(payload.profile as BackendProfile);
-        saveSession(session);
-        return { success: true };
-      }
-
-      if (!hasSupabaseBrowserConfig()) {
-        return { success: false, error: "Login is not available right now. Please try again later." };
-      }
-
-      const supabase = getSupabaseBrowserClient();
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: normalizedEmail,
-        password
       });
-      if (error || !data.session?.access_token) {
-        return { success: false, error: "The email or password is incorrect." };
+
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        return { success: false, error: payload?.error ?? "Unable to sign in with this account." };
       }
 
-      const session = await establishBackendSession(data.session.access_token);
-      await supabase.auth.signOut({ scope: "local" }).catch(() => undefined);
-      saveSession(session);
+      const session = mapProfileToSession(payload.profile as BackendAuthProfile);
+      if (!saveSession(session)) {
+        return { success: false, error: "A sign out was requested before login completed. Please try again." };
+      }
       return { success: true };
     } catch (error) {
       return {
@@ -575,49 +697,55 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
         error: getAuthErrorMessage(error, "Unable to sign in with this account.")
       };
     }
-  }, [saveSession]);
+  }, [isPasswordLoginAvailable, prepareForNewSession, saveSession]);
 
-  const updateProfile = useCallback((input: StudentProfileInput) => {
-    setUser((current) => {
-      if (!current) return current;
-      const updated = { ...current, ...input };
-      return updated;
-    });
-  }, []);
+  const updateProfile = useCallback(async (input: StudentProfileInput): Promise<AuthResult> => {
+    if (!user?.id) return { success: false, error: "Log in again before updating your profile." };
+
+    const requestGeneration = sessionGenerationRef.current;
+    const accountId = user.id;
+    const accessToken = user.accessToken ?? COOKIE_SESSION_TOKEN;
+
+    try {
+      const profile = await updateMyProfileFromApi(accessToken, {
+        fullName: input.fullName.trim(),
+        phone: input.phone.trim() || null,
+        department: input.department.trim() || null,
+        address: input.address.trim() || null
+      });
+
+      if (requestGeneration !== sessionGenerationRef.current || profile.id !== accountId) {
+        return { success: false, error: "The active account changed before the profile update completed." };
+      }
+
+      setUser((current) => (
+        current?.id === accountId
+          ? mapProfileToSession(profile, current.accessToken ?? COOKIE_SESSION_TOKEN)
+          : current
+      ));
+      return { success: true };
+    } catch (error) {
+      return {
+        success: false,
+        error: getAuthErrorMessage(error, "Unable to save your profile. Please try again.")
+      };
+    }
+  }, [user?.accessToken, user?.id]);
 
   const logout = useCallback(async () => {
-    if (!navigator.onLine) return false;
-
-    sessionGenerationRef.current += 1;
-    profileCheckRef.current = null;
-
-    const accessToken = user?.accessToken ?? "";
-    if (accessToken) {
-      await disableWebPushNotifications(accessToken).catch(() => undefined);
-    }
-
-    let response: Response;
-    try {
-      response = await onlineFetch(`${API_BASE_URL}/auth/logout`, {
-        method: "POST",
-        credentials: "include",
-        keepalive: true
-      });
-    } catch {
-      return false;
-    }
-
-    if (!response.ok && response.status !== 401) return false;
+    window.localStorage.setItem(LOGOUT_PENDING_KEY, "true");
+    clearConfirmedSession();
+    const logoutGeneration = sessionGenerationRef.current;
+    const remoteLogout = navigator.onLine
+      ? flushPendingLogout(logoutGeneration)
+      : Promise.resolve(false);
     if (hasSupabaseBrowserConfig()) {
       await getSupabaseBrowserClient().auth.signOut({ scope: "local" }).catch(() => undefined);
     }
-    window.sessionStorage.removeItem(LEGACY_DEV_SESSION_KEY);
-    window.localStorage.removeItem(LEGACY_SESSION_KEY);
-    clearStaffSession();
-    setUser(null);
-    setWelcomeGateUser(null);
+
+    await remoteLogout;
     return true;
-  }, [user?.accessToken]);
+  }, [clearConfirmedSession, flushPendingLogout]);
 
   const value = useMemo(
     () => ({
@@ -629,11 +757,12 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
       sendEmailOtp,
       verifyEmailOtp,
       loginWithTestAccount,
+      isPasswordLoginAvailable,
       completeEmailLogin,
       updateProfile,
       logout
     }),
-    [user, ready, openAuth, closeAuth, sendEmailOtp, verifyEmailOtp, loginWithTestAccount, completeEmailLogin, updateProfile, logout]
+    [user, ready, openAuth, closeAuth, sendEmailOtp, verifyEmailOtp, loginWithTestAccount, isPasswordLoginAvailable, completeEmailLogin, updateProfile, logout]
   );
 
   return (

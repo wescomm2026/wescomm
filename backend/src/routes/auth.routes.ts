@@ -2,6 +2,7 @@ import { Router } from "express";
 import { timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { env } from "../config/env.js";
+import { profileUpdateSchema } from "../domain/profile-update.js";
 import { supabaseAdmin } from "../lib/supabase.js";
 import { requireAuth, type AuthenticatedRequest } from "../middleware/auth.js";
 import { createRateLimiter, ipRateLimitKey, userRateLimitKey } from "../middleware/rate-limit.js";
@@ -11,6 +12,7 @@ import {
   readAuthSessionToken,
   revokeAuthSession
 } from "../services/auth-session.service.js";
+import { updateOwnProfile } from "../services/profile.service.js";
 import { type RawProfile, mapProfile } from "../types/app.js";
 import { isEmailAllowedForDomains, normalizeAllowedEmailDomains } from "../utils/auth-email-policy.js";
 import { asyncHandler } from "../utils/async-handler.js";
@@ -37,6 +39,14 @@ const sessionExchangeLimiter = createRateLimiter({
   max: 10,
   key: userRateLimitKey,
   message: "Too many session requests. Please wait before signing in again."
+});
+
+const profileUpdateLimiter = createRateLimiter({
+  namespace: "profile-update",
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  key: userRateLimitKey,
+  message: "Profile update limit reached. Please wait before making more changes."
 });
 
 const allowedDevEmails = new Set(
@@ -113,5 +123,17 @@ authRoutes.get(
   asyncHandler(async (request: AuthenticatedRequest, response) => {
     response.setHeader("Cache-Control", "no-store");
     response.json({ profile: request.auth!.profile });
+  })
+);
+
+authRoutes.patch(
+  "/me",
+  requireAuth,
+  profileUpdateLimiter,
+  asyncHandler(async (request: AuthenticatedRequest, response) => {
+    const input = profileUpdateSchema.parse(request.body);
+    const profile = await updateOwnProfile(request.auth!.profile, input);
+    response.setHeader("Cache-Control", "no-store");
+    response.json({ profile });
   })
 );

@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { z } from "zod";
+import { normalizeAllowedAuthMethods } from "../domain/auth-method-policy.js";
 import { validateAllowedEmailDomains } from "../utils/auth-email-policy.js";
 
 const booleanEnv = z.preprocess((value) => {
@@ -16,6 +17,7 @@ const envSchema = z.object({
   AUTH_ALLOWED_EMAIL_DOMAIN: z.string().trim().default("wesleyan.edu.ph"),
   AUTH_ALLOWED_EMAIL_DOMAINS: z.string().trim().optional(),
   AUTH_ALLOWED_AUTH_PROVIDERS: z.string().trim().default("email"),
+  AUTH_ALLOWED_AUTH_METHODS: z.string().trim().default("otp,magiclink,email/signup,token_refresh"),
   AUTH_ENABLE_DEV_LOGIN: booleanEnv.default(false),
   AUTH_DEV_LOGIN_PASSWORD: z.string().min(6).max(128).optional(),
   AUTH_DEV_LOGIN_EMAILS: z.string().trim().default(
@@ -40,6 +42,11 @@ const allowedEmailDomains = validateAllowedEmailDomains(
   parsedEnv.AUTH_ALLOWED_EMAIL_DOMAINS ?? parsedEnv.AUTH_ALLOWED_EMAIL_DOMAIN,
   parsedEnv.NODE_ENV
 );
+const allowedAuthMethods = normalizeAllowedAuthMethods(parsedEnv.AUTH_ALLOWED_AUTH_METHODS);
+
+if (allowedAuthMethods.length === 0 || allowedAuthMethods.includes("*") || allowedAuthMethods.includes("password")) {
+  throw new Error("AUTH_ALLOWED_AUTH_METHODS must list approved passwordless methods and cannot include '*' or 'password'.");
+}
 
 function validateEncryptionKeys(value: string | undefined, currentVersion: string) {
   if (!value) return false;
@@ -111,5 +118,6 @@ if (parsedEnv.NODE_ENV === "production") {
 export const env = {
   ...parsedEnv,
   FRONTEND_ORIGINS: parsedEnv.FRONTEND_ORIGINS ?? parsedEnv.FRONTEND_ORIGIN,
-  AUTH_ALLOWED_EMAIL_DOMAINS: allowedEmailDomains.join(",")
+  AUTH_ALLOWED_EMAIL_DOMAINS: allowedEmailDomains.join(","),
+  AUTH_ALLOWED_AUTH_METHODS: allowedAuthMethods.join(",")
 };

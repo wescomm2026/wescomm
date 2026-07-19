@@ -14,7 +14,6 @@ const SEND_LIMIT_WINDOW_MS = 15 * 60 * 1000;
 const REMEMBER_EMAIL_KEY = "wescomm_remembered_email_name";
 const REMEMBER_EMAIL_ENABLED_KEY = "wescomm_remember_email_enabled";
 const SEND_ATTEMPTS_KEY_PREFIX = "wescomm_auth_send_attempts:";
-const PASSWORD_LOGIN_EMAILS = new Set(["admin@wesleyan.edu.ph", "staff@wesleyan.edu.ph", "student@wesleyan.edu.ph"]);
 type AuthStep = "email" | "code" | "password";
 
 function schoolEmailDomainSuffix(allowedEmailDomain: string) {
@@ -93,7 +92,13 @@ function recordSendAttempt(email: string) {
 }
 
 export function StudentAuthModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { allowedEmailDomain, sendEmailOtp, verifyEmailOtp, loginWithTestAccount } = useStudentAuth();
+  const {
+    allowedEmailDomain,
+    sendEmailOtp,
+    verifyEmailOtp,
+    loginWithTestAccount,
+    isPasswordLoginAvailable
+  } = useStudentAuth();
   const [mounted, setMounted] = useState(false);
   const [loading, setLoading] = useState<"send" | "verify" | "password" | "">("");
   const [step, setStep] = useState<AuthStep>("email");
@@ -175,7 +180,7 @@ export function StudentAuthModal({ open, onClose }: { open: boolean; onClose: ()
       window.localStorage.removeItem(REMEMBER_EMAIL_KEY);
     }
 
-    if (PASSWORD_LOGIN_EMAILS.has(normalizedEmail)) {
+    if (isPasswordLoginAvailable(normalizedEmail)) {
       setStep("password");
       setNotice("Enter the password for this WESCOMM account.");
       setLoading("");

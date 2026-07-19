@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Bell, BellOff, Check, Send } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import { ActionLoadingOverlay } from "@/components/ui/ActionLoadingOverlay";
@@ -12,6 +12,7 @@ import {
   getWebPushState,
   isWebPushSupported,
   sendWebPushTest,
+  syncExistingWebPushSubscription,
   type PushCapabilityState
 } from "@/lib/push-notifications";
 
@@ -35,67 +36,110 @@ export function WebPushSettings({ compact = false }: { compact?: boolean }) {
   const [state, setState] = useState<PushCapabilityState>("default");
   const [busyAction, setBusyAction] = useState<"enable" | "disable" | "test" | "">("");
   const [message, setMessage] = useState("");
+  const [stateOwnerId, setStateOwnerId] = useState("");
+  const syncSequenceRef = useRef(0);
+  const accountId = user?.id ?? "";
+  const activeOwnerRef = useRef(accountId);
+  activeOwnerRef.current = accountId;
+  const visibleState = stateOwnerId === accountId ? state : "default";
 
   const refreshState = useCallback(async () => {
-    if (!user?.accessToken) return;
+    if (!user?.accessToken || !accountId) return;
+    const ownerId = accountId;
 
     try {
       const nextState = await getWebPushState();
+      if (activeOwnerRef.current !== ownerId) return;
       setState(nextState);
+      setStateOwnerId(ownerId);
     } catch {
+      if (activeOwnerRef.current !== ownerId) return;
       setState(isWebPushSupported() ? "default" : "unsupported");
+      setStateOwnerId(ownerId);
     }
-  }, [user?.accessToken]);
+  }, [accountId, user?.accessToken]);
 
   useEffect(() => {
-    void refreshState();
-  }, [refreshState]);
+    const accessToken = user?.accessToken;
+    const syncSequence = ++syncSequenceRef.current;
+    setState("default");
+    setStateOwnerId(accountId);
+    setMessage("");
+    setBusyAction("");
+    if (!accessToken || !accountId) return undefined;
+
+    void syncExistingWebPushSubscription(accessToken).then((nextState) => {
+      if (syncSequence !== syncSequenceRef.current) return;
+      setState(nextState);
+      setStateOwnerId(accountId);
+    }).catch(() => {
+      if (syncSequence !== syncSequenceRef.current) return;
+      setState(isWebPushSupported() ? "default" : "unsupported");
+      setStateOwnerId(accountId);
+    });
+
+    return () => {
+      syncSequenceRef.current += 1;
+    };
+  }, [accountId, user?.accessToken]);
 
   const enable = async () => {
     if (!user?.accessToken || busyAction) return;
+    const ownerId = accountId;
     setBusyAction("enable");
     setMessage("");
 
     try {
       await enableWebPushNotifications(user.accessToken);
+      if (activeOwnerRef.current !== ownerId) return;
       setState("granted");
+      setStateOwnerId(ownerId);
       setMessage("Phone notifications are enabled. A test notification was sent.");
     } catch (error) {
+      if (activeOwnerRef.current !== ownerId) return;
       await refreshState();
+      if (activeOwnerRef.current !== ownerId) return;
       setMessage(error instanceof Error ? error.message : "Unable to enable phone notifications.");
     } finally {
-      setBusyAction("");
+      if (activeOwnerRef.current === ownerId) setBusyAction("");
     }
   };
 
   const disable = async () => {
     if (!user?.accessToken || busyAction) return;
+    const ownerId = accountId;
     setBusyAction("disable");
     setMessage("");
 
     try {
       await disableWebPushNotifications(user.accessToken);
+      if (activeOwnerRef.current !== ownerId) return;
       await refreshState();
+      if (activeOwnerRef.current !== ownerId) return;
       setMessage("Phone notifications were disabled on this browser.");
     } catch (error) {
+      if (activeOwnerRef.current !== ownerId) return;
       setMessage(error instanceof Error ? error.message : "Unable to disable phone notifications.");
     } finally {
-      setBusyAction("");
+      if (activeOwnerRef.current === ownerId) setBusyAction("");
     }
   };
 
   const sendTest = async () => {
     if (!user?.accessToken || busyAction) return;
+    const ownerId = accountId;
     setBusyAction("test");
     setMessage("");
 
     try {
       await sendWebPushTest(user.accessToken);
+      if (activeOwnerRef.current !== ownerId) return;
       setMessage("Test notification sent.");
     } catch (error) {
+      if (activeOwnerRef.current !== ownerId) return;
       setMessage(error instanceof Error ? error.message : "Unable to send a test notification.");
     } finally {
-      setBusyAction("");
+      if (activeOwnerRef.current === ownerId) setBusyAction("");
     }
   };
 
@@ -115,9 +159,9 @@ export function WebPushSettings({ compact = false }: { compact?: boolean }) {
     }
   } as const;
   const activeLoadingCopy = busyAction ? loadingCopy[busyAction] : null;
-  const canEnable = state === "default";
-  const canDisable = state === "granted";
-  const canSendTest = state === "granted";
+  const canEnable = visibleState === "default";
+  const canDisable = visibleState === "granted";
+  const canSendTest = visibleState === "granted";
 
   return (
     <section className={compact ? "relative rounded-lg border border-[#dce5dd] bg-white p-4 shadow-sm" : "relative rounded-lg border border-[#dce5dd] bg-white p-5 shadow-sm"}>
@@ -139,9 +183,9 @@ export function WebPushSettings({ compact = false }: { compact?: boolean }) {
       </div>
 
       <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <span className={`inline-flex w-fit items-center gap-2 rounded-full px-3 py-1.5 text-xs font-extrabold ${statusClass(state)}`}>
-          {state === "granted" ? <Check className="size-4" /> : <Bell className="size-4" />}
-          {statusText(state)}
+        <span className={`inline-flex w-fit items-center gap-2 rounded-full px-3 py-1.5 text-xs font-extrabold ${statusClass(visibleState)}`}>
+          {visibleState === "granted" ? <Check className="size-4" /> : <Bell className="size-4" />}
+          {statusText(visibleState)}
         </span>
         <div className="flex flex-col gap-2 sm:flex-row">
           {canSendTest ? (
@@ -165,7 +209,7 @@ export function WebPushSettings({ compact = false }: { compact?: boolean }) {
       </div>
 
       {message ? <p className="mt-3 rounded-md bg-[#f4f8f5] px-3 py-2 text-xs font-semibold leading-5 text-[#526058]">{message}</p> : null}
-      {state === "unsupported" ? (
+      {visibleState === "unsupported" ? (
         <p className="mt-3 text-xs leading-5 text-[#68746d]">
           On iPhone, add WESCOMM to the Home Screen first, then open it from the Home Screen icon before enabling notifications.
         </p>

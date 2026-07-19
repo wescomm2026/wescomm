@@ -1,0 +1,82 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import test from "node:test";
+import { profileUpdateSchema } from "../domain/profile-update.js";
+
+test("profile updates accept and normalize only mutable self-service fields", () => {
+  assert.deepEqual(profileUpdateSchema.parse({
+    fullName: "  Test Student  ",
+    phone: " 09123456789 ",
+    department: "   ",
+    address: null
+  }), {
+    fullName: "Test Student",
+    phone: "09123456789",
+    department: null,
+    address: null
+  });
+});
+
+test("profile updates reject protected and storage-managed fields", () => {
+  for (const protectedField of [
+    "id",
+    "email",
+    "studentNumber",
+    "role",
+    "avatarUrl",
+    "avatarDataUrl",
+    "createdAt",
+    "updatedAt"
+  ]) {
+    assert.equal(profileUpdateSchema.safeParse({ [protectedField]: "attacker-value" }).success, false);
+  }
+  assert.equal(profileUpdateSchema.safeParse({}).success, false);
+  assert.equal(profileUpdateSchema.safeParse({ fullName: "   " }).success, false);
+});
+
+test("database migration makes public application data access backend-only", () => {
+  const migrationPath = path.resolve(
+    process.cwd(),
+    "prisma/migrations/20260718120000_lock_down_direct_application_writes/migration.sql"
+  );
+  const sql = readFileSync(migrationPath, "utf8");
+
+  assert.match(sql, /ARRAY\['anon', 'authenticated'\]/);
+  assert.match(sql, /REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public/);
+  assert.match(sql, /REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public/);
+  assert.match(sql, /REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA public/);
+  assert.match(sql, /REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA public FROM PUBLIC/);
+  assert.match(sql, /ARRAY\['postgres', 'supabase_admin'\]/);
+  assert.match(sql, /ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public REVOKE ALL PRIVILEGES ON TABLES/);
+  assert.match(sql, /ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS/);
+  assert.match(sql, /GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO service_role/);
+  assert.match(sql, /GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO service_role/);
+  assert.match(sql, /ALTER TABLE public\._prisma_migrations ENABLE ROW LEVEL SECURITY/);
+  assert.doesNotMatch(sql, /FORCE ROW LEVEL SECURITY/);
+  assert.match(sql, /ARRAY\['anon', 'authenticated', 'service_role'\]/);
+  assert.match(sql, /REVOKE ALL PRIVILEGES ON TABLE public\._prisma_migrations FROM %I/);
+  assert.match(sql, /DROP POLICY IF EXISTS "profiles_update_own"/);
+  assert.match(sql, /DROP POLICY IF EXISTS "reservations_student_insert_own"/);
+  assert.match(sql, /DROP POLICY IF EXISTS "reservation_items_student_insert_own"/);
+  assert.match(sql, /UPDATE public\.auth_sessions\s+SET revoked_at = NOW\(\)/);
+  assert.match(sql, /DROP POLICY IF EXISTS "avatars_user_upload_own" ON storage\.objects/);
+  assert.match(sql, /DROP POLICY IF EXISTS "receipts_staff_upload" ON storage\.objects/);
+  assert.match(sql, /DROP POLICY IF EXISTS "avatars_user_read_own" ON storage\.objects/);
+  assert.match(sql, /DROP POLICY IF EXISTS "receipts_staff_read" ON storage\.objects/);
+  assert.doesNotMatch(sql, /REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM service_role/i);
+});
+
+test("Supabase bootstrap guides preserve the backend-only database boundary", () => {
+  for (const fileName of ["SUPABASE_SQL_EDITOR_COMMANDS.txt", "BACKEND_DATABASE_API_SETUP.txt"]) {
+    const sql = readFileSync(path.resolve(process.cwd(), "../txt_files", fileName), "utf8");
+    assert.match(sql, /revoke all privileges on all tables in schema public from anon, authenticated/i);
+    assert.match(sql, /revoke execute on all functions in schema public from public/i);
+    assert.match(sql, /alter default privileges for role supabase_admin in schema public/i);
+    assert.match(sql, /alter table public\._prisma_migrations enable row level security/i);
+    assert.match(sql, /revoke all privileges on table public\._prisma_migrations from service_role/i);
+    assert.doesNotMatch(sql, /force row level security/i);
+    assert.match(sql, /drop policy if exists "avatars_user_read_own" on storage\.objects/i);
+    assert.match(sql, /drop policy if exists "receipts_staff_read" on storage\.objects/i);
+  }
+});

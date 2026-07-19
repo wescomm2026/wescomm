@@ -13,6 +13,14 @@ export type PushCapabilityState =
   | "granted"
   | "denied";
 
+let pushIdentityQueue: Promise<void> = Promise.resolve();
+
+function serializePushIdentityChange<T>(operation: () => Promise<T>) {
+  const result = pushIdentityQueue.then(operation, operation);
+  pushIdentityQueue = result.then(() => undefined, () => undefined);
+  return result;
+}
+
 function urlBase64ToUint8Array(base64String: string) {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
   const base64 = `${base64String}${padding}`.replace(/-/g, "+").replace(/_/g, "/");
@@ -49,6 +57,26 @@ export async function getWebPushState(): Promise<PushCapabilityState> {
   return subscription ? "granted" : "default";
 }
 
+export function syncExistingWebPushSubscription(token: string): Promise<PushCapabilityState> {
+  return serializePushIdentityChange(async () => {
+    if (!isWebPushSupported()) return "unsupported";
+
+    const config = await getPushPublicConfigFromApi();
+    if (!config.enabled || !config.publicKey) return "not-configured";
+    if (Notification.permission !== "granted") return Notification.permission as PushCapabilityState;
+
+    const registration = await navigator.serviceWorker.getRegistration("/");
+    await registration?.update().catch(() => undefined);
+    const subscription = await registration?.pushManager.getSubscription();
+    if (!subscription) return "default";
+
+    // The browser endpoint is device-scoped rather than account-scoped. Saving
+    // it again safely transfers the endpoint to the current authenticated user.
+    await savePushSubscriptionToApi(token, subscription.toJSON());
+    return "granted";
+  });
+}
+
 async function getServiceWorkerRegistration() {
   const registration = await registerWescommServiceWorker();
   await registration.update().catch(() => undefined);
@@ -57,45 +85,56 @@ async function getServiceWorkerRegistration() {
 }
 
 export async function enableWebPushNotifications(token: string) {
-  if (!isWebPushSupported()) {
-    throw new Error("This browser does not support web push notifications.");
-  }
+  return serializePushIdentityChange(async () => {
+    if (!isWebPushSupported()) {
+      throw new Error("This browser does not support web push notifications.");
+    }
 
-  const permission = await Notification.requestPermission();
-  if (permission !== "granted") {
-    throw new Error(permission === "denied"
-      ? "Notifications are blocked. Enable them in your browser or phone site settings."
-      : "Notification permission was not granted.");
-  }
+    const permission = await Notification.requestPermission();
+    if (permission !== "granted") {
+      throw new Error(permission === "denied"
+        ? "Notifications are blocked. Enable them in your browser or phone site settings."
+        : "Notification permission was not granted.");
+    }
 
-  const config = await getPushPublicConfigFromApi();
-  if (!config.enabled || !config.publicKey) {
-    throw new Error("Web push is not configured yet. Add VAPID keys on the backend first.");
-  }
+    const config = await getPushPublicConfigFromApi();
+    if (!config.enabled || !config.publicKey) {
+      throw new Error("Web push is not configured yet. Add VAPID keys on the backend first.");
+    }
 
-  const registration = await getServiceWorkerRegistration();
-  const existingSubscription = await registration.pushManager.getSubscription();
-  const subscription = existingSubscription ?? await registration.pushManager.subscribe({
-    userVisibleOnly: true,
-    applicationServerKey: urlBase64ToUint8Array(config.publicKey)
+    const registration = await getServiceWorkerRegistration();
+    const existingSubscription = await registration.pushManager.getSubscription();
+    const subscription = existingSubscription ?? await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(config.publicKey)
+    });
+
+    await savePushSubscriptionToApi(token, subscription.toJSON());
+    await sendPushTestFromApi(token);
+    return subscription;
   });
-
-  await savePushSubscriptionToApi(token, subscription.toJSON());
-  await sendPushTestFromApi(token);
-  return subscription;
 }
 
 export async function disableWebPushNotifications(token: string) {
-  if (!isWebPushSupported()) return;
+  return serializePushIdentityChange(async () => {
+    if (!isWebPushSupported()) return;
 
+    const registration = await navigator.serviceWorker.getRegistration("/");
+    const subscription = await registration?.pushManager.getSubscription();
+    if (!subscription) return;
+
+    await Promise.all([
+      removePushSubscriptionFromApi(token, subscription.endpoint).catch(() => undefined),
+      subscription.unsubscribe()
+    ]);
+  });
+}
+
+export async function unsubscribeWebPushFromBrowser() {
+  if (!isWebPushSupported()) return;
   const registration = await navigator.serviceWorker.getRegistration("/");
   const subscription = await registration?.pushManager.getSubscription();
-  if (!subscription) return;
-
-  await Promise.all([
-    removePushSubscriptionFromApi(token, subscription.endpoint).catch(() => undefined),
-    subscription.unsubscribe()
-  ]);
+  await subscription?.unsubscribe().catch(() => undefined);
 }
 
 export async function sendWebPushTest(token: string) {

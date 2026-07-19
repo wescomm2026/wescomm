@@ -8,6 +8,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode
 } from "react";
@@ -41,31 +42,48 @@ export function StudentRestrictionProvider({ children }: { children: ReactNode }
   const pathname = usePathname();
   const { user, ready } = useStudentAuth();
   const [summary, setSummary] = useState<BackendRestrictionSummary | null>(null);
+  const [summaryOwnerId, setSummaryOwnerId] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const requestSequenceRef = useRef(0);
+  const accountId = user?.id ?? "";
+  const visibleSummary = summaryOwnerId === accountId ? summary : null;
 
   const refresh = useCallback(async () => {
-    if (!user?.accessToken || user.role !== "STUDENT") {
+    if (!user?.accessToken || user.role !== "STUDENT" || !accountId) {
+      requestSequenceRef.current += 1;
       setSummary(null);
+      setSummaryOwnerId(accountId);
       setError("");
+      setLoading(false);
       return;
     }
 
+    const requestSequence = ++requestSequenceRef.current;
     setLoading(true);
     try {
-      setSummary(await getMyRestrictionSummaryFromApi(user.accessToken));
+      const nextSummary = await getMyRestrictionSummaryFromApi(user.accessToken);
+      if (requestSequence !== requestSequenceRef.current) return;
+      setSummary(nextSummary);
+      setSummaryOwnerId(accountId);
       setError("");
     } catch (requestError) {
+      if (requestSequence !== requestSequenceRef.current) return;
       setError(requestError instanceof Error ? requestError.message : "Unable to check reservation access.");
     } finally {
-      setLoading(false);
+      if (requestSequence === requestSequenceRef.current) setLoading(false);
     }
-  }, [user?.accessToken, user?.role]);
+  }, [accountId, user?.accessToken, user?.role]);
 
   useEffect(() => {
     if (!ready) return;
+    requestSequenceRef.current += 1;
+    setSummary(null);
+    setSummaryOwnerId(accountId);
+    setError("");
+    setLoading(false);
     void refresh();
-  }, [pathname, ready, refresh]);
+  }, [accountId, pathname, ready, refresh]);
 
   useEffect(() => {
     if (!user?.accessToken || user.role !== "STUDENT") return undefined;
@@ -87,17 +105,17 @@ export function StudentRestrictionProvider({ children }: { children: ReactNode }
       window.removeEventListener("wescomm:restriction-refresh", refreshFromEvent);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
-  }, [refresh, user?.accessToken, user?.role]);
+  }, [accountId, refresh, user?.accessToken, user?.role]);
 
   const value = useMemo<StudentRestrictionContextValue>(
     () => ({
-      summary,
+      summary: visibleSummary,
       loading,
       error,
-      isReservationRestricted: Boolean(summary?.activeRestriction),
+      isReservationRestricted: Boolean(visibleSummary?.activeRestriction),
       refresh
     }),
-    [error, loading, refresh, summary]
+    [error, loading, refresh, visibleSummary]
   );
 
   return <StudentRestrictionContext.Provider value={value}>{children}</StudentRestrictionContext.Provider>;
