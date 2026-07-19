@@ -13,6 +13,7 @@ const prisma = new PrismaClient({
   },
 });
 const verifyAppliedMigration = process.argv.includes("--after-deploy");
+const allowMissingSupabaseAuth = process.argv.includes("--allow-missing-supabase-auth");
 
 const requiredColumns = {
   profiles: "id full_name email student_number phone department address role avatar_url created_at updated_at",
@@ -206,6 +207,14 @@ try {
         ) AS profile_update_policies,
         (
           SELECT COUNT(*)::integer
+          FROM pg_class AS auth_table
+          JOIN pg_namespace AS auth_schema ON auth_schema.oid = auth_table.relnamespace
+          WHERE auth_schema.nspname = 'auth'
+            AND auth_table.relname = 'users'
+            AND auth_table.relkind IN ('r', 'p')
+        ) AS auth_users_tables,
+        (
+          SELECT COUNT(*)::integer
           FROM pg_constraint AS constraint_record
           JOIN pg_class AS child_table ON child_table.oid = constraint_record.conrelid
           JOIN pg_namespace AS child_schema ON child_schema.oid = child_table.relnamespace
@@ -325,10 +334,25 @@ try {
     } else if (verifyAppliedMigration && authBoundary.storage_write_policies > 0) {
       console.error("Direct authenticated private Storage policies remain after migration.");
       process.exitCode = 1;
-    } else if (verifyAppliedMigration && authBoundary.auth_profile_foreign_keys !== 1) {
+    } else if (
+      verifyAppliedMigration &&
+      authBoundary.auth_users_tables !== 1 &&
+      !allowMissingSupabaseAuth
+    ) {
+      console.error("Supabase auth.users is missing; its profile boundary cannot be verified.");
+      process.exitCode = 1;
+    } else if (
+      verifyAppliedMigration &&
+      authBoundary.auth_users_tables === 1 &&
+      authBoundary.auth_profile_foreign_keys !== 1
+    ) {
       console.error("profiles.id must reference auth.users.id with ON DELETE CASCADE.");
       process.exitCode = 1;
-    } else if (verifyAppliedMigration && authBoundary.auth_profile_triggers !== 1) {
+    } else if (
+      verifyAppliedMigration &&
+      authBoundary.auth_users_tables === 1 &&
+      authBoundary.auth_profile_triggers !== 1
+    ) {
       console.error("The enabled auth.users -> public.handle_new_user trigger is missing or duplicated.");
       process.exitCode = 1;
     } else if (verifyAppliedMigration && authBoundary.migration_history_rls_tables !== 1) {
@@ -350,6 +374,9 @@ try {
     } else {
       const phase = verifyAppliedMigration ? "Post-deploy verification" : "Existing-database baseline preflight";
       console.log(`${phase} passed.`);
+      if (verifyAppliedMigration && authBoundary.auth_users_tables === 0 && allowMissingSupabaseAuth) {
+        console.log("Supabase Auth boundary checks skipped because auth.users is absent in this plain PostgreSQL environment.");
+      }
       if (!verifyAppliedMigration) {
         console.log(
           `Pending migration impact: ${impactRows[0].stale_active_rows} stale ACTIVE row(s) will expire and ${impactRows[0].duplicate_active_rows} duplicate ACTIVE row(s) will be lifted.`,

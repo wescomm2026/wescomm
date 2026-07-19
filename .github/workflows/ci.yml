@@ -55,7 +55,7 @@ jobs:
         run: npm run prisma:migrate:deploy
 
       - name: Verify database migrations
-        run: npm run prisma:migrate:verify
+        run: npm run prisma:migrate:verify:ci
 
       - name: Typecheck
         run: npm run typecheck
