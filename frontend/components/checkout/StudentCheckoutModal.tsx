@@ -16,7 +16,13 @@ import { ActionLoadingOverlay } from "@/components/ui/ActionLoadingOverlay";
 import { AssetIcon } from "@/components/ui/AssetIcon";
 import { Button } from "@/components/ui/button";
 import { BackendApiError, createReservationFromApi, type BackendPaymentMethod } from "@/lib/api";
-import { isUniformClothOnly, UNIFORM_CLOTH_NOTICE } from "@/lib/product-display";
+import {
+  isProductUnavailable,
+  isUniformClothOnly,
+  productPurchaseLimit,
+  productStockCount,
+  UNIFORM_CLOTH_NOTICE
+} from "@/lib/product-display";
 import {
   getReservationRequestIdentity,
   type PendingReservationRequest
@@ -103,9 +109,13 @@ export function StudentCheckoutModal({
   const [error, setError] = useState("");
   const [reference, setReference] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
   const pendingRequestRef = useRef<PendingReservationRequest | null>(null);
 
   useEffect(() => setMounted(true), []);
+  useEffect(() => {
+    submittingRef.current = submitting;
+  }, [submitting]);
 
   useEffect(() => {
     if (!product) return;
@@ -127,7 +137,7 @@ export function StudentCheckoutModal({
     document.documentElement.style.overflow = "hidden";
 
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !submitting) onClose();
+      if (event.key === "Escape" && !submittingRef.current) onClose();
     };
     window.addEventListener("keydown", onKeyDown);
 
@@ -136,11 +146,12 @@ export function StudentCheckoutModal({
       document.documentElement.style.overflow = previousHtmlOverflow;
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [product, onClose, submitting]);
+  }, [product, onClose]);
 
   const unitPrice = product ? parsePrice(product.price) : 0;
-  const stockCount = product ? Number(product.count) : 0;
-  const maxQuantity = Math.max(1, Math.min(stockCount, 10));
+  const stockCount = product ? productStockCount(product) : 0;
+  const maxQuantity = product ? productPurchaseLimit(product) : 0;
+  const unavailable = product ? isProductUnavailable(product) : true;
   const total = useMemo(() => unitPrice * quantity, [quantity, unitPrice]);
   const clothOnly = product ? isUniformClothOnly(product) : false;
 
@@ -157,6 +168,10 @@ export function StudentCheckoutModal({
       return;
     }
     if (!product) return;
+    if (unavailable) {
+      setError("This item is currently out of stock. Return to the shop and add it to your wishlist for a restock alert.");
+      return;
+    }
     if (!pickupDate) {
       setError("Select your preferred pickup date.");
       return;
@@ -372,7 +387,7 @@ export function StudentCheckoutModal({
                     <button
                       type="button"
                       onClick={() => setQuantity((current) => Math.max(1, current - 1))}
-                      disabled={submitting || quantity === 1}
+                      disabled={submitting || unavailable || quantity === 1}
                       aria-label="Decrease quantity"
                       className="grid size-10 place-items-center rounded-md border border-[#cfdacf] text-primary hover:bg-[#eef6ee] disabled:opacity-40"
                     >
@@ -382,13 +397,15 @@ export function StudentCheckoutModal({
                     <button
                       type="button"
                       onClick={() => setQuantity((current) => Math.min(maxQuantity, current + 1))}
-                      disabled={submitting || quantity === maxQuantity}
+                      disabled={submitting || unavailable || quantity >= maxQuantity}
                       aria-label="Increase quantity"
                       className="grid size-10 place-items-center rounded-md border border-[#cfdacf] text-primary hover:bg-[#eef6ee] disabled:opacity-40"
                     >
                       <Plus className="size-4" />
                     </button>
-                    <span className="text-xs text-[#69746e]">Maximum {maxQuantity} per reservation</span>
+                    <span className="text-xs text-[#69746e]">
+                      {unavailable ? "This item is currently unavailable" : `Maximum ${maxQuantity} per reservation`}
+                    </span>
                   </div>
                 </section>
 
@@ -528,11 +545,13 @@ export function StudentCheckoutModal({
                   </p>
                 )}
 
-                <Button type="submit" disabled={submitting || isReservationRestricted} className="mt-5 h-12 w-full text-base font-bold">
+                <Button type="submit" disabled={submitting || isReservationRestricted || unavailable} className="mt-5 h-12 w-full text-base font-bold">
                   <AssetIcon src="/assets/verified.svg" className="size-6" />
                   {submitting
                     ? "Submitting reservation..."
-                    : isReservationRestricted
+                    : unavailable
+                      ? "Out of Stock"
+                      : isReservationRestricted
                       ? "Reservation Access Paused"
                       : user
                         ? "Confirm Reservation"

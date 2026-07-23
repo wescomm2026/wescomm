@@ -7,7 +7,12 @@ import { Minus, Plus, X } from "lucide-react";
 import type { CartProduct } from "@/components/cart/StudentCartProvider";
 import { AssetIcon } from "@/components/ui/AssetIcon";
 import { Button } from "@/components/ui/button";
-import { isUniformClothOnly, UNIFORM_CLOTH_NOTICE } from "@/lib/product-display";
+import {
+  isProductUnavailable,
+  isUniformClothOnly,
+  productPurchaseLimit,
+  UNIFORM_CLOTH_NOTICE
+} from "@/lib/product-display";
 
 function parsePrice(price: string) {
   return Number(price.replace(/[^0-9.]/g, ""));
@@ -58,7 +63,8 @@ export function AddToCartModal({
     };
   }, [product, onClose]);
 
-  const limit = product ? Math.max(1, Math.min(Number(product.count), 10)) : 1;
+  const limit = product ? productPurchaseLimit(product) : 0;
+  const unavailable = product ? isProductUnavailable(product) : true;
   const total = useMemo(() => (product ? parsePrice(product.price) * quantity : 0), [product, quantity]);
   const clothOnly = product ? isUniformClothOnly(product) : false;
 
@@ -172,13 +178,15 @@ export function AddToCartModal({
           <div className="mt-6 flex flex-wrap items-center justify-between gap-4 border-t border-[#e4ebe5] pt-5">
             <div>
               <p className="text-sm font-extrabold text-[#253029]">Quantity</p>
-              <p className="text-xs text-[#6d7771]">Maximum {limit} per item option</p>
+              <p className="text-xs text-[#6d7771]">
+                {unavailable ? "This item is currently unavailable" : `Maximum ${limit} per item option`}
+              </p>
             </div>
             <div className="flex items-center gap-2">
               <button
                 type="button"
                 onClick={() => setQuantity((current) => Math.max(1, current - 1))}
-                disabled={quantity === 1}
+                disabled={unavailable || quantity === 1}
                 className="grid size-10 place-items-center rounded-md border border-[#d3ddd4] disabled:opacity-40"
                 aria-label="Decrease quantity"
               >
@@ -188,7 +196,7 @@ export function AddToCartModal({
               <button
                 type="button"
                 onClick={() => setQuantity((current) => Math.min(limit, current + 1))}
-                disabled={quantity === limit}
+                disabled={unavailable || quantity >= limit}
                 className="grid size-10 place-items-center rounded-md border border-[#d3ddd4] disabled:opacity-40"
                 aria-label="Increase quantity"
               >
@@ -205,10 +213,13 @@ export function AddToCartModal({
           </div>
           <Button
             className="h-12 px-6 text-base"
-            onClick={() => onConfirm(product, selectedOptions, quantity)}
+            disabled={unavailable}
+            onClick={() => {
+              if (!unavailable) onConfirm(product, selectedOptions, quantity);
+            }}
           >
             <AssetIcon src="/assets/cart.svg" className="size-6" />
-            Add to Cart
+            {unavailable ? "Out of Stock" : "Add to Cart"}
           </Button>
         </footer>
       </section>

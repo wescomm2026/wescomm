@@ -15,7 +15,7 @@ const prisma = new PrismaClient({
 const verifyAppliedMigration = process.argv.includes("--after-deploy");
 const allowMissingSupabaseAuth = process.argv.includes("--allow-missing-supabase-auth");
 
-const requiredColumns = {
+const baselineRequiredColumns = {
   profiles: "id full_name email student_number phone department address role avatar_url created_at updated_at",
   auth_sessions: "id user_id token_hash user_agent expires_at last_seen_at revoked_at created_at",
   categories: "id name slug icon_url is_active created_at updated_at",
@@ -36,7 +36,15 @@ const requiredColumns = {
   app_settings: "id key value updated_by_id created_at updated_at",
 };
 
-const requiredEnums = {
+const requiredColumns = verifyAppliedMigration
+  ? {
+      ...baselineRequiredColumns,
+      notifications: `${baselineRequiredColumns.notifications} dedupe_key action_url`,
+      wishlist_items: "user_id product_id created_at updated_at",
+    }
+  : baselineRequiredColumns;
+
+const baselineRequiredEnums = {
   app_role: "STUDENT STAFF ADMIN",
   product_status: "IN_STOCK RESTOCK_SOON OUT_OF_STOCK ON_SALE",
   inventory_movement_type: "RESTOCK SALE RESERVATION_HOLD RESERVATION_CANCEL RESERVATION_NO_SHOW ADJUSTMENT",
@@ -50,6 +58,13 @@ const requiredEnums = {
   notification_type: "RESERVATION RECEIPT LOW_STOCK MESSAGE SYSTEM",
   conversation_status: "OPEN RESOLVED",
 };
+
+const requiredEnums = verifyAppliedMigration
+  ? {
+      ...baselineRequiredEnums,
+      notification_type: `${baselineRequiredEnums.notification_type} BACK_IN_STOCK`,
+    }
+  : baselineRequiredEnums;
 
 function toSetMap(rows, groupKey, valueKey) {
   const result = new Map();
@@ -250,6 +265,68 @@ try {
         ) AS migration_history_rls_tables,
         (
           SELECT COUNT(*)::integer
+          FROM pg_class AS wishlist_table
+          JOIN pg_namespace AS wishlist_schema ON wishlist_schema.oid = wishlist_table.relnamespace
+          WHERE wishlist_schema.nspname = 'public'
+            AND wishlist_table.relname = 'wishlist_items'
+            AND wishlist_table.relkind IN ('r', 'p')
+            AND wishlist_table.relrowsecurity
+            AND NOT wishlist_table.relforcerowsecurity
+        ) AS wishlist_rls_tables,
+        (
+          SELECT COUNT(*)::integer
+          FROM pg_policies
+          WHERE schemaname = 'public'
+            AND tablename = 'wishlist_items'
+        ) AS wishlist_policies,
+        (
+          SELECT COUNT(*)::integer
+          FROM pg_constraint AS wishlist_constraint
+          JOIN pg_class AS wishlist_table ON wishlist_table.oid = wishlist_constraint.conrelid
+          JOIN pg_namespace AS wishlist_schema ON wishlist_schema.oid = wishlist_table.relnamespace
+          WHERE wishlist_schema.nspname = 'public'
+            AND wishlist_table.relname = 'wishlist_items'
+            AND wishlist_constraint.conname = 'wishlist_items_pkey'
+            AND wishlist_constraint.contype = 'p'
+        ) AS wishlist_primary_keys,
+        (
+          SELECT COUNT(*)::integer
+          FROM pg_constraint AS wishlist_constraint
+          JOIN pg_class AS wishlist_table ON wishlist_table.oid = wishlist_constraint.conrelid
+          JOIN pg_namespace AS wishlist_schema ON wishlist_schema.oid = wishlist_table.relnamespace
+          WHERE wishlist_schema.nspname = 'public'
+            AND wishlist_table.relname = 'wishlist_items'
+            AND wishlist_constraint.conname IN (
+              'wishlist_items_user_id_fkey',
+              'wishlist_items_product_id_fkey'
+            )
+            AND wishlist_constraint.contype = 'f'
+        ) AS wishlist_foreign_keys,
+        (
+          SELECT COUNT(*)::integer
+          FROM pg_indexes
+          WHERE schemaname = 'public'
+            AND tablename = 'wishlist_items'
+            AND indexname = 'wishlist_items_product_id_idx'
+        ) AS wishlist_product_indexes,
+        (
+          SELECT COUNT(*)::integer
+          FROM pg_indexes
+          WHERE schemaname = 'public'
+            AND tablename = 'notifications'
+            AND indexname = 'notifications_dedupe_key_key'
+            AND UPPER(indexdef) LIKE 'CREATE UNIQUE INDEX%'
+        ) AS notification_dedupe_indexes,
+        (
+          SELECT COUNT(*)::integer
+          FROM pg_indexes
+          WHERE schemaname = 'public'
+            AND tablename = 'notifications'
+            AND indexname = 'notifications_user_id_created_at_idx'
+            AND indexdef ILIKE '%(user_id, created_at DESC)%'
+        ) AS notification_user_timeline_indexes,
+        (
+          SELECT COUNT(*)::integer
           FROM information_schema.table_privileges
           WHERE table_schema = 'public'
             AND table_name = '_prisma_migrations'
@@ -357,6 +434,27 @@ try {
       process.exitCode = 1;
     } else if (verifyAppliedMigration && authBoundary.migration_history_rls_tables !== 1) {
       console.error("RLS must be enabled, but not forced, on public._prisma_migrations.");
+      process.exitCode = 1;
+    } else if (verifyAppliedMigration && authBoundary.wishlist_rls_tables !== 1) {
+      console.error("RLS must be enabled, but not forced, on public.wishlist_items.");
+      process.exitCode = 1;
+    } else if (verifyAppliedMigration && authBoundary.wishlist_policies !== 0) {
+      console.error("public.wishlist_items must not expose direct browser database policies.");
+      process.exitCode = 1;
+    } else if (verifyAppliedMigration && authBoundary.wishlist_primary_keys !== 1) {
+      console.error("The wishlist user/product primary key is missing.");
+      process.exitCode = 1;
+    } else if (verifyAppliedMigration && authBoundary.wishlist_foreign_keys !== 2) {
+      console.error("The wishlist profile/product foreign keys are missing.");
+      process.exitCode = 1;
+    } else if (verifyAppliedMigration && authBoundary.wishlist_product_indexes !== 1) {
+      console.error("The wishlist product lookup index is missing.");
+      process.exitCode = 1;
+    } else if (verifyAppliedMigration && authBoundary.notification_dedupe_indexes !== 1) {
+      console.error("The notification delivery deduplication index is missing or is not unique.");
+      process.exitCode = 1;
+    } else if (verifyAppliedMigration && authBoundary.notification_user_timeline_indexes !== 1) {
+      console.error("The notification user timeline index is missing.");
       process.exitCode = 1;
     } else if (verifyAppliedMigration && authBoundary.service_role_migration_history_privileges > 0) {
       console.error("service_role must not have direct privileges on public._prisma_migrations.");

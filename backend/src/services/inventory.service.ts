@@ -1,8 +1,15 @@
+import { Prisma } from "@prisma/client";
 import { supabaseAdmin } from "../lib/supabase.js";
+import { prisma } from "../lib/prisma.js";
 import { safelyRecordAuditLog } from "./audit-log.service.js";
 import { createNotificationsForRoles } from "./notification.service.js";
+import {
+  createBackInStockNotificationsInTransaction,
+  dispatchBackInStockPushNotifications
+} from "./wishlist-notification.service.js";
 import { firstRow, type ProductStatus } from "../types/app.js";
 import { HttpError } from "../utils/http-error.js";
+import { lockProductForUpdate } from "../utils/product-transaction.js";
 
 type RawCategory = {
   id: string;
@@ -141,6 +148,37 @@ function deriveProductStatus(stock: number, lowStockThreshold: number, currentSt
   if (currentStatus === "ON_SALE") return "ON_SALE";
   if (stock <= lowStockThreshold) return "RESTOCK_SOON";
   return "IN_STOCK";
+}
+
+export const INVENTORY_WRITE_TRANSACTION_OPTIONS = Object.freeze({
+  maxWait: 10_000,
+  timeout: 20_000
+});
+
+function mapInventoryTransactionError(error: unknown) {
+  if (error instanceof HttpError) return error;
+  if (error instanceof Prisma.PrismaClientKnownRequestError) {
+    if (error.code === "P2002") {
+      return new HttpError(409, "A product with this name already exists.");
+    }
+    if (error.code === "P2034") {
+      return new HttpError(
+        409,
+        "Inventory changed while processing. Please try again.",
+        "INVENTORY_WRITE_CONFLICT",
+        { retryable: true }
+      );
+    }
+    if (error.code === "P2024" || error.code === "P2028") {
+      return new HttpError(
+        503,
+        "Inventory is temporarily unavailable. Please try again.",
+        "INVENTORY_TRANSACTION_UNAVAILABLE",
+        { retryable: true }
+      );
+    }
+  }
+  return error;
 }
 
 async function notifyLowStockIfNeeded(input: {
@@ -393,67 +431,137 @@ export async function createProduct(input: ProductCreateInput, performedById: st
 }
 
 export async function updateProduct(productId: string, input: ProductUpdateInput, performedById: string) {
-  const current = await requireInventoryProduct(productId);
-  const updates: Record<string, unknown> = {};
-
+  const initialProduct = await requireInventoryProduct(productId);
+  let categoryId: string | undefined;
   if (input.categoryId || input.categorySlug || input.categoryName) {
-    const category = await resolveCategory(input);
-    updates.category_id = category.id;
+    categoryId = (await resolveCategory(input)).id;
   }
-  if (input.name !== undefined) {
-    await assertUniqueActiveProductName(input.name, productId);
-    updates.name = input.name.trim();
-  }
-  if (input.description !== undefined) updates.description = input.description;
-  if (input.imageUrl !== undefined) updates.image_url = input.imageUrl;
-  if (input.price !== undefined) updates.price = input.price;
-  if (input.oldPrice !== undefined) updates.old_price = input.oldPrice;
-  if (input.stock !== undefined) updates.stock = input.stock;
-  if (input.lowStockThreshold !== undefined) updates.low_stock_threshold = input.lowStockThreshold;
-  if (input.isActive !== undefined) updates.is_active = input.isActive;
+  if (input.name !== undefined) await assertUniqueActiveProductName(input.name, productId);
 
-  const nextStock = input.stock ?? current.stock;
-  const nextLowStockThreshold = input.lowStockThreshold ?? current.lowStockThreshold;
-  if (input.status !== undefined) {
-    updates.status = input.status;
-  } else if (input.stock !== undefined || input.lowStockThreshold !== undefined) {
-    updates.status = deriveProductStatus(nextStock, nextLowStockThreshold, current.status);
-  }
+  const hasProductChanges = Boolean(
+    categoryId ||
+    input.name !== undefined ||
+    input.description !== undefined ||
+    input.imageUrl !== undefined ||
+    input.price !== undefined ||
+    input.oldPrice !== undefined ||
+    input.status !== undefined ||
+    input.stock !== undefined ||
+    input.lowStockThreshold !== undefined ||
+    input.isActive !== undefined
+  );
+  if (!hasProductChanges) return initialProduct;
+  const changedFields = [
+    categoryId ? "category_id" : null,
+    input.name !== undefined ? "name" : null,
+    input.description !== undefined ? "description" : null,
+    input.imageUrl !== undefined ? "image_url" : null,
+    input.price !== undefined ? "price" : null,
+    input.oldPrice !== undefined ? "old_price" : null,
+    input.status !== undefined || input.stock !== undefined || input.lowStockThreshold !== undefined ? "status" : null,
+    input.stock !== undefined ? "stock" : null,
+    input.lowStockThreshold !== undefined ? "low_stock_threshold" : null,
+    input.isActive !== undefined ? "is_active" : null
+  ].filter((field): field is string => Boolean(field));
 
-  if (!Object.keys(updates).length) return current;
+  const transactionResult = await prisma
+    .$transaction(async (transaction) => {
+      const productExists = await lockProductForUpdate(transaction, productId);
+      if (!productExists) throw new HttpError(404, "Product not found.");
 
-  updates.updated_at = new Date().toISOString();
+      const current = await transaction.product.findUnique({
+        where: { id: productId },
+        select: {
+          id: true,
+          name: true,
+          price: true,
+          status: true,
+          stock: true,
+          lowStockThreshold: true,
+          isActive: true
+        }
+      });
+      if (!current) throw new HttpError(404, "Product not found.");
 
-  const { data, error } = await supabaseAdmin
-    .from("products")
-    .update(updates)
-    .eq("id", productId)
-    .select(inventorySelect)
-    .single();
+      const nextStock = input.stock ?? current.stock;
+      const nextLowStockThreshold = input.lowStockThreshold ?? current.lowStockThreshold;
+      const nextStatus = input.status ??
+        (
+          input.stock !== undefined || input.lowStockThreshold !== undefined
+            ? deriveProductStatus(nextStock, nextLowStockThreshold, current.status)
+            : current.status
+        );
+      const updates: Prisma.ProductUncheckedUpdateInput = {
+        updatedAt: new Date()
+      };
+      if (categoryId) updates.categoryId = categoryId;
+      if (input.name !== undefined) updates.name = input.name.trim();
+      if (input.description !== undefined) updates.description = input.description;
+      if (input.imageUrl !== undefined) updates.imageUrl = input.imageUrl;
+      if (input.price !== undefined) updates.price = input.price;
+      if (input.oldPrice !== undefined) updates.oldPrice = input.oldPrice;
+      if (input.status !== undefined || input.stock !== undefined || input.lowStockThreshold !== undefined) {
+        updates.status = nextStatus;
+      }
+      if (input.stock !== undefined) updates.stock = input.stock;
+      if (input.lowStockThreshold !== undefined) updates.lowStockThreshold = input.lowStockThreshold;
+      if (input.isActive !== undefined) updates.isActive = input.isActive;
 
-  if (error) {
-    if (error.code === "23505") throw new HttpError(409, "A product with this name already exists.");
-    throw new HttpError(500, error.message);
-  }
+      const updated = await transaction.product.update({
+        where: { id: productId },
+        data: updates,
+        select: {
+          id: true,
+          name: true,
+          price: true,
+          status: true,
+          stock: true,
+          lowStockThreshold: true,
+          isActive: true
+        }
+      });
 
-  if (input.stock !== undefined && input.stock !== current.stock) {
-    await recordInventoryMovement({
-      productId,
-      type: "ADJUSTMENT",
-      quantity: input.stock - current.stock,
-      previousStock: current.stock,
-      newStock: input.stock,
-      performedById,
-      notes: input.notes ?? "Product stock adjusted."
+      let inventoryMovementId: string | undefined;
+      if (updated.stock !== current.stock) {
+        const movement = await transaction.inventoryMovement.create({
+          data: {
+            productId,
+            type: "ADJUSTMENT",
+            quantity: updated.stock - current.stock,
+            previousStock: current.stock,
+            newStock: updated.stock,
+            performedById,
+            notes: input.notes ?? "Product stock adjusted."
+          },
+          select: { id: true }
+        });
+        inventoryMovementId = movement.id;
+      }
+
+      const backInStockNotifications = await createBackInStockNotificationsInTransaction(
+        transaction,
+        {
+          productId,
+          productName: updated.name,
+          previous: current,
+          next: updated,
+          eventId: inventoryMovementId
+        }
+      );
+
+      return { current, updated, backInStockNotifications };
+    }, INVENTORY_WRITE_TRANSACTION_OPTIONS)
+    .catch((error) => {
+      throw mapInventoryTransactionError(error);
     });
-  }
 
-  const updatedProduct = mapInventoryProduct(data as unknown as RawInventoryProduct);
+  const updatedProduct = await requireInventoryProduct(productId);
+  await dispatchBackInStockPushNotifications(transactionResult.backInStockNotifications);
   await notifyLowStockIfNeeded({
     productName: updatedProduct.name,
-    previousStock: current.stock,
+    previousStock: transactionResult.current.stock,
     newStock: updatedProduct.stock,
-    previousLowStockThreshold: current.lowStockThreshold,
+    previousLowStockThreshold: transactionResult.current.lowStockThreshold,
     lowStockThreshold: updatedProduct.lowStockThreshold
   });
 
@@ -464,14 +572,14 @@ export async function updateProduct(productId: string, input: ProductUpdateInput
     entityId: productId,
     summary: `Updated product ${updatedProduct.name}.`,
     metadata: {
-      changedFields: Object.keys(updates).filter((field) => field !== "updated_at"),
+      changedFields,
       previous: {
-        name: current.name,
-        stock: current.stock,
-        lowStockThreshold: current.lowStockThreshold,
-        price: current.price,
-        status: current.status,
-        isActive: current.isActive
+        name: transactionResult.current.name,
+        stock: transactionResult.current.stock,
+        lowStockThreshold: transactionResult.current.lowStockThreshold,
+        price: transactionResult.current.price,
+        status: transactionResult.current.status,
+        isActive: transactionResult.current.isActive
       },
       next: {
         name: updatedProduct.name,
@@ -536,41 +644,86 @@ export async function restockProduct(input: {
   performedById: string;
   notes?: string;
 }) {
-  const product = await requireInventoryProduct(input.productId);
   const mode = input.mode ?? "add";
-  const newStock = mode === "set" ? input.quantity : product.stock + input.quantity;
-  const status = deriveProductStatus(newStock, product.lowStockThreshold, product.status);
+  const transactionResult = await prisma
+    .$transaction(async (transaction) => {
+      const productExists = await lockProductForUpdate(transaction, input.productId);
+      if (!productExists) throw new HttpError(404, "Product not found.");
 
-  const { data, error } = await supabaseAdmin
-    .from("products")
-    .update({
-      stock: newStock,
-      status,
-      updated_at: new Date().toISOString()
-    })
-    .eq("id", input.productId)
-    .select(inventorySelect)
-    .single();
+      const product = await transaction.product.findUnique({
+        where: { id: input.productId },
+        select: {
+          id: true,
+          name: true,
+          status: true,
+          stock: true,
+          lowStockThreshold: true,
+          isActive: true
+        }
+      });
+      if (!product) throw new HttpError(404, "Product not found.");
 
-  if (error) throw new HttpError(500, error.message);
+      const newStock = mode === "set" ? input.quantity : product.stock + input.quantity;
+      const status = deriveProductStatus(newStock, product.lowStockThreshold, product.status);
+      const updated = await transaction.product.update({
+        where: { id: input.productId },
+        data: {
+          stock: newStock,
+          status,
+          updatedAt: new Date()
+        },
+        select: {
+          id: true,
+          name: true,
+          status: true,
+          stock: true,
+          lowStockThreshold: true,
+          isActive: true
+        }
+      });
 
-  const difference = newStock - product.stock;
-  await recordInventoryMovement({
-    productId: input.productId,
-    type: difference >= 0 ? "RESTOCK" : "ADJUSTMENT",
-    quantity: difference,
-    previousStock: product.stock,
-    newStock,
-    performedById: input.performedById,
-    notes: input.notes ?? (mode === "set" ? "Stock set by staff." : "Stock added by staff.")
-  });
+      const difference = newStock - product.stock;
+      let inventoryMovementId: string | undefined;
+      if (difference !== 0) {
+        const movement = await transaction.inventoryMovement.create({
+          data: {
+            productId: input.productId,
+            type: difference >= 0 ? "RESTOCK" : "ADJUSTMENT",
+            quantity: difference,
+            previousStock: product.stock,
+            newStock,
+            performedById: input.performedById,
+            notes: input.notes ?? (mode === "set" ? "Stock set by staff." : "Stock added by staff.")
+          },
+          select: { id: true }
+        });
+        inventoryMovementId = movement.id;
+      }
 
-  const updatedProduct = mapInventoryProduct(data as unknown as RawInventoryProduct);
+      const backInStockNotifications = await createBackInStockNotificationsInTransaction(
+        transaction,
+        {
+          productId: input.productId,
+          productName: updated.name,
+          previous: product,
+          next: updated,
+          eventId: inventoryMovementId
+        }
+      );
+
+      return { product, updated, difference, backInStockNotifications };
+    }, INVENTORY_WRITE_TRANSACTION_OPTIONS)
+    .catch((error) => {
+      throw mapInventoryTransactionError(error);
+    });
+
+  const updatedProduct = await requireInventoryProduct(input.productId);
+  await dispatchBackInStockPushNotifications(transactionResult.backInStockNotifications);
   await notifyLowStockIfNeeded({
     productName: updatedProduct.name,
-    previousStock: product.stock,
+    previousStock: transactionResult.product.stock,
     newStock: updatedProduct.stock,
-    previousLowStockThreshold: product.lowStockThreshold,
+    previousLowStockThreshold: transactionResult.product.lowStockThreshold,
     lowStockThreshold: updatedProduct.lowStockThreshold
   });
 
@@ -583,9 +736,9 @@ export async function restockProduct(input: {
     metadata: {
       mode,
       quantity: input.quantity,
-      previousStock: product.stock,
+      previousStock: transactionResult.product.stock,
       newStock: updatedProduct.stock,
-      difference,
+      difference: transactionResult.difference,
       notes: input.notes ?? null
     }
   });

@@ -17,12 +17,14 @@ import { staffRestrictionsRoutes } from "./staff-restrictions.routes.js";
 import { staffUsersRoutes } from "./staff-users.routes.js";
 import { uploadsRoutes } from "./uploads.routes.js";
 import { usersRoutes } from "./users.routes.js";
+import { wishlistRoutes } from "./wishlist.routes.js";
 
 export const apiRoutes = Router();
 
 apiRoutes.use("/health", healthRoutes);
 apiRoutes.use("/auth", authRoutes);
 apiRoutes.use("/products", productsRoutes);
+apiRoutes.use("/wishlist", wishlistRoutes);
 apiRoutes.use("/reservations", reservationsRoutes);
 apiRoutes.use("/restrictions", restrictionsRoutes);
 apiRoutes.use("/receipts", receiptsRoutes);

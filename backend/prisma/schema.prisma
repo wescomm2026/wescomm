@@ -98,6 +98,7 @@ enum NotificationType {
   RESERVATION
   RECEIPT
   LOW_STOCK
+  BACK_IN_STOCK
   MESSAGE
   SYSTEM
 
@@ -142,6 +143,7 @@ model Profile {
   liftedRestrictions    AccountRestriction[]        @relation("LiftedRestrictions")
   reservationRequests   ReservationIdempotencyKey[] @relation("StudentReservationRequests")
   authSessions          AuthSession[]
+  wishlistItems         WishlistItem[]
 
   @@map("profiles")
 }
@@ -193,6 +195,7 @@ model Product {
   variants          ProductVariant[]
   inventoryMoves    InventoryMovement[]
   reservationItems  ReservationItem[]
+  wishlistItems     WishlistItem[]
 
   @@map("products")
 }
@@ -362,11 +365,27 @@ model Notification {
   title     String
   message   String
   type      NotificationType @default(SYSTEM)
+  dedupeKey String?          @unique @map("dedupe_key")
+  actionUrl String?          @map("action_url")
   readAt    DateTime?        @map("read_at") @db.Timestamptz(6)
   createdAt DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
   user      Profile          @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  @@index([userId, createdAt(sort: Desc)])
   @@map("notifications")
+}
+
+model WishlistItem {
+  userId    String   @map("user_id") @db.Uuid
+  productId String   @map("product_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  user      Profile  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@id([userId, productId])
+  @@index([productId])
+  @@map("wishlist_items")
 }
 
 model PushSubscription {

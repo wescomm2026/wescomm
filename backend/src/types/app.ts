@@ -15,7 +15,14 @@ export type ReservationStatus = (typeof RESERVATION_STATUSES)[number];
 export const RECEIPT_STATUSES = ["PENDING", "VERIFIED", "VOIDED"] as const;
 export type ReceiptStatus = (typeof RECEIPT_STATUSES)[number];
 
-export const NOTIFICATION_TYPES = ["RESERVATION", "RECEIPT", "LOW_STOCK", "MESSAGE", "SYSTEM"] as const;
+export const NOTIFICATION_TYPES = [
+  "RESERVATION",
+  "RECEIPT",
+  "LOW_STOCK",
+  "BACK_IN_STOCK",
+  "MESSAGE",
+  "SYSTEM"
+] as const;
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number];
 
 export const CONVERSATION_STATUSES = ["OPEN", "RESOLVED"] as const;

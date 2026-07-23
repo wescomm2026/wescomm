@@ -1,5 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
+import { Suspense } from "react";
 import { FaqExperience } from "@/components/faq/FaqExperience";
 import { DashboardProductsProvider } from "@/components/dashboard/DashboardProductsProvider";
 import { HomeActionCards } from "@/components/dashboard/HomeActionCards";
@@ -105,7 +106,16 @@ export function StudentDashboard() {
 export function ShopPage() {
   return (
     <div className="space-y-5">
-      <StudentShopExperience />
+      <Suspense
+        fallback={
+          <div className="wes-card p-8 text-center">
+            <p className="font-semibold">Loading live shop items...</p>
+            <p className="mt-1 text-sm text-muted-foreground">Preparing the WESCOMM catalog.</p>
+          </div>
+        }
+      >
+        <StudentShopExperience />
+      </Suspense>
       <StudentFooter />
     </div>
   );
