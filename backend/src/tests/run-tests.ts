@@ -27,4 +27,7 @@ await import("./restriction-transaction.test.js");
 await import("./user-role-concurrency.test.js");
 await import("./reservation-safety.test.js");
 await import("./reservation-state.test.js");
+await import("./wishlist-migration.test.js");
+await import("./wishlist-policy.test.js");
+await import("./wishlist-notification.test.js");
 await import("./security.test.js");

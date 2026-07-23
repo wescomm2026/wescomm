@@ -12,7 +12,12 @@ import { ActionLoadingOverlay } from "@/components/ui/ActionLoadingOverlay";
 import { AssetIcon } from "@/components/ui/AssetIcon";
 import { Button } from "@/components/ui/button";
 import { BackendApiError, createReservationFromApi, type BackendPaymentMethod } from "@/lib/api";
-import { isUniformClothOnly, UNIFORM_CLOTH_NOTICE } from "@/lib/product-display";
+import {
+  isProductUnavailable,
+  isUniformClothOnly,
+  productPurchaseLimit,
+  UNIFORM_CLOTH_NOTICE
+} from "@/lib/product-display";
 import {
   getReservationRequestIdentity,
   type PendingReservationRequest
@@ -112,8 +117,17 @@ export function StudentCartDrawer() {
     () => items.reduce((sum, item) => sum + parsePrice(item.product.price) * item.quantity, 0),
     [items]
   );
+  const unavailableItems = useMemo(
+    () => items.filter((item) => isProductUnavailable(item.product)),
+    [items]
+  );
+  const hasUnavailableItems = unavailableItems.length > 0;
 
   const startCheckout = () => {
+    if (hasUnavailableItems) {
+      setError("Remove unavailable items before checking out.");
+      return;
+    }
     if (!user) {
       openAuth();
       return;
@@ -148,6 +162,10 @@ export function StudentCartDrawer() {
     }
     if (items.some((item) => !item.product.id)) {
       setError("Refresh the shop so all cart items can be reserved from the live inventory.");
+      return;
+    }
+    if (hasUnavailableItems) {
+      setError("One or more cart items are unavailable. Return to the cart and remove them before checking out.");
       return;
     }
 
@@ -250,6 +268,12 @@ export function StudentCartDrawer() {
                 <p className="mt-1 text-2xl font-extrabold text-primary">{formatPrice(total)}</p>
                 <p className="mt-1 text-xs text-[#6c7770]">Total payment at pickup</p>
               </section>
+
+              {hasUnavailableItems ? (
+                <p className="rounded-md border border-[#ead7a5] bg-[#fff9e9] px-3 py-2 text-sm font-semibold text-[#775300]" role="alert">
+                  One or more cart items are no longer available. Go back and remove them before confirming.
+                </p>
+              ) : null}
 
               {items.some((item) => isUniformClothOnly(item.product)) ? (
                 <section className="rounded-md border border-[#bdd8c0] bg-[#f3faf4] p-4">
@@ -361,7 +385,7 @@ export function StudentCartDrawer() {
               <Button type="button" variant="secondary" className="h-12" onClick={() => setCheckout(false)} disabled={submitting}>
                 Back to Cart
               </Button>
-              <Button type="submit" disabled={submitting || isReservationRestricted} className="h-12">
+              <Button type="submit" disabled={submitting || isReservationRestricted || hasUnavailableItems} className="h-12">
                 <AssetIcon src="/assets/verified.svg" className="size-6" />
                 {submitting ? "Submitting..." : isReservationRestricted ? "Access Paused" : "Confirm"}
               </Button>
@@ -371,7 +395,8 @@ export function StudentCartDrawer() {
           <>
             <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4 sm:p-5">
               {items.map((item) => {
-                const limit = Math.max(1, Math.min(Number(item.product.count), 10));
+                const limit = productPurchaseLimit(item.product);
+                const unavailable = isProductUnavailable(item.product);
                 return (
                   <article key={item.id} className="grid grid-cols-[82px_1fr] gap-3 rounded-lg border border-[#dfe7e0] p-3">
                     <div className="relative h-20 overflow-hidden rounded-md bg-[#eef5ee]">
@@ -389,6 +414,9 @@ export function StudentCartDrawer() {
                             <p className="mt-1 rounded bg-[#f3faf4] px-2 py-1 text-xs font-semibold text-primary">Tela/material only</p>
                           ) : null}
                           <p className="mt-1 font-extrabold text-primary">{item.product.price}</p>
+                          {unavailable ? (
+                            <p className="mt-1 text-xs font-extrabold text-[#a75a00]">Currently unavailable</p>
+                          ) : null}
                         </div>
                         <button
                           type="button"
@@ -403,7 +431,7 @@ export function StudentCartDrawer() {
                         <button
                           type="button"
                           onClick={() => updateQuantity(item.id, item.quantity - 1)}
-                          disabled={item.quantity === 1}
+                          disabled={unavailable || item.quantity === 1}
                           className="grid size-8 place-items-center rounded-md border border-[#d3ddd4] disabled:opacity-40"
                           aria-label={`Decrease ${item.product.name} quantity`}
                         >
@@ -413,7 +441,7 @@ export function StudentCartDrawer() {
                         <button
                           type="button"
                           onClick={() => updateQuantity(item.id, item.quantity + 1)}
-                          disabled={item.quantity === limit}
+                          disabled={unavailable || item.quantity >= limit}
                           className="grid size-8 place-items-center rounded-md border border-[#d3ddd4] disabled:opacity-40"
                           aria-label={`Increase ${item.product.name} quantity`}
                         >
@@ -429,6 +457,11 @@ export function StudentCartDrawer() {
               })}
             </div>
             <footer className="shrink-0 border-t border-[#e4ebe5] p-5 sm:p-6">
+              {hasUnavailableItems ? (
+                <p className="mb-4 rounded-md border border-[#ead7a5] bg-[#fff9e9] px-3 py-2 text-sm font-semibold text-[#775300]" role="alert">
+                  Remove unavailable items before checkout.
+                </p>
+              ) : null}
               <div className="mb-4 flex items-end justify-between gap-4">
                 <div>
                   <p className="text-sm font-bold text-[#253029]">Cart total</p>
@@ -436,9 +469,15 @@ export function StudentCartDrawer() {
                 </div>
                 <p className="text-2xl font-extrabold text-primary">{formatPrice(total)}</p>
               </div>
-              <Button className="h-12 w-full text-base" onClick={startCheckout} disabled={isReservationRestricted}>
+              <Button className="h-12 w-full text-base" onClick={startCheckout} disabled={isReservationRestricted || hasUnavailableItems}>
                 <ShoppingBag className="size-5" />
-                {isReservationRestricted ? "Reservation Access Paused" : user ? "Checkout Cart" : "Log in to Checkout"}
+                {hasUnavailableItems
+                  ? "Remove Unavailable Items"
+                  : isReservationRestricted
+                    ? "Reservation Access Paused"
+                    : user
+                      ? "Checkout Cart"
+                      : "Log in to Checkout"}
               </Button>
               {restrictionSummary?.activeRestriction ? (
                 <p className="mt-3 text-center text-xs leading-5 text-[#8f2222]">You can keep these items in your cart and contact Support for a review.</p>

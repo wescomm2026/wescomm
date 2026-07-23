@@ -3,8 +3,27 @@ export type ProductDisplayTarget = {
   category: string;
 };
 
+export type ProductStockTarget = {
+  status: string;
+  count: string | number;
+};
+
 export const UNIFORM_CLOTH_NOTICE =
   "Sold as uniform cloth/material only. The image is a preview of the finished uniform, not a ready-to-wear item.";
+
+export function productStockCount(product: ProductStockTarget) {
+  const count = Number(product.count);
+  return Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0;
+}
+
+export function isProductUnavailable(product: ProductStockTarget) {
+  return product.status.trim().toLowerCase() === "out of stock" || productStockCount(product) === 0;
+}
+
+export function productPurchaseLimit(product: ProductStockTarget, maximum = 10) {
+  if (isProductUnavailable(product)) return 0;
+  return Math.min(productStockCount(product), Math.max(1, Math.floor(maximum)));
+}
 
 export function isPeUniformProduct(product: ProductDisplayTarget) {
   return product.category === "Uniforms" && /\bP\.?E\.?\b|physical education|elementary pe/i.test(product.name);

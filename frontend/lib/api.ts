@@ -66,7 +66,7 @@ export type BackendFaq = {
 export type BackendReservationStatus = "PENDING" | "CONFIRMED" | "READY_FOR_PICKUP" | "COMPLETED" | "CANCELLED" | "NO_SHOW";
 export type BackendPaymentMethod = "PAY_AT_COMMISSARY" | "E_WALLET_AT_PICKUP" | "CASH" | "GCASH";
 export type BackendReceiptStatus = "PENDING" | "VERIFIED" | "VOIDED";
-export type BackendNotificationType = "RESERVATION" | "RECEIPT" | "LOW_STOCK" | "MESSAGE" | "SYSTEM";
+export type BackendNotificationType = "RESERVATION" | "RECEIPT" | "LOW_STOCK" | "MESSAGE" | "SYSTEM" | "BACK_IN_STOCK";
 export type BackendConversationStatus = "OPEN" | "RESOLVED";
 
 export type BackendProfileSummary = {
@@ -185,7 +185,13 @@ export type BackendNotification = {
   title: string;
   message: string;
   type: BackendNotificationType;
+  actionUrl?: string | null;
   readAt: string | null;
+  createdAt: string;
+};
+
+export type BackendWishlistItem = {
+  productId: string;
   createdAt: string;
 };
 
@@ -503,6 +509,26 @@ export async function updateMyProfileFromApi(token: string, payload: UpdateMyPro
 export async function getProductsFromApi() {
   const data = await apiFetch<{ products: BackendProduct[] }>("/products");
   return data.products.map(mapBackendProduct);
+}
+
+export async function getWishlistFromApi(token: string) {
+  const data = await authApiFetch<{ wishlist: BackendWishlistItem[] }>("/wishlist", token);
+  return data.wishlist;
+}
+
+export async function addWishlistItemFromApi(token: string, productId: string) {
+  const data = await authApiFetch<{ wishlistItem: BackendWishlistItem }>(
+    `/wishlist/${encodeURIComponent(productId)}`,
+    token,
+    { method: "POST" }
+  );
+  return data.wishlistItem;
+}
+
+export async function removeWishlistItemFromApi(token: string, productId: string) {
+  await authApiFetch<null>(`/wishlist/${encodeURIComponent(productId)}`, token, {
+    method: "DELETE"
+  });
 }
 
 export async function getFaqsFromApi() {

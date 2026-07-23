@@ -18,15 +18,22 @@ function notificationIcon(type: BackendNotificationType) {
   if (type === "RESERVATION") return "/assets/reservations.svg";
   if (type === "RECEIPT") return "/assets/verified.svg";
   if (type === "LOW_STOCK") return "/assets/restock-soon.svg";
+  if (type === "BACK_IN_STOCK") return "/assets/restock-soon.svg";
   if (type === "MESSAGE") return "/assets/support.svg";
   return "/assets/notifications.svg";
 }
 
-function notificationHref(type: BackendNotificationType) {
-  if (type === "RESERVATION") return "/student/reservations";
-  if (type === "RECEIPT") return "/student/receipts";
-  if (type === "LOW_STOCK") return "/student/shop";
-  if (type === "MESSAGE") return "/student/support";
+function notificationHref(notification: BackendNotification) {
+  if (
+    notification.actionUrl?.startsWith("/") &&
+    !notification.actionUrl.startsWith("//")
+  ) {
+    return notification.actionUrl;
+  }
+  if (notification.type === "RESERVATION") return "/student/reservations";
+  if (notification.type === "RECEIPT") return "/student/receipts";
+  if (notification.type === "LOW_STOCK" || notification.type === "BACK_IN_STOCK") return "/student/shop?wishlist=1";
+  if (notification.type === "MESSAGE") return "/student/support";
   return "/student/dashboard";
 }
 
@@ -217,7 +224,7 @@ export function StudentNotifications({ onRequireAuth }: { onRequireAuth?: () => 
             ) : visibleNotifications.length ? visibleNotifications.map((notification) => (
               <Link
                 key={notification.id}
-                href={notificationHref(notification.type)}
+                href={notificationHref(notification)}
                 onClick={() => {
                   void markRead(notification);
                   setOpen(false);
