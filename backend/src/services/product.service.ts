@@ -77,7 +77,7 @@ export async function listProducts(filters: ProductFilters) {
     )
     .eq("is_active", true);
 
-  if (error) throw new HttpError(500, error.message);
+  if (error) throw HttpError.fromSupabase(error);
 
   const query = filters.query?.trim().toLowerCase();
   const products = ((data ?? []) as RawProduct[])
@@ -112,7 +112,7 @@ export async function getProduct(productId: string) {
 
   if (error) {
     if (error.code === "PGRST116") return null;
-    throw new HttpError(500, error.message);
+    throw HttpError.fromSupabase(error);
   }
 
   return mapProduct(data as RawProduct);

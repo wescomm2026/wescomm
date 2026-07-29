@@ -98,7 +98,7 @@ async function loadRoleByUserId(userId: string) {
     .eq("id", userId)
     .maybeSingle();
 
-  if (error) throw new HttpError(500, error.message);
+  if (error) throw HttpError.fromSupabase(error);
   return (data?.role as AppRole | undefined) ?? "STUDENT";
 }
 
@@ -139,7 +139,7 @@ export async function savePushSubscription(input: {
     .select("id")
     .eq("endpoint_hash", endpointHash)
     .maybeSingle();
-  if (hashLookupError) throw new HttpError(500, hashLookupError.message);
+  if (hashLookupError) throw HttpError.fromSupabase(hashLookupError);
 
   let existing = existingByHash as { id: string } | null;
   if (!existing) {
@@ -148,7 +148,7 @@ export async function savePushSubscription(input: {
       .select("id")
       .eq("endpoint", input.subscription.endpoint)
       .maybeSingle();
-    if (legacyLookupError) throw new HttpError(500, legacyLookupError.message);
+    if (legacyLookupError) throw HttpError.fromSupabase(legacyLookupError);
     existing = legacyRow as { id: string } | null;
   }
 
@@ -168,7 +168,7 @@ export async function savePushSubscription(input: {
     : supabaseAdmin.from("push_subscriptions").insert(encryptedValues);
   const { data, error } = await query.select("*").single();
 
-  if (error) throw new HttpError(500, error.message);
+  if (error) throw HttpError.fromSupabase(error);
   return data as RawPushSubscription;
 }
 
@@ -186,7 +186,7 @@ export async function removePushSubscription(input: {
     .eq("user_id", input.userId)
     .eq("endpoint_hash", endpointHash);
 
-  if (error) throw new HttpError(500, error.message);
+  if (error) throw HttpError.fromSupabase(error);
 
   await supabaseAdmin
     .from("push_subscriptions")

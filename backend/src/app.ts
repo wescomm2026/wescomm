@@ -9,6 +9,10 @@ import { requireTrustedCookieOrigin } from "./middleware/csrf.js";
 import { apiRoutes } from "./routes/index.js";
 import { allowedFrontendOrigins } from "./utils/allowed-origins.js";
 import { HttpError } from "./utils/http-error.js";
+import {
+  DATABASE_RETRY_AFTER_SECONDS,
+  isTransientPrismaConnectionError
+} from "./utils/prisma-retry.js";
 
 export const app = express();
 
@@ -69,13 +73,33 @@ app.use((error: unknown, _request: express.Request, response: express.Response, 
 
   if (error instanceof HttpError) {
     if (error.status >= 500) console.error(`[${requestId}]`, error);
-    const message = error.status >= 500 && env.NODE_ENV === "production"
-      ? "Internal server error."
-      : error.message;
+    const temporarilyUnavailable = (
+      error.status === 503
+      && error.details?.retryable === true
+    );
+    if (temporarilyUnavailable) {
+      response.setHeader("Retry-After", String(DATABASE_RETRY_AFTER_SECONDS));
+    }
+    const message = temporarilyUnavailable
+      ? "The service is temporarily unavailable. Please try again."
+      : error.status >= 500 && env.NODE_ENV === "production"
+        ? "Internal server error."
+        : error.message;
     return response.status(error.status).json({
       error: message,
       code: error.code,
       details: error.details,
+      requestId
+    });
+  }
+
+  if (isTransientPrismaConnectionError(error)) {
+    console.error(`[${requestId}] transient database failure`, error);
+    response.setHeader("Retry-After", String(DATABASE_RETRY_AFTER_SECONDS));
+    return response.status(503).json({
+      error: "The service is temporarily unavailable. Please try again.",
+      code: "DATABASE_TEMPORARILY_UNAVAILABLE",
+      details: { retryable: true },
       requestId
     });
   }

@@ -82,7 +82,7 @@ export async function recordAuditLog(input: AuditLogInput) {
     .select(auditLogSelect)
     .single();
 
-  if (error) throw new HttpError(500, error.message);
+  if (error) throw HttpError.fromSupabase(error);
   return mapAuditLog(data as unknown as RawAuditLog);
 }
 
@@ -107,7 +107,7 @@ export async function listAuditLogs(filters: AuditLogFilters = {}) {
   if (filters.actorId) query = query.eq("actor_id", filters.actorId);
 
   const { data, error } = await query;
-  if (error) throw new HttpError(500, error.message);
+  if (error) throw HttpError.fromSupabase(error);
 
   return ((data ?? []) as unknown as RawAuditLog[]).map(mapAuditLog);
 }

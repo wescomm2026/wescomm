@@ -43,7 +43,8 @@ export function authSessionIssueError(error: unknown) {
     return new HttpError(
       503,
       "Sign-in is temporarily unavailable. Please try again.",
-      "AUTH_SESSION_UNAVAILABLE"
+      "AUTH_SESSION_UNAVAILABLE",
+      { retryable: true }
     );
   }
   return error;

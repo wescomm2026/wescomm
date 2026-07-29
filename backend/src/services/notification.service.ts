@@ -67,7 +67,7 @@ export async function createNotification(input: NotificationInput) {
     .select("*")
     .single();
 
-  if (error) throw new HttpError(500, error.message);
+  if (error) throw HttpError.fromSupabase(error);
   const notification = mapNotification(data as RawNotification);
   dispatchPushNotifications([notification]);
   return notification;
@@ -82,7 +82,7 @@ export async function createNotificationsForRoles(
     .select("id,role")
     .in("role", roles);
 
-  if (profileError) throw new HttpError(500, profileError.message);
+  if (profileError) throw HttpError.fromSupabase(profileError);
 
   const rows = (profileRows ?? []).map((profile) => ({
     user_id: profile.id,
@@ -94,7 +94,7 @@ export async function createNotificationsForRoles(
   if (!rows.length) return [];
 
   const { data, error } = await supabaseAdmin.from("notifications").insert(rows).select("*");
-  if (error) throw new HttpError(500, error.message);
+  if (error) throw HttpError.fromSupabase(error);
 
   const roleByUserId = new Map(
     (profileRows ?? []).map((profile) => [profile.id as string, profile.role as AppRole])
@@ -111,7 +111,7 @@ export async function listNotifications(userId: string) {
     .eq("user_id", userId)
     .order("created_at", { ascending: false });
 
-  if (error) throw new HttpError(500, error.message);
+  if (error) throw HttpError.fromSupabase(error);
   return ((data ?? []) as RawNotification[]).map(mapNotification);
 }
 
@@ -124,7 +124,7 @@ export async function markNotificationRead(notificationId: string, userId: strin
     .select("*")
     .maybeSingle();
 
-  if (error) throw new HttpError(500, error.message);
+  if (error) throw HttpError.fromSupabase(error);
   return data ? mapNotification(data as RawNotification) : null;
 }
 
@@ -137,6 +137,6 @@ export async function markAllNotificationsRead(userId: string) {
     .is("read_at", null)
     .select("*");
 
-  if (error) throw new HttpError(500, error.message);
+  if (error) throw HttpError.fromSupabase(error);
   return ((data ?? []) as RawNotification[]).map(mapNotification);
 }

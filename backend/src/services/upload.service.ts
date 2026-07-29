@@ -54,7 +54,7 @@ async function ensureProductImageBucket() {
     });
 
     if (createError) {
-      throw new HttpError(500, `Unable to prepare product image storage: ${createError.message}`);
+      throw HttpError.fromSupabase(createError, "Unable to prepare product image storage");
     }
   }
 
@@ -92,7 +92,7 @@ export async function uploadProductImage(input: {
     });
 
   if (error) {
-    throw new HttpError(500, `Unable to upload product image: ${error.message}`);
+    throw HttpError.fromSupabase(error, "Unable to upload product image");
   }
 
   const { data } = supabaseAdmin.storage.from(PRODUCT_IMAGE_BUCKET).getPublicUrl(path);

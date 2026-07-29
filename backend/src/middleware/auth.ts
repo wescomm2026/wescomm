@@ -55,7 +55,7 @@ async function loadProfileById(id: string) {
     .eq("id", id)
     .maybeSingle();
 
-  if (profileError) throw new HttpError(500, profileError.message);
+  if (profileError) throw HttpError.fromSupabase(profileError);
   return mapProfile(profileRow as RawProfile | null);
 }
 
@@ -151,7 +151,7 @@ export async function requireAuth(request: AuthenticatedRequest, response: Respo
         .select("*")
         .single();
 
-      if (createProfileError) return next(new HttpError(500, createProfileError.message));
+      if (createProfileError) return next(HttpError.fromSupabase(createProfileError));
       profile = mapProfile(createdProfileRow as RawProfile);
     } else if (profile.email.toLowerCase() !== email) {
       const { data: updatedProfileRow, error: updateProfileError } = await supabaseAdmin
@@ -165,7 +165,7 @@ export async function requireAuth(request: AuthenticatedRequest, response: Respo
         if (updateProfileError.code === "23505") {
           return next(new HttpError(409, "This school email is already linked to another account."));
         }
-        return next(new HttpError(500, updateProfileError.message));
+        return next(HttpError.fromSupabase(updateProfileError));
       }
 
       await revokeAuthSessionsForUser(data.user.id);

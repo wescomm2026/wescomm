@@ -269,7 +269,7 @@ async function getReceiptByIdOrThrow(receiptId: string) {
     .eq("id", receiptId)
     .maybeSingle();
 
-  if (error) throw new HttpError(500, error.message);
+  if (error) throw HttpError.fromSupabase(error);
   if (!data) throw new HttpError(404, "Receipt not found.");
 
   return mapReceipt(data as unknown as RawReceipt);
@@ -280,7 +280,7 @@ export async function listReceipts(userId: string, role: AppRole) {
   if (role === "STUDENT") query = query.eq("student_id", userId);
 
   const { data, error } = await query;
-  if (error) throw new HttpError(500, error.message);
+  if (error) throw HttpError.fromSupabase(error);
   return ((data ?? []) as unknown as RawReceipt[]).map(mapReceipt);
 }
 
@@ -291,7 +291,7 @@ export async function verifyReceipt(receiptCode: string) {
     .eq("receipt_code", receiptCode)
     .maybeSingle();
 
-  if (error) throw new HttpError(500, error.message);
+  if (error) throw HttpError.fromSupabase(error);
   return data ? mapPublicReceipt(data as unknown as RawPublicReceipt) : null;
 }
 
@@ -320,7 +320,7 @@ export async function createReceipt(input: {
     .select(receiptSelect)
     .single();
 
-  if (error) throw new HttpError(500, error.message);
+  if (error) throw HttpError.fromSupabase(error);
   const receipt = mapReceipt(data as unknown as RawReceipt);
 
   await createNotification({
@@ -354,7 +354,7 @@ export async function createReceiptForReservation(reservationId: string, issuedB
     .eq("reservation_id", reservationId)
     .maybeSingle();
 
-  if (existingError) throw new HttpError(500, existingError.message);
+  if (existingError) throw HttpError.fromSupabase(existingError);
   if (existingReceipt) return mapReceipt(existingReceipt as unknown as RawReceipt);
 
   const { data: reservationData, error: reservationError } = await supabaseAdmin
@@ -363,7 +363,7 @@ export async function createReceiptForReservation(reservationId: string, issuedB
     .eq("id", reservationId)
     .single();
 
-  if (reservationError) throw new HttpError(500, reservationError.message);
+  if (reservationError) throw HttpError.fromSupabase(reservationError);
 
   const reservation = reservationData as RawReceiptSourceReservation;
   if (reservation.status !== "COMPLETED") {
@@ -388,7 +388,7 @@ export async function createReceiptForReservation(reservationId: string, issuedB
     .select(receiptSelect)
     .single();
 
-  if (error) throw new HttpError(500, error.message);
+  if (error) throw HttpError.fromSupabase(error);
   const receipt = mapReceipt(data as unknown as RawReceipt);
 
   await Promise.all([
@@ -446,7 +446,7 @@ export async function markReceiptVerified(receiptId: string, verifiedById: strin
     .select(receiptSelect)
     .single();
 
-  if (error) throw new HttpError(500, error.message);
+  if (error) throw HttpError.fromSupabase(error);
   const receipt = mapReceipt(data as unknown as RawReceipt);
 
   await createNotification({
@@ -491,7 +491,7 @@ export async function voidReceipt(receiptId: string, voidedById: string, reason?
     .select(receiptSelect)
     .single();
 
-  if (error) throw new HttpError(500, error.message);
+  if (error) throw HttpError.fromSupabase(error);
   const receipt = mapReceipt(data as unknown as RawReceipt);
   const cleanReason = reason?.trim();
 
