@@ -43,7 +43,32 @@ test("only connection and pool-acquisition codes are classified as transient", (
   assert.equal(isTransientPrismaConnectionError({ errorCode: "P1001" }), true);
   assert.equal(isTransientPrismaConnectionError(initializationError), true);
   assert.equal(isTransientPrismaConnectionError(uncodedInitializationError), true);
+  assert.equal(isTransientPrismaConnectionError({ code: "P1002" }), true);
+  assert.equal(isTransientPrismaConnectionError({ code: "P1008" }), true);
+  assert.equal(isTransientPrismaConnectionError({ code: "P1017" }), true);
   assert.equal(isTransientPrismaConnectionError({ code: "P2024" }), true);
+  assert.equal(isTransientPrismaConnectionError({ cause: { code: "ECONNRESET" } }), true);
   assert.equal(isTransientPrismaConnectionError({ code: "P2028" }), false);
   assert.equal(isTransientPrismaConnectionError(new Error("network")), false);
+});
+
+test("read retries use bounded exponential backoff without replaying non-transient work", async () => {
+  const observedDelays: number[] = [];
+  let attempts = 0;
+
+  const result = await withTransientPrismaReadRetry(async () => {
+    attempts += 1;
+    if (attempts < 3) throw { code: "P1002" };
+    return "recovered";
+  }, {
+    delayMs: 100,
+    jitterRatio: 0,
+    sleep: async (delayMs) => {
+      observedDelays.push(delayMs);
+    }
+  });
+
+  assert.equal(result, "recovered");
+  assert.equal(attempts, 3);
+  assert.deepEqual(observedDelays, [100, 200]);
 });

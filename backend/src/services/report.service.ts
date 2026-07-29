@@ -1,4 +1,5 @@
 import { prisma } from "../lib/prisma.js";
+import { withTransientPrismaReadRetry } from "../utils/prisma-retry.js";
 
 function toNumber(value: unknown) {
   const numericValue = Number(value ?? 0);
@@ -47,7 +48,7 @@ export async function getReportSummary() {
     userGroups,
     activeConversations,
     recentReceipts
-  ] = await Promise.all([
+  ] = await withTransientPrismaReadRetry(() => Promise.all([
     prisma.product.findMany({
       where: { isActive: true },
       select: {
@@ -98,7 +99,7 @@ export async function getReportSummary() {
         }
       }
     })
-  ]);
+  ]));
 
   const totalProducts = products.length;
   const lowStockItems = products.filter((product) => product.stock <= product.lowStockThreshold).length;

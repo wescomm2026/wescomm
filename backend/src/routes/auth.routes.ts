@@ -83,7 +83,7 @@ async function loadPasswordLoginProfile(email: string) {
     .eq("email", email)
     .maybeSingle();
 
-  if (error) throw new HttpError(500, error.message);
+  if (error) throw HttpError.fromSupabase(error);
   return mapProfile(profileRow as RawProfile | null);
 }
 

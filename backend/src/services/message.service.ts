@@ -125,7 +125,7 @@ async function requireConversation(conversationId: string, viewerId?: string) {
     .eq("id", conversationId)
     .maybeSingle();
 
-  if (error) throw new HttpError(500, error.message);
+  if (error) throw HttpError.fromSupabase(error);
   if (!data) throw new HttpError(404, "Conversation not found.");
   return mapConversation(data as RawConversation, viewerId);
 }
@@ -141,7 +141,7 @@ export async function listConversations(userId: string, role: AppRole) {
   if (role === "STUDENT") query = query.eq("student_id", userId);
 
   const { data, error } = await query;
-  if (error) throw new HttpError(500, error.message);
+  if (error) throw HttpError.fromSupabase(error);
   const conversations = ((data ?? []) as RawConversation[]).map((conversation) => mapConversation(conversation, userId));
   return role === "STUDENT"
     ? conversations.filter((conversation) => conversation.studentId === userId)
@@ -163,7 +163,7 @@ export async function createConversation(input: {
     .select("id")
     .single();
 
-  if (conversationError) throw new HttpError(500, conversationError.message);
+  if (conversationError) throw HttpError.fromSupabase(conversationError);
 
   const conversation = conversationData as { id: string };
   const { error: messageError } = await supabaseAdmin.from("conversation_messages").insert({
@@ -172,7 +172,7 @@ export async function createConversation(input: {
     message: encryptSensitiveText(input.message.trim(), "conversation.message")
   });
 
-  if (messageError) throw new HttpError(500, messageError.message);
+  if (messageError) throw HttpError.fromSupabase(messageError);
 
   const createdConversation = await requireConversation(conversation.id, input.studentId);
   await createNotificationsForRoles(["STAFF", "ADMIN"], {
@@ -213,14 +213,14 @@ export async function createMessage(input: {
     .select("id,conversation_id,sender_id,message,created_at,sender:profiles!conversation_messages_sender_id_fkey(id,full_name,email,student_number)")
     .single();
 
-  if (error) throw new HttpError(500, error.message);
+  if (error) throw HttpError.fromSupabase(error);
 
   const { error: updateError } = await supabaseAdmin
     .from("conversations")
     .update(updateConversation)
     .eq("id", input.conversationId);
 
-  if (updateError) throw new HttpError(500, updateError.message);
+  if (updateError) throw HttpError.fromSupabase(updateError);
 
   const message = mapMessage(data as RawConversationMessage);
 
@@ -271,7 +271,7 @@ export async function updateConversationStatus(input: {
     .select(conversationSelect)
     .single();
 
-  if (error) throw new HttpError(500, error.message);
+  if (error) throw HttpError.fromSupabase(error);
 
   const updatedConversation = mapConversation(data as RawConversation);
 

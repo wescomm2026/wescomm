@@ -123,8 +123,8 @@ separately but deploy together under one project, domain, and release.
    NEXT_PUBLIC_SUPABASE_ANON_KEY=<public anon key>
    SUPABASE_SERVICE_ROLE_KEY=<private service-role key>
 
-   DATABASE_URL=<Supavisor transaction URL, port 6543, sslmode=require>
-   DIRECT_URL=<valid direct/session URL, sslmode=require>
+   DATABASE_URL=<Supavisor transaction URL, port 6543, pgbouncer=true, sslmode=require>
+   DIRECT_URL=<valid session/direct URL, port 5432, sslmode=require>
 
    DATA_ENCRYPTION_CURRENT_VERSION=v1
    DATA_ENCRYPTION_KEYS=<existing versioned encryption key list>
@@ -161,6 +161,13 @@ separately but deploy together under one project, domain, and release.
       cd backend
       npm run prisma:migrate:deploy
       npm run prisma:migrate:verify
+
+12. Configure DATABASE_BACKUP_URL and DATABASE_BACKUP_PASSPHRASE as GitHub
+    repository secrets and SUPABASE_PROJECT_REF as a repository variable, then
+    manually verify the encrypted backup workflow. Follow
+    txt_files/WESCOMM_DATABASE_RESILIENCE.md. The backup URL must be the same
+    project as DIRECT_URL and use a port 5432 session/direct endpoint, never the
+    runtime port 6543 endpoint.
 
     A new Supabase project must first receive the SQL bootstrap described in
     backend/README.md. Prisma migrations alone do not provision all Supabase RLS,
@@ -303,7 +310,9 @@ OTP returns to localhost:
 
 Prisma cannot connect:
   Use the Supabase transaction pooler on port 6543 for DATABASE_URL and include
-  sslmode=require. Confirm the database password is URL-encoded if needed.
+  pgbouncer=true and sslmode=require. Use the session/direct endpoint on port
+  5432 only for DIRECT_URL. Confirm the database password is URL-encoded if
+  needed.
 
 Build contains a secret:
   Stop the deployment, rotate the credential, remove it from the file and Git

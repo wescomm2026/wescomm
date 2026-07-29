@@ -21,6 +21,7 @@ playwright-report/
 test-results/
 blob-report/
 .nyc_output/
+.backup-work/
 
 # Hosting and local tooling
 .vercel/

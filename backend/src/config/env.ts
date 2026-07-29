@@ -7,6 +7,7 @@ import {
 } from "../domain/deployment-environment.js";
 import { assertSafeTemporaryStaffLoginEnvironment } from "../domain/temporary-staff-login-policy.js";
 import { validateAllowedEmailDomains } from "../utils/auth-email-policy.js";
+import { assertSafeProductionDatabaseUrls } from "../utils/database-url.js";
 
 const booleanEnv = z.preprocess((value) => {
   if (typeof value !== "string") return value;
@@ -122,6 +123,12 @@ if (parsedEnv.NODE_ENV === "production") {
   if (frontendOrigins.some((origin) => !origin.startsWith("https://"))) {
     throw new Error("All production FRONTEND_ORIGINS must use HTTPS.");
   }
+
+  assertSafeProductionDatabaseUrls(
+    parsedEnv.DATABASE_URL,
+    parsedEnv.DIRECT_URL,
+    parsedEnv.NEXT_PUBLIC_SUPABASE_URL
+  );
 }
 
 export const env = {
