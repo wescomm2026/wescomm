@@ -108,20 +108,23 @@ function ProductCard({
         <span className={`pointer-events-none absolute left-1.5 top-1.5 z-10 max-w-[calc(100%-52px)] truncate rounded-full px-2 py-1 text-[9px] font-extrabold leading-none sm:left-2 sm:top-2 sm:px-3 sm:text-xs ${tone}`}>
           {product.status}
         </span>
-        <button
-          type="button"
-          onClick={() => onToggleWishlist(product)}
-          disabled={!product.id || wishlistDisabled || wishlistPending}
-          aria-pressed={wishlisted}
-          aria-label={`${wishlisted ? "Remove" : "Add"} ${product.name} ${wishlisted ? "from" : "to"} wishlist`}
-          className="absolute right-1.5 top-1.5 z-20 grid size-10 place-items-center rounded-full border border-[#d8e4d9] bg-white/95 text-primary shadow-sm transition hover:scale-105 hover:bg-[#eef7ef] focus:outline-none focus:ring-2 focus:ring-primary/40 disabled:opacity-60 sm:right-2 sm:top-2 sm:size-11"
-        >
-          {wishlistPending ? (
-            <LoaderCircle className="size-5 animate-spin" aria-hidden="true" />
-          ) : (
-            <Heart className={`size-5 ${wishlisted ? "fill-primary" : ""}`} strokeWidth={2.2} aria-hidden="true" />
-          )}
-        </button>
+        {!disabled ? (
+          <button
+            type="button"
+            onClick={() => onToggleWishlist(product)}
+            disabled={!product.id || wishlistDisabled || wishlistPending}
+            aria-pressed={wishlisted}
+            aria-busy={wishlistPending}
+            aria-label={`${wishlisted ? "Remove" : "Add"} ${product.name} ${wishlisted ? "from" : "to"} wishlist`}
+            className="absolute right-1.5 top-1.5 z-20 grid size-10 place-items-center rounded-full border border-[#d8e4d9] bg-white/95 text-primary shadow-sm transition hover:scale-105 hover:bg-[#eef7ef] focus:outline-none focus:ring-2 focus:ring-primary/40 disabled:opacity-60 sm:right-2 sm:top-2 sm:size-11"
+          >
+            {wishlistPending || wishlistDisabled ? (
+              <LoaderCircle className="size-5 animate-spin" aria-hidden="true" />
+            ) : (
+              <Heart className={`size-5 ${wishlisted ? "fill-primary" : ""}`} strokeWidth={2.2} aria-hidden="true" />
+            )}
+          </button>
+        ) : null}
       </div>
       <h3 className="mt-2 line-clamp-2 min-h-9 text-xs font-extrabold leading-[1.125rem] text-[#17211b] sm:mt-3 sm:min-h-12 sm:text-base sm:leading-6">{product.name}</h3>
       <p className="hidden line-clamp-2 min-h-10 text-sm leading-5 text-muted-foreground sm:block">{product.detail}</p>
@@ -132,8 +135,9 @@ function ProductCard({
       </div>
       <p className="mt-1.5 truncate text-[10px] font-semibold text-[#506059] sm:mt-2 sm:text-sm">{availabilityText(product)}</p>
       {clothOnly ? (
-        <p className="mt-2 hidden rounded-md border border-[#cfe2d1] bg-[#f5faf5] px-3 py-2 text-xs font-medium leading-5 text-[#4e6255] sm:block">
-          Tela/material lang. Preview lang ang uniform image.
+        <p className="mt-1.5 rounded-md border border-[#cfe2d1] bg-[#f5faf5] px-2 py-1 text-[9px] font-semibold leading-4 text-[#4e6255] sm:mt-2 sm:px-3 sm:py-2 sm:text-xs sm:font-medium sm:leading-5">
+          <span className="sm:hidden">Cloth only · image is a preview</span>
+          <span className="hidden sm:inline">Tela/material lang. Preview lang ang uniform image.</span>
         </p>
       ) : null}
       {disabled ? (
@@ -142,12 +146,19 @@ function ProductCard({
           variant="secondary"
           disabled={!product.id || wishlistDisabled || wishlistPending}
           aria-pressed={wishlisted}
+          aria-busy={wishlistPending}
           aria-label={`${wishlisted ? "Stop" : "Notify me about"} ${product.name} restock`}
           className="mt-auto h-10 w-full px-1.5 pt-0 text-[10px] sm:h-11 sm:px-3 sm:text-sm"
           onClick={() => onToggleWishlist(product)}
         >
-          <Heart className={`size-4 shrink-0 ${wishlisted ? "fill-primary" : ""}`} aria-hidden="true" />
-          <span className="truncate">{wishlisted ? "Watching stock" : "Notify me"}</span>
+          {wishlistPending || wishlistDisabled ? (
+            <LoaderCircle className="size-4 shrink-0 animate-spin" aria-hidden="true" />
+          ) : (
+            <Heart className={`size-4 shrink-0 ${wishlisted ? "fill-primary" : ""}`} aria-hidden="true" />
+          )}
+          <span className="truncate">
+            {wishlistDisabled ? "Loading wishlist" : wishlisted ? "Watching stock" : "Notify me"}
+          </span>
         </Button>
       ) : (
         <div className="mt-auto grid grid-cols-2 gap-1.5 pt-2.5 sm:gap-2 sm:pt-3">
@@ -367,6 +378,8 @@ export function StudentShopExperience() {
     ? productFromNotification
     : "";
   const processedRestockLinkRef = useRef("");
+  const productRequestSequenceRef = useRef(0);
+  const wishlistFilterRef = useRef<HTMLButtonElement>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("All Items");
@@ -382,6 +395,7 @@ export function StudentShopExperience() {
   const [shopNotice, setShopNotice] = useState<{ title: string; message: string; error?: boolean } | null>(null);
 
   const loadProducts = useCallback(({ background = false }: { background?: boolean } = {}) => {
+    const requestSequence = ++productRequestSequenceRef.current;
     let cancelled = false;
 
     if (!background) {
@@ -391,10 +405,13 @@ export function StudentShopExperience() {
 
     getProductsFromApi()
       .then((apiProducts) => {
-        if (!cancelled) setProducts(apiProducts);
+        if (!cancelled && requestSequence === productRequestSequenceRef.current) {
+          setProducts(apiProducts);
+          setError("");
+        }
       })
       .catch((productsError) => {
-        if (!cancelled) {
+        if (!cancelled && requestSequence === productRequestSequenceRef.current) {
           if (!background) {
             setProducts([]);
             setError(productsError instanceof Error ? productsError.message : "Unable to load shop items.");
@@ -402,7 +419,9 @@ export function StudentShopExperience() {
         }
       })
       .finally(() => {
-        if (!cancelled && !background) setLoading(false);
+        if (!cancelled && !background && requestSequence === productRequestSequenceRef.current) {
+          setLoading(false);
+        }
       });
 
     return () => {
@@ -416,13 +435,13 @@ export function StudentShopExperience() {
 
   useEffect(() => {
     const refreshProducts = () => {
-      if (!navigator.onLine) return;
+      if (!navigator.onLine || loading) return;
       loadProducts({ background: true });
     };
 
     window.addEventListener("wescomm:products-refresh", refreshProducts);
     return () => window.removeEventListener("wescomm:products-refresh", refreshProducts);
-  }, [loadProducts]);
+  }, [loadProducts, loading]);
 
   useEffect(() => {
     const handleShopSearch = (event: Event) => {
@@ -436,24 +455,28 @@ export function StudentShopExperience() {
   useEffect(() => {
     setQuery(routeQuery);
     setWishlistOnly(wishlistRequested);
-  }, [routeQuery, wishlistRequested]);
+    if (wishlistRequested && highlightedProductId) {
+      setCategory("All Items");
+      setStatuses(statusFilters);
+    }
+  }, [highlightedProductId, routeQuery, wishlistRequested]);
 
   useEffect(() => {
-    if (!wishlistRequested || !highlightedProductId || !navigator.onLine) return;
+    if (!wishlistRequested || !highlightedProductId || loading || !navigator.onLine) return;
     const restockLinkKey = `${highlightedProductId}:${searchParams.toString()}`;
     if (processedRestockLinkRef.current === restockLinkKey) return;
     processedRestockLinkRef.current = restockLinkKey;
     loadProducts({ background: true });
-  }, [highlightedProductId, loadProducts, searchParams, wishlistRequested]);
+  }, [highlightedProductId, loadProducts, loading, searchParams, wishlistRequested]);
 
   useEffect(() => {
-    if (!highlightedProductId || loading) return;
+    if (!highlightedProductId || loading || (wishlistOnly && !wishlist.ready)) return;
     const frame = window.requestAnimationFrame(() => {
       document.querySelector<HTMLElement>(`[data-product-id="${highlightedProductId}"]`)
         ?.scrollIntoView({ behavior: "smooth", block: "center" });
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [highlightedProductId, loading, products]);
+  }, [highlightedProductId, loading, products, wishlist.productIds, wishlist.ready, wishlistOnly]);
 
   const updateQuery = useCallback((value: string) => {
     setQuery(value);
@@ -519,6 +542,9 @@ export function StudentShopExperience() {
   }, [authReady, updateWishlistFilter, user?.role, wishlistOnly]);
 
   const toggleWishlist = useCallback(async (product: Product) => {
+    if (wishlistOnly && product.id && wishlist.productIds.has(product.id)) {
+      wishlistFilterRef.current?.focus();
+    }
     const result = await wishlist.toggle(product.id);
     if (!result.ok) {
       if (result.reason === "AUTH_REQUIRED") return;
@@ -546,7 +572,7 @@ export function StudentShopExperience() {
         ? `We will notify you when ${product.name} is available again.`
         : `${product.name} is now in your wishlist.`
     });
-  }, [wishlist]);
+  }, [wishlist, wishlistOnly]);
 
   const confirmAddToCart = useCallback(
     (product: CartProduct, selectedOptions: Record<string, string>, quantity: number) => {
@@ -589,9 +615,11 @@ export function StudentShopExperience() {
   }, [products]);
 
   const wishlistViewLoading =
-    wishlistOnly && (!authReady || (user?.role === "STUDENT" && !wishlist.ready));
+    wishlistOnly && !wishlist.error && (!authReady || (user?.role === "STUDENT" && !wishlist.ready));
+  const wishlistViewUnavailable =
+    wishlistOnly && user?.role === "STUDENT" && Boolean(wishlist.error) && !wishlist.ready;
   const wishlistControlsDisabled =
-    user?.role === "STUDENT" && !wishlist.ready;
+    !authReady || (user?.role === "STUDENT" && !wishlist.ready);
 
   return (
     <div className="grid w-full max-w-full min-w-0 gap-6 overflow-hidden lg:grid-cols-[250px_1fr]">
@@ -662,6 +690,7 @@ export function StudentShopExperience() {
           <p className="text-sm text-[#3f4a44]">Showing {filteredProducts.length} of {products.length} items</p>
           <div className="flex items-center gap-2">
             <button
+              ref={wishlistFilterRef}
               type="button"
               onClick={() => updateWishlistFilter(!wishlistOnly)}
               disabled={wishlistControlsDisabled}
@@ -692,9 +721,12 @@ export function StudentShopExperience() {
           </div>
         </div>
 
-        {wishlist.error && user?.role === "STUDENT" ? (
-          <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900" role="status">
-            Wishlist could not be loaded: {wishlist.error}
+        {wishlist.error && user?.role === "STUDENT" && !wishlistOnly ? (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900" role="alert">
+            <span>Wishlist could not be loaded: {wishlist.error}</span>
+            <button type="button" onClick={wishlist.retry} className="h-9 rounded-md border border-amber-300 bg-white px-3 text-xs font-extrabold text-amber-950">
+              Retry
+            </button>
           </div>
         ) : null}
 
@@ -704,7 +736,15 @@ export function StudentShopExperience() {
           </div>
         ) : null}
 
-        {loading || wishlistViewLoading ? (
+        {wishlistViewUnavailable ? (
+          <div className="wes-card border-amber-200 bg-amber-50 p-8 text-center" role="alert">
+            <p className="font-extrabold text-amber-950">Wishlist is temporarily unavailable</p>
+            <p className="mt-1 text-sm text-amber-900">{wishlist.error}</p>
+            <button type="button" onClick={wishlist.retry} className="mt-4 h-10 rounded-md border border-amber-300 bg-white px-4 text-sm font-extrabold text-amber-950">
+              Retry wishlist
+            </button>
+          </div>
+        ) : loading || wishlistViewLoading ? (
           <div className="wes-card p-8 text-center">
             <p className="font-semibold">{wishlistViewLoading ? "Loading your wishlist..." : "Loading live shop items..."}</p>
             <p className="mt-1 text-sm text-muted-foreground">

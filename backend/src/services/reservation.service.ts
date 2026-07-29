@@ -22,9 +22,7 @@ import {
 } from "./restriction.service.js";
 import { sendPushToUser } from "./push.service.js";
 import {
-  createBackInStockNotificationsInTransaction,
-  dispatchBackInStockPushNotifications,
-  type BackInStockNotification
+  createBackInStockNotificationsInTransaction
 } from "./wishlist-notification.service.js";
 import {
   type AppRole,
@@ -750,8 +748,6 @@ export async function updateReservationStatus(reservationId: string, status: Res
         const releasesHeldStock = statusChanged && (status === "CANCELLED" || status === "NO_SHOW");
         const releaseMovementType = status === "NO_SHOW" ? "RESERVATION_NO_SHOW" : "RESERVATION_CANCEL";
         const releaseNote = status === "NO_SHOW" ? "released after confirmed no-show" : "cancelled";
-        const backInStockNotifications: BackInStockNotification[] = [];
-
         await tx.reservation.update({
           where: { id: reservationId },
           data: {
@@ -808,19 +804,17 @@ export async function updateReservationStatus(reservationId: string, status: Res
               select: { id: true }
             });
 
-            backInStockNotifications.push(
-              ...(await createBackInStockNotificationsInTransaction(tx, {
-                productId,
-                productName: product.name,
-                previous: product,
-                next: {
-                  ...product,
-                  stock: newStock,
-                  status: nextStatus
-                },
-                eventId: inventoryMovement.id
-              }))
-            );
+            await createBackInStockNotificationsInTransaction(tx, {
+              productId,
+              productName: product.name,
+              previous: product,
+              next: {
+                ...product,
+                stock: newStock,
+                status: nextStatus
+              },
+              eventId: inventoryMovement.id
+            });
           }
         }
 
@@ -959,8 +953,7 @@ export async function updateReservationStatus(reservationId: string, status: Res
           nextStatus: status,
           referenceCode: existingReservation.referenceCode,
           pushNotification,
-          policyOutcome,
-          backInStockNotifications
+          policyOutcome
         };
       },
       {
@@ -985,7 +978,6 @@ export async function updateReservationStatus(reservationId: string, status: Res
       throw error;
     });
 
-  await dispatchBackInStockPushNotifications(result.backInStockNotifications);
   await createReservationStatusNotification(result.pushNotification);
   if (result.policyOutcome) await notifyStudentOfPolicyOutcome(result.policyOutcome);
 

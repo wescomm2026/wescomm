@@ -21,6 +21,7 @@ export function useStudentWishlist() {
   const [pendingProductIds, setPendingProductIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [reloadKey, setReloadKey] = useState(0);
   const requestSequenceRef = useRef(0);
   const ownerId = authReady && user?.role === "STUDENT" ? user.id : "";
   const token = ownerId ? user?.accessToken ?? "" : "";
@@ -49,7 +50,6 @@ export function useStudentWishlist() {
       .catch((wishlistError) => {
         if (requestSequence !== requestSequenceRef.current) return;
         setError(wishlistError instanceof Error ? wishlistError.message : "Unable to load your wishlist.");
-        setLoadedOwnerId(ownerId);
       })
       .finally(() => {
         if (requestSequence === requestSequenceRef.current) setLoading(false);
@@ -58,6 +58,10 @@ export function useStudentWishlist() {
     return () => {
       requestSequenceRef.current += 1;
     };
+  }, [ownerId, reloadKey, token]);
+
+  const retry = useCallback(() => {
+    if (ownerId && token) setReloadKey((current) => current + 1);
   }, [ownerId, token]);
 
   const toggle = useCallback(async (productId?: string): Promise<WishlistToggleResult> => {
@@ -138,6 +142,7 @@ export function useStudentWishlist() {
     ready,
     loading,
     error,
+    retry,
     toggle
-  }), [error, loading, pendingProductIds, ready, toggle, visibleProductIds]);
+  }), [error, loading, pendingProductIds, ready, retry, toggle, visibleProductIds]);
 }

@@ -52,5 +52,3 @@ Desktop.ini
 # Local archives and design-reference source files are not deployed.
 *.zip
 wescomm_assets/
-
-.vercel

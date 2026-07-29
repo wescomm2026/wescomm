@@ -64,6 +64,7 @@ export function StudentNotifications({ onRequireAuth }: { onRequireAuth?: () => 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const containerRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const requestSequenceRef = useRef(0);
   const accountId = user?.id ?? "";
   const visibleNotifications = notificationOwnerId === accountId ? notifications : [];
@@ -114,7 +115,10 @@ export function StudentNotifications({ onRequireAuth }: { onRequireAuth?: () => 
       if (!containerRef.current?.contains(event.target as Node)) setOpen(false);
     };
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
+      if (event.key === "Escape") {
+        setOpen(false);
+        window.requestAnimationFrame(() => triggerRef.current?.focus());
+      }
     };
 
     document.addEventListener("mousedown", closeOnOutsideClick);
@@ -164,11 +168,12 @@ export function StudentNotifications({ onRequireAuth }: { onRequireAuth?: () => 
   return (
     <div ref={containerRef} className="relative shrink-0">
       <button
+        ref={triggerRef}
         type="button"
         onClick={toggleNotifications}
         aria-label={`Notifications${unreadCount ? `, ${unreadCount} unread` : ""}`}
         aria-expanded={open}
-        aria-haspopup="dialog"
+        aria-controls={open ? "student-notifications-panel" : undefined}
         title="Notifications"
         className={cn(
           "relative grid size-10 place-items-center rounded-md border border-transparent transition-colors sm:size-11",
@@ -185,7 +190,8 @@ export function StudentNotifications({ onRequireAuth }: { onRequireAuth?: () => 
 
       {open ? (
         <section
-          role="dialog"
+          id="student-notifications-panel"
+          role="region"
           aria-label="Student notifications"
           className="fixed inset-x-3 top-[82px] z-50 overflow-hidden rounded-lg border border-[#d8e3d9] bg-white shadow-[0_18px_55px_rgba(17,40,25,0.2)] sm:absolute sm:inset-x-auto sm:right-0 sm:top-[calc(100%+12px)] sm:w-[380px]"
         >
@@ -207,7 +213,10 @@ export function StudentNotifications({ onRequireAuth }: { onRequireAuth?: () => 
               ) : null}
               <button
                 type="button"
-                onClick={() => setOpen(false)}
+                onClick={() => {
+                  setOpen(false);
+                  window.requestAnimationFrame(() => triggerRef.current?.focus());
+                }}
                 aria-label="Close notifications"
                 className="grid size-9 place-items-center rounded-md hover:bg-[#eef3ee]"
               >

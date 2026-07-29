@@ -33,4 +33,8 @@ await import("./reservation-state.test.js");
 await import("./wishlist-migration.test.js");
 await import("./wishlist-policy.test.js");
 await import("./wishlist-notification.test.js");
+await import("./wishlist-service.test.js");
+if (process.env.RUN_DATABASE_INTEGRATION_TESTS === "true") {
+  await import("./wishlist-postgres.integration.test.js");
+}
 await import("./security.test.js");

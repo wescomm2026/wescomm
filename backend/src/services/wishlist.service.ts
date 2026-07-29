@@ -2,9 +2,11 @@ import { Prisma } from "@prisma/client";
 import { isProductAvailable } from "../domain/wishlist-policy.js";
 import { prisma } from "../lib/prisma.js";
 import { HttpError } from "../utils/http-error.js";
+import { withTransientPrismaReadRetry } from "../utils/prisma-retry.js";
 import { lockProductForUpdate } from "../utils/product-transaction.js";
 
 export const WISHLIST_WRITE_TRANSACTION_OPTIONS = Object.freeze({
+  isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
   maxWait: 10_000,
   timeout: 20_000
 });
@@ -40,7 +42,7 @@ function mapWishlistItem(item: { productId: string; createdAt: Date }) {
 }
 
 export async function listWishlist(userId: string) {
-  const items = await prisma.wishlistItem.findMany({
+  const items = await withTransientPrismaReadRetry(() => prisma.wishlistItem.findMany({
     where: {
       userId,
       product: { isActive: true }
@@ -50,7 +52,7 @@ export async function listWishlist(userId: string) {
       productId: true,
       createdAt: true
     }
-  });
+  }));
 
   return items.map(mapWishlistItem);
 }

@@ -3,10 +3,7 @@ import { supabaseAdmin } from "../lib/supabase.js";
 import { prisma } from "../lib/prisma.js";
 import { safelyRecordAuditLog } from "./audit-log.service.js";
 import { createNotificationsForRoles } from "./notification.service.js";
-import {
-  createBackInStockNotificationsInTransaction,
-  dispatchBackInStockPushNotifications
-} from "./wishlist-notification.service.js";
+import { createBackInStockNotificationsInTransaction } from "./wishlist-notification.service.js";
 import { firstRow, type ProductStatus } from "../types/app.js";
 import { HttpError } from "../utils/http-error.js";
 import { lockProductForUpdate } from "../utils/product-transaction.js";
@@ -538,7 +535,7 @@ export async function updateProduct(productId: string, input: ProductUpdateInput
         inventoryMovementId = movement.id;
       }
 
-      const backInStockNotifications = await createBackInStockNotificationsInTransaction(
+      await createBackInStockNotificationsInTransaction(
         transaction,
         {
           productId,
@@ -549,14 +546,13 @@ export async function updateProduct(productId: string, input: ProductUpdateInput
         }
       );
 
-      return { current, updated, backInStockNotifications };
+      return { current, updated };
     }, INVENTORY_WRITE_TRANSACTION_OPTIONS)
     .catch((error) => {
       throw mapInventoryTransactionError(error);
     });
 
   const updatedProduct = await requireInventoryProduct(productId);
-  await dispatchBackInStockPushNotifications(transactionResult.backInStockNotifications);
   await notifyLowStockIfNeeded({
     productName: updatedProduct.name,
     previousStock: transactionResult.current.stock,
@@ -700,7 +696,7 @@ export async function restockProduct(input: {
         inventoryMovementId = movement.id;
       }
 
-      const backInStockNotifications = await createBackInStockNotificationsInTransaction(
+      await createBackInStockNotificationsInTransaction(
         transaction,
         {
           productId: input.productId,
@@ -711,14 +707,13 @@ export async function restockProduct(input: {
         }
       );
 
-      return { product, updated, difference, backInStockNotifications };
+      return { product, updated, difference };
     }, INVENTORY_WRITE_TRANSACTION_OPTIONS)
     .catch((error) => {
       throw mapInventoryTransactionError(error);
     });
 
   const updatedProduct = await requireInventoryProduct(input.productId);
-  await dispatchBackInStockPushNotifications(transactionResult.backInStockNotifications);
   await notifyLowStockIfNeeded({
     productName: updatedProduct.name,
     previousStock: transactionResult.product.stock,
