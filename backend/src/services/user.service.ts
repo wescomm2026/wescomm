@@ -4,6 +4,7 @@ import { safelyRecordAuditLog, type AuditLogInput } from "./audit-log.service.js
 import type { AppRole } from "../types/app.js";
 import { HttpError } from "../utils/http-error.js";
 import { decryptSensitiveText } from "../utils/field-encryption.js";
+import { withTransientPrismaReadRetry } from "../utils/prisma-retry.js";
 
 const ADMIN_ROLE_LOCK_NAMESPACE = 1_464_161_091;
 const ADMIN_ROLE_LOCK_KEY = 1;
@@ -49,7 +50,7 @@ function mapUser(row: {
 }
 
 export async function listUsers() {
-  const users = await prisma.profile.findMany({
+  const users = await withTransientPrismaReadRetry(() => prisma.profile.findMany({
     orderBy: { createdAt: "desc" },
     select: {
       id: true,
@@ -63,13 +64,13 @@ export async function listUsers() {
       createdAt: true,
       updatedAt: true
     }
-  });
+  }));
 
   return users.map(mapUser);
 }
 
 export async function listStaffVisibleUsers() {
-  const users = await prisma.profile.findMany({
+  const users = await withTransientPrismaReadRetry(() => prisma.profile.findMany({
     where: {
       role: { in: ["STAFF", "ADMIN"] }
     },
@@ -89,7 +90,7 @@ export async function listStaffVisibleUsers() {
       createdAt: true,
       updatedAt: true
     }
-  });
+  }));
 
   return users.map(mapUser);
 }

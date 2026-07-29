@@ -108,16 +108,18 @@ The implementer will need these later:
 NEXT_PUBLIC_SUPABASE_URL="https://YOUR_PROJECT_REF.supabase.co"
 NEXT_PUBLIC_SUPABASE_ANON_KEY="YOUR_ANON_PUBLIC_KEY"
 SUPABASE_SERVICE_ROLE_KEY="YOUR_SERVICE_ROLE_KEY"
-DATABASE_URL="YOUR_TRANSACTION_POOLER_CONNECTION_STRING"
-DIRECT_URL="YOUR_DIRECT_CONNECTION_STRING"
+DATABASE_URL="YOUR_TRANSACTION_POOLER_6543_CONNECTION_STRING_WITH_PGBOUNCER_TRUE_AND_TLS"
+DIRECT_URL="YOUR_SESSION_OR_DIRECT_5432_CONNECTION_STRING_WITH_TLS"
 
 Notes:
 
 DATABASE_URL:
-Used by the application during runtime.
+Used by the application during runtime. On Supabase/Vercel, use transaction
+mode on port 6543 with pgbouncer=true and sslmode=require.
 
 DIRECT_URL:
-Used for Prisma migration.
+Used only for Prisma migration, logical backup, and restore. Use session/direct
+mode on port 5432 with sslmode=require.
 
 
 PART 4 - ENABLE EXTENSIONS

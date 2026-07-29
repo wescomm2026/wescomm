@@ -46,7 +46,7 @@ export async function updateOwnProfile(
     .select("*")
     .single();
 
-  if (error) throw new HttpError(500, error.message);
+  if (error) throw HttpError.fromSupabase(error);
 
   const profile = mapProfile(data as RawProfile);
   if (!profile) throw new HttpError(500, "Updated profile could not be loaded.");

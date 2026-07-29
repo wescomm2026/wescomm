@@ -159,6 +159,18 @@ Audit logs are best-effort during development. If the table is not created yet, 
 
 `PATCH /api/reservations/:id/status` also handles cancellation stock restoration inside a transaction, so cancelling a reservation restores stock and records the inventory movement together with the status change.
 
+## Free-plan database resilience
+
+Production runtime queries use the Supabase transaction pooler from
+`DATABASE_URL`; `DIRECT_URL` is only for migrations, backups, and restores.
+Transient read failures use bounded retries, while ambiguous writes are never
+automatically replayed. Database outages return retryable `503` responses and
+the readiness endpoint reports `checks.database=false`.
+
+Supabase Free does not provide automatic database failover. Configure the
+encrypted off-site backup workflow and run regular restore drills using
+[`WESCOMM_DATABASE_RESILIENCE.md`](../txt_files/WESCOMM_DATABASE_RESILIENCE.md).
+
 ### Idempotent checkout
 
 Run `../txt_files/DATABASE_RESERVATION_IDEMPOTENCY_SQL.txt` once in the Supabase SQL Editor. Student checkout must send a unique `Idempotency-Key` header between 16 and 128 characters. The frontend generates this automatically.

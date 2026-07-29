@@ -170,7 +170,7 @@ async function getCategoryById(categoryId: string) {
     .eq("id", categoryId)
     .maybeSingle();
 
-  if (error) throw new HttpError(500, error.message);
+  if (error) throw HttpError.fromSupabase(error);
   return data ? mapCategory(data as RawCategory) : null;
 }
 
@@ -181,7 +181,7 @@ async function getCategoryBySlug(slug: string) {
     .eq("slug", slug)
     .maybeSingle();
 
-  if (error) throw new HttpError(500, error.message);
+  if (error) throw HttpError.fromSupabase(error);
   return data ? mapCategory(data as RawCategory) : null;
 }
 
@@ -216,7 +216,7 @@ async function resolveCategory(input: CategoryInput) {
       const category = await getCategoryBySlug(categorySlug);
       if (category) return category;
     }
-    throw new HttpError(500, error.message);
+    throw HttpError.fromSupabase(error);
   }
 
   return mapCategory(data as RawCategory);
@@ -236,7 +236,7 @@ async function requireProductVariant(productId: string, variantId: string) {
     .eq("product_id", productId)
     .maybeSingle();
 
-  if (error) throw new HttpError(500, error.message);
+  if (error) throw HttpError.fromSupabase(error);
   if (!data) throw new HttpError(404, "Product variant not found.");
 }
 
@@ -248,7 +248,7 @@ async function assertUniqueActiveProductName(name: string, ignoreProductId?: str
     .eq("is_active", true)
     .ilike("name", trimmedName);
 
-  if (error) throw new HttpError(500, error.message);
+  if (error) throw HttpError.fromSupabase(error);
 
   const duplicate = (data ?? []).find((row) => row.id !== ignoreProductId);
   if (duplicate) throw new HttpError(409, "An active product with this name already exists.");
@@ -275,7 +275,7 @@ async function recordInventoryMovement(input: {
     notes: input.notes ?? null
   });
 
-  if (error) throw new HttpError(500, error.message);
+  if (error) throw HttpError.fromSupabase(error);
 }
 
 export async function listCategories() {
@@ -285,7 +285,7 @@ export async function listCategories() {
     .eq("is_active", true)
     .order("name", { ascending: true });
 
-  if (error) throw new HttpError(500, error.message);
+  if (error) throw HttpError.fromSupabase(error);
   return ((data ?? []) as RawCategory[]).map(mapCategory);
 }
 
@@ -296,7 +296,7 @@ export async function listInventory() {
     .eq("is_active", true)
     .order("name", { ascending: true });
 
-  if (error) throw new HttpError(500, error.message);
+  if (error) throw HttpError.fromSupabase(error);
   return ((data ?? []) as unknown as RawInventoryProduct[]).map(mapInventoryProduct);
 }
 
@@ -307,7 +307,7 @@ export async function getInventoryProduct(productId: string) {
     .eq("id", productId)
     .maybeSingle();
 
-  if (error) throw new HttpError(500, error.message);
+  if (error) throw HttpError.fromSupabase(error);
   return data ? mapInventoryProduct(data as unknown as RawInventoryProduct) : null;
 }
 
@@ -338,7 +338,7 @@ export async function createProduct(input: ProductCreateInput, performedById: st
 
   if (error) {
     if (error.code === "23505") throw new HttpError(409, "A product with this name already exists.");
-    throw new HttpError(500, error.message);
+    throw HttpError.fromSupabase(error);
   }
 
   const product = mapInventoryProduct(data as unknown as RawInventoryProduct);
@@ -353,7 +353,7 @@ export async function createProduct(input: ProductCreateInput, performedById: st
       }))
     );
 
-    if (variantError) throw new HttpError(500, variantError.message);
+    if (variantError) throw HttpError.fromSupabase(variantError);
   }
 
   await recordInventoryMovement({
@@ -500,7 +500,7 @@ export async function archiveProduct(productId: string, performedById: string) {
     .select(inventorySelect)
     .single();
 
-  if (error) throw new HttpError(500, error.message);
+  if (error) throw HttpError.fromSupabase(error);
 
   await recordInventoryMovement({
     productId,
@@ -605,7 +605,7 @@ export async function createProductVariant(productId: string, input: ProductVari
 
   if (error) {
     if (error.code === "23505") throw new HttpError(409, "This product variant already exists.");
-    throw new HttpError(500, error.message);
+    throw HttpError.fromSupabase(error);
   }
 
   const product = await requireInventoryProduct(productId);
@@ -650,7 +650,7 @@ export async function updateProductVariant(
 
     if (error) {
       if (error.code === "23505") throw new HttpError(409, "This product variant already exists.");
-      throw new HttpError(500, error.message);
+      throw HttpError.fromSupabase(error);
     }
   }
 
@@ -681,7 +681,7 @@ export async function deleteProductVariant(productId: string, variantId: string,
     .eq("id", variantId)
     .eq("product_id", productId);
 
-  if (error) throw new HttpError(500, error.message);
+  if (error) throw HttpError.fromSupabase(error);
   const product = await requireInventoryProduct(productId);
 
   await safelyRecordAuditLog({

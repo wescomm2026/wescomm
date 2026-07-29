@@ -366,14 +366,14 @@ export async function listReservations(userId: string, role: AppRole) {
   if (role === "STUDENT") query = query.eq("student_id", userId);
 
   const { data, error } = await query;
-  if (error) throw new HttpError(500, error.message);
+  if (error) throw HttpError.fromSupabase(error);
 
   return ((data ?? []) as RawReservation[]).map(mapReservation);
 }
 
 async function loadReservationById(reservationId: string) {
   const { data, error } = await supabaseAdmin.from("reservations").select(reservationSelect).eq("id", reservationId).single();
-  if (error) throw new HttpError(500, error.message);
+  if (error) throw HttpError.fromSupabase(error);
   return mapReservation(data as RawReservation);
 }
 
@@ -984,7 +984,7 @@ export async function updateReservationStatus(reservationId: string, status: Res
   }
 
   const { data, error } = await supabaseAdmin.from("reservations").select(reservationSelect).eq("id", reservationId).single();
-  if (error) throw new HttpError(500, error.message);
+  if (error) throw HttpError.fromSupabase(error);
 
   const reservation = mapReservation(data as RawReservation);
 

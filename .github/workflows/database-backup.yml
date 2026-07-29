@@ -1,0 +1,148 @@
+name: Encrypted Supabase database backup
+
+on:
+  schedule:
+    # 02:20 Asia/Singapore every day (GitHub cron uses UTC).
+    - cron: "20 18 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wescomm-database-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    name: Export and encrypt logical backup
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate backup secrets
+        shell: bash
+        env:
+          DATABASE_BACKUP_URL: ${{ secrets.DATABASE_BACKUP_URL }}
+          DATABASE_BACKUP_PASSPHRASE: ${{ secrets.DATABASE_BACKUP_PASSPHRASE }}
+          EXPECTED_SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${DATABASE_BACKUP_URL:-}" ]]; then
+            echo "::error::Add the DATABASE_BACKUP_URL repository secret before enabling scheduled backups."
+            exit 1
+          fi
+          if [[ ${#DATABASE_BACKUP_PASSPHRASE} -lt 24 ]]; then
+            echo "::error::DATABASE_BACKUP_PASSPHRASE must be at least 24 characters."
+            exit 1
+          fi
+          if [[ -z "${EXPECTED_SUPABASE_PROJECT_REF:-}" ]]; then
+            echo "::error::Add the SUPABASE_PROJECT_REF repository variable before enabling scheduled backups."
+            exit 1
+          fi
+          node - <<'NODE'
+          const parsed = new URL(process.env.DATABASE_BACKUP_URL)
+          const expectedProjectRef = process.env.EXPECTED_SUPABASE_PROJECT_REF
+          if (!["postgres:", "postgresql:"].includes(parsed.protocol)) {
+            throw new Error("DATABASE_BACKUP_URL must be a PostgreSQL URL.")
+          }
+          if (parsed.port !== "5432") {
+            throw new Error("Use the Supabase session/direct endpoint on port 5432 for backups, not transaction mode 6543.")
+          }
+          if (!/sslmode=(require|verify-ca|verify-full)(?:&|$)/i.test(parsed.search.slice(1))) {
+            throw new Error("DATABASE_BACKUP_URL must require or verify TLS.")
+          }
+
+          const hostname = parsed.hostname.toLowerCase()
+          let actualProjectRef = null
+          if (hostname.endsWith(".pooler.supabase.com")) {
+            const username = decodeURIComponent(parsed.username)
+            const separator = username.lastIndexOf(".")
+            actualProjectRef = separator >= 0 ? username.slice(separator + 1) : null
+          } else {
+            actualProjectRef = hostname.match(/^db\.([a-z0-9]+)\.supabase\.co$/)?.[1] ?? null
+          }
+
+          if (!actualProjectRef) {
+            throw new Error("DATABASE_BACKUP_URL must use a Supabase session pooler or direct database endpoint.")
+          }
+          if (actualProjectRef !== expectedProjectRef) {
+            throw new Error("DATABASE_BACKUP_URL does not target SUPABASE_PROJECT_REF.")
+          }
+          NODE
+
+      - name: Install Supabase CLI
+        uses: supabase/setup-cli@v3
+        with:
+          version: 2.84.2
+
+      - name: Export roles, schema, and data
+        shell: bash
+        env:
+          DATABASE_BACKUP_URL: ${{ secrets.DATABASE_BACKUP_URL }}
+        run: |
+          set -euo pipefail
+          mkdir -p .backup-work
+          supabase db dump --db-url "$DATABASE_BACKUP_URL" -f .backup-work/roles.sql --role-only
+          supabase db dump --db-url "$DATABASE_BACKUP_URL" -f .backup-work/schema.sql
+          supabase db dump --db-url "$DATABASE_BACKUP_URL" -f .backup-work/data.sql --use-copy --data-only \
+            -x "storage.buckets_vectors" \
+            -x "storage.vector_indexes"
+
+      - name: Package and encrypt backup
+        shell: bash
+        env:
+          DATABASE_BACKUP_PASSPHRASE: ${{ secrets.DATABASE_BACKUP_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+          basename="wescomm-database-${timestamp}"
+          echo "BACKUP_BASENAME=${basename}" >> "$GITHUB_ENV"
+          tar -C .backup-work -czf ".backup-work/${basename}.tar.gz" roles.sql schema.sql data.sql
+          openssl enc -aes-256-cbc -salt -pbkdf2 -iter 600000 -md sha256 \
+            -in ".backup-work/${basename}.tar.gz" \
+            -out ".backup-work/${basename}.tar.gz.enc" \
+            -pass env:DATABASE_BACKUP_PASSPHRASE
+          sha256sum ".backup-work/${basename}.tar.gz.enc" \
+            > ".backup-work/${basename}.tar.gz.enc.sha256"
+
+      - name: Verify encrypted archive
+        shell: bash
+        env:
+          DATABASE_BACKUP_PASSPHRASE: ${{ secrets.DATABASE_BACKUP_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          openssl enc -d -aes-256-cbc -pbkdf2 -iter 600000 -md sha256 \
+            -in ".backup-work/${BACKUP_BASENAME}.tar.gz.enc" \
+            -pass env:DATABASE_BACKUP_PASSPHRASE \
+            | tar -tzf - > /dev/null
+
+      - name: Remove plaintext working files
+        if: success()
+        shell: bash
+        run: |
+          rm -f \
+            .backup-work/roles.sql \
+            .backup-work/schema.sql \
+            .backup-work/data.sql \
+            ".backup-work/${BACKUP_BASENAME}.tar.gz"
+
+      - name: Upload encrypted off-site copy
+        uses: actions/upload-artifact@v4
+        with:
+          name: wescomm-database-backup-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .backup-work/*.tar.gz.enc
+            .backup-work/*.tar.gz.enc.sha256
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+          include-hidden-files: true
+
+      - name: Clean up runner files
+        if: always()
+        shell: bash
+        run: rm -rf .backup-work

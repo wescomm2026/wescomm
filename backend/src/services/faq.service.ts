@@ -44,7 +44,7 @@ export async function listPublishedFaqs() {
     .order("category", { ascending: true, nullsFirst: false })
     .order("question", { ascending: true });
 
-  if (error) throw new HttpError(500, error.message);
+  if (error) throw HttpError.fromSupabase(error);
   return ((data ?? []) as RawFaq[]).map(mapFaq);
 }
 
@@ -54,7 +54,7 @@ export async function listFaqs() {
     .select(faqSelect)
     .order("updated_at", { ascending: false });
 
-  if (error) throw new HttpError(500, error.message);
+  if (error) throw HttpError.fromSupabase(error);
   return ((data ?? []) as RawFaq[]).map(mapFaq);
 }
 
@@ -73,7 +73,7 @@ export async function createFaq(input: FaqInput) {
 
   if (error) {
     if (error.code === "23505") throw new HttpError(409, "An FAQ with this question already exists.");
-    throw new HttpError(500, error.message);
+    throw HttpError.fromSupabase(error);
   }
 
   const faq = mapFaq(data as RawFaq);
@@ -113,7 +113,7 @@ export async function updateFaq(faqId: string, input: Partial<FaqInput>) {
 
   if (error) {
     if (error.code === "23505") throw new HttpError(409, "An FAQ with this question already exists.");
-    throw new HttpError(500, error.message);
+    throw HttpError.fromSupabase(error);
   }
   if (!data) throw new HttpError(404, "FAQ not found.");
 
@@ -143,7 +143,7 @@ export async function deleteFaq(faqId: string, performedById?: string) {
     .select(faqSelect)
     .maybeSingle();
 
-  if (error) throw new HttpError(500, error.message);
+  if (error) throw HttpError.fromSupabase(error);
   if (!data) throw new HttpError(404, "FAQ not found.");
 
   const faq = mapFaq(data as RawFaq);
