@@ -4,7 +4,7 @@ import Image from "next/image";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Heart, LoaderCircle, ShoppingBag, X } from "lucide-react";
+import { Heart, LoaderCircle, Maximize2, ShoppingBag, X } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import { AddToCartModal } from "@/components/cart/AddToCartModal";
 import { useStudentCart, type CartProduct } from "@/components/cart/StudentCartProvider";
@@ -50,6 +50,7 @@ function ProductCard({
   product,
   onBuyNow,
   onAddToCart,
+  onViewImage,
   onToggleWishlist,
   wishlisted,
   wishlistPending,
@@ -59,6 +60,7 @@ function ProductCard({
   product: Product;
   onBuyNow: (product: Product) => void;
   onAddToCart: (product: Product) => void;
+  onViewImage: (product: Product) => void;
   onToggleWishlist: (product: Product) => void;
   wishlisted: boolean;
   wishlistPending: boolean;
@@ -83,14 +85,27 @@ function ProductCard({
       }`}
     >
       <div className="relative aspect-square w-full overflow-hidden rounded-lg bg-[#f7faf7]">
-        <Image
-          src={product.image}
-          alt={product.name}
-          fill
-          sizes="(max-width: 639px) 44vw, (max-width: 1279px) 30vw, 22vw"
-          className="object-contain p-2 sm:p-3"
-        />
-        <span className={`absolute left-1.5 top-1.5 max-w-[calc(100%-52px)] truncate rounded-full px-2 py-1 text-[9px] font-extrabold leading-none sm:left-2 sm:top-2 sm:px-3 sm:text-xs ${tone}`}>
+        <button
+          type="button"
+          onClick={() => onViewImage(product)}
+          aria-label={`View full image of ${product.name}`}
+          className="absolute inset-0 cursor-zoom-in rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
+        >
+          <Image
+            src={product.image}
+            alt={product.name}
+            fill
+            sizes="(max-width: 639px) 44vw, (max-width: 1279px) 30vw, 22vw"
+            className="object-contain p-2 sm:p-3"
+          />
+          <span
+            aria-hidden="true"
+            className="absolute bottom-1.5 right-1.5 grid size-7 place-items-center rounded-full border border-[#d8e4d9] bg-white/95 text-primary shadow-sm sm:bottom-2 sm:right-2 sm:size-8"
+          >
+            <Maximize2 className="size-3.5 sm:size-4" />
+          </span>
+        </button>
+        <span className={`pointer-events-none absolute left-1.5 top-1.5 z-10 max-w-[calc(100%-52px)] truncate rounded-full px-2 py-1 text-[9px] font-extrabold leading-none sm:left-2 sm:top-2 sm:px-3 sm:text-xs ${tone}`}>
           {product.status}
         </span>
         <button
@@ -99,7 +114,7 @@ function ProductCard({
           disabled={!product.id || wishlistDisabled || wishlistPending}
           aria-pressed={wishlisted}
           aria-label={`${wishlisted ? "Remove" : "Add"} ${product.name} ${wishlisted ? "from" : "to"} wishlist`}
-          className="absolute right-1.5 top-1.5 grid size-10 place-items-center rounded-full border border-[#d8e4d9] bg-white/95 text-primary shadow-sm transition hover:scale-105 hover:bg-[#eef7ef] focus:outline-none focus:ring-2 focus:ring-primary/40 disabled:opacity-60 sm:right-2 sm:top-2 sm:size-11"
+          className="absolute right-1.5 top-1.5 z-20 grid size-10 place-items-center rounded-full border border-[#d8e4d9] bg-white/95 text-primary shadow-sm transition hover:scale-105 hover:bg-[#eef7ef] focus:outline-none focus:ring-2 focus:ring-primary/40 disabled:opacity-60 sm:right-2 sm:top-2 sm:size-11"
         >
           {wishlistPending ? (
             <LoaderCircle className="size-5 animate-spin" aria-hidden="true" />
@@ -159,6 +174,100 @@ function ProductCard({
         </div>
       )}
     </article>
+  );
+}
+
+function ProductImageDialog({
+  product,
+  onClose
+}: {
+  product: Product | null;
+  onClose: () => void;
+}) {
+  const [mounted, setMounted] = useState(false);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => setMounted(true), []);
+
+  useEffect(() => {
+    if (!product) return;
+
+    const previousBodyOverflow = document.body.style.overflow;
+    const previousHtmlOverflow = document.documentElement.style.overflow;
+    const previousFocus = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
+
+    const focusFrame = window.requestAnimationFrame(() => closeButtonRef.current?.focus());
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+      if (event.key === "Tab") {
+        event.preventDefault();
+        closeButtonRef.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      document.body.style.overflow = previousBodyOverflow;
+      document.documentElement.style.overflow = previousHtmlOverflow;
+      window.removeEventListener("keydown", onKeyDown);
+      previousFocus?.focus();
+    };
+  }, [product, onClose]);
+
+  if (!mounted || !product) return null;
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[9200] grid place-items-center overflow-y-auto bg-[#101820]/70 p-2 backdrop-blur-[3px] sm:p-6"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <section
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="shop-image-preview-title"
+        aria-describedby="shop-image-preview-description"
+        className="relative flex max-h-[calc(100svh-1rem)] w-full max-w-5xl flex-col overflow-hidden rounded-xl border border-white/20 bg-white shadow-[0_28px_90px_rgba(0,0,0,0.38)] sm:max-h-[calc(100vh-3rem)]"
+      >
+        <button
+          ref={closeButtonRef}
+          type="button"
+          onClick={onClose}
+          aria-label={`Close full image of ${product.name}`}
+          className="absolute right-3 top-3 z-20 grid size-11 place-items-center rounded-full border border-[#dce5dd] bg-white/95 text-[#17211b] shadow-md transition hover:bg-[#eef6ee] focus:outline-none focus:ring-2 focus:ring-primary sm:right-4 sm:top-4"
+        >
+          <X className="size-5" aria-hidden="true" />
+        </button>
+
+        <header className="shrink-0 border-b border-[#e5ebe6] px-4 pb-3 pt-4 pr-16 sm:px-6 sm:pb-4 sm:pt-5 sm:pr-20">
+          <p className="text-xs font-extrabold uppercase tracking-wide text-primary">Product image</p>
+          <h2 id="shop-image-preview-title" className="mt-1 line-clamp-2 text-lg font-extrabold text-[#17211b] sm:text-2xl">
+            {product.name}
+          </h2>
+          <p id="shop-image-preview-description" className="sr-only">
+            Full product image preview. Press Escape or use the close button to return to the shop.
+          </p>
+        </header>
+
+        <div className="relative h-[70svh] min-h-[280px] w-full bg-[#f7faf7] sm:h-[72vh]">
+          <Image
+            src={product.image}
+            alt={`Full image of ${product.name}`}
+            fill
+            sizes="(max-width: 640px) 96vw, 80vw"
+            className="object-contain p-3 sm:p-6"
+          />
+        </div>
+      </section>
+    </div>,
+    document.body
   );
 }
 
@@ -266,6 +375,7 @@ export function StudentShopExperience() {
   const [wishlistOnly, setWishlistOnly] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [imagePreviewProduct, setImagePreviewProduct] = useState<Product | null>(null);
   const [checkoutProduct, setCheckoutProduct] = useState<Product | null>(null);
   const [cartProduct, setCartProduct] = useState<Product | null>(null);
   const [addedNotice, setAddedNotice] = useState<{ productName: string; itemDetails: string } | null>(null);
@@ -373,6 +483,7 @@ export function StudentShopExperience() {
   const toggleStatus = (status: string) => {
     setStatuses((current) => (current.includes(status) ? current.filter((item) => item !== status) : [...current, status]));
   };
+  const closeImagePreview = useCallback(() => setImagePreviewProduct(null), []);
   const closeCheckout = useCallback(() => setCheckoutProduct(null), []);
   const closeCartSelector = useCallback(() => setCartProduct(null), []);
   const closeAddedNotice = useCallback(() => setAddedNotice(null), []);
@@ -608,6 +719,7 @@ export function StudentShopExperience() {
                 product={product}
                 onBuyNow={setCheckoutProduct}
                 onAddToCart={setCartProduct}
+                onViewImage={setImagePreviewProduct}
                 onToggleWishlist={(item) => void toggleWishlist(item)}
                 wishlisted={Boolean(product.id && wishlist.productIds.has(product.id))}
                 wishlistPending={Boolean(product.id && wishlist.pendingProductIds.has(product.id))}
@@ -629,6 +741,7 @@ export function StudentShopExperience() {
           </div>
         ) : null}
       </main>
+      <ProductImageDialog product={imagePreviewProduct} onClose={closeImagePreview} />
       <AddToCartModal product={cartProduct} relatedProducts={relatedClothProducts(cartProduct)} onSwitchProduct={setCartProduct} onClose={closeCartSelector} onConfirm={confirmAddToCart} />
       <StudentCheckoutModal product={checkoutProduct} relatedProducts={relatedClothProducts(checkoutProduct)} onSwitchProduct={setCheckoutProduct} onClose={closeCheckout} />
       {addedNotice ? (

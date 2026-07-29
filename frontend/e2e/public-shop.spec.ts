@@ -101,6 +101,17 @@ test("mobile shop renders two compact product cards per row without horizontal o
 
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(overflow).toBeLessThanOrEqual(1);
+
+  const imagePreviewButton = page.getByRole("button", { name: "View full image of Mobile Shop Notebook" });
+  await imagePreviewButton.click();
+
+  const imageDialog = page.getByRole("dialog", { name: "Mobile Shop Notebook" });
+  await expect(imageDialog).toBeVisible();
+  await expect(imageDialog.getByRole("img", { name: "Full image of Mobile Shop Notebook" })).toBeVisible();
+  await expect(page.locator("html")).toHaveCSS("overflow", "hidden");
+  await page.keyboard.press("Escape");
+  await expect(imageDialog).toBeHidden();
+  await expect(imagePreviewButton).toBeFocused();
 });
 
 test("student wishlist saves, removes, and enables an out-of-stock alert", async ({ page }, testInfo) => {
