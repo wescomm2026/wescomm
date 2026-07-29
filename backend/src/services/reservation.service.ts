@@ -22,6 +22,9 @@ import {
 } from "./restriction.service.js";
 import { sendPushToUser } from "./push.service.js";
 import {
+  createBackInStockNotificationsInTransaction
+} from "./wishlist-notification.service.js";
+import {
   type AppRole,
   type NotificationType,
   type PaymentMethod,
@@ -745,7 +748,6 @@ export async function updateReservationStatus(reservationId: string, status: Res
         const releasesHeldStock = statusChanged && (status === "CANCELLED" || status === "NO_SHOW");
         const releaseMovementType = status === "NO_SHOW" ? "RESERVATION_NO_SHOW" : "RESERVATION_CANCEL";
         const releaseNote = status === "NO_SHOW" ? "released after confirmed no-show" : "cancelled";
-
         await tx.reservation.update({
           where: { id: reservationId },
           data: {
@@ -766,9 +768,11 @@ export async function updateReservationStatus(reservationId: string, status: Res
               where: { id: productId },
               select: {
                 id: true,
+                name: true,
                 stock: true,
                 status: true,
-                lowStockThreshold: true
+                lowStockThreshold: true,
+                isActive: true
               }
             });
 
@@ -787,7 +791,7 @@ export async function updateReservationStatus(reservationId: string, status: Res
               select: { id: true }
             });
 
-            await tx.inventoryMovement.create({
+            const inventoryMovement = await tx.inventoryMovement.create({
               data: {
                 productId,
                 type: releaseMovementType,
@@ -796,7 +800,20 @@ export async function updateReservationStatus(reservationId: string, status: Res
                 newStock,
                 performedById,
                 notes: `Reservation ${existingReservation.referenceCode} ${releaseNote}`
-              }
+              },
+              select: { id: true }
+            });
+
+            await createBackInStockNotificationsInTransaction(tx, {
+              productId,
+              productName: product.name,
+              previous: product,
+              next: {
+                ...product,
+                stock: newStock,
+                status: nextStatus
+              },
+              eventId: inventoryMovement.id
             });
           }
         }

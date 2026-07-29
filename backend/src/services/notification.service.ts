@@ -9,6 +9,7 @@ type RawNotification = {
   title: string;
   message: string;
   type: string;
+  action_url: string | null;
   read_at: string | null;
   created_at: string;
 };
@@ -18,6 +19,8 @@ type NotificationInput = {
   title: string;
   message: string;
   type?: NotificationType;
+  actionUrl?: string | null;
+  dedupeKey?: string | null;
 };
 
 function mapNotification(row: RawNotification) {
@@ -27,6 +30,7 @@ function mapNotification(row: RawNotification) {
     title: row.title,
     message: row.message,
     type: row.type,
+    actionUrl: row.action_url,
     readAt: row.read_at,
     createdAt: row.created_at
   };
@@ -44,7 +48,8 @@ function dispatchPushNotifications(
           id: notification.id,
           title: notification.title,
           message: notification.message,
-          type: notification.type as NotificationType
+          type: notification.type as NotificationType,
+          url: notification.actionUrl ?? undefined
         },
         roleByUserId.get(notification.userId)
       )
@@ -62,7 +67,9 @@ export async function createNotification(input: NotificationInput) {
       user_id: input.userId,
       title: input.title,
       message: input.message,
-      type: input.type ?? "SYSTEM"
+      type: input.type ?? "SYSTEM",
+      action_url: input.actionUrl ?? null,
+      dedupe_key: input.dedupeKey ?? null
     })
     .select("*")
     .single();
@@ -88,7 +95,9 @@ export async function createNotificationsForRoles(
     user_id: profile.id,
     title: input.title,
     message: input.message,
-    type: input.type ?? "SYSTEM"
+    type: input.type ?? "SYSTEM",
+    action_url: input.actionUrl ?? null,
+    dedupe_key: input.dedupeKey ? `${input.dedupeKey}:${profile.id}` : null
   }));
 
   if (!rows.length) return [];

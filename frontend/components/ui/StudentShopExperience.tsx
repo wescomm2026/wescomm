@@ -1,17 +1,25 @@
 "use client";
 
 import Image from "next/image";
+import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Maximize2, ShoppingBag, X } from "lucide-react";
+import { Heart, LoaderCircle, Maximize2, ShoppingBag, X } from "lucide-react";
+import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import { AddToCartModal } from "@/components/cart/AddToCartModal";
 import { useStudentCart, type CartProduct } from "@/components/cart/StudentCartProvider";
 import { StudentCheckoutModal } from "@/components/checkout/StudentCheckoutModal";
 import { AssetIcon } from "@/components/ui/AssetIcon";
 import { Button } from "@/components/ui/button";
 import { getProductsFromApi } from "@/lib/api";
-import { isUniformClothOnly, uniformClothGroupKey } from "@/lib/product-display";
-import { emitShopSearch, readShopSearchFromUrl, SHOP_SEARCH_EVENT, writeShopSearchToUrl } from "@/lib/shop-search";
+import {
+  isProductUnavailable,
+  isUniformClothOnly,
+  productStockCount,
+  uniformClothGroupKey
+} from "@/lib/product-display";
+import { emitShopSearch, SHOP_SEARCH_EVENT, writeShopSearchToUrl } from "@/lib/shop-search";
+import { useStudentWishlist } from "@/components/wishlist/useStudentWishlist";
 
 type Product = CartProduct;
 
@@ -30,8 +38,8 @@ function parsePrice(price: string) {
 }
 
 function availabilityText(product: Product) {
-  const count = Number(product.count);
-  if (!Number.isFinite(count) || count <= 0 || product.status === "Out of Stock") {
+  const count = productStockCount(product);
+  if (isProductUnavailable(product)) {
     return "No available items";
   }
 
@@ -42,14 +50,24 @@ function ProductCard({
   product,
   onBuyNow,
   onAddToCart,
-  onViewImage
+  onViewImage,
+  onToggleWishlist,
+  wishlisted,
+  wishlistPending,
+  wishlistDisabled,
+  highlighted
 }: {
   product: Product;
   onBuyNow: (product: Product) => void;
   onAddToCart: (product: Product) => void;
   onViewImage: (product: Product) => void;
+  onToggleWishlist: (product: Product) => void;
+  wishlisted: boolean;
+  wishlistPending: boolean;
+  wishlistDisabled: boolean;
+  highlighted: boolean;
 }) {
-  const disabled = product.status === "Out of Stock";
+  const disabled = isProductUnavailable(product);
   const clothOnly = isUniformClothOnly(product);
   const tone =
     product.status === "In Stock"
@@ -59,7 +77,13 @@ function ProductCard({
         : "bg-[#fff0bf] text-[#d97706]";
 
   return (
-    <article aria-label={product.name} className="wes-card flex h-full min-w-0 flex-col overflow-hidden p-2.5 sm:p-4">
+    <article
+      aria-label={product.name}
+      data-product-id={product.id}
+      className={`wes-card flex h-full min-w-0 flex-col overflow-hidden p-2.5 transition sm:p-4 ${
+        highlighted ? "ring-2 ring-primary ring-offset-2" : ""
+      }`}
+    >
       <div className="relative aspect-square w-full overflow-hidden rounded-lg bg-[#f7faf7]">
         <button
           type="button"
@@ -81,9 +105,26 @@ function ProductCard({
             <Maximize2 className="size-3.5 sm:size-4" />
           </span>
         </button>
-        <span className={`pointer-events-none absolute left-1.5 top-1.5 max-w-[calc(100%-12px)] truncate rounded-full px-2 py-1 text-[9px] font-extrabold leading-none sm:left-2 sm:top-2 sm:px-3 sm:text-xs ${tone}`}>
+        <span className={`pointer-events-none absolute left-1.5 top-1.5 z-10 max-w-[calc(100%-52px)] truncate rounded-full px-2 py-1 text-[9px] font-extrabold leading-none sm:left-2 sm:top-2 sm:px-3 sm:text-xs ${tone}`}>
           {product.status}
         </span>
+        {!disabled ? (
+          <button
+            type="button"
+            onClick={() => onToggleWishlist(product)}
+            disabled={!product.id || wishlistDisabled || wishlistPending}
+            aria-pressed={wishlisted}
+            aria-busy={wishlistPending}
+            aria-label={`${wishlisted ? "Remove" : "Add"} ${product.name} ${wishlisted ? "from" : "to"} wishlist`}
+            className="absolute right-1.5 top-1.5 z-20 grid size-10 place-items-center rounded-full border border-[#d8e4d9] bg-white/95 text-primary shadow-sm transition hover:scale-105 hover:bg-[#eef7ef] focus:outline-none focus:ring-2 focus:ring-primary/40 disabled:opacity-60 sm:right-2 sm:top-2 sm:size-11"
+          >
+            {wishlistPending || wishlistDisabled ? (
+              <LoaderCircle className="size-5 animate-spin" aria-hidden="true" />
+            ) : (
+              <Heart className={`size-5 ${wishlisted ? "fill-primary" : ""}`} strokeWidth={2.2} aria-hidden="true" />
+            )}
+          </button>
+        ) : null}
       </div>
       <h3 className="mt-2 line-clamp-2 min-h-9 text-xs font-extrabold leading-[1.125rem] text-[#17211b] sm:mt-3 sm:min-h-12 sm:text-base sm:leading-6">{product.name}</h3>
       <p className="hidden line-clamp-2 min-h-10 text-sm leading-5 text-muted-foreground sm:block">{product.detail}</p>
@@ -94,14 +135,30 @@ function ProductCard({
       </div>
       <p className="mt-1.5 truncate text-[10px] font-semibold text-[#506059] sm:mt-2 sm:text-sm">{availabilityText(product)}</p>
       {clothOnly ? (
-        <p className="mt-2 hidden rounded-md border border-[#cfe2d1] bg-[#f5faf5] px-3 py-2 text-xs font-medium leading-5 text-[#4e6255] sm:block">
-          Tela/material lang. Preview lang ang uniform image.
+        <p className="mt-1.5 rounded-md border border-[#cfe2d1] bg-[#f5faf5] px-2 py-1 text-[9px] font-semibold leading-4 text-[#4e6255] sm:mt-2 sm:px-3 sm:py-2 sm:text-xs sm:font-medium sm:leading-5">
+          <span className="sm:hidden">Cloth only · image is a preview</span>
+          <span className="hidden sm:inline">Tela/material lang. Preview lang ang uniform image.</span>
         </p>
       ) : null}
       {disabled ? (
-        <Button variant="secondary" disabled className="mt-auto h-10 w-full min-w-0 px-1 text-[10px] text-primary sm:h-11 sm:px-3 sm:text-sm">
-          <AssetIcon src="/assets/out-of-stock.svg" className="hidden size-4 sm:block sm:size-5" />
-          <span className="truncate">Out of Stock</span>
+        <Button
+          type="button"
+          variant="secondary"
+          disabled={!product.id || wishlistDisabled || wishlistPending}
+          aria-pressed={wishlisted}
+          aria-busy={wishlistPending}
+          aria-label={`${wishlisted ? "Stop" : "Notify me about"} ${product.name} restock`}
+          className="mt-auto h-10 w-full px-1.5 pt-0 text-[10px] sm:h-11 sm:px-3 sm:text-sm"
+          onClick={() => onToggleWishlist(product)}
+        >
+          {wishlistPending || wishlistDisabled ? (
+            <LoaderCircle className="size-4 shrink-0 animate-spin" aria-hidden="true" />
+          ) : (
+            <Heart className={`size-4 shrink-0 ${wishlisted ? "fill-primary" : ""}`} aria-hidden="true" />
+          )}
+          <span className="truncate">
+            {wishlistDisabled ? "Loading wishlist" : wishlisted ? "Watching stock" : "Notify me"}
+          </span>
         </Button>
       ) : (
         <div className="mt-auto grid grid-cols-2 gap-1.5 pt-2.5 sm:gap-2 sm:pt-3">
@@ -247,7 +304,7 @@ function AddedToCartToast({
   if (!mounted) return null;
 
   return createPortal(
-    <div className="fixed bottom-4 left-3 right-3 z-[9500] mx-auto flex max-w-md items-start gap-3 rounded-lg border border-[#bdd5bf] bg-white p-4 shadow-[0_18px_50px_rgba(0,0,0,0.2)] sm:bottom-6 sm:left-auto sm:right-6 sm:mx-0">
+    <div role="status" aria-live="polite" className="fixed bottom-4 left-3 right-3 z-[9500] mx-auto flex max-w-md items-start gap-3 rounded-lg border border-[#bdd5bf] bg-white p-4 shadow-[0_18px_50px_rgba(0,0,0,0.2)] sm:bottom-6 sm:left-auto sm:right-6 sm:mx-0">
       <AssetIcon src="/assets/confirmed.svg" className="size-9" />
       <div className="min-w-0 flex-1">
         <p className="font-extrabold text-[#17211b]">Added to your cart</p>
@@ -265,21 +322,80 @@ function AddedToCartToast({
   );
 }
 
+function ShopNoticeToast({
+  title,
+  message,
+  error = false,
+  onClose
+}: {
+  title: string;
+  message: string;
+  error?: boolean;
+  onClose: () => void;
+}) {
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => setMounted(true), []);
+  useEffect(() => {
+    const timeout = window.setTimeout(onClose, 5000);
+    return () => window.clearTimeout(timeout);
+  }, [onClose]);
+
+  if (!mounted) return null;
+
+  return createPortal(
+    <div
+      role={error ? "alert" : "status"}
+      aria-live={error ? "assertive" : "polite"}
+      className={`fixed bottom-4 left-3 right-3 z-[9600] mx-auto flex max-w-md items-start gap-3 rounded-lg border bg-white p-4 shadow-[0_18px_50px_rgba(0,0,0,0.2)] sm:bottom-6 sm:left-auto sm:right-6 sm:mx-0 ${
+        error ? "border-red-200" : "border-[#bdd5bf]"
+      }`}
+    >
+      <span className={`grid size-9 shrink-0 place-items-center rounded-full ${error ? "bg-red-50 text-red-700" : "bg-[#eaf6eb] text-primary"}`}>
+        <Heart className="size-5" aria-hidden="true" />
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className={`font-extrabold ${error ? "text-red-800" : "text-[#17211b]"}`}>{title}</p>
+        <p className="mt-0.5 text-sm leading-5 text-[#59665e]">{message}</p>
+      </div>
+      <button type="button" onClick={onClose} aria-label="Dismiss message" className="grid size-8 place-items-center rounded-md hover:bg-[#eef6ee]">
+        <X className="size-4" />
+      </button>
+    </div>,
+    document.body
+  );
+}
+
 export function StudentShopExperience() {
   const { addItem, openCart } = useStudentCart();
+  const { user, ready: authReady, openAuth } = useStudentAuth();
+  const wishlist = useStudentWishlist();
+  const searchParams = useSearchParams();
+  const routeQuery = searchParams.get("query") ?? "";
+  const wishlistRequested = searchParams.get("wishlist") === "1";
+  const productFromNotification = searchParams.get("product") ?? "";
+  const highlightedProductId = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(productFromNotification)
+    ? productFromNotification
+    : "";
+  const processedRestockLinkRef = useRef("");
+  const productRequestSequenceRef = useRef(0);
+  const wishlistFilterRef = useRef<HTMLButtonElement>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("All Items");
   const [statuses, setStatuses] = useState<string[]>(statusFilters);
   const [sort, setSort] = useState("featured");
+  const [wishlistOnly, setWishlistOnly] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [imagePreviewProduct, setImagePreviewProduct] = useState<Product | null>(null);
   const [checkoutProduct, setCheckoutProduct] = useState<Product | null>(null);
   const [cartProduct, setCartProduct] = useState<Product | null>(null);
   const [addedNotice, setAddedNotice] = useState<{ productName: string; itemDetails: string } | null>(null);
+  const [shopNotice, setShopNotice] = useState<{ title: string; message: string; error?: boolean } | null>(null);
 
   const loadProducts = useCallback(({ background = false }: { background?: boolean } = {}) => {
+    const requestSequence = ++productRequestSequenceRef.current;
     let cancelled = false;
 
     if (!background) {
@@ -289,10 +405,13 @@ export function StudentShopExperience() {
 
     getProductsFromApi()
       .then((apiProducts) => {
-        if (!cancelled) setProducts(apiProducts);
+        if (!cancelled && requestSequence === productRequestSequenceRef.current) {
+          setProducts(apiProducts);
+          setError("");
+        }
       })
       .catch((productsError) => {
-        if (!cancelled) {
+        if (!cancelled && requestSequence === productRequestSequenceRef.current) {
           if (!background) {
             setProducts([]);
             setError(productsError instanceof Error ? productsError.message : "Unable to load shop items.");
@@ -300,7 +419,9 @@ export function StudentShopExperience() {
         }
       })
       .finally(() => {
-        if (!cancelled && !background) setLoading(false);
+        if (!cancelled && !background && requestSequence === productRequestSequenceRef.current) {
+          setLoading(false);
+        }
       });
 
     return () => {
@@ -314,17 +435,15 @@ export function StudentShopExperience() {
 
   useEffect(() => {
     const refreshProducts = () => {
-      if (!navigator.onLine) return;
+      if (!navigator.onLine || loading) return;
       loadProducts({ background: true });
     };
 
     window.addEventListener("wescomm:products-refresh", refreshProducts);
     return () => window.removeEventListener("wescomm:products-refresh", refreshProducts);
-  }, [loadProducts]);
+  }, [loadProducts, loading]);
 
   useEffect(() => {
-    setQuery(readShopSearchFromUrl());
-
     const handleShopSearch = (event: Event) => {
       setQuery((event as CustomEvent<string>).detail ?? "");
     };
@@ -332,6 +451,32 @@ export function StudentShopExperience() {
     window.addEventListener(SHOP_SEARCH_EVENT, handleShopSearch);
     return () => window.removeEventListener(SHOP_SEARCH_EVENT, handleShopSearch);
   }, []);
+
+  useEffect(() => {
+    setQuery(routeQuery);
+    setWishlistOnly(wishlistRequested);
+    if (wishlistRequested && highlightedProductId) {
+      setCategory("All Items");
+      setStatuses(statusFilters);
+    }
+  }, [highlightedProductId, routeQuery, wishlistRequested]);
+
+  useEffect(() => {
+    if (!wishlistRequested || !highlightedProductId || loading || !navigator.onLine) return;
+    const restockLinkKey = `${highlightedProductId}:${searchParams.toString()}`;
+    if (processedRestockLinkRef.current === restockLinkKey) return;
+    processedRestockLinkRef.current = restockLinkKey;
+    loadProducts({ background: true });
+  }, [highlightedProductId, loadProducts, loading, searchParams, wishlistRequested]);
+
+  useEffect(() => {
+    if (!highlightedProductId || loading || (wishlistOnly && !wishlist.ready)) return;
+    const frame = window.requestAnimationFrame(() => {
+      document.querySelector<HTMLElement>(`[data-product-id="${highlightedProductId}"]`)
+        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [highlightedProductId, loading, products, wishlist.productIds, wishlist.ready, wishlistOnly]);
 
   const updateQuery = useCallback((value: string) => {
     setQuery(value);
@@ -347,7 +492,8 @@ export function StudentShopExperience() {
         const matchesSearch = !lowerQuery || `${product.name} ${product.category} ${product.detail} ${product.status}`.toLowerCase().includes(lowerQuery);
         const matchesCategory = category === "All Items" || product.category === category;
         const matchesStatus = statuses.length === 0 || statuses.includes(product.status);
-        return matchesSearch && matchesCategory && matchesStatus;
+        const matchesWishlist = !wishlistOnly || Boolean(product.id && wishlist.productIds.has(product.id));
+        return matchesSearch && matchesCategory && matchesStatus && matchesWishlist;
       })
       .sort((a, b) => {
         if (sort === "price-low") return parsePrice(a.price) - parsePrice(b.price);
@@ -355,7 +501,7 @@ export function StudentShopExperience() {
         if (sort === "name") return a.name.localeCompare(b.name);
         return 0;
       });
-  }, [category, products, query, sort, statuses]);
+  }, [category, products, query, sort, statuses, wishlist.productIds, wishlistOnly]);
 
   const toggleStatus = (status: string) => {
     setStatuses((current) => (current.includes(status) ? current.filter((item) => item !== status) : [...current, status]));
@@ -364,6 +510,69 @@ export function StudentShopExperience() {
   const closeCheckout = useCallback(() => setCheckoutProduct(null), []);
   const closeCartSelector = useCallback(() => setCartProduct(null), []);
   const closeAddedNotice = useCallback(() => setAddedNotice(null), []);
+  const closeShopNotice = useCallback(() => setShopNotice(null), []);
+
+  const updateWishlistFilter = useCallback((enabled: boolean) => {
+    if (enabled && !user) {
+      openAuth();
+      return;
+    }
+    if (enabled && user?.role !== "STUDENT") {
+      setShopNotice({
+        title: "Student account required",
+        message: "Wishlists and restock alerts are available for student accounts.",
+        error: true
+      });
+      return;
+    }
+
+    setWishlistOnly(enabled);
+    const url = new URL(window.location.href);
+    if (enabled) url.searchParams.set("wishlist", "1");
+    else {
+      url.searchParams.delete("wishlist");
+      url.searchParams.delete("product");
+    }
+    window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+  }, [openAuth, user]);
+
+  useEffect(() => {
+    if (!authReady || !wishlistOnly || user?.role === "STUDENT") return;
+    updateWishlistFilter(false);
+  }, [authReady, updateWishlistFilter, user?.role, wishlistOnly]);
+
+  const toggleWishlist = useCallback(async (product: Product) => {
+    if (wishlistOnly && product.id && wishlist.productIds.has(product.id)) {
+      wishlistFilterRef.current?.focus();
+    }
+    const result = await wishlist.toggle(product.id);
+    if (!result.ok) {
+      if (result.reason === "AUTH_REQUIRED") return;
+      setShopNotice({
+        title: result.reason === "STUDENT_ONLY" ? "Student account required" : "Wishlist not updated",
+        message: result.reason === "STUDENT_ONLY"
+          ? "Wishlists and restock alerts are available for student accounts."
+          : result.message ?? "Please refresh the shop and try again.",
+        error: true
+      });
+      return;
+    }
+
+    if (!result.wishlisted) {
+      setShopNotice({
+        title: "Removed from wishlist",
+        message: `${product.name} was removed from your wishlist.`
+      });
+      return;
+    }
+
+    setShopNotice({
+      title: isProductUnavailable(product) ? "Restock alert turned on" : "Saved to your wishlist",
+      message: isProductUnavailable(product)
+        ? `We will notify you when ${product.name} is available again.`
+        : `${product.name} is now in your wishlist.`
+    });
+  }, [wishlist, wishlistOnly]);
 
   const confirmAddToCart = useCallback(
     (product: CartProduct, selectedOptions: Record<string, string>, quantity: number) => {
@@ -405,6 +614,13 @@ export function StudentShopExperience() {
     ];
   }, [products]);
 
+  const wishlistViewLoading =
+    wishlistOnly && !wishlist.error && (!authReady || (user?.role === "STUDENT" && !wishlist.ready));
+  const wishlistViewUnavailable =
+    wishlistOnly && user?.role === "STUDENT" && Boolean(wishlist.error) && !wishlist.ready;
+  const wishlistControlsDisabled =
+    !authReady || (user?.role === "STUDENT" && !wishlist.ready);
+
   return (
     <div className="grid w-full max-w-full min-w-0 gap-6 overflow-hidden lg:grid-cols-[250px_1fr]">
       <aside className="hidden space-y-5 lg:block">
@@ -414,7 +630,9 @@ export function StudentShopExperience() {
             {categories.map((item) => (
               <button
                 key={item.label}
+                type="button"
                 onClick={() => setCategory(item.label)}
+                aria-pressed={category === item.label}
                 className={`flex w-full items-center gap-3 rounded-lg px-3 py-3 text-left text-sm font-semibold hover:bg-[#f4faf4] ${category === item.label ? "bg-[#e8f4e8] text-primary" : "text-[#26312b]"}`}
               >
                 <Image src={item.image} alt="" width={28} height={28} className="size-7 object-contain" />
@@ -429,13 +647,16 @@ export function StudentShopExperience() {
         <div className="min-w-0 space-y-4">
           <div className="flex h-12 items-center rounded-xl border border-[#d8e3d8] bg-white px-4 shadow-sm">
             <AssetIcon src="/assets/search.svg" className="mr-3 size-6" />
-            <input value={query} onChange={(event) => updateQuery(event.target.value)} className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-[#7d887f]" placeholder="Search campus items" />
+            <label htmlFor="shop-search" className="sr-only">Search campus items</label>
+            <input id="shop-search" value={query} onChange={(event) => updateQuery(event.target.value)} className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-[#7d887f]" placeholder="Search campus items" />
           </div>
           <div className="flex max-w-full gap-2 overflow-x-auto pb-1 lg:hidden">
             {categories.map((item) => (
               <button
                 key={item.label}
+                type="button"
                 onClick={() => setCategory(item.label)}
+                aria-pressed={category === item.label}
                 className={`flex min-h-[86px] min-w-[92px] flex-col items-center justify-center rounded-xl border border-[#dfe8df] p-2 text-center text-[11px] font-semibold leading-tight ${category === item.label ? "bg-[#e8f4e8] text-primary" : "bg-white"}`}
               >
                 <Image src={item.image} alt="" width={34} height={34} className="mb-1 size-8 object-contain" />
@@ -447,13 +668,16 @@ export function StudentShopExperience() {
             {statusFilters.map((status) => (
               <button
                 key={status}
+                type="button"
                 onClick={() => toggleStatus(status)}
+                aria-pressed={statuses.includes(status)}
                 className={`h-10 rounded-xl border px-3 text-sm font-semibold ${statuses.includes(status) ? "border-primary bg-[#e8f4e8] text-primary" : "border-[#dfe8df] bg-white"}`}
               >
                 {status}
               </button>
             ))}
-            <select value={sort} onChange={(event) => setSort(event.target.value)} className="col-span-2 h-10 rounded-xl border border-[#dfe8df] bg-white px-3 text-sm font-semibold text-primary lg:col-span-1">
+            <label htmlFor="shop-sort" className="sr-only">Sort shop items</label>
+            <select id="shop-sort" value={sort} onChange={(event) => setSort(event.target.value)} className="col-span-2 h-10 rounded-xl border border-[#dfe8df] bg-white px-3 text-sm font-semibold text-primary lg:col-span-1">
               <option value="featured">Featured</option>
               <option value="name">Name</option>
               <option value="price-low">Price Low</option>
@@ -462,20 +686,49 @@ export function StudentShopExperience() {
           </div>
         </div>
 
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-sm text-[#3f4a44]">Showing {filteredProducts.length} of {products.length} items</p>
-          <button
-            onClick={() => {
-              updateQuery("");
-              setCategory("All Items");
-              setStatuses(statusFilters);
-              setSort("featured");
-            }}
-            className="text-sm font-semibold text-primary"
-          >
-            Reset
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              ref={wishlistFilterRef}
+              type="button"
+              onClick={() => updateWishlistFilter(!wishlistOnly)}
+              disabled={wishlistControlsDisabled}
+              aria-pressed={wishlistOnly}
+              className={`inline-flex h-10 items-center gap-1.5 rounded-full border px-3 text-xs font-extrabold transition sm:text-sm ${
+                wishlistOnly
+                  ? "border-primary bg-[#e8f4e8] text-primary"
+                  : "border-[#d8e3d8] bg-white text-[#455149] hover:border-primary"
+              }`}
+            >
+              <Heart className={`size-4 ${wishlistOnly ? "fill-primary" : ""}`} aria-hidden="true" />
+              Wishlist
+              {user?.role === "STUDENT" ? <span aria-label={`${wishlist.productIds.size} items`}>({wishlist.productIds.size})</span> : null}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                updateQuery("");
+                setCategory("All Items");
+                setStatuses(statusFilters);
+                setSort("featured");
+                updateWishlistFilter(false);
+              }}
+              className="h-10 px-1 text-sm font-semibold text-primary"
+            >
+              Reset
+            </button>
+          </div>
         </div>
+
+        {wishlist.error && user?.role === "STUDENT" && !wishlistOnly ? (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900" role="alert">
+            <span>Wishlist could not be loaded: {wishlist.error}</span>
+            <button type="button" onClick={wishlist.retry} className="h-9 rounded-md border border-amber-300 bg-white px-3 text-xs font-extrabold text-amber-950">
+              Retry
+            </button>
+          </div>
+        ) : null}
 
         {error ? (
           <div className="wes-card border-red-200 bg-red-50 p-5 text-sm font-semibold text-red-700">
@@ -483,10 +736,20 @@ export function StudentShopExperience() {
           </div>
         ) : null}
 
-        {loading ? (
+        {wishlistViewUnavailable ? (
+          <div className="wes-card border-amber-200 bg-amber-50 p-8 text-center" role="alert">
+            <p className="font-extrabold text-amber-950">Wishlist is temporarily unavailable</p>
+            <p className="mt-1 text-sm text-amber-900">{wishlist.error}</p>
+            <button type="button" onClick={wishlist.retry} className="mt-4 h-10 rounded-md border border-amber-300 bg-white px-4 text-sm font-extrabold text-amber-950">
+              Retry wishlist
+            </button>
+          </div>
+        ) : loading || wishlistViewLoading ? (
           <div className="wes-card p-8 text-center">
-            <p className="font-semibold">Loading live shop items...</p>
-            <p className="mt-1 text-sm text-muted-foreground">Checking the WESCOMM inventory database.</p>
+            <p className="font-semibold">{wishlistViewLoading ? "Loading your wishlist..." : "Loading live shop items..."}</p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {wishlistViewLoading ? "Syncing saved items for this account." : "Checking the WESCOMM inventory database."}
+            </p>
           </div>
         ) : !error && filteredProducts.length ? (
           <div data-testid="shop-product-grid" className="grid grid-cols-2 gap-2 sm:gap-4 md:grid-cols-3 xl:grid-cols-4">
@@ -497,13 +760,24 @@ export function StudentShopExperience() {
                 onBuyNow={setCheckoutProduct}
                 onAddToCart={setCartProduct}
                 onViewImage={setImagePreviewProduct}
+                onToggleWishlist={(item) => void toggleWishlist(item)}
+                wishlisted={Boolean(product.id && wishlist.productIds.has(product.id))}
+                wishlistPending={Boolean(product.id && wishlist.pendingProductIds.has(product.id))}
+                wishlistDisabled={wishlistControlsDisabled}
+                highlighted={Boolean(product.id && product.id === highlightedProductId)}
               />
             ))}
           </div>
         ) : !error ? (
           <div className="wes-card p-8 text-center">
-            <p className="font-semibold">No items found</p>
-            <p className="mt-1 text-sm text-muted-foreground">Try another search, category, or stock filter.</p>
+            <p className="font-semibold">{wishlistOnly ? "No wishlist items found" : "No items found"}</p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {wishlistOnly
+                ? wishlist.productIds.size
+                  ? "Try clearing the search, category, or stock filters."
+                  : "Tap the heart on an item to save it here and receive restock alerts."
+                : "Try another search, category, or stock filter."}
+            </p>
           </div>
         ) : null}
       </main>
@@ -516,6 +790,14 @@ export function StudentShopExperience() {
           itemDetails={addedNotice.itemDetails}
           onClose={closeAddedNotice}
           onViewCart={viewCartFromNotice}
+        />
+      ) : null}
+      {shopNotice ? (
+        <ShopNoticeToast
+          title={shopNotice.title}
+          message={shopNotice.message}
+          error={shopNotice.error}
+          onClose={closeShopNotice}
         />
       ) : null}
     </div>

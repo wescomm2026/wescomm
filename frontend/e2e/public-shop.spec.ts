@@ -80,7 +80,7 @@ test("mobile student navigation opens as a web menu and changes pages", async ({
   await expect(page.getByPlaceholder("Search campus items")).toBeVisible();
 });
 
-test("mobile shop renders two compact product cards and opens a full image preview", async ({ page }, testInfo) => {
+test("mobile shop renders wishlist controls in two columns and opens a full image preview", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "mobile-chromium", "The compact grid is a mobile-only layout requirement.");
 
   await page.route("**/api/backend/products", (route) => json(route, { products: shopFixtures }));
@@ -97,6 +97,8 @@ test("mobile shop renders two compact product cards and opens a full image previ
   expect(firstBox).not.toBeNull();
   expect(secondBox).not.toBeNull();
   expect(Math.abs((firstBox?.y ?? 0) - (secondBox?.y ?? 0))).toBeLessThanOrEqual(2);
+  await expect(page.getByRole("button", { name: /Notify me about Mobile Shop Pen Set restock/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Add Mobile Shop Pen Set to wishlist" })).toHaveCount(0);
 
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(overflow).toBeLessThanOrEqual(1);
@@ -111,4 +113,284 @@ test("mobile shop renders two compact product cards and opens a full image previ
   await page.keyboard.press("Escape");
   await expect(imageDialog).toBeHidden();
   await expect(imagePreviewButton).toBeFocused();
+});
+
+test("student wishlist saves, removes, and enables an out-of-stock alert", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "One browser project is enough for the API-backed wishlist lifecycle.");
+
+  const wishlist = new Set<string>();
+  const mutations: string[] = [];
+  let releaseAuth: () => void = () => {};
+  let authGate: Promise<void> | null = new Promise((resolve) => {
+    releaseAuth = resolve;
+  });
+  let releaseWishlistRead: () => void = () => {};
+  let wishlistReadGate: Promise<void> | null = null;
+  let failNextProductRead = false;
+  let failNextWishlistDelete = false;
+
+  await page.route("**/api/backend/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+
+    if (path === "/api/backend/auth/me") {
+      if (authGate) {
+        await authGate;
+        authGate = null;
+      }
+      await json(route, {
+        profile: {
+          id: "73000000-0000-4000-8000-000000000001",
+          role: "STUDENT",
+          studentNumber: "QA-WISHLIST-001",
+          fullName: "Wishlist QA Student",
+          email: "wishlist.qa@wesleyan.edu.ph",
+          phone: null,
+          department: null,
+          address: null,
+          avatarUrl: null
+        }
+      });
+      return;
+    }
+    if (path === "/api/backend/products") {
+      if (failNextProductRead) {
+        failNextProductRead = false;
+        await json(route, { error: "Temporary product refresh failure." }, 503);
+        return;
+      }
+      await json(route, { products: shopFixtures });
+      return;
+    }
+    if (path === "/api/backend/wishlist" && request.method() === "GET") {
+      if (wishlistReadGate) {
+        await wishlistReadGate;
+        wishlistReadGate = null;
+      }
+      await json(route, {
+        wishlist: Array.from(wishlist, (productId) => ({ productId, createdAt: "2026-07-23T00:00:00.000Z" }))
+      });
+      return;
+    }
+    const wishlistMatch = path.match(/^\/api\/backend\/wishlist\/([^/]+)$/);
+    if (wishlistMatch && request.method() === "POST") {
+      const productId = decodeURIComponent(wishlistMatch[1]);
+      wishlist.add(productId);
+      mutations.push(`POST:${productId}`);
+      await json(route, { wishlistItem: { productId, createdAt: "2026-07-23T00:00:00.000Z" } }, 201);
+      return;
+    }
+    if (wishlistMatch && request.method() === "DELETE") {
+      const productId = decodeURIComponent(wishlistMatch[1]);
+      mutations.push(`DELETE:${productId}`);
+      if (failNextWishlistDelete) {
+        failNextWishlistDelete = false;
+        await json(route, { error: "Temporary wishlist delete failure." }, 503);
+        return;
+      }
+      wishlist.delete(productId);
+      await route.fulfill({ status: 204 });
+      return;
+    }
+    if (path === "/api/backend/restrictions/me") {
+      await json(route, {
+        restrictionSummary: {
+          activeRestriction: null,
+          consecutiveOffenses: 0,
+          offenses: [],
+          policy: { firstRestrictionAt: 3 }
+        }
+      });
+      return;
+    }
+    if (path === "/api/backend/notifications") {
+      await json(route, {
+        notifications: [{
+          id: "74000000-0000-4000-8000-000000000001",
+          userId: "73000000-0000-4000-8000-000000000001",
+          title: "Mobile Shop Pen Set is back in stock",
+          message: "Open your wishlist to view the item.",
+          type: "BACK_IN_STOCK",
+          actionUrl: `/student/shop?wishlist=1&product=${shopFixtures[1].id}`,
+          readAt: null,
+          createdAt: "2026-07-23T00:00:00.000Z"
+        }]
+      });
+      return;
+    }
+    if (path === "/api/backend/notifications/74000000-0000-4000-8000-000000000001/read") {
+      await json(route, { notification: null });
+      return;
+    }
+    if (path === "/api/backend/push/public-key") {
+      await json(route, { enabled: false, publicKey: "" });
+      return;
+    }
+
+    await json(route, { error: `Unexpected mocked API request: ${request.method()} ${path}` }, 500);
+  });
+
+  await page.goto("/student/shop");
+  await dismissWelcomeGate(page);
+
+  const inStockHeart = page.getByRole("button", { name: "Add Mobile Shop Notebook to wishlist" });
+  await expect(inStockHeart).toHaveAttribute("aria-pressed", "false");
+  await expect(inStockHeart).toBeDisabled();
+  releaseAuth();
+  await expect(inStockHeart).toBeEnabled();
+  const firstSaveResponse = page.waitForResponse((response) =>
+    response.request().method() === "POST" &&
+    new URL(response.url()).pathname.endsWith(`/wishlist/${shopFixtures[0].id}`)
+  );
+  await inStockHeart.click();
+  await firstSaveResponse;
+  await expect(page.getByRole("button", { name: "Remove Mobile Shop Notebook from wishlist" })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByText("Saved to your wishlist")).toBeVisible();
+
+  const restockButton = page.getByRole("button", { name: "Notify me about Mobile Shop Pen Set restock" });
+  const restockSaveResponse = page.waitForResponse((response) =>
+    response.request().method() === "POST" &&
+    new URL(response.url()).pathname.endsWith(`/wishlist/${shopFixtures[1].id}`)
+  );
+  await restockButton.click();
+  await restockSaveResponse;
+  await expect(page.getByText("Restock alert turned on")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Stop Mobile Shop Pen Set restock" })).toHaveAttribute("aria-pressed", "true");
+
+  await page.getByRole("button", { name: "Out of Stock" }).click();
+  await expect(page.getByRole("article", { name: "Mobile Shop Pen Set" })).toHaveCount(0);
+  const notificationTrigger = page.getByRole("button", { name: /Notifications, 1 unread/ });
+  await notificationTrigger.click();
+  const notificationRegion = page.getByRole("region", { name: "Student notifications" });
+  await expect(notificationRegion).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(notificationRegion).toBeHidden();
+  await expect(notificationTrigger).toBeFocused();
+  await notificationTrigger.click();
+  await page.getByRole("link", { name: /Mobile Shop Pen Set is back in stock/ }).click();
+  await expect(page.getByRole("article", { name: "Mobile Shop Pen Set" })).toHaveClass(/ring-2/);
+
+  await page.goto("/student/faq");
+  await dismissWelcomeGate(page);
+  failNextProductRead = true;
+  wishlistReadGate = new Promise((resolve) => {
+    releaseWishlistRead = resolve;
+  });
+  await page.getByRole("button", { name: /Notifications, 1 unread/ }).click();
+  await page.getByRole("link", { name: /Mobile Shop Pen Set is back in stock/ }).click();
+  await expect(page).toHaveURL(new RegExp(`wishlist=1&product=${shopFixtures[1].id}`));
+  await expect(page.getByText("Loading your wishlist...")).toBeVisible();
+  releaseWishlistRead();
+  await expect(page.getByRole("button", { name: /^Wishlist 2 items$/ })).toHaveAttribute("aria-pressed", "true");
+  const highlightedCard = page.getByRole("article", { name: "Mobile Shop Pen Set" });
+  await expect(highlightedCard).toHaveClass(/ring-2/);
+  await expect(highlightedCard).toBeInViewport();
+  await expect(page.getByText("Temporary product refresh failure.")).toHaveCount(0);
+
+  failNextWishlistDelete = true;
+  const failedRemoveResponse = page.waitForResponse((response) =>
+    response.request().method() === "DELETE" &&
+    response.status() === 503 &&
+    new URL(response.url()).pathname.endsWith(`/wishlist/${shopFixtures[0].id}`)
+  );
+  await page.getByRole("button", { name: "Remove Mobile Shop Notebook from wishlist" }).click();
+  await failedRemoveResponse;
+  await expect(page.getByText("Wishlist not updated")).toBeVisible();
+  await expect(page.getByRole("article", { name: "Mobile Shop Notebook" })).toHaveCount(1);
+  await expect(page.getByRole("button", { name: /^Wishlist 2 items$/ })).toBeFocused();
+
+  const removeResponse = page.waitForResponse((response) =>
+    response.request().method() === "DELETE" &&
+    new URL(response.url()).pathname.endsWith(`/wishlist/${shopFixtures[0].id}`)
+  );
+  await page.getByRole("button", { name: "Remove Mobile Shop Notebook from wishlist" }).click();
+  await removeResponse;
+  await expect(page.getByRole("article", { name: "Mobile Shop Notebook" })).toHaveCount(0);
+  const wishlistFilter = page.getByRole("button", { name: /^Wishlist 1 items$/ });
+  await expect(wishlistFilter).toHaveAttribute("aria-pressed", "true");
+  await expect(wishlistFilter).toBeFocused();
+
+  expect(mutations).toEqual([
+    `POST:${shopFixtures[0].id}`,
+    `POST:${shopFixtures[1].id}`,
+    `DELETE:${shopFixtures[0].id}`,
+    `DELETE:${shopFixtures[0].id}`
+  ]);
+});
+
+test("failed wishlist loading stays disabled until a successful retry", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "One browser project is enough for wishlist recovery.");
+
+  let wishlistReads = 0;
+  await page.route("**/api/backend/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+
+    if (path === "/api/backend/auth/me") {
+      await json(route, {
+        profile: {
+          id: "73000000-0000-4000-8000-000000000001",
+          role: "STUDENT",
+          studentNumber: "QA-WISHLIST-001",
+          fullName: "Wishlist QA Student",
+          email: "wishlist.qa@wesleyan.edu.ph",
+          phone: null,
+          department: null,
+          address: null,
+          avatarUrl: null
+        }
+      });
+      return;
+    }
+    if (path === "/api/backend/products") {
+      await json(route, { products: shopFixtures });
+      return;
+    }
+    if (path === "/api/backend/wishlist" && request.method() === "GET") {
+      wishlistReads += 1;
+      if (wishlistReads === 1) {
+        await json(route, { error: "Wishlist database is temporarily unavailable." }, 503);
+      } else {
+        await json(route, {
+          wishlist: [{ productId: shopFixtures[0].id, createdAt: "2026-07-23T00:00:00.000Z" }]
+        });
+      }
+      return;
+    }
+    if (path === "/api/backend/restrictions/me") {
+      await json(route, {
+        restrictionSummary: {
+          activeRestriction: null,
+          consecutiveOffenses: 0,
+          offenses: [],
+          policy: { firstRestrictionAt: 3 }
+        }
+      });
+      return;
+    }
+    if (path === "/api/backend/notifications") {
+      await json(route, { notifications: [] });
+      return;
+    }
+    if (path === "/api/backend/push/public-key") {
+      await json(route, { enabled: false, publicKey: "" });
+      return;
+    }
+
+    await json(route, { error: `Unexpected mocked API request: ${request.method()} ${path}` }, 500);
+  });
+
+  await page.goto("/student/shop");
+  await dismissWelcomeGate(page);
+
+  const unavailableHeart = page.getByRole("button", { name: "Add Mobile Shop Notebook to wishlist" });
+  await expect(unavailableHeart).toBeDisabled();
+  await expect(page.getByText(/Wishlist could not be loaded:/)).toBeVisible();
+
+  await page.getByRole("button", { name: "Retry" }).click();
+  const restoredHeart = page.getByRole("button", { name: "Remove Mobile Shop Notebook from wishlist" });
+  await expect(restoredHeart).toBeEnabled();
+  await expect(restoredHeart).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByText(/Wishlist could not be loaded:/)).toBeHidden();
+  expect(wishlistReads).toBe(2);
 });

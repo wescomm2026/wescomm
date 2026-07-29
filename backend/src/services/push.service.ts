@@ -74,6 +74,7 @@ export function notificationUrlForRole(type: NotificationType | undefined, role?
   if (type === "RESERVATION") return `${base}/reservations`;
   if (type === "RECEIPT") return isStaffSide ? `${base}/receipt-verification` : `${base}/receipts`;
   if (type === "LOW_STOCK") return isStaffSide ? `${base}/inventory` : `${base}/shop`;
+  if (type === "BACK_IN_STOCK") return isStaffSide ? `${base}/inventory` : `${base}/shop?wishlist=1`;
   if (type === "MESSAGE") return isStaffSide ? `${base}/messages` : `${base}/support`;
   return `${base}/dashboard`;
 }

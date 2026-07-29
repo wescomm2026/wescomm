@@ -61,6 +61,8 @@ jobs:
         run: npm run typecheck
 
       - name: Run tests
+        env:
+          RUN_DATABASE_INTEGRATION_TESTS: "true"
         run: npm test
 
   frontend:
