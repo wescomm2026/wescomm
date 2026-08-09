@@ -2,6 +2,11 @@ import { expect, test } from "@playwright/test";
 import { dismissWelcomeGate } from "./helpers";
 
 test("startup gate uses the WESCOMM logo animation without legacy welcome content", async ({ page }) => {
+  await page.route(/\/api\/backend\/products(?:\?.*)?$/, async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    await route.continue();
+  });
+
   const animationResponse = page.waitForResponse((response) => (
     new URL(response.url()).pathname === "/assets/wescomm-logo-intro.mp4"
   ));
@@ -29,6 +34,17 @@ test("startup gate uses the WESCOMM logo animation without legacy welcome conten
   await expect(gate.getByRole("heading")).toHaveCount(0);
   await expect(gate.getByText(/Welcome (?:Back )?to WESCOMM/)).toHaveCount(0);
   expect([200, 206]).toContain((await animationResponse).status());
+
+  await expect(gate).toHaveAttribute("data-animation-complete", "true");
+  await expect(animation).toHaveJSProperty("paused", true);
+  const heldFrame = await animation.evaluate((element) => {
+    const video = element as HTMLVideoElement;
+    return {
+      currentTime: video.currentTime,
+      duration: video.duration
+    };
+  });
+  expect(heldFrame.duration - heldFrame.currentTime).toBeGreaterThan(0.6);
 
   await dismissWelcomeGate(page);
 });

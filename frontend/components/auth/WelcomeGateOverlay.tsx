@@ -22,6 +22,7 @@ const ENTER_FALLBACK_MS = 250;
 const EXIT_FALLBACK_MS = 450;
 const E2E_TEST_ENABLED = process.env.NEXT_PUBLIC_E2E_TEST === "true";
 const LOGO_ANIMATION_PLAYBACK_RATE = E2E_TEST_ENABLED ? 16 : 1;
+const LOGO_VISIBLE_END_BUFFER_SECONDS = 0.8;
 const LOADING_BACKGROUND = "radial-gradient(circle at center, #f8f9f3 0%, #edf2ec 100%)";
 
 function getLoadingLabel(user: WelcomeGateMode) {
@@ -48,7 +49,9 @@ export function WelcomeGateOverlay({
   const [minimumElapsed, setMinimumElapsed] = useState(minimumDurationMs <= 0);
   const [animationComplete, setAnimationComplete] = useState(false);
   const [mediaFailed, setMediaFailed] = useState(false);
+  const animationCompleteRef = useRef(false);
   const finishedRef = useRef(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
 
   const beginExit = useCallback(() => {
     setPhase((current) => (current === "exiting" ? current : "exiting"));
@@ -59,6 +62,19 @@ export function WelcomeGateOverlay({
     finishedRef.current = true;
     onFinish();
   }, [onFinish]);
+
+  const holdLastVisibleFrame = useCallback((video?: HTMLVideoElement | null) => {
+    if (animationCompleteRef.current) return;
+    animationCompleteRef.current = true;
+
+    if (video && Number.isFinite(video.duration) && video.duration > 0) {
+      const lastVisibleTime = Math.max(0, video.duration - LOGO_VISIBLE_END_BUFFER_SECONDS);
+      video.pause();
+      if (video.currentTime > lastVisibleTime) video.currentTime = lastVisibleTime;
+    }
+
+    setAnimationComplete(true);
+  }, []);
 
   useEffect(() => {
     if (minimumDurationMs <= 0) return undefined;
@@ -72,17 +88,17 @@ export function WelcomeGateOverlay({
 
   useEffect(() => {
     const timeout = window.setTimeout(
-      () => setAnimationComplete(true),
+      () => holdLastVisibleFrame(videoRef.current),
       Math.max(0, maximumDurationMs)
     );
     return () => window.clearTimeout(timeout);
-  }, [maximumDurationMs]);
+  }, [holdLastVisibleFrame, maximumDurationMs]);
 
   useEffect(() => {
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      setAnimationComplete(true);
+      holdLastVisibleFrame();
     }
-  }, []);
+  }, [holdLastVisibleFrame]);
 
   useEffect(() => {
     const fallbackMs = phase === "entering" ? ENTER_FALLBACK_MS : phase === "exiting" ? EXIT_FALLBACK_MS : null;
@@ -107,6 +123,13 @@ export function WelcomeGateOverlay({
     event.currentTarget.playbackRate = LOGO_ANIMATION_PLAYBACK_RATE;
   };
 
+  const handleVideoTimeUpdate = (event: SyntheticEvent<HTMLVideoElement>) => {
+    const video = event.currentTarget;
+    if (!Number.isFinite(video.duration) || video.duration <= 0) return;
+    if (video.duration - video.currentTime > LOGO_VISIBLE_END_BUFFER_SECONDS) return;
+    holdLastVisibleFrame(video);
+  };
+
   return (
     <div
       className="welcome-gate-overlay fixed inset-0 z-[12000] grid place-items-center overflow-hidden"
@@ -128,6 +151,7 @@ export function WelcomeGateOverlay({
       }}
     >
       <video
+        ref={videoRef}
         className={`welcome-gate-video${mediaFailed ? " welcome-gate-video-failed" : ""}`}
         data-testid="welcome-logo-animation"
         autoPlay
@@ -135,10 +159,11 @@ export function WelcomeGateOverlay({
         playsInline
         preload="auto"
         onLoadedMetadata={handleVideoMetadata}
-        onEnded={() => setAnimationComplete(true)}
+        onTimeUpdate={handleVideoTimeUpdate}
+        onEnded={(event) => holdLastVisibleFrame(event.currentTarget)}
         onError={() => {
           setMediaFailed(true);
-          setAnimationComplete(true);
+          holdLastVisibleFrame();
         }}
         style={{
           width: "100%",
