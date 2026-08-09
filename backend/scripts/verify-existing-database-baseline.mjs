@@ -41,6 +41,10 @@ const requiredColumns = verifyAppliedMigration
       ...baselineRequiredColumns,
       notifications: `${baselineRequiredColumns.notifications} dedupe_key action_url`,
       wishlist_items: "user_id product_id created_at updated_at",
+      online_payments: "id reservation_id status amount_centavos currency livemode provider_checkout_session_id provider_payment_intent_id provider_payment_id checkout_url checkout_expires_at last_reconciled_at fee_centavos net_amount_centavos refunded_amount_centavos paid_at expired_at cancelled_at refunded_at created_at updated_at",
+      online_payment_attempts: "id online_payment_id attempt_number status provider_idempotency_key request_hash request_payload provider_checkout_session_id provider_payment_intent_id provider_payment_id checkout_url livemode checkout_expires_at last_reconciled_at expire_requested_at expired_at provider_created_at paid_at fee_centavos net_amount_centavos last_provider_error_code created_at updated_at",
+      paymongo_webhook_events: "id provider_event_id dedupe_key event_type livemode resource_id payload_hash status reason_code online_payment_id received_at processed_at",
+      audit_logs: "id actor_id action entity_type entity_id summary metadata created_at",
     }
   : baselineRequiredColumns;
 
@@ -62,7 +66,11 @@ const baselineRequiredEnums = {
 const requiredEnums = verifyAppliedMigration
   ? {
       ...baselineRequiredEnums,
-      notification_type: `${baselineRequiredEnums.notification_type} BACK_IN_STOCK`,
+      payment_method: `${baselineRequiredEnums.payment_method} PAYMONGO_GCASH`,
+      notification_type: `${baselineRequiredEnums.notification_type} BACK_IN_STOCK PAYMENT`,
+      online_payment_status: "INITIALIZING AWAITING_PAYMENT PAID EXPIRED CANCELLED REFUND_REVIEW_REQUIRED PARTIALLY_REFUNDED REFUNDED",
+      online_payment_attempt_status: "CREATING CREATE_UNKNOWN ACTIVE EXPIRY_REQUESTED EXPIRED PAID FAILED ABANDONED MANUAL_REVIEW_REQUIRED",
+      paymongo_webhook_event_status: "PROCESSED IGNORED REJECTED",
     }
   : baselineRequiredEnums;
 
@@ -281,6 +289,51 @@ try {
         ) AS wishlist_policies,
         (
           SELECT COUNT(*)::integer
+          FROM pg_class AS payment_table
+          JOIN pg_namespace AS payment_schema ON payment_schema.oid = payment_table.relnamespace
+          WHERE payment_schema.nspname = 'public'
+            AND payment_table.relname IN (
+              'online_payments',
+              'online_payment_attempts',
+              'paymongo_webhook_events',
+              'audit_logs'
+            )
+            AND payment_table.relkind IN ('r', 'p')
+            AND payment_table.relrowsecurity
+            AND NOT payment_table.relforcerowsecurity
+        ) AS payment_rls_tables,
+        (
+          SELECT COUNT(*)::integer
+          FROM pg_policies
+          WHERE schemaname = 'public'
+            AND tablename IN (
+              'online_payments',
+              'online_payment_attempts',
+              'paymongo_webhook_events'
+            )
+        ) AS payment_policies,
+        (
+          SELECT COUNT(*)::integer
+          FROM pg_trigger AS payment_trigger
+          JOIN pg_class AS payment_table ON payment_table.oid = payment_trigger.tgrelid
+          JOIN pg_namespace AS payment_schema ON payment_schema.oid = payment_table.relnamespace
+          WHERE NOT payment_trigger.tgisinternal
+            AND payment_trigger.tgenabled <> 'D'
+            AND payment_schema.nspname = 'public'
+            AND payment_table.relname = 'online_payment_attempts'
+            AND payment_trigger.tgname = 'online_payment_attempts_protect_identity'
+        ) AS payment_identity_triggers,
+        (
+          SELECT COUNT(*)::integer
+          FROM pg_indexes
+          WHERE schemaname = 'public'
+            AND tablename = 'online_payment_attempts'
+            AND indexname = 'online_payment_attempts_one_open_attempt_key'
+            AND UPPER(indexdef) LIKE 'CREATE UNIQUE INDEX%'
+            AND indexdef ILIKE '%WHERE%status%CREATING%CREATE_UNKNOWN%ACTIVE%EXPIRY_REQUESTED%'
+        ) AS payment_open_attempt_indexes,
+        (
+          SELECT COUNT(*)::integer
           FROM pg_constraint AS wishlist_constraint
           JOIN pg_class AS wishlist_table ON wishlist_table.oid = wishlist_constraint.conrelid
           JOIN pg_namespace AS wishlist_schema ON wishlist_schema.oid = wishlist_table.relnamespace
@@ -440,6 +493,18 @@ try {
       process.exitCode = 1;
     } else if (verifyAppliedMigration && authBoundary.wishlist_policies !== 0) {
       console.error("public.wishlist_items must not expose direct browser database policies.");
+      process.exitCode = 1;
+    } else if (verifyAppliedMigration && authBoundary.payment_rls_tables !== 4) {
+      console.error("RLS must be enabled, but not forced, on all server-only payment and audit tables.");
+      process.exitCode = 1;
+    } else if (verifyAppliedMigration && authBoundary.payment_policies !== 0) {
+      console.error("Payment tables must not expose direct browser database policies.");
+      process.exitCode = 1;
+    } else if (verifyAppliedMigration && authBoundary.payment_identity_triggers !== 1) {
+      console.error("The online payment attempt identity-protection trigger is missing or disabled.");
+      process.exitCode = 1;
+    } else if (verifyAppliedMigration && authBoundary.payment_open_attempt_indexes !== 1) {
+      console.error("The one-open-payment-attempt partial unique index is missing or malformed.");
       process.exitCode = 1;
     } else if (verifyAppliedMigration && authBoundary.wishlist_primary_keys !== 1) {
       console.error("The wishlist user/product primary key is missing.");

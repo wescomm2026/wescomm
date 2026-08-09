@@ -131,6 +131,7 @@ function StaffMobileMenu({
 function staffNotificationIcon(type: BackendNotificationType) {
   if (type === "RESERVATION") return "/assets/reservations.svg";
   if (type === "RECEIPT") return "/assets/receipts.svg";
+  if (type === "PAYMENT") return "/assets/payment.svg";
   if (type === "LOW_STOCK") return "/assets/low-stock.svg";
   if (type === "MESSAGE") return "/assets/support.svg";
   return "/assets/notifications.svg";
@@ -139,6 +140,7 @@ function staffNotificationIcon(type: BackendNotificationType) {
 function staffNotificationHref(type: BackendNotificationType, routeBase: string, homeHref: string) {
   if (type === "RESERVATION") return `${routeBase}/reservations`;
   if (type === "RECEIPT") return `${routeBase}/receipt-verification`;
+  if (type === "PAYMENT") return `${routeBase}/reservations`;
   if (type === "LOW_STOCK") return `${routeBase}/inventory`;
   if (type === "MESSAGE") return `${routeBase}/messages`;
   return homeHref;

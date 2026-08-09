@@ -1,0 +1,46 @@
+name: PayMongo payment maintenance
+
+on:
+  schedule:
+    # GitHub schedules can be delayed. The backend uses its own timestamps and
+    # bounded batches, so reruns are safe and no exact hourly timing is assumed.
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: paymongo-payment-maintenance
+  cancel-in-progress: false
+
+jobs:
+  maintain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      MAINTENANCE_URL: ${{ secrets.WESCOMM_PAYMENT_MAINTENANCE_URL }}
+      MAINTENANCE_TOKEN: ${{ secrets.WESCOMM_PAYMENT_MAINTENANCE_SECRET }}
+    steps:
+      - name: Reconcile and expire bounded payment attempts
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$MAINTENANCE_URL"
+          test -n "$MAINTENANCE_TOKEN"
+          case "$MAINTENANCE_URL" in
+            https://*/api/payments/maintenance) ;;
+            *) echo "Maintenance URL must be an HTTPS /api/payments/maintenance endpoint." >&2; exit 1 ;;
+          esac
+          curl --fail-with-body --silent --show-error \
+            --max-time 55 \
+            --location \
+            --max-redirs 2 \
+            --proto-redir =https \
+            --retry 2 \
+            --retry-all-errors \
+            --request POST \
+            --header "Authorization: Bearer $MAINTENANCE_TOKEN" \
+            --header "Content-Type: application/json" \
+            --data '{"limit":25}' \
+            "$MAINTENANCE_URL"

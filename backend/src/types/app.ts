@@ -6,8 +6,33 @@ export type AppRole = (typeof APP_ROLES)[number];
 export const PRODUCT_STATUSES = ["IN_STOCK", "RESTOCK_SOON", "OUT_OF_STOCK", "ON_SALE"] as const;
 export type ProductStatus = (typeof PRODUCT_STATUSES)[number];
 
-export const PAYMENT_METHODS = ["PAY_AT_COMMISSARY", "E_WALLET_AT_PICKUP", "CASH", "GCASH"] as const;
+export const PAYMENT_METHODS = ["PAY_AT_COMMISSARY", "E_WALLET_AT_PICKUP", "CASH", "GCASH", "PAYMONGO_GCASH"] as const;
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
+
+export const ONLINE_PAYMENT_STATUSES = [
+  "INITIALIZING",
+  "AWAITING_PAYMENT",
+  "PAID",
+  "EXPIRED",
+  "CANCELLED",
+  "REFUND_REVIEW_REQUIRED",
+  "PARTIALLY_REFUNDED",
+  "REFUNDED"
+] as const;
+export type OnlinePaymentStatus = (typeof ONLINE_PAYMENT_STATUSES)[number];
+
+export const ONLINE_PAYMENT_ATTEMPT_STATUSES = [
+  "CREATING",
+  "CREATE_UNKNOWN",
+  "ACTIVE",
+  "EXPIRY_REQUESTED",
+  "EXPIRED",
+  "PAID",
+  "FAILED",
+  "ABANDONED",
+  "MANUAL_REVIEW_REQUIRED"
+] as const;
+export type OnlinePaymentAttemptStatus = (typeof ONLINE_PAYMENT_ATTEMPT_STATUSES)[number];
 
 export const RESERVATION_STATUSES = ["PENDING", "CONFIRMED", "READY_FOR_PICKUP", "COMPLETED", "CANCELLED", "NO_SHOW"] as const;
 export type ReservationStatus = (typeof RESERVATION_STATUSES)[number];
@@ -18,6 +43,7 @@ export type ReceiptStatus = (typeof RECEIPT_STATUSES)[number];
 export const NOTIFICATION_TYPES = [
   "RESERVATION",
   "RECEIPT",
+  "PAYMENT",
   "LOW_STOCK",
   "BACK_IN_STOCK",
   "MESSAGE",

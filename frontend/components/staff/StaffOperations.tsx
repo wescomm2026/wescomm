@@ -69,6 +69,9 @@ type StaffReservationRow = {
   quantity: number;
   pickup: string;
   payment: string;
+  onlineGcash: boolean;
+  paymentStatus: string;
+  paymentConfirmed: boolean;
   total: number;
   status: string;
   backendStatus: BackendReservationStatus;
@@ -161,9 +164,24 @@ function formatStaffPickup(startValue: string | null, endValue: string | null) {
 
 function formatPaymentMethod(value: string) {
   if (value === "E_WALLET_AT_PICKUP") return "E-wallet at Pickup";
+  if (value === "PAYMONGO_GCASH") return "GCash (Online)";
   if (value === "GCASH") return "GCash";
   if (value === "CASH") return "Cash";
   return "Pay at Commissary";
+}
+
+function formatOnlinePaymentStatus(value?: string) {
+  if (value === "PAID") return "Paid";
+  if (value === "AWAITING_PAYMENT") return "Awaiting payment";
+  if (value === "INITIALIZING") return "Initializing";
+  if (value === "PROCESSING") return "Processing";
+  if (value === "REFUND_REVIEW_REQUIRED") return "Refund review required";
+  if (value === "PARTIALLY_REFUNDED") return "Partially refunded";
+  if (value === "REFUNDED") return "Refunded";
+  if (value === "EXPIRED") return "Expired";
+  if (value === "CANCELLED") return "Cancelled";
+  if (value === "FAILED") return "Failed";
+  return "Awaiting payment details";
 }
 
 function mapStaffReservation(row: BackendReservation): StaffReservationRow {
@@ -178,6 +196,9 @@ function mapStaffReservation(row: BackendReservation): StaffReservationRow {
     quantity,
     pickup: formatStaffPickup(row.pickupStart, row.pickupEnd),
     payment: formatPaymentMethod(row.paymentMethod),
+    onlineGcash: row.paymentMethod === "PAYMONGO_GCASH",
+    paymentStatus: formatOnlinePaymentStatus(row.payment?.status),
+    paymentConfirmed: row.paymentMethod !== "PAYMONGO_GCASH" || row.payment?.status === "PAID",
     total: Number(row.totalAmount),
     status: formatReservationStatus(row.status),
     backendStatus: row.status,
@@ -1072,6 +1093,7 @@ export function StaffReservationsExperience() {
           <div className="rounded-lg border border-[#dce5dd] bg-white p-6 text-sm font-semibold text-[#68746d] shadow-sm">Loading live reservations...</div>
         ) : filtered.length ? filtered.map((row) => {
           const nextStatus = getNextReservationStatus(row.backendStatus);
+          const paymentBlocksProgress = row.onlineGcash && !row.paymentConfirmed;
           const noShowEligible = row.backendStatus === "READY_FOR_PICKUP" && Boolean(row.pickupEnd) && Date.now() >= new Date(row.pickupEnd!).getTime() + 24 * 60 * 60 * 1000;
           return (
             <article key={row.id} className="relative grid gap-4 overflow-hidden rounded-lg border border-[#dce5dd] bg-white p-4 shadow-sm lg:grid-cols-[1fr_1.2fr_1.2fr_1fr_auto_auto] lg:items-center">
@@ -1083,11 +1105,20 @@ export function StaffReservationsExperience() {
               <div><p className="font-extrabold">{row.reference}</p><p className="text-xs text-[#68746d]">{row.student}</p></div>
               <div><p className="text-sm font-bold">{row.item}</p><p className="text-xs text-[#68746d]">Quantity: {row.quantity}</p></div>
               <p className="text-sm"><span className="font-bold text-primary">Pickup:</span> {row.pickup}</p>
-              <p className="text-sm"><span className="font-bold text-primary">Payment:</span> {row.payment}<span className="mt-1 block font-extrabold text-[#17211b]">PHP {row.total.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></p>
+              <div className="text-sm">
+                <p><span className="font-bold text-primary">Payment:</span> {row.payment}</p>
+                {row.onlineGcash ? <span className="mt-1 inline-flex"><StatusBadge status={row.paymentStatus} /></span> : null}
+                <span className="mt-1 block font-extrabold text-[#17211b]">PHP {row.total.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              </div>
               <StatusBadge status={row.status} />
               <div className="flex flex-wrap gap-2">
                 {nextStatus ? (
-                  <Button className="h-10" disabled={Boolean(submittingId)} onClick={() => void updateStatus(row, nextStatus)}>
+                  <Button
+                    className="h-10"
+                    disabled={Boolean(submittingId) || paymentBlocksProgress}
+                    title={paymentBlocksProgress ? "Wait for secure PayMongo payment confirmation before processing this reservation." : undefined}
+                    onClick={() => void updateStatus(row, nextStatus)}
+                  >
                     {submittingId === row.id
                       ? "Saving..."
                       : row.backendStatus === "PENDING"
@@ -1096,6 +1127,11 @@ export function StaffReservationsExperience() {
                           ? "Mark ready"
                           : "Complete"}
                   </Button>
+                ) : null}
+                {paymentBlocksProgress ? (
+                  <p className="max-w-48 text-xs font-semibold leading-5 text-amber-800">
+                    Await secure payment confirmation. Do not use a screenshot as proof.
+                  </p>
                 ) : null}
                 {noShowEligible ? (
                   <Link href={user?.role === "ADMIN" ? "/admin/student-access" : "/staff/student-access"}>

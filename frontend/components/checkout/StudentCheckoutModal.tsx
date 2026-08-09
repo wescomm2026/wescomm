@@ -11,11 +11,20 @@ import {
   X
 } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
+import {
+  PaymentMethodSelector,
+  type StudentCheckoutPaymentMethod
+} from "@/components/checkout/PaymentMethodSelector";
 import { useStudentRestriction } from "@/components/restrictions/StudentRestrictionProvider";
 import { ActionLoadingOverlay } from "@/components/ui/ActionLoadingOverlay";
 import { AssetIcon } from "@/components/ui/AssetIcon";
 import { Button } from "@/components/ui/button";
-import { BackendApiError, createReservationFromApi, type BackendPaymentMethod } from "@/lib/api";
+import { BackendApiError, createGcashCheckoutFromApi, createReservationFromApi, type BackendReservation } from "@/lib/api";
+import {
+  getPaymentIdempotencyKey,
+  openTrustedPaymongoCheckout,
+  rememberPaymentCheckout
+} from "@/lib/payment-checkout";
 import {
   isProductUnavailable,
   isUniformClothOnly,
@@ -24,6 +33,7 @@ import {
   UNIFORM_CLOTH_NOTICE
 } from "@/lib/product-display";
 import {
+  clearReservationRequestIdentity,
   getReservationRequestIdentity,
   type PendingReservationRequest
 } from "@/lib/reservation-idempotency";
@@ -66,11 +76,6 @@ function formatSelections(options: Record<string, string>) {
   return Object.entries(options).map(([name, value]) => `${name}: ${value}`).join(", ");
 }
 
-function mapPaymentMethod(value: string): BackendPaymentMethod {
-  if (value === "E-wallet at Pickup") return "E_WALLET_AT_PICKUP";
-  return "PAY_AT_COMMISSARY";
-}
-
 function getPickupWindow(date: string, time: string) {
   const windows: Record<string, [string, string]> = {
     "8:00 AM - 10:00 AM": ["08:00", "10:00"],
@@ -103,11 +108,16 @@ export function StudentCheckoutModal({
   const [quantity, setQuantity] = useState(1);
   const [pickupDate, setPickupDate] = useState("");
   const [pickupTime, setPickupTime] = useState("10:00 AM - 12:00 PM");
-  const [paymentMethod, setPaymentMethod] = useState("Pay at Commissary");
+  const [paymentMethod, setPaymentMethod] = useState<StudentCheckoutPaymentMethod>("PAY_AT_COMMISSARY");
   const [notes, setNotes] = useState("");
   const [selectedOptions, setSelectedOptions] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
   const [reference, setReference] = useState("");
+  const [gcashRecovery, setGcashRecovery] = useState<{
+    reservationId: string;
+    referenceCode: string;
+    message: string;
+  } | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
   const pendingRequestRef = useRef<PendingReservationRequest | null>(null);
@@ -123,11 +133,12 @@ export function StudentCheckoutModal({
     setQuantity(1);
     setPickupDate(getFutureDate(1));
     setPickupTime("10:00 AM - 12:00 PM");
-    setPaymentMethod("Pay at Commissary");
+    setPaymentMethod("PAY_AT_COMMISSARY");
     setNotes("");
     setSelectedOptions(defaultSelections(product));
     setError("");
     setReference("");
+    setGcashRecovery(null);
     setSubmitting(false);
     pendingRequestRef.current = null;
 
@@ -154,6 +165,33 @@ export function StudentCheckoutModal({
   const unavailable = product ? isProductUnavailable(product) : true;
   const total = useMemo(() => unitPrice * quantity, [quantity, unitPrice]);
   const clothOnly = product ? isUniformClothOnly(product) : false;
+
+  const openGcashCheckout = async (reservation: Pick<BackendReservation, "id" | "referenceCode">) => {
+    if (!user?.accessToken) throw new Error("Please sign in again to continue.");
+
+    const checkout = await createGcashCheckoutFromApi(
+      user.accessToken,
+      reservation.id,
+      getPaymentIdempotencyKey(reservation.id)
+    );
+    if (!rememberPaymentCheckout(checkout.payment, checkout.checkoutUrl)) {
+      throw new Error("WESCOMM blocked an invalid payment destination. Please try again.");
+    }
+    openTrustedPaymongoCheckout(checkout.checkoutUrl);
+  };
+
+  const continueGcashPayment = async () => {
+    if (!gcashRecovery) return;
+    setSubmitting(true);
+    setError("");
+    try {
+      await openGcashCheckout({ id: gcashRecovery.reservationId, referenceCode: gcashRecovery.referenceCode });
+    } catch (paymentError) {
+      setError(paymentError instanceof Error ? paymentError.message : "Unable to open GCash payment.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   const confirmReservation = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -195,7 +233,7 @@ export function StudentCheckoutModal({
     const variantSummary = [itemDetails, noteDetails ? `Note: ${noteDetails}` : ""].filter(Boolean).join(" | ");
 
     const payload = {
-      paymentMethod: mapPaymentMethod(paymentMethod),
+      paymentMethod,
       ...getPickupWindow(pickupDate, pickupTime),
       items: [
         {
@@ -205,16 +243,34 @@ export function StudentCheckoutModal({
         }
       ]
     };
-    const requestIdentity = getReservationRequestIdentity(payload, pendingRequestRef.current);
+    const requestIdentity = getReservationRequestIdentity(payload, pendingRequestRef.current, user.id);
     pendingRequestRef.current = requestIdentity;
 
     setSubmitting(true);
     try {
       const reservation = await createReservationFromApi(user.accessToken, payload, requestIdentity.key);
 
-      setReference(reservation.referenceCode);
+      clearReservationRequestIdentity(user.id, requestIdentity);
       pendingRequestRef.current = null;
       window.dispatchEvent(new Event("wescomm:products-refresh"));
+      if (paymentMethod === "PAYMONGO_GCASH") {
+        setGcashRecovery({
+          reservationId: reservation.id,
+          referenceCode: reservation.referenceCode,
+          message: "Your reservation is saved. Continue to the secure GCash payment page."
+        });
+        try {
+          await openGcashCheckout(reservation);
+        } catch (paymentError) {
+          setGcashRecovery({
+            reservationId: reservation.id,
+            referenceCode: reservation.referenceCode,
+            message: paymentError instanceof Error ? paymentError.message : "Unable to open GCash payment."
+          });
+        }
+      } else {
+        setReference(reservation.referenceCode);
+      }
     } catch (reservationError) {
       if (reservationError instanceof BackendApiError && reservationError.code === "RESERVATION_ACCESS_SUSPENDED") {
         window.dispatchEvent(new Event("wescomm:restriction-refresh"));
@@ -251,7 +307,36 @@ export function StudentCheckoutModal({
           <X className="size-5" />
         </button>
 
-        {reference ? (
+        {gcashRecovery ? (
+          <div className="flex min-h-[560px] flex-col items-center justify-center px-6 py-16 text-center">
+            <span className="grid size-20 place-items-center rounded-full bg-[#fff4c8] text-[#8a6500]">
+              <AssetIcon src="/assets/e-wallet.svg" className="size-14" />
+            </span>
+            <p className="mt-6 text-sm font-bold uppercase text-primary">Reservation saved</p>
+            <h1 id="checkout-title" className="mt-2 text-3xl font-extrabold text-[#101820] sm:text-4xl">
+              Complete your GCash payment
+            </h1>
+            <p className="mt-3 max-w-xl text-sm leading-6 text-[#657169]">{gcashRecovery.message}</p>
+            <div className="mt-7 rounded-lg border border-[#cfe0d0] bg-[#f5faf5] px-7 py-5">
+              <p className="text-xs font-bold uppercase text-[#6b766f]">Reservation reference</p>
+              <p className="mt-1 text-2xl font-extrabold text-primary">{gcashRecovery.referenceCode}</p>
+            </div>
+            {error ? (
+              <p tabIndex={-1} className="mt-4 max-w-xl rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700" role="alert">
+                {error}
+              </p>
+            ) : null}
+            <div className="mt-8 flex w-full max-w-md flex-col gap-3 sm:flex-row">
+              <Link href="/student/reservations" className="flex-1" onClick={onClose}>
+                <Button variant="secondary" className="h-12 w-full">View Reservation</Button>
+              </Link>
+              <Button className="h-12 flex-1" onClick={() => void continueGcashPayment()} disabled={submitting} aria-busy={submitting}>
+                <AssetIcon src="/assets/e-wallet.svg" className="size-6" />
+                {submitting ? "Opening GCash..." : "Continue Payment"}
+              </Button>
+            </div>
+          </div>
+        ) : reference ? (
           <div className="flex min-h-[560px] flex-col items-center justify-center px-6 py-16 text-center">
             <span className="grid size-20 place-items-center rounded-full bg-[#e5f3e6] text-primary">
               <AssetIcon src="/assets/confirmed.svg" className="size-14" />
@@ -484,44 +569,20 @@ export function StudentCheckoutModal({
                   </div>
                 </div>
                 <div className="flex items-end justify-between gap-4 py-5">
-                  <span className="font-bold text-[#253029]">Total at pickup</span>
+                  <span className="font-bold text-[#253029]">
+                    {paymentMethod === "PAYMONGO_GCASH" ? "Total to pay online" : "Total at pickup"}
+                  </span>
                   <span className="text-2xl font-extrabold text-primary">{formatPrice(total)}</span>
                 </div>
 
-                <fieldset className="border-t border-[#dce4dc] pt-5">
-                  <legend className="flex items-center gap-2 font-extrabold text-[#17211b]">
-                    <AssetIcon src="/assets/payment.svg" className="size-7" />
-                    Payment method
-                  </legend>
-                  <div className="mt-3 grid gap-2">
-                    {[
-                      { value: "Pay at Commissary", label: "Pay at Commissary", detail: "Cash payment during pickup", image: "/assets/cash.svg" },
-                      { value: "E-wallet at Pickup", label: "E-wallet at Pickup", detail: "Scan the official QR at the counter", image: "/assets/e-wallet.svg" }
-                    ].map((method) => (
-                      <label
-                        key={method.value}
-                        className={`flex cursor-pointer items-start gap-3 rounded-md border p-3 transition ${
-                          paymentMethod === method.value ? "border-primary bg-[#edf6ed]" : "border-[#d7e0d8] bg-white"
-                        }`}
-                      >
-                        <input
-                          type="radio"
-                          name="payment"
-                          value={method.value}
-                          checked={paymentMethod === method.value}
-                          onChange={() => setPaymentMethod(method.value)}
-                          disabled={submitting}
-                          className="mt-1 accent-primary"
-                        />
-                        <AssetIcon src={method.image} className="mt-0.5 size-7" />
-                        <span>
-                          <span className="block text-sm font-bold text-[#253029]">{method.label}</span>
-                          <span className="block text-xs leading-5 text-[#6d7771]">{method.detail}</span>
-                        </span>
-                      </label>
-                    ))}
-                  </div>
-                </fieldset>
+                <div className="border-t border-[#dce4dc] pt-5">
+                  <PaymentMethodSelector
+                    name="payment"
+                    value={paymentMethod}
+                    onChange={setPaymentMethod}
+                    disabled={submitting}
+                  />
+                </div>
 
                 {error ? (
                   <p className="mt-4 rounded-md border border-[#f0b9b9] bg-[#fff3f3] px-3 py-2.5 text-sm font-medium text-[#a22828]" role="alert">
@@ -545,7 +606,7 @@ export function StudentCheckoutModal({
                   </p>
                 )}
 
-                <Button type="submit" disabled={submitting || isReservationRestricted || unavailable} className="mt-5 h-12 w-full text-base font-bold">
+                <Button type="submit" disabled={submitting || isReservationRestricted || unavailable} aria-busy={submitting} className="mt-5 h-12 w-full text-base font-bold">
                   <AssetIcon src="/assets/verified.svg" className="size-6" />
                   {submitting
                     ? "Submitting reservation..."
@@ -554,11 +615,13 @@ export function StudentCheckoutModal({
                       : isReservationRestricted
                       ? "Reservation Access Paused"
                       : user
-                        ? "Confirm Reservation"
+                        ? paymentMethod === "PAYMONGO_GCASH" ? "Continue to GCash" : "Confirm Reservation"
                         : "Log in to Continue"}
                 </Button>
                 <p className="mt-3 text-center text-xs leading-5 text-[#77817b]">
-                  No payment is charged online. Staff confirmation is required before pickup.
+                  {paymentMethod === "PAYMONGO_GCASH"
+                    ? "WESCOMM marks payment complete only after secure confirmation from PayMongo."
+                    : "No payment is charged online. Staff confirmation is required before pickup."}
                 </p>
               </aside>
             </div>

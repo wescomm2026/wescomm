@@ -7,6 +7,7 @@ import { ZodError } from "zod";
 import { env } from "./config/env.js";
 import { requireTrustedCookieOrigin } from "./middleware/csrf.js";
 import { apiRoutes } from "./routes/index.js";
+import { paymongoWebhookHandler } from "./routes/paymongo-webhook.routes.js";
 import { allowedFrontendOrigins } from "./utils/allowed-origins.js";
 import { HttpError } from "./utils/http-error.js";
 import {
@@ -38,16 +39,25 @@ app.use(cors({
   },
   credentials: true,
   methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Authorization", "Content-Type", "X-Request-Id"],
+  allowedHeaders: ["Authorization", "Content-Type", "Idempotency-Key", "X-Request-Id"],
   exposedHeaders: ["X-Request-Id", "RateLimit-Limit", "RateLimit-Remaining", "RateLimit-Reset", "Retry-After"],
   maxAge: 600
 }));
-app.use(express.json({ limit: "6mb" }));
 app.use(morgan(
   env.NODE_ENV === "production"
     ? ":date[iso] :method :safe-url :status :response-time ms request=:request-id"
     : ":method :safe-url :status :response-time ms"
 ));
+
+// PayMongo signs the exact bytes sent. This route must remain before every
+// JSON parser and before cookie-origin/CSRF middleware.
+app.post(
+  "/api/webhooks/paymongo",
+  express.raw({ type: "application/json", limit: "256kb" }),
+  paymongoWebhookHandler
+);
+
+app.use(express.json({ limit: "6mb" }));
 app.use(requireTrustedCookieOrigin);
 
 app.use("/api", (_request, response, next) => {
