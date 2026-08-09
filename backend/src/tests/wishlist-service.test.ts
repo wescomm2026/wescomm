@@ -1,12 +1,17 @@
-import { Prisma } from "@prisma/client";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import test from "node:test";
-import { WISHLIST_WRITE_TRANSACTION_OPTIONS } from "../services/wishlist.service.js";
 
-test("wishlist writes use bounded serializable transactions", () => {
-  assert.deepEqual(WISHLIST_WRITE_TRANSACTION_OPTIONS, {
-    isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-    maxWait: 10_000,
-    timeout: 20_000
-  });
+test("wishlist writes lock and mutate each product in one database statement", () => {
+  const source = readFileSync(
+    path.resolve(process.cwd(), "src/services/wishlist.service.ts"),
+    "utf8"
+  );
+
+  assert.doesNotMatch(source, /prisma\s*\.\s*\$transaction/);
+  assert.match(source, /WITH locked_product AS MATERIALIZED/);
+  assert.match(source, /FOR UPDATE/);
+  assert.match(source, /INSERT INTO public\.wishlist_items/);
+  assert.match(source, /DELETE FROM public\.wishlist_items/);
 });

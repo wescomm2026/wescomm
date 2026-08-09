@@ -36,6 +36,10 @@ function json(route: Route, body: unknown, status = 200) {
   });
 }
 
+function apiPath(requestUrl: string) {
+  return new URL(requestUrl).pathname.replace(/^\/api(?:\/backend)?/, "");
+}
+
 test("anonymous users can browse live products and use the cart without changing inventory", async ({ page }) => {
   await page.goto("/student/shop");
   await dismissWelcomeGate(page);
@@ -83,12 +87,16 @@ test("mobile student navigation opens as a web menu and changes pages", async ({
 test("mobile shop renders wishlist controls in two columns and opens a full image preview", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "mobile-chromium", "The compact grid is a mobile-only layout requirement.");
 
-  await page.route("**/api/backend/products", (route) => json(route, { products: shopFixtures }));
+  await page.route(/\/api(?:\/backend)?\/products(?:\?.*)?$/, (route) => json(route, { products: shopFixtures }));
   await page.goto("/student/shop");
   await dismissWelcomeGate(page);
 
   const cards = page.getByTestId("shop-product-grid").getByRole("article");
   await expect(cards).toHaveCount(2);
+  for (const status of ["In Stock", "Restock Soon", "Out of Stock", "On Sale"]) {
+    await expect(page.getByRole("button", { name: status })).toHaveAttribute("aria-pressed", "false");
+  }
+  await expect(page.getByLabel("Sort shop items")).toHaveValue("featured");
   const [firstBox, secondBox] = await Promise.all([
     cards.nth(0).boundingBox(),
     cards.nth(1).boundingBox()
@@ -125,15 +133,21 @@ test("student wishlist saves, removes, and enables an out-of-stock alert", async
     releaseAuth = resolve;
   });
   let releaseWishlistRead: () => void = () => {};
-  let wishlistReadGate: Promise<void> | null = null;
+  let wishlistReadGate: Promise<void> | null = new Promise((resolve) => {
+    releaseWishlistRead = resolve;
+  });
+  let releaseWishlistWrite: () => void = () => {};
+  let wishlistWriteGate: Promise<void> | null = new Promise((resolve) => {
+    releaseWishlistWrite = resolve;
+  });
   let failNextProductRead = false;
   let failNextWishlistDelete = false;
 
-  await page.route("**/api/backend/**", async (route) => {
+  await page.route(/\/api(?:\/backend)?\/.*/, async (route) => {
     const request = route.request();
-    const path = new URL(request.url()).pathname;
+    const path = apiPath(request.url());
 
-    if (path === "/api/backend/auth/me") {
+    if (path === "/auth/me") {
       if (authGate) {
         await authGate;
         authGate = null;
@@ -153,7 +167,7 @@ test("student wishlist saves, removes, and enables an out-of-stock alert", async
       });
       return;
     }
-    if (path === "/api/backend/products") {
+    if (path === "/products") {
       if (failNextProductRead) {
         failNextProductRead = false;
         await json(route, { error: "Temporary product refresh failure." }, 503);
@@ -162,21 +176,26 @@ test("student wishlist saves, removes, and enables an out-of-stock alert", async
       await json(route, { products: shopFixtures });
       return;
     }
-    if (path === "/api/backend/wishlist" && request.method() === "GET") {
+    if (path === "/wishlist" && request.method() === "GET") {
+      const wishlistSnapshot = Array.from(wishlist);
       if (wishlistReadGate) {
         await wishlistReadGate;
         wishlistReadGate = null;
       }
       await json(route, {
-        wishlist: Array.from(wishlist, (productId) => ({ productId, createdAt: "2026-07-23T00:00:00.000Z" }))
+        wishlist: wishlistSnapshot.map((productId) => ({ productId, createdAt: "2026-07-23T00:00:00.000Z" }))
       });
       return;
     }
-    const wishlistMatch = path.match(/^\/api\/backend\/wishlist\/([^/]+)$/);
+    const wishlistMatch = path.match(/^\/wishlist\/([^/]+)$/);
     if (wishlistMatch && request.method() === "POST") {
       const productId = decodeURIComponent(wishlistMatch[1]);
       wishlist.add(productId);
       mutations.push(`POST:${productId}`);
+      if (wishlistWriteGate) {
+        await wishlistWriteGate;
+        wishlistWriteGate = null;
+      }
       await json(route, { wishlistItem: { productId, createdAt: "2026-07-23T00:00:00.000Z" } }, 201);
       return;
     }
@@ -192,7 +211,7 @@ test("student wishlist saves, removes, and enables an out-of-stock alert", async
       await route.fulfill({ status: 204 });
       return;
     }
-    if (path === "/api/backend/restrictions/me") {
+    if (path === "/restrictions/me") {
       await json(route, {
         restrictionSummary: {
           activeRestriction: null,
@@ -203,7 +222,7 @@ test("student wishlist saves, removes, and enables an out-of-stock alert", async
       });
       return;
     }
-    if (path === "/api/backend/notifications") {
+    if (path === "/notifications") {
       await json(route, {
         notifications: [{
           id: "74000000-0000-4000-8000-000000000001",
@@ -218,11 +237,11 @@ test("student wishlist saves, removes, and enables an out-of-stock alert", async
       });
       return;
     }
-    if (path === "/api/backend/notifications/74000000-0000-4000-8000-000000000001/read") {
+    if (path === "/notifications/74000000-0000-4000-8000-000000000001/read") {
       await json(route, { notification: null });
       return;
     }
-    if (path === "/api/backend/push/public-key") {
+    if (path === "/push/public-key") {
       await json(route, { enabled: false, publicKey: "" });
       return;
     }
@@ -243,6 +262,13 @@ test("student wishlist saves, removes, and enables an out-of-stock alert", async
     new URL(response.url()).pathname.endsWith(`/wishlist/${shopFixtures[0].id}`)
   );
   await inStockHeart.click();
+  const optimisticHeart = page.getByRole("button", { name: "Remove Mobile Shop Notebook from wishlist" });
+  await expect(optimisticHeart).toHaveAttribute("aria-pressed", "true");
+  await expect(optimisticHeart).toHaveAttribute("aria-busy", "true");
+  await expect(optimisticHeart.locator(".animate-spin")).toHaveCount(0);
+  releaseWishlistRead();
+  await expect(optimisticHeart).toHaveAttribute("aria-pressed", "true");
+  releaseWishlistWrite();
   await firstSaveResponse;
   await expect(page.getByRole("button", { name: "Remove Mobile Shop Notebook from wishlist" })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByText("Saved to your wishlist")).toBeVisible();
@@ -258,7 +284,8 @@ test("student wishlist saves, removes, and enables an out-of-stock alert", async
   await expect(page.getByRole("button", { name: "Stop Mobile Shop Pen Set restock" })).toHaveAttribute("aria-pressed", "true");
 
   await page.getByRole("button", { name: "Out of Stock" }).click();
-  await expect(page.getByRole("article", { name: "Mobile Shop Pen Set" })).toHaveCount(0);
+  await expect(page.getByRole("article", { name: "Mobile Shop Notebook" })).toHaveCount(0);
+  await expect(page.getByRole("article", { name: "Mobile Shop Pen Set" })).toHaveCount(1);
   const notificationTrigger = page.getByRole("button", { name: /Notifications, 1 unread/ });
   await notificationTrigger.click();
   const notificationRegion = page.getByRole("region", { name: "Student notifications" });
@@ -318,15 +345,15 @@ test("student wishlist saves, removes, and enables an out-of-stock alert", async
   ]);
 });
 
-test("failed wishlist loading stays disabled until a successful retry", async ({ page }, testInfo) => {
+test("failed wishlist loading can recover without blocking wishlist controls", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop-chromium", "One browser project is enough for wishlist recovery.");
 
   let wishlistReads = 0;
-  await page.route("**/api/backend/**", async (route) => {
+  await page.route(/\/api(?:\/backend)?\/.*/, async (route) => {
     const request = route.request();
-    const path = new URL(request.url()).pathname;
+    const path = apiPath(request.url());
 
-    if (path === "/api/backend/auth/me") {
+    if (path === "/auth/me") {
       await json(route, {
         profile: {
           id: "73000000-0000-4000-8000-000000000001",
@@ -342,11 +369,11 @@ test("failed wishlist loading stays disabled until a successful retry", async ({
       });
       return;
     }
-    if (path === "/api/backend/products") {
+    if (path === "/products") {
       await json(route, { products: shopFixtures });
       return;
     }
-    if (path === "/api/backend/wishlist" && request.method() === "GET") {
+    if (path === "/wishlist" && request.method() === "GET") {
       wishlistReads += 1;
       if (wishlistReads === 1) {
         await json(route, { error: "Wishlist database is temporarily unavailable." }, 503);
@@ -357,7 +384,7 @@ test("failed wishlist loading stays disabled until a successful retry", async ({
       }
       return;
     }
-    if (path === "/api/backend/restrictions/me") {
+    if (path === "/restrictions/me") {
       await json(route, {
         restrictionSummary: {
           activeRestriction: null,
@@ -368,11 +395,11 @@ test("failed wishlist loading stays disabled until a successful retry", async ({
       });
       return;
     }
-    if (path === "/api/backend/notifications") {
+    if (path === "/notifications") {
       await json(route, { notifications: [] });
       return;
     }
-    if (path === "/api/backend/push/public-key") {
+    if (path === "/push/public-key") {
       await json(route, { enabled: false, publicKey: "" });
       return;
     }
@@ -384,7 +411,7 @@ test("failed wishlist loading stays disabled until a successful retry", async ({
   await dismissWelcomeGate(page);
 
   const unavailableHeart = page.getByRole("button", { name: "Add Mobile Shop Notebook to wishlist" });
-  await expect(unavailableHeart).toBeDisabled();
+  await expect(unavailableHeart).toBeEnabled();
   await expect(page.getByText(/Wishlist could not be loaded:/)).toBeVisible();
 
   await page.getByRole("button", { name: "Retry" }).click();

@@ -1,15 +1,9 @@
 import { Prisma } from "@prisma/client";
 import { isProductAvailable } from "../domain/wishlist-policy.js";
 import { prisma } from "../lib/prisma.js";
+import type { ProductStatus } from "../types/app.js";
 import { HttpError } from "../utils/http-error.js";
 import { withTransientPrismaReadRetry } from "../utils/prisma-retry.js";
-import { lockProductForUpdate } from "../utils/product-transaction.js";
-
-export const WISHLIST_WRITE_TRANSACTION_OPTIONS = Object.freeze({
-  isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-  maxWait: 10_000,
-  timeout: 20_000
-});
 
 function mapWishlistTransactionError(error: unknown) {
   if (error instanceof HttpError) return error;
@@ -58,53 +52,68 @@ export async function listWishlist(userId: string) {
 }
 
 export async function addWishlistItem(userId: string, productId: string) {
-  return prisma
-    .$transaction(async (transaction) => {
-      const productExists = await lockProductForUpdate(transaction, productId);
-      if (!productExists) throw new HttpError(404, "Product not found.");
+  try {
+    // Keep the product lock and idempotent upsert in one remote-DB round trip.
+    // The lock preserves ordering with back-in-stock notification transactions.
+    const [row] = await prisma.$queryRaw<Array<{
+      productId: string;
+      createdAt: Date;
+      stock: number;
+      status: ProductStatus;
+      isActive: boolean;
+    }>>`
+      WITH locked_product AS MATERIALIZED (
+        SELECT id, stock, status, is_active
+        FROM public.products
+        WHERE id = CAST(${productId} AS uuid)
+          AND is_active = TRUE
+        FOR UPDATE
+      ), wishlist_item AS (
+        INSERT INTO public.wishlist_items (user_id, product_id)
+        SELECT CAST(${userId} AS uuid), id
+        FROM locked_product
+        ON CONFLICT (user_id, product_id)
+        DO UPDATE SET updated_at = NOW()
+        RETURNING product_id, created_at
+      )
+      SELECT
+        wishlist_item.product_id AS "productId",
+        wishlist_item.created_at AS "createdAt",
+        locked_product.stock,
+        locked_product.status,
+        locked_product.is_active AS "isActive"
+      FROM wishlist_item
+      INNER JOIN locked_product ON locked_product.id = wishlist_item.product_id
+    `;
 
-      const product = await transaction.product.findUnique({
-        where: { id: productId },
-        select: {
-          id: true,
-          stock: true,
-          status: true,
-          isActive: true
-        }
-      });
-      if (!product?.isActive) throw new HttpError(404, "Product not found.");
+    if (!row) throw new HttpError(404, "Product not found.");
 
-      const item = await transaction.wishlistItem.upsert({
-        where: {
-          userId_productId: { userId, productId }
-        },
-        create: { userId, productId },
-        update: { updatedAt: new Date() },
-        select: {
-          productId: true,
-          createdAt: true
-        }
-      });
-
-      return {
-        ...mapWishlistItem(item),
-        isAvailable: isProductAvailable(product)
-      };
-    }, WISHLIST_WRITE_TRANSACTION_OPTIONS)
-    .catch((error) => {
-      throw mapWishlistTransactionError(error);
-    });
+    return {
+      ...mapWishlistItem(row),
+      isAvailable: isProductAvailable(row)
+    };
+  } catch (error) {
+    throw mapWishlistTransactionError(error);
+  }
 }
 
 export async function removeWishlistItem(userId: string, productId: string) {
-  await prisma
-    .$transaction(async (transaction) => {
-      await lockProductForUpdate(transaction, productId);
-      await transaction.wishlistItem.deleteMany({
-        where: { userId, productId }
-      });
-    }, WISHLIST_WRITE_TRANSACTION_OPTIONS)
-    .catch((error) => {
-      throw mapWishlistTransactionError(error);
-    });
+  try {
+    // Locking and deleting in one statement preserves the same notification
+    // ordering guarantee without an interactive transaction's extra round trips.
+    await prisma.$executeRaw`
+      WITH locked_product AS MATERIALIZED (
+        SELECT id
+        FROM public.products
+        WHERE id = CAST(${productId} AS uuid)
+        FOR UPDATE
+      )
+      DELETE FROM public.wishlist_items AS wishlist
+      USING locked_product
+      WHERE wishlist.user_id = CAST(${userId} AS uuid)
+        AND wishlist.product_id = locked_product.id
+    `;
+  } catch (error) {
+    throw mapWishlistTransactionError(error);
+  }
 }

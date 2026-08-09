@@ -116,9 +116,9 @@ function ProductCard({
             aria-pressed={wishlisted}
             aria-busy={wishlistPending}
             aria-label={`${wishlisted ? "Remove" : "Add"} ${product.name} ${wishlisted ? "from" : "to"} wishlist`}
-            className="absolute right-1.5 top-1.5 z-20 grid size-10 place-items-center rounded-full border border-[#d8e4d9] bg-white/95 text-primary shadow-sm transition hover:scale-105 hover:bg-[#eef7ef] focus:outline-none focus:ring-2 focus:ring-primary/40 disabled:opacity-60 sm:right-2 sm:top-2 sm:size-11"
+            className="absolute right-1.5 top-1.5 z-20 grid size-10 place-items-center rounded-full border border-[#d8e4d9] bg-white/95 text-primary shadow-sm transition hover:scale-105 hover:bg-[#eef7ef] focus:outline-none focus:ring-2 focus:ring-primary/40 disabled:opacity-100 sm:right-2 sm:top-2 sm:size-11"
           >
-            {wishlistPending || wishlistDisabled ? (
+            {wishlistDisabled ? (
               <LoaderCircle className="size-5 animate-spin" aria-hidden="true" />
             ) : (
               <Heart className={`size-5 ${wishlisted ? "fill-primary" : ""}`} strokeWidth={2.2} aria-hidden="true" />
@@ -148,10 +148,10 @@ function ProductCard({
           aria-pressed={wishlisted}
           aria-busy={wishlistPending}
           aria-label={`${wishlisted ? "Stop" : "Notify me about"} ${product.name} restock`}
-          className="mt-auto h-10 w-full px-1.5 pt-0 text-[10px] sm:h-11 sm:px-3 sm:text-sm"
+          className="mt-auto h-10 w-full px-1.5 pt-0 text-[10px] disabled:opacity-100 sm:h-11 sm:px-3 sm:text-sm"
           onClick={() => onToggleWishlist(product)}
         >
-          {wishlistPending || wishlistDisabled ? (
+          {wishlistDisabled ? (
             <LoaderCircle className="size-4 shrink-0 animate-spin" aria-hidden="true" />
           ) : (
             <Heart className={`size-4 shrink-0 ${wishlisted ? "fill-primary" : ""}`} aria-hidden="true" />
@@ -383,7 +383,7 @@ export function StudentShopExperience() {
   const [products, setProducts] = useState<Product[]>([]);
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("All Items");
-  const [statuses, setStatuses] = useState<string[]>(statusFilters);
+  const [statuses, setStatuses] = useState<string[]>([]);
   const [sort, setSort] = useState("featured");
   const [wishlistOnly, setWishlistOnly] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -457,7 +457,7 @@ export function StudentShopExperience() {
     setWishlistOnly(wishlistRequested);
     if (wishlistRequested && highlightedProductId) {
       setCategory("All Items");
-      setStatuses(statusFilters);
+      setStatuses([]);
     }
   }, [highlightedProductId, routeQuery, wishlistRequested]);
 
@@ -619,7 +619,7 @@ export function StudentShopExperience() {
   const wishlistViewUnavailable =
     wishlistOnly && user?.role === "STUDENT" && Boolean(wishlist.error) && !wishlist.ready;
   const wishlistControlsDisabled =
-    !authReady || (user?.role === "STUDENT" && !wishlist.ready);
+    !authReady;
 
   return (
     <div className="grid w-full max-w-full min-w-0 gap-6 overflow-hidden lg:grid-cols-[250px_1fr]">
@@ -710,7 +710,7 @@ export function StudentShopExperience() {
               onClick={() => {
                 updateQuery("");
                 setCategory("All Items");
-                setStatuses(statusFilters);
+                setStatuses([]);
                 setSort("featured");
                 updateWishlistFilter(false);
               }}

@@ -12,26 +12,71 @@ type WishlistToggleResult =
   | { ok: true; wishlisted: boolean }
   | { ok: false; reason: "AUTH_REQUIRED" | "STUDENT_ONLY" | "MISSING_PRODUCT" | "REQUEST_FAILED"; message?: string };
 
+type WishlistMutation = {
+  wishlisted: boolean;
+  pending: boolean;
+};
+
 const EMPTY_WISHLIST = new Set<string>();
+
+function applyWishlistMutations(
+  productIds: Set<string>,
+  mutations: Map<string, WishlistMutation>
+) {
+  if (!mutations.size) return productIds;
+
+  const next = new Set(productIds);
+  mutations.forEach((mutation, productId) => {
+    if (mutation.wishlisted) next.add(productId);
+    else next.delete(productId);
+  });
+  return next;
+}
 
 export function useStudentWishlist() {
   const { user, ready: authReady, openAuth } = useStudentAuth();
   const [productIds, setProductIds] = useState<Set<string>>(new Set());
   const [loadedOwnerId, setLoadedOwnerId] = useState("");
-  const [pendingProductIds, setPendingProductIds] = useState<Set<string>>(new Set());
+  const [mutations, setMutations] = useState<Map<string, WishlistMutation>>(new Map());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
   const requestSequenceRef = useRef(0);
+  const productIdsRef = useRef<Set<string>>(new Set());
+  const mutationsRef = useRef<Map<string, WishlistMutation>>(new Map());
+  const loadedOwnerIdRef = useRef("");
   const ownerId = authReady && user?.role === "STUDENT" ? user.id : "";
   const token = ownerId ? user?.accessToken ?? "" : "";
-  const visibleProductIds = loadedOwnerId === ownerId ? productIds : EMPTY_WISHLIST;
+  const ownerProductIds = loadedOwnerId === ownerId ? productIds : EMPTY_WISHLIST;
+  const visibleProductIds = useMemo(
+    () => applyWishlistMutations(ownerProductIds, mutations),
+    [mutations, ownerProductIds]
+  );
+  const pendingProductIds = useMemo(
+    () => new Set(
+      Array.from(mutations)
+        .filter(([, mutation]) => mutation.pending)
+        .map(([productId]) => productId)
+    ),
+    [mutations]
+  );
   const ready = authReady && (!ownerId || loadedOwnerId === ownerId) && !loading;
+
+  const replaceProductIds = useCallback((next: Set<string>) => {
+    productIdsRef.current = next;
+    setProductIds(next);
+  }, []);
+
+  const replaceMutations = useCallback((next: Map<string, WishlistMutation>) => {
+    mutationsRef.current = next;
+    setMutations(next);
+  }, []);
 
   useEffect(() => {
     const requestSequence = ++requestSequenceRef.current;
-    setProductIds(new Set());
-    setPendingProductIds(new Set());
+    replaceProductIds(new Set());
+    replaceMutations(new Map());
+    loadedOwnerIdRef.current = "";
     setLoadedOwnerId("");
     setError("");
 
@@ -44,7 +89,19 @@ export function useStudentWishlist() {
     getWishlistFromApi(token)
       .then((items) => {
         if (requestSequence !== requestSequenceRef.current) return;
-        setProductIds(new Set(items.map((item) => item.productId)));
+        const nextProductIds = new Set(items.map((item) => item.productId));
+        const nextMutations = new Map(mutationsRef.current);
+
+        nextMutations.forEach((mutation, productId) => {
+          if (mutation.pending) return;
+          if (mutation.wishlisted) nextProductIds.add(productId);
+          else nextProductIds.delete(productId);
+          nextMutations.delete(productId);
+        });
+
+        replaceProductIds(nextProductIds);
+        replaceMutations(nextMutations);
+        loadedOwnerIdRef.current = ownerId;
         setLoadedOwnerId(ownerId);
       })
       .catch((wishlistError) => {
@@ -58,7 +115,7 @@ export function useStudentWishlist() {
     return () => {
       requestSequenceRef.current += 1;
     };
-  }, [ownerId, reloadKey, token]);
+  }, [ownerId, reloadKey, replaceMutations, replaceProductIds, token]);
 
   const retry = useCallback(() => {
     if (ownerId && token) setReloadKey((current) => current + 1);
@@ -75,24 +132,23 @@ export function useStudentWishlist() {
     if (!productId) {
       return { ok: false, reason: "MISSING_PRODUCT" };
     }
-    if (!token || !ownerId || loadedOwnerId !== ownerId || pendingProductIds.has(productId)) {
+    if (!token || !ownerId || mutationsRef.current.get(productId)?.pending) {
       return {
         ok: false,
         reason: "REQUEST_FAILED",
-        message: loading ? "Your wishlist is still loading. Please try again." : "Please refresh and try again."
+        message: "Please wait for the current wishlist update to finish."
       };
     }
 
-    const wasWishlisted = visibleProductIds.has(productId);
+    const currentMutation = mutationsRef.current.get(productId);
+    const wasWishlisted = currentMutation?.wishlisted ?? productIdsRef.current.has(productId);
+    const nextWishlisted = !wasWishlisted;
     const requestSequence = requestSequenceRef.current;
     setError("");
-    setPendingProductIds((current) => new Set(current).add(productId));
-    setProductIds((current) => {
-      const next = new Set(current);
-      if (wasWishlisted) next.delete(productId);
-      else next.add(productId);
-      return next;
-    });
+    replaceMutations(new Map(mutationsRef.current).set(productId, {
+      wishlisted: nextWishlisted,
+      pending: true
+    }));
 
     try {
       if (wasWishlisted) await removeWishlistItemFromApi(token, productId);
@@ -101,39 +157,37 @@ export function useStudentWishlist() {
       if (requestSequence !== requestSequenceRef.current) {
         return { ok: false, reason: "REQUEST_FAILED" };
       }
-      return { ok: true, wishlisted: !wasWishlisted };
+
+      const nextProductIds = new Set(productIdsRef.current);
+      if (nextWishlisted) nextProductIds.add(productId);
+      else nextProductIds.delete(productId);
+      replaceProductIds(nextProductIds);
+
+      const nextMutations = new Map(mutationsRef.current);
+      if (loadedOwnerIdRef.current === ownerId) nextMutations.delete(productId);
+      else nextMutations.set(productId, { wishlisted: nextWishlisted, pending: false });
+      replaceMutations(nextMutations);
+
+      return { ok: true, wishlisted: nextWishlisted };
     } catch (wishlistError) {
       if (requestSequence === requestSequenceRef.current) {
-        setProductIds((current) => {
-          const next = new Set(current);
-          if (wasWishlisted) next.add(productId);
-          else next.delete(productId);
-          return next;
-        });
+        const nextMutations = new Map(mutationsRef.current);
+        nextMutations.delete(productId);
+        replaceMutations(nextMutations);
       }
       return {
         ok: false,
         reason: "REQUEST_FAILED",
         message: wishlistError instanceof Error ? wishlistError.message : "Unable to update your wishlist."
       };
-    } finally {
-      if (requestSequence === requestSequenceRef.current) {
-        setPendingProductIds((current) => {
-          const next = new Set(current);
-          next.delete(productId);
-          return next;
-        });
-      }
     }
   }, [
-    loadedOwnerId,
-    loading,
     openAuth,
     ownerId,
-    pendingProductIds,
+    replaceMutations,
+    replaceProductIds,
     token,
-    user,
-    visibleProductIds
+    user
   ]);
 
   return useMemo(() => ({
