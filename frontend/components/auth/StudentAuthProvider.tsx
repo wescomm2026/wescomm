@@ -67,6 +67,7 @@ type StudentAuthContextValue = {
   ready: boolean;
   allowedEmailDomain: string;
   openAuth: () => void;
+  openAuthAt: (returnTo: string) => void;
   closeAuth: () => void;
   sendEmailOtp: (email: string) => Promise<AuthResult>;
   verifyEmailOtp: (email: string, token: string) => Promise<AuthResult>;
@@ -147,6 +148,18 @@ function getDashboardPath(role: AppRole) {
   return "/student/dashboard";
 }
 
+function safeStudentReturnPath(value?: string) {
+  if (!value || typeof window === "undefined") return null;
+
+  try {
+    const url = new URL(value, window.location.origin);
+    if (url.origin !== window.location.origin || !url.pathname.startsWith("/student/")) return null;
+    return `${url.pathname}${url.search}${url.hash}`;
+  } catch {
+    return null;
+  }
+}
+
 async function loadProfileSession(accessToken?: string): Promise<StudentUser> {
   const profileResponse = await onlineFetch(`${API_BASE_URL}/auth/me`, {
     credentials: "include",
@@ -224,6 +237,7 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
   const mountedRef = useRef(false);
   const profileCheckRef = useRef<Promise<ProfileCheckResult> | null>(null);
   const pendingLogoutRef = useRef<Promise<boolean> | null>(null);
+  const pendingAuthReturnPathRef = useRef<string | null>(null);
   const sessionGenerationRef = useRef(0);
   const welcomeTargetNeedsContentReady = READINESS_AWARE_DASHBOARD_PATHS.has(welcomeGateTargetPath);
   const dismissWelcomeGate = useCallback(() => setWelcomeGateUser(null), []);
@@ -517,23 +531,35 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
     };
   }, [clearConfirmedSession, flushPendingLogout, ready, revalidateProfileSession, user]);
 
-  const openAuth = useCallback(() => setModalOpen(true), []);
-  const closeAuth = useCallback(() => setModalOpen(false), []);
+  const openAuth = useCallback(() => {
+    pendingAuthReturnPathRef.current = null;
+    setModalOpen(true);
+  }, []);
+  const openAuthAt = useCallback((returnTo: string) => {
+    pendingAuthReturnPathRef.current = safeStudentReturnPath(returnTo);
+    setModalOpen(true);
+  }, []);
+  const closeAuth = useCallback(() => {
+    pendingAuthReturnPathRef.current = null;
+    setModalOpen(false);
+  }, []);
 
   const saveSession = useCallback((session: StudentUser) => {
     if (window.localStorage.getItem(LOGOUT_PENDING_KEY) === "true") return false;
     sessionGenerationRef.current += 1;
     profileCheckRef.current = null;
-    const dashboardPath = getDashboardPath(session.role);
-    if (dashboardPath !== window.location.pathname) {
-      resetWelcomeContentReady(dashboardPath);
+    const requestedReturnPath = session.role === "STUDENT" ? pendingAuthReturnPathRef.current : null;
+    pendingAuthReturnPathRef.current = null;
+    const targetPath = requestedReturnPath ?? getDashboardPath(session.role);
+    if (targetPath !== window.location.pathname) {
+      resetWelcomeContentReady(targetPath);
     }
     persistSession(session, {
       showWelcomeGate: true,
-      welcomeGateTargetPath: dashboardPath
+      welcomeGateTargetPath: targetPath
     });
     setModalOpen(false);
-    router.replace(dashboardPath);
+    router.replace(targetPath);
     return true;
   }, [persistSession, router]);
 
@@ -783,6 +809,7 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
       ready,
       allowedEmailDomain: ALLOWED_EMAIL_DOMAIN,
       openAuth,
+      openAuthAt,
       closeAuth,
       sendEmailOtp,
       verifyEmailOtp,
@@ -792,7 +819,7 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
       updateProfile,
       logout
     }),
-    [user, ready, openAuth, closeAuth, sendEmailOtp, verifyEmailOtp, loginWithTestAccount, isPasswordLoginAvailable, completeEmailLogin, updateProfile, logout]
+    [user, ready, openAuth, openAuthAt, closeAuth, sendEmailOtp, verifyEmailOtp, loginWithTestAccount, isPasswordLoginAvailable, completeEmailLogin, updateProfile, logout]
   );
 
   return (

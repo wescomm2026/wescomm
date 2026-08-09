@@ -4,6 +4,12 @@ import {
   type ReservationStatus as PrismaReservationStatus
 } from "@prisma/client";
 import { randomBytes } from "node:crypto";
+import { env } from "../config/env.js";
+import {
+  assertPaymentAllowsReservationTransition,
+  paymentCanResume,
+  paymentCanRetry
+} from "../domain/online-payment.js";
 import { RESERVATION_RESTRICTION_POLICY, getNoShowEligibleAt } from "../domain/reservation-policy.js";
 import {
   assertReservationTransition,
@@ -14,6 +20,7 @@ import { prisma } from "../lib/prisma.js";
 import { supabaseAdmin } from "../lib/supabase.js";
 import { safelyRecordAuditLog } from "./audit-log.service.js";
 import { createReceiptForReservation } from "./receipt.service.js";
+import { expireCheckoutAttemptBestEffort } from "./paymongo-reconciliation.service.js";
 import {
   assertReservationAccessInTransaction,
   notifyStudentOfPolicyOutcome,
@@ -27,6 +34,7 @@ import {
 import {
   type AppRole,
   type NotificationType,
+  type OnlinePaymentStatus,
   type PaymentMethod,
   type RawProfileSummary,
   type ReservationStatus,
@@ -87,6 +95,23 @@ type RawReservation = {
   updated_at: string;
   student: RawProfileSummary | RawProfileSummary[] | null;
   items: RawReservationItem[] | null;
+  payment: RawOnlinePayment | RawOnlinePayment[] | null;
+};
+
+type RawOnlinePayment = {
+  id: string;
+  reservation_id: string;
+  status: OnlinePaymentStatus;
+  amount_centavos: number;
+  currency: string;
+  livemode: boolean;
+  provider_checkout_session_id: string | null;
+  provider_payment_id: string | null;
+  checkout_url: string | null;
+  checkout_expires_at: string | null;
+  paid_at: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
 function normalizeVariantPart(value: string) {
@@ -302,6 +327,7 @@ function mapProduct(product: RawProduct | RawProduct[] | null | undefined) {
 }
 
 function mapReservation(row: RawReservation) {
+  const payment = firstRow(row.payment);
   return {
     id: row.id,
     studentId: row.student_id,
@@ -314,6 +340,23 @@ function mapReservation(row: RawReservation) {
     staffNotes: row.staff_notes,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    payment: payment
+      ? {
+          id: payment.id,
+          reservationId: payment.reservation_id,
+          status: payment.status,
+          amountMinor: payment.amount_centavos,
+          currency: payment.currency.trim(),
+          livemode: payment.livemode,
+          canResume: paymentCanResume(payment.status, payment.checkout_url, payment.checkout_expires_at),
+          canRetry: paymentCanRetry(payment.status),
+          providerReference: payment.provider_payment_id ?? payment.provider_checkout_session_id,
+          paidAt: payment.paid_at,
+          checkoutExpiresAt: payment.checkout_expires_at,
+          createdAt: payment.created_at,
+          updatedAt: payment.updated_at
+        }
+      : null,
     student: mapProfileSummary(row.student),
     items: (row.items ?? []).map((item) => ({
       id: item.id,
@@ -341,6 +384,21 @@ const reservationSelect = `
   staff_notes,
   created_at,
   updated_at,
+  payment:online_payments!online_payments_reservation_id_fkey(
+    id,
+    reservation_id,
+    status,
+    amount_centavos,
+    currency,
+    livemode,
+    provider_checkout_session_id,
+    provider_payment_id,
+    checkout_url,
+    checkout_expires_at,
+    paid_at,
+    created_at,
+    updated_at
+  ),
   student:profiles!reservations_student_id_fkey(id,full_name,email,student_number),
   items:reservation_items(
     id,
@@ -402,6 +460,10 @@ export async function createReservation(input: {
     quantity: number;
   }>;
 }) {
+  if (input.paymentMethod === "PAYMONGO_GCASH" && !env.PAYMONGO_ENABLED) {
+    throw new HttpError(503, "Online GCash payment is not available.", "PAYMONGO_DISABLED");
+  }
+
   const requestHash = hashReservationRequest(input);
   await prisma.reservationIdempotencyKey.deleteMany({
     where: {
@@ -712,7 +774,18 @@ export async function updateReservationStatus(reservationId: string, status: Res
             studentId: true,
             referenceCode: true,
             status: true,
+            paymentMethod: true,
             pickupEnd: true,
+            onlinePayment: {
+              select: {
+                id: true,
+                status: true,
+                attempts: {
+                  where: { status: { in: ["CREATING", "CREATE_UNKNOWN", "ACTIVE", "EXPIRY_REQUESTED"] } },
+                  select: { id: true }
+                }
+              }
+            },
             items: {
               select: {
                 productId: true,
@@ -726,6 +799,11 @@ export async function updateReservationStatus(reservationId: string, status: Res
         if (!existingReservation) throw new HttpError(404, "Reservation not found.");
 
         assertReservationTransition(existingReservation.status as ReservationStatus, status);
+        assertPaymentAllowsReservationTransition({
+          paymentMethod: existingReservation.paymentMethod as PaymentMethod,
+          paymentStatus: existingReservation.onlinePayment?.status as OnlinePaymentStatus | undefined,
+          nextReservationStatus: status
+        });
 
         if (status === "NO_SHOW") {
           if (!performedById) throw new HttpError(401, "A staff account is required to confirm a no-show.");
@@ -748,6 +826,30 @@ export async function updateReservationStatus(reservationId: string, status: Res
         const releasesHeldStock = statusChanged && (status === "CANCELLED" || status === "NO_SHOW");
         const releaseMovementType = status === "NO_SHOW" ? "RESERVATION_NO_SHOW" : "RESERVATION_CANCEL";
         const releaseNote = status === "NO_SHOW" ? "released after confirmed no-show" : "cancelled";
+        let paymentCleanupAttemptIds: string[] = [];
+
+        if (
+          statusChanged
+          && status === "CANCELLED"
+          && existingReservation.paymentMethod === "PAYMONGO_GCASH"
+          && existingReservation.onlinePayment
+          && (existingReservation.onlinePayment.status === "INITIALIZING"
+            || existingReservation.onlinePayment.status === "AWAITING_PAYMENT"
+            || existingReservation.onlinePayment.status === "EXPIRED")
+        ) {
+          await tx.onlinePayment.update({
+            where: { id: existingReservation.onlinePayment.id },
+            data: { status: "CANCELLED", cancelledAt: new Date() },
+            select: { id: true }
+          });
+          paymentCleanupAttemptIds = existingReservation.onlinePayment.attempts.map((attempt) => attempt.id);
+          if (paymentCleanupAttemptIds.length) {
+            await tx.onlinePaymentAttempt.updateMany({
+              where: { id: { in: paymentCleanupAttemptIds } },
+              data: { status: "EXPIRY_REQUESTED", expireRequestedAt: new Date() }
+            });
+          }
+        }
         await tx.reservation.update({
           where: { id: reservationId },
           data: {
@@ -953,7 +1055,8 @@ export async function updateReservationStatus(reservationId: string, status: Res
           nextStatus: status,
           referenceCode: existingReservation.referenceCode,
           pushNotification,
-          policyOutcome
+          policyOutcome,
+          paymentCleanupAttemptIds
         };
       },
       {
@@ -978,6 +1081,13 @@ export async function updateReservationStatus(reservationId: string, status: Res
       throw error;
     });
 
+  if (result.paymentCleanupAttemptIds.length) {
+    await Promise.allSettled(
+      result.paymentCleanupAttemptIds.map((attemptId) =>
+        expireCheckoutAttemptBestEffort(attemptId, performedById ?? null)
+      )
+    );
+  }
   await createReservationStatusNotification(result.pushNotification);
   if (result.policyOutcome) await notifyStudentOfPolicyOutcome(result.policyOutcome);
 

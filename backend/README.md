@@ -104,6 +104,16 @@ http://localhost:4000/api
 - `PATCH /api/staff/restrictions/:id/lift`
 - `PATCH /api/staff/restrictions/offenses/:id/overturn` (admin only)
 - `POST /api/reservations/:id/no-show`
+- `GET /api/payments/options`
+- `POST /api/payments/gcash/checkout` (student)
+- `GET /api/payments/:id` (owner, staff, or admin)
+- `POST /api/payments/:id/reconcile` (staff or admin)
+- `POST /api/payments/maintenance` (server-only maintenance bearer token)
+- `POST /api/webhooks/paymongo` (raw signed PayMongo delivery)
+
+PayMongo setup, attempt recovery, expiration/stock-hold policy, reconciliation,
+GitHub Actions maintenance secrets, sandbox tests, and go-live gates are in
+`../txt_files/WESCOMM_PAYMONGO_GCASH_SETUP.md`.
 
 The browser exchanges its Supabase access token once through `POST /api/auth/session`, then uses a revocable HttpOnly cookie. Bearer tokens remain supported for trusted API testing.
 
@@ -149,9 +159,9 @@ Never commit `.env`. Rotate any service-role, database, SMTP, or private VAPID c
 
 ## Audit Logs
 
-Admin activity tracking uses the `audit_logs` table from `DATABASE_AUDIT_LOGS_SQL.txt`. The backend records important actions such as product creation/update/archive/restock, product image upload, reservation status updates, receipt generation/verification, FAQ changes, support status updates, and admin user role changes.
+Admin activity tracking uses the `audit_logs` table. The PayMongo migration safely adopts an existing compatible table or creates it when absent. The backend records important actions such as product creation/update/archive/restock, product image upload, reservation and payment status changes, receipt generation/verification, FAQ changes, support status updates, and admin user role changes.
 
-Audit logs are best-effort during development. If the table is not created yet, normal operations continue, but `/api/admin/audit-logs` will show an error until the SQL file is run.
+PayMongo lifecycle audit writes are part of the same database transaction as the financial state change. Older operational audit calls remain best-effort so a logging outage does not incorrectly replay a completed business action. Apply all Prisma migrations before enabling payments; `/api/admin/audit-logs` requires the table to exist.
 
 ## Reservation Stock Safety
 
@@ -222,7 +232,8 @@ migration workflow.
 
 The Prisma baseline recreates the Prisma-managed structure for CI and local
 PostgreSQL. It does not replace the Supabase SQL bootstrap for Auth triggers,
-RLS policies, storage, Realtime, custom checks, or `audit_logs`.
+RLS policies, storage, Realtime, or platform-specific custom checks. Later
+Prisma migrations may adopt or create application tables such as `audit_logs`.
 
 ## Student Reservation Access Policy
 

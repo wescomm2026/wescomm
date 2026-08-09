@@ -64,9 +64,27 @@ export type BackendFaq = {
 };
 
 export type BackendReservationStatus = "PENDING" | "CONFIRMED" | "READY_FOR_PICKUP" | "COMPLETED" | "CANCELLED" | "NO_SHOW";
-export type BackendPaymentMethod = "PAY_AT_COMMISSARY" | "E_WALLET_AT_PICKUP" | "CASH" | "GCASH";
+export type BackendPaymentMethod = "PAY_AT_COMMISSARY" | "E_WALLET_AT_PICKUP" | "PAYMONGO_GCASH" | "CASH" | "GCASH";
+export type BackendPaymentStatus =
+  | "INITIALIZING"
+  | "AWAITING_PAYMENT"
+  | "PROCESSING"
+  | "PAID"
+  | "FAILED"
+  | "EXPIRED"
+  | "CANCELLED"
+  | "REFUND_REVIEW_REQUIRED"
+  | "PARTIALLY_REFUNDED"
+  | "REFUNDED";
 export type BackendReceiptStatus = "PENDING" | "VERIFIED" | "VOIDED";
-export type BackendNotificationType = "RESERVATION" | "RECEIPT" | "LOW_STOCK" | "MESSAGE" | "SYSTEM" | "BACK_IN_STOCK";
+export type BackendNotificationType =
+  | "RESERVATION"
+  | "RECEIPT"
+  | "PAYMENT"
+  | "LOW_STOCK"
+  | "MESSAGE"
+  | "SYSTEM"
+  | "BACK_IN_STOCK";
 export type BackendConversationStatus = "OPEN" | "RESOLVED";
 
 export type BackendProfileSummary = {
@@ -74,6 +92,29 @@ export type BackendProfileSummary = {
   fullName: string;
   email: string;
   studentNumber?: string | null;
+};
+
+export type BackendPaymentSummary = {
+  id: string;
+  reservationId: string;
+  status: BackendPaymentStatus;
+  amountMinor: number;
+  currency: string;
+  livemode: boolean;
+  canResume: boolean;
+  canRetry: boolean;
+  providerReference?: string | null;
+  paidAt?: string | null;
+  checkoutExpiresAt?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type BackendPaymentOptions = {
+  paymongoGcash: {
+    enabled: boolean;
+    livemode: boolean;
+  };
 };
 
 export type BackendReservation = {
@@ -86,6 +127,7 @@ export type BackendReservation = {
   paymentMethod: BackendPaymentMethod;
   totalAmount: string | number;
   staffNotes?: string | null;
+  payment?: BackendPaymentSummary | null;
   createdAt: string;
   updatedAt: string;
   student?: BackendProfileSummary | null;
@@ -578,6 +620,38 @@ export async function createReservationFromApi(token: string, payload: CreateRes
     body: JSON.stringify(payload)
   });
   return data.reservation;
+}
+
+export async function getPaymentOptionsFromApi(): Promise<BackendPaymentOptions> {
+  const data = await apiFetch<BackendPaymentOptions | { options: BackendPaymentOptions }>("/payments/options");
+  const options = "options" in data ? data.options : data;
+
+  return {
+    paymongoGcash: {
+      enabled: options.paymongoGcash?.enabled === true,
+      livemode: options.paymongoGcash?.livemode === true
+    }
+  };
+}
+
+export async function createGcashCheckoutFromApi(
+  token: string,
+  reservationId: string,
+  idempotencyKey: string
+) {
+  return authApiFetch<{ payment: BackendPaymentSummary; checkoutUrl: string }>("/payments/gcash/checkout", token, {
+    method: "POST",
+    headers: { "Idempotency-Key": idempotencyKey },
+    body: JSON.stringify({ reservationId })
+  });
+}
+
+export async function getPaymentFromApi(token: string, paymentId: string) {
+  const data = await authApiFetch<{ payment: BackendPaymentSummary }>(
+    `/payments/${encodeURIComponent(paymentId)}`,
+    token
+  );
+  return data.payment;
 }
 
 export async function getReservationsFromApi(token: string) {

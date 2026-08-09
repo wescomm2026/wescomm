@@ -14,6 +14,7 @@
     "typecheck": "tsc --noEmit",
     "test": "npm run build && node dist/tests/run-tests.js",
     "test:ci": "npm run typecheck && npm test",
+    "test:paymongo:db": "npm run build && node scripts/test-paymongo-isolated-database.mjs",
     "prisma:generate": "prisma generate",
     "prisma:migrate:baseline:existing": "node scripts/verify-existing-database-baseline.mjs && prisma migrate resolve --applied 0_init",
     "prisma:migrate:deploy": "prisma migrate deploy",

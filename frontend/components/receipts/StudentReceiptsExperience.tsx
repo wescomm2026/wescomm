@@ -41,6 +41,7 @@ function formatCurrency(value: number) {
 
 function formatPaymentMethod(value: BackendPaymentMethod) {
   if (value === "E_WALLET_AT_PICKUP") return "E-wallet at Pickup";
+  if (value === "PAYMONGO_GCASH") return "GCash (Online)";
   if (value === "GCASH") return "GCash";
   if (value === "CASH") return "Cash";
   return "Pay at Commissary";

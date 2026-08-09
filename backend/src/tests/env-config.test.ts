@@ -23,7 +23,13 @@ const safeProductionEnvironment = {
   NEXT_PUBLIC_SUPABASE_ANON_KEY: "qa-public-key",
   SUPABASE_SERVICE_ROLE_KEY: "qa-service-role-key",
   DATABASE_URL: "postgresql://postgres:postgres@example.invalid:5432/postgres?sslmode=require",
-  DIRECT_URL: "postgresql://postgres:postgres@example.invalid:5432/postgres?sslmode=require"
+  DIRECT_URL: "postgresql://postgres:postgres@example.invalid:5432/postgres?sslmode=require",
+  PAYMONGO_ENABLED: "false",
+  PAYMONGO_SECRET_KEY: "",
+  PAYMONGO_WEBHOOK_SECRET: "",
+  PAYMONGO_LIVEMODE: "false",
+  PAYMONGO_RETURN_ORIGIN: "",
+  PAYMENT_MAINTENANCE_SECRET: "wescomm-maintenance-secret-at-least-32-characters"
 };
 
 function loadConfig(overrides: Record<string, string>) {
@@ -85,4 +91,130 @@ test("the parsed Vercel Production environment rejects a one-sided temporary sta
 
   assert.notEqual(result.status, 0);
   assert.match(`${result.stdout}\n${result.stderr}`, /flags must be enabled together/);
+});
+
+test("disabled PayMongo configuration does not require provider secrets", () => {
+  const result = loadConfig({
+    PAYMONGO_ENABLED: "false",
+    PAYMONGO_SECRET_KEY: "",
+    PAYMONGO_WEBHOOK_SECRET: "",
+    PAYMONGO_LIVEMODE: "false"
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test("disabled checkout still validates webhook mode and any configured signing secret", () => {
+  const weakSecret = loadConfig({
+    PAYMONGO_ENABLED: "false",
+    PAYMONGO_WEBHOOK_SECRET: "too-short"
+  });
+  assert.notEqual(weakSecret.status, 0);
+  assert.match(`${weakSecret.stdout}\n${weakSecret.stderr}`, /at least 16 characters/);
+
+  const previewLiveWebhook = loadConfig({
+    PAYMONGO_ENABLED: "false",
+    PAYMONGO_WEBHOOK_SECRET: "whsec_wescomm_live_example",
+    PAYMONGO_LIVEMODE: "true"
+  });
+  assert.notEqual(previewLiveWebhook.status, 0);
+  assert.match(`${previewLiveWebhook.stdout}\n${previewLiveWebhook.stderr}`, /allowed only in the production deployment/);
+});
+
+test("PayMongo test mode accepts only a test secret and a sufficiently long webhook secret", () => {
+  const valid = loadConfig({
+    PAYMONGO_ENABLED: "true",
+    PAYMONGO_SECRET_KEY: "sk_test_wescomm_example",
+    PAYMONGO_WEBHOOK_SECRET: "whsec_wescomm_test_example",
+    PAYMONGO_LIVEMODE: "false"
+  });
+  assert.equal(valid.status, 0, valid.stderr);
+
+  const wrongPrefix = loadConfig({
+    PAYMONGO_ENABLED: "true",
+    PAYMONGO_SECRET_KEY: "sk_live_wescomm_example",
+    PAYMONGO_WEBHOOK_SECRET: "whsec_wescomm_test_example",
+    PAYMONGO_LIVEMODE: "false"
+  });
+  assert.notEqual(wrongPrefix.status, 0);
+  assert.match(`${wrongPrefix.stdout}\n${wrongPrefix.stderr}`, /must start with sk_test_/);
+});
+
+test("enabled PayMongo configuration fails closed when either secret is absent or weak", () => {
+  const missingApiKey = loadConfig({
+    PAYMONGO_ENABLED: "true",
+    PAYMONGO_SECRET_KEY: "",
+    PAYMONGO_WEBHOOK_SECRET: "whsec_wescomm_test_example"
+  });
+  assert.notEqual(missingApiKey.status, 0);
+  assert.match(`${missingApiKey.stdout}\n${missingApiKey.stderr}`, /PAYMONGO_SECRET_KEY is required/);
+
+  const weakWebhookSecret = loadConfig({
+    PAYMONGO_ENABLED: "true",
+    PAYMONGO_SECRET_KEY: "sk_test_wescomm_example",
+    PAYMONGO_WEBHOOK_SECRET: "too-short"
+  });
+  assert.notEqual(weakWebhookSecret.status, 0);
+  assert.match(`${weakWebhookSecret.stdout}\n${weakWebhookSecret.stderr}`, /at least 16 characters/);
+});
+
+test("production PayMongo fails closed without the external maintenance secret", () => {
+  const missingMaintenanceSecret = loadConfig({
+    VERCEL_ENV: "production",
+    VERCEL_TARGET_ENV: "production",
+    AUTH_ENABLE_DEV_LOGIN: "false",
+    PAYMONGO_ENABLED: "true",
+    PAYMONGO_SECRET_KEY: "sk_test_wescomm_example",
+    PAYMONGO_WEBHOOK_SECRET: "whsec_wescomm_test_example",
+    PAYMONGO_LIVEMODE: "false",
+    PAYMENT_MAINTENANCE_SECRET: ""
+  });
+  assert.notEqual(missingMaintenanceSecret.status, 0);
+  assert.match(`${missingMaintenanceSecret.stdout}\n${missingMaintenanceSecret.stderr}`, /PAYMENT_MAINTENANCE_SECRET.*required/);
+
+  const weakMaintenanceSecret = loadConfig({
+    PAYMENT_MAINTENANCE_SECRET: "too-short"
+  });
+  assert.notEqual(weakMaintenanceSecret.status, 0);
+  assert.match(`${weakMaintenanceSecret.stdout}\n${weakMaintenanceSecret.stderr}`, /at least 32 characters/);
+});
+
+test("PayMongo return URLs must be approved frontend origins without paths or query strings", () => {
+  const outsideOrigin = loadConfig({
+    PAYMONGO_RETURN_ORIGIN: "https://payments-attacker.example"
+  });
+  assert.notEqual(outsideOrigin.status, 0);
+  assert.match(`${outsideOrigin.stdout}\n${outsideOrigin.stderr}`, /must match an origin in FRONTEND_ORIGINS/);
+
+  const pathOrigin = loadConfig({
+    FRONTEND_ORIGINS: "https://wescomm-qa.example",
+    PAYMONGO_RETURN_ORIGIN: "https://wescomm-qa.example/redirect"
+  });
+  assert.notEqual(pathOrigin.status, 0);
+  assert.match(`${pathOrigin.stdout}\n${pathOrigin.stderr}`, /must contain only an approved frontend origin/);
+});
+
+test("PayMongo live mode is rejected outside production and accepts the matching key in production", () => {
+  const preview = loadConfig({
+    PAYMONGO_ENABLED: "true",
+    PAYMONGO_SECRET_KEY: "sk_live_wescomm_example",
+    PAYMONGO_WEBHOOK_SECRET: "whsec_wescomm_live_example",
+    PAYMONGO_LIVEMODE: "true"
+  });
+  assert.notEqual(preview.status, 0);
+  assert.match(`${preview.stdout}\n${preview.stderr}`, /allowed only in the production deployment/);
+
+  const production = loadConfig({
+    VERCEL_ENV: "production",
+    VERCEL_TARGET_ENV: "production",
+    AUTH_ENABLE_DEV_LOGIN: "false",
+    AUTH_ENABLE_TEMP_PRODUCTION_STAFF_LOGIN: "false",
+    NEXT_PUBLIC_ENABLE_TEMP_PRODUCTION_STAFF_LOGIN: "false",
+    PAYMONGO_ENABLED: "true",
+    PAYMONGO_SECRET_KEY: "sk_live_wescomm_example",
+    PAYMONGO_WEBHOOK_SECRET: "whsec_wescomm_live_example",
+    PAYMONGO_LIVEMODE: "true"
+  });
+  assert.equal(production.status, 0, production.stderr);
+  assert.equal(production.stdout, "true");
 });

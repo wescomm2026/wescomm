@@ -82,8 +82,44 @@ enum PaymentMethod {
   E_WALLET_AT_PICKUP
   CASH
   GCASH
+  PAYMONGO_GCASH
 
   @@map("payment_method")
+}
+
+enum OnlinePaymentStatus {
+  INITIALIZING
+  AWAITING_PAYMENT
+  PAID
+  EXPIRED
+  CANCELLED
+  REFUND_REVIEW_REQUIRED
+  PARTIALLY_REFUNDED
+  REFUNDED
+
+  @@map("online_payment_status")
+}
+
+enum OnlinePaymentAttemptStatus {
+  CREATING
+  CREATE_UNKNOWN
+  ACTIVE
+  EXPIRY_REQUESTED
+  EXPIRED
+  PAID
+  FAILED
+  ABANDONED
+  MANUAL_REVIEW_REQUIRED
+
+  @@map("online_payment_attempt_status")
+}
+
+enum PaymongoWebhookEventStatus {
+  PROCESSED
+  IGNORED
+  REJECTED
+
+  @@map("paymongo_webhook_event_status")
 }
 
 enum ReceiptStatus {
@@ -97,6 +133,7 @@ enum ReceiptStatus {
 enum NotificationType {
   RESERVATION
   RECEIPT
+  PAYMENT
   LOW_STOCK
   BACK_IN_STOCK
   MESSAGE
@@ -144,6 +181,7 @@ model Profile {
   reservationRequests   ReservationIdempotencyKey[] @relation("StudentReservationRequests")
   authSessions          AuthSession[]
   wishlistItems         WishlistItem[]
+  auditLogs             AuditLog[]                  @relation("AuditActor")
 
   @@map("profiles")
 }
@@ -250,8 +288,91 @@ model Reservation {
   receipts           Receipt[]
   offenses           StudentOffense[]
   idempotencyRequest ReservationIdempotencyKey?
+  onlinePayment      OnlinePayment?
 
   @@map("reservations")
+}
+
+model OnlinePayment {
+  id                        String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  reservationId             String                 @unique @map("reservation_id") @db.Uuid
+  status                    OnlinePaymentStatus    @default(INITIALIZING)
+  amountCentavos            Int                    @map("amount_centavos")
+  currency                  String                 @default("PHP") @db.Char(3)
+  livemode                  Boolean                @default(false)
+  providerCheckoutSessionId String?                @unique @map("provider_checkout_session_id")
+  providerPaymentIntentId   String?                @unique @map("provider_payment_intent_id")
+  providerPaymentId         String?                @unique @map("provider_payment_id")
+  checkoutUrl               String?                @map("checkout_url")
+  checkoutExpiresAt         DateTime?              @map("checkout_expires_at") @db.Timestamptz(6)
+  lastReconciledAt          DateTime?              @map("last_reconciled_at") @db.Timestamptz(6)
+  feeCentavos               Int?                   @map("fee_centavos")
+  netAmountCentavos         Int?                   @map("net_amount_centavos")
+  refundedAmountCentavos    Int                    @default(0) @map("refunded_amount_centavos")
+  paidAt                    DateTime?              @map("paid_at") @db.Timestamptz(6)
+  expiredAt                 DateTime?              @map("expired_at") @db.Timestamptz(6)
+  cancelledAt               DateTime?              @map("cancelled_at") @db.Timestamptz(6)
+  refundedAt                DateTime?              @map("refunded_at") @db.Timestamptz(6)
+  createdAt                 DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                 DateTime               @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  reservation               Reservation            @relation(fields: [reservationId], references: [id], onDelete: Restrict)
+  attempts                  OnlinePaymentAttempt[]
+  webhookEvents             PaymongoWebhookEvent[]
+
+  @@index([status, updatedAt])
+  @@map("online_payments")
+}
+
+model OnlinePaymentAttempt {
+  id                        String                     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  onlinePaymentId           String                     @map("online_payment_id") @db.Uuid
+  attemptNumber             Int                        @map("attempt_number")
+  status                    OnlinePaymentAttemptStatus @default(CREATING)
+  providerIdempotencyKey    String                     @unique @map("provider_idempotency_key")
+  requestHash               String                     @map("request_hash") @db.Char(64)
+  requestPayload            Json                       @map("request_payload")
+  providerCheckoutSessionId String?                    @unique @map("provider_checkout_session_id")
+  providerPaymentIntentId   String?                    @unique @map("provider_payment_intent_id")
+  providerPaymentId         String?                    @unique @map("provider_payment_id")
+  checkoutUrl               String?                    @map("checkout_url")
+  livemode                  Boolean
+  checkoutExpiresAt         DateTime?                  @map("checkout_expires_at") @db.Timestamptz(6)
+  lastReconciledAt          DateTime?                  @map("last_reconciled_at") @db.Timestamptz(6)
+  expireRequestedAt         DateTime?                  @map("expire_requested_at") @db.Timestamptz(6)
+  expiredAt                 DateTime?                  @map("expired_at") @db.Timestamptz(6)
+  providerCreatedAt         DateTime?                  @map("provider_created_at") @db.Timestamptz(6)
+  paidAt                    DateTime?                  @map("paid_at") @db.Timestamptz(6)
+  feeCentavos               Int?                       @map("fee_centavos")
+  netAmountCentavos         Int?                       @map("net_amount_centavos")
+  lastProviderErrorCode     String?                    @map("last_provider_error_code") @db.VarChar(64)
+  createdAt                 DateTime                   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                 DateTime                   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  onlinePayment             OnlinePayment              @relation(fields: [onlinePaymentId], references: [id], onDelete: Restrict)
+
+  @@unique([onlinePaymentId, attemptNumber])
+  @@index([onlinePaymentId, status, createdAt])
+  @@index([status, checkoutExpiresAt])
+  @@map("online_payment_attempts")
+}
+
+model PaymongoWebhookEvent {
+  id              String                     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  providerEventId String?                    @unique @map("provider_event_id")
+  dedupeKey       String                     @unique @map("dedupe_key")
+  eventType       String                     @map("event_type")
+  livemode        Boolean
+  resourceId      String?                    @map("resource_id")
+  payloadHash     String                     @map("payload_hash") @db.Char(64)
+  status          PaymongoWebhookEventStatus
+  reasonCode      String?                    @map("reason_code") @db.VarChar(64)
+  onlinePaymentId String?                    @map("online_payment_id") @db.Uuid
+  receivedAt      DateTime                   @default(now()) @map("received_at") @db.Timestamptz(6)
+  processedAt     DateTime                   @default(now()) @map("processed_at") @db.Timestamptz(6)
+  onlinePayment   OnlinePayment?             @relation(fields: [onlinePaymentId], references: [id], onDelete: SetNull)
+
+  @@index([eventType, receivedAt])
+  @@index([onlinePaymentId, receivedAt])
+  @@map("paymongo_webhook_events")
 }
 
 model ReservationIdempotencyKey {
@@ -375,6 +496,24 @@ model Notification {
   @@map("notifications")
 }
 
+model AuditLog {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  actorId    String?  @map("actor_id") @db.Uuid
+  action     String
+  entityType String   @map("entity_type")
+  entityId   String?  @map("entity_id")
+  summary    String
+  metadata   Json     @default("{}")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  actor      Profile? @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt(sort: Desc)])
+  @@index([actorId])
+  @@index([action])
+  @@index([entityType, entityId])
+  @@map("audit_logs")
+}
+
 model WishlistItem {
   userId    String   @map("user_id") @db.Uuid
   productId String   @map("product_id") @db.Uuid
@@ -389,17 +528,17 @@ model WishlistItem {
 }
 
 model PushSubscription {
-  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  userId    String    @map("user_id") @db.Uuid
-  endpoint  String    @unique
-  endpointHash String? @unique @map("endpoint_hash")
-  p256dh    String
-  auth      String
-  userAgent String?   @map("user_agent")
-  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
-  revokedAt DateTime? @map("revoked_at") @db.Timestamptz(6)
-  user      Profile   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId       String    @map("user_id") @db.Uuid
+  endpoint     String    @unique
+  endpointHash String?   @unique @map("endpoint_hash")
+  p256dh       String
+  auth         String
+  userAgent    String?   @map("user_agent")
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+  revokedAt    DateTime? @map("revoked_at") @db.Timestamptz(6)
+  user         Profile   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@map("push_subscriptions")

@@ -72,6 +72,7 @@ export function notificationUrlForRole(type: NotificationType | undefined, role?
   const base = role === "ADMIN" ? "/admin" : isStaffSide ? "/staff" : "/student";
 
   if (type === "RESERVATION") return `${base}/reservations`;
+  if (type === "PAYMENT") return `${base}/reservations`;
   if (type === "RECEIPT") return isStaffSide ? `${base}/receipt-verification` : `${base}/receipts`;
   if (type === "LOW_STOCK") return isStaffSide ? `${base}/inventory` : `${base}/shop`;
   if (type === "BACK_IN_STOCK") return isStaffSide ? `${base}/inventory` : `${base}/shop?wishlist=1`;
@@ -85,6 +86,9 @@ function lockScreenSafeContent(payload: PushNotificationPayload) {
   }
   if (payload.type === "RECEIPT") {
     return { title: "Receipt update", body: "Open WESCOMM to view your latest digital receipt update." };
+  }
+  if (payload.type === "PAYMENT") {
+    return { title: "Payment update", body: "Open WESCOMM to view your latest payment status." };
   }
   if (payload.type === "MESSAGE") {
     return { title: "Support update", body: "You have a new WESCOMM support update." };
