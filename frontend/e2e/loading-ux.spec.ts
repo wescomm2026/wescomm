@@ -1,6 +1,26 @@
 import { expect, test } from "@playwright/test";
 import { dismissWelcomeGate } from "./helpers";
 
+test("startup gate uses the WESCOMM logo animation without legacy welcome content", async ({ page }) => {
+  const animationResponse = page.waitForResponse((response) => (
+    new URL(response.url()).pathname === "/assets/wescomm-logo-intro.mp4"
+  ));
+
+  await page.goto("/student/dashboard", { waitUntil: "domcontentloaded" });
+
+  const gate = page.locator(".welcome-gate-overlay");
+  await expect(gate).toBeVisible();
+  const animation = gate.getByTestId("welcome-logo-animation");
+  await expect(animation).toHaveJSProperty("autoplay", true);
+  await expect(animation).toHaveJSProperty("muted", true);
+  await expect(animation.locator("source")).toHaveAttribute("src", "/assets/wescomm-logo-intro.mp4");
+  await expect(gate.getByRole("heading")).toHaveCount(0);
+  await expect(gate.getByText(/Welcome (?:Back )?to WESCOMM/)).toHaveCount(0);
+  expect([200, 206]).toContain((await animationResponse).status());
+
+  await dismissWelcomeGate(page);
+});
+
 test("student dashboard shares one products request across its loading cards", async ({ page }) => {
   let productsRequestCount = 0;
   page.on("request", (request) => {

@@ -45,68 +45,38 @@ html {
 .welcome-gate-overlay {
   isolation: isolate;
   opacity: 1;
+  background: radial-gradient(circle at center, #f8f9f3 0%, #edf2ec 100%);
 }
 
-.welcome-gate-panel {
-  position: absolute;
-  inset-block: 0;
-  width: calc(50% + 1px);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(238, 248, 240, 0.96)),
-    radial-gradient(circle at center, rgba(0, 101, 47, 0.08), transparent 42%);
-  border-color: rgba(0, 101, 47, 0.16);
-  box-shadow: 0 0 60px rgba(0, 91, 43, 0.08);
+.welcome-gate-video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: radial-gradient(circle at center, #f8f9f3 0%, #edf2ec 100%);
 }
 
-.welcome-gate-panel-left {
-  left: 0;
-  border-right-width: 1px;
+.welcome-gate-video-failed {
+  display: none;
 }
 
-.welcome-gate-panel-right {
-  right: 0;
-  border-left-width: 1px;
+.welcome-gate-fallback-logo {
+  width: min(82vw, 900px);
+  height: auto;
+  object-fit: contain;
 }
 
 .welcome-gate-overlay[data-phase="entering"] {
-  animation: welcomeGateOverlayEnter 0.3s ease-out both;
+  animation: welcomeGateOverlayEnter 0.18s ease-out both;
 }
 
-.welcome-gate-overlay[data-phase="entering"] .welcome-gate-content {
-  animation: welcomeGateContentEnter 0.3s ease-out both;
-}
-
-.welcome-gate-overlay[data-phase="holding"],
-.welcome-gate-overlay[data-phase="holding"] .welcome-gate-content {
+.welcome-gate-overlay[data-phase="holding"] {
   opacity: 1;
-  transform: none;
 }
 
 .welcome-gate-overlay[data-phase="exiting"] {
-  animation: welcomeGateOverlayExit 0.7s ease-in both;
+  animation: welcomeGateOverlayExit 0.35s ease-in both;
   pointer-events: none;
-}
-
-.welcome-gate-overlay[data-phase="exiting"] .welcome-gate-panel {
-  animation-duration: 0.7s;
-  animation-fill-mode: both;
-  animation-timing-function: cubic-bezier(0.72, 0, 0.2, 1);
-}
-
-.welcome-gate-overlay[data-phase="exiting"] .welcome-gate-panel-left {
-  animation-name: welcomeGatePanelLeftExit;
-}
-
-.welcome-gate-overlay[data-phase="exiting"] .welcome-gate-panel-right {
-  animation-name: welcomeGatePanelRightExit;
-}
-
-.welcome-gate-overlay[data-phase="exiting"] .welcome-gate-content {
-  animation: welcomeGateContentExit 0.32s ease-in both;
-}
-
-.welcome-gate-skip {
-  animation: welcomeGateSkipEnter 0.2s ease-out both;
 }
 
 @keyframes welcomeGateOverlayEnter {
@@ -118,66 +88,17 @@ html {
   }
 }
 
-@keyframes welcomeGateContentEnter {
-  from {
-    opacity: 0;
-    transform: translateY(8px) scale(0.985);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-
-@keyframes welcomeGatePanelLeftExit {
-  to {
-    transform: translateX(-104%);
-  }
-}
-
-@keyframes welcomeGatePanelRightExit {
-  to {
-    transform: translateX(104%);
-  }
-}
-
-@keyframes welcomeGateContentExit {
-  to {
-    opacity: 0;
-    transform: translateY(-6px) scale(0.99);
-  }
-}
-
 @keyframes welcomeGateOverlayExit {
-  70% {
+  35% {
     opacity: 1;
   }
   to {
     opacity: 0;
-  }
-}
-
-@keyframes welcomeGateSkipEnter {
-  from {
-    opacity: 0;
-    transform: translateY(3px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-
-@media (max-width: 640px) {
-  .welcome-gate-panel {
-    width: calc(50% + 2px);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .welcome-gate-overlay[data-phase="entering"],
-  .welcome-gate-overlay[data-phase="entering"] .welcome-gate-content,
-  .welcome-gate-skip {
+  .welcome-gate-overlay[data-phase="entering"] {
     animation-duration: 0.01ms;
   }
 
@@ -185,14 +106,11 @@ html {
     animation-duration: 0.12s;
   }
 
-  .welcome-gate-overlay[data-phase="exiting"] .welcome-gate-panel,
-  .welcome-gate-overlay[data-phase="exiting"] .welcome-gate-content {
-    animation: welcomeGateReducedExit 0.12s ease-out both;
+  .welcome-gate-video {
+    display: none;
   }
 
-  @keyframes welcomeGateReducedExit {
-    to {
-      opacity: 0;
-    }
+  .welcome-gate-overlay {
+    background: #f8f9f3 url("/assets/wescomm-logo.png") center / min(82vw, 900px) auto no-repeat;
   }
 }

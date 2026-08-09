@@ -1,7 +1,14 @@
 "use client";
 
 import Image from "next/image";
-import { useCallback, useEffect, useRef, useState, type AnimationEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type AnimationEvent,
+  type SyntheticEvent
+} from "react";
 
 type WelcomeGateUser = {
   role: "STUDENT" | "STAFF" | "ADMIN";
@@ -11,43 +18,15 @@ type WelcomeGateUser = {
 type WelcomeGateMode = WelcomeGateUser | "GUEST";
 type WelcomeGatePhase = "entering" | "holding" | "exiting";
 
-const ENTER_FALLBACK_MS = 400;
-const EXIT_FALLBACK_MS = 850;
+const ENTER_FALLBACK_MS = 250;
+const EXIT_FALLBACK_MS = 450;
+const LOGO_ANIMATION_PLAYBACK_RATE = 1.6;
 
-function getGateCopy(user: WelcomeGateMode) {
-  if (user === "GUEST") {
-    return {
-      eyebrow: "Preparing WESCOMM",
-      title: "Welcome to WESCOMM",
-      detail: "Browse campus essentials, check stock, and sign in to reserve items.",
-      line: "Preparing real-time stock browsing, FAQs, support, and digital services..."
-    };
-  }
-
-  if (user.role === "ADMIN") {
-    return {
-      eyebrow: "Preparing admin overview",
-      title: "Welcome Back to WESCOMM",
-      detail: "Your campus essentials are loading.",
-      line: "Checking reports, users, inventory, and system activity..."
-    };
-  }
-
-  if (user.role === "STAFF") {
-    return {
-      eyebrow: "Preparing staff operations",
-      title: "Welcome Back to WESCOMM",
-      detail: "Your campus essentials are loading.",
-      line: "Checking inventory, reservations, receipt verification, and messages..."
-    };
-  }
-
-  return {
-    eyebrow: "Preparing student portal",
-    title: "Welcome Back to WESCOMM",
-    detail: "Your campus essentials are loading.",
-    line: "Checking your reservations, stock updates, and digital receipts..."
-  };
+function getLoadingLabel(user: WelcomeGateMode) {
+  if (user === "GUEST") return "Loading WESCOMM";
+  if (user.role === "ADMIN") return "Loading the WESCOMM admin portal";
+  if (user.role === "STAFF") return "Loading the WESCOMM staff portal";
+  return "Loading the WESCOMM student portal";
 }
 
 export function WelcomeGateOverlay({
@@ -55,22 +34,17 @@ export function WelcomeGateOverlay({
   onFinish,
   readyToFinish = true,
   minimumDurationMs = 2200,
-  maximumDurationMs = 4000,
-  allowSkip = true,
-  skipDelayMs = 900
+  maximumDurationMs = 4000
 }: {
   user: WelcomeGateMode;
   onFinish: () => void;
   readyToFinish?: boolean;
   minimumDurationMs?: number;
   maximumDurationMs?: number;
-  allowSkip?: boolean;
-  skipDelayMs?: number;
 }) {
-  const copy = getGateCopy(user);
   const [phase, setPhase] = useState<WelcomeGatePhase>("entering");
   const [minimumElapsed, setMinimumElapsed] = useState(minimumDurationMs <= 0);
-  const [skipVisible, setSkipVisible] = useState(allowSkip && skipDelayMs <= 0);
+  const [mediaFailed, setMediaFailed] = useState(false);
   const finishedRef = useRef(false);
 
   const beginExit = useCallback(() => {
@@ -88,12 +62,6 @@ export function WelcomeGateOverlay({
     const timeout = window.setTimeout(() => setMinimumElapsed(true), minimumDurationMs);
     return () => window.clearTimeout(timeout);
   }, [minimumDurationMs]);
-
-  useEffect(() => {
-    if (!allowSkip || skipDelayMs <= 0) return undefined;
-    const timeout = window.setTimeout(() => setSkipVisible(true), skipDelayMs);
-    return () => window.clearTimeout(timeout);
-  }, [allowSkip, skipDelayMs]);
 
   useEffect(() => {
     if (minimumElapsed && readyToFinish) beginExit();
@@ -122,52 +90,48 @@ export function WelcomeGateOverlay({
     else if (phase === "exiting") finish();
   };
 
+  const handleVideoMetadata = (event: SyntheticEvent<HTMLVideoElement>) => {
+    event.currentTarget.defaultPlaybackRate = LOGO_ANIMATION_PLAYBACK_RATE;
+    event.currentTarget.playbackRate = LOGO_ANIMATION_PLAYBACK_RATE;
+  };
+
   return (
     <div
-      className="welcome-gate-overlay fixed inset-0 z-[12000] grid place-items-center overflow-hidden bg-[#f7fbf7]/95 px-4 backdrop-blur-[5px]"
+      className="welcome-gate-overlay fixed inset-0 z-[12000] grid place-items-center overflow-hidden"
       data-phase={phase}
       role="status"
       aria-live="polite"
       aria-atomic="true"
       onAnimationEnd={handleOverlayAnimationEnd}
     >
-      <div className="welcome-gate-panel welcome-gate-panel-left" aria-hidden="true" />
-      <div className="welcome-gate-panel welcome-gate-panel-right" aria-hidden="true" />
-
-      <section
-        className="welcome-gate-content relative z-10 mx-auto flex w-full max-w-[560px] flex-col items-center text-center"
-        aria-labelledby="welcome-gate-title"
+      <video
+        className={`welcome-gate-video${mediaFailed ? " welcome-gate-video-failed" : ""}`}
+        data-testid="welcome-logo-animation"
+        autoPlay
+        muted
+        playsInline
+        preload="auto"
+        onLoadedMetadata={handleVideoMetadata}
+        onError={() => setMediaFailed(true)}
+        aria-hidden="true"
       >
-        <div className="grid size-24 place-items-center rounded-full border border-[#cfe2d1] bg-white shadow-[0_20px_60px_rgba(0,91,43,0.12)] sm:size-28">
-          <Image
-            src="/assets/wescomm-logo.png"
-            alt="WESCOMM"
-            width={190}
-            height={86}
-            priority
-            className="h-auto w-[150px] object-contain sm:w-[178px]"
-          />
-        </div>
-        <p className="mt-7 text-xs font-extrabold uppercase tracking-[0.16em] text-primary">{copy.eyebrow}</p>
-        <h1 id="welcome-gate-title" className="mt-3 text-3xl font-extrabold leading-tight text-[#101820] sm:text-5xl">
-          {copy.title}
-        </h1>
-        <p className="mt-4 text-base font-semibold text-[#304039] sm:text-lg">{copy.detail}</p>
-        <p className="mt-2 max-w-md text-sm leading-6 text-[#5f6d66]">{copy.line}</p>
-        <div className="mt-6 flex items-center gap-3 text-sm font-bold text-primary">
-          <span className="size-2.5 animate-pulse rounded-full bg-primary motion-reduce:animate-none" aria-hidden="true" />
-          {readyToFinish ? "Your dashboard is ready" : "Preparing your dashboard..."}
-        </div>
-        {skipVisible && phase !== "exiting" ? (
-          <button
-            type="button"
-            onClick={beginExit}
-            className="welcome-gate-skip mt-5 min-h-11 rounded-md px-4 text-sm font-bold text-[#3f5b4c] underline decoration-[#9db8a6] underline-offset-4 transition hover:text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
-          >
-            Skip intro
-          </button>
-        ) : null}
-      </section>
+        <source
+          src="/assets/wescomm-logo-intro.mp4"
+          type="video/mp4"
+          media="(prefers-reduced-motion: no-preference)"
+        />
+      </video>
+      {mediaFailed ? (
+        <Image
+          src="/assets/wescomm-logo.png"
+          alt=""
+          width={1600}
+          height={900}
+          className="welcome-gate-fallback-logo"
+          aria-hidden="true"
+        />
+      ) : null}
+      <span className="sr-only">{getLoadingLabel(user)}</span>
     </div>
   );
 }
