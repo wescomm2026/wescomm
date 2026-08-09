@@ -40,6 +40,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
   return (
     <html lang="en">
+      <head>
+        <link
+          rel="preload"
+          href="/assets/wescomm-logo-intro.mp4"
+          as="video"
+          type="video/mp4"
+          media="(prefers-reduced-motion: no-preference)"
+        />
+      </head>
       <body>
         <PwaLifecycle
           enableServiceWorker={enableServiceWorker}

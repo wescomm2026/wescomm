@@ -90,7 +90,7 @@ const TEMPORARY_PRODUCTION_STAFF_LOGIN_EXPIRES_AT =
   process.env.NEXT_PUBLIC_TEMP_PRODUCTION_STAFF_LOGIN_EXPIRES_AT;
 const E2E_TEST_ENABLED = process.env.NEXT_PUBLIC_E2E_TEST === "true";
 const WELCOME_GATE_MINIMUM_DURATION_MS = E2E_TEST_ENABLED ? 0 : 2200;
-const WELCOME_GATE_MAXIMUM_DURATION_MS = E2E_TEST_ENABLED ? 1000 : 4000;
+const WELCOME_GATE_MAXIMUM_DURATION_MS = E2E_TEST_ENABLED ? 1000 : 7000;
 const READINESS_AWARE_DASHBOARD_PATHS = new Set(["/student/dashboard", "/staff", "/admin/dashboard"]);
 const ALLOWED_EMAIL_DOMAIN = process.env.NEXT_PUBLIC_AUTH_ALLOWED_EMAIL_DOMAIN ?? "wesleyan.edu.ph";
 const AUTH_SESSION_LOCK_NAME = "wescomm-auth-session";
@@ -824,8 +824,6 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
 
   return (
     <StudentAuthContext.Provider value={value}>
-      {children}
-      <StudentAuthModal open={modalOpen} onClose={closeAuth} />
       {welcomeGateUser ? (
         <WelcomeGateOverlay
           user={welcomeGateUser}
@@ -835,6 +833,8 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
           onFinish={dismissWelcomeGate}
         />
       ) : null}
+      {children}
+      <StudentAuthModal open={modalOpen} onClose={closeAuth} />
     </StudentAuthContext.Provider>
   );
 }

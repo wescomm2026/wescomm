@@ -8,8 +8,20 @@ test("startup gate uses the WESCOMM logo animation without legacy welcome conten
 
   await page.goto("/student/dashboard", { waitUntil: "domcontentloaded" });
 
+  await expect(
+    page.locator('link[rel="preload"][as="video"][href="/assets/wescomm-logo-intro.mp4"]')
+  ).toHaveCount(1);
+
   const gate = page.locator(".welcome-gate-overlay");
   await expect(gate).toBeVisible();
+  expect(await gate.evaluate((element) => element.style.position)).toBe("fixed");
+  expect(await gate.evaluate((element) => {
+    const main = document.querySelector("main");
+    return Boolean(
+      main && (element.compareDocumentPosition(main) & Node.DOCUMENT_POSITION_FOLLOWING)
+    );
+  })).toBe(true);
+
   const animation = gate.getByTestId("welcome-logo-animation");
   await expect(animation).toHaveJSProperty("autoplay", true);
   await expect(animation).toHaveJSProperty("muted", true);

@@ -67,7 +67,7 @@ html {
 }
 
 .welcome-gate-overlay[data-phase="entering"] {
-  animation: welcomeGateOverlayEnter 0.18s ease-out both;
+  opacity: 1;
 }
 
 .welcome-gate-overlay[data-phase="holding"] {
@@ -77,15 +77,6 @@ html {
 .welcome-gate-overlay[data-phase="exiting"] {
   animation: welcomeGateOverlayExit 0.35s ease-in both;
   pointer-events: none;
-}
-
-@keyframes welcomeGateOverlayEnter {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
 }
 
 @keyframes welcomeGateOverlayExit {
@@ -98,10 +89,6 @@ html {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .welcome-gate-overlay[data-phase="entering"] {
-    animation-duration: 0.01ms;
-  }
-
   .welcome-gate-overlay[data-phase="exiting"] {
     animation-duration: 0.12s;
   }

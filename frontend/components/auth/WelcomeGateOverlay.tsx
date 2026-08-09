@@ -20,7 +20,9 @@ type WelcomeGatePhase = "entering" | "holding" | "exiting";
 
 const ENTER_FALLBACK_MS = 250;
 const EXIT_FALLBACK_MS = 450;
-const LOGO_ANIMATION_PLAYBACK_RATE = 1.6;
+const E2E_TEST_ENABLED = process.env.NEXT_PUBLIC_E2E_TEST === "true";
+const LOGO_ANIMATION_PLAYBACK_RATE = E2E_TEST_ENABLED ? 16 : 1;
+const LOADING_BACKGROUND = "radial-gradient(circle at center, #f8f9f3 0%, #edf2ec 100%)";
 
 function getLoadingLabel(user: WelcomeGateMode) {
   if (user === "GUEST") return "Loading WESCOMM";
@@ -34,7 +36,7 @@ export function WelcomeGateOverlay({
   onFinish,
   readyToFinish = true,
   minimumDurationMs = 2200,
-  maximumDurationMs = 4000
+  maximumDurationMs = 7000
 }: {
   user: WelcomeGateMode;
   onFinish: () => void;
@@ -44,6 +46,7 @@ export function WelcomeGateOverlay({
 }) {
   const [phase, setPhase] = useState<WelcomeGatePhase>("entering");
   const [minimumElapsed, setMinimumElapsed] = useState(minimumDurationMs <= 0);
+  const [animationComplete, setAnimationComplete] = useState(false);
   const [mediaFailed, setMediaFailed] = useState(false);
   const finishedRef = useRef(false);
 
@@ -64,13 +67,22 @@ export function WelcomeGateOverlay({
   }, [minimumDurationMs]);
 
   useEffect(() => {
-    if (minimumElapsed && readyToFinish) beginExit();
-  }, [beginExit, minimumElapsed, readyToFinish]);
+    if (minimumElapsed && readyToFinish && animationComplete) beginExit();
+  }, [animationComplete, beginExit, minimumElapsed, readyToFinish]);
 
   useEffect(() => {
-    const timeout = window.setTimeout(beginExit, Math.max(0, maximumDurationMs));
+    const timeout = window.setTimeout(
+      () => setAnimationComplete(true),
+      Math.max(0, maximumDurationMs)
+    );
     return () => window.clearTimeout(timeout);
-  }, [beginExit, maximumDurationMs]);
+  }, [maximumDurationMs]);
+
+  useEffect(() => {
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      setAnimationComplete(true);
+    }
+  }, []);
 
   useEffect(() => {
     const fallbackMs = phase === "entering" ? ENTER_FALLBACK_MS : phase === "exiting" ? EXIT_FALLBACK_MS : null;
@@ -99,10 +111,21 @@ export function WelcomeGateOverlay({
     <div
       className="welcome-gate-overlay fixed inset-0 z-[12000] grid place-items-center overflow-hidden"
       data-phase={phase}
+      data-animation-complete={animationComplete ? "true" : "false"}
       role="status"
       aria-live="polite"
       aria-atomic="true"
       onAnimationEnd={handleOverlayAnimationEnd}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 12000,
+        display: "grid",
+        placeItems: "center",
+        overflow: "hidden",
+        isolation: "isolate",
+        background: LOADING_BACKGROUND
+      }}
     >
       <video
         className={`welcome-gate-video${mediaFailed ? " welcome-gate-video-failed" : ""}`}
@@ -112,7 +135,17 @@ export function WelcomeGateOverlay({
         playsInline
         preload="auto"
         onLoadedMetadata={handleVideoMetadata}
-        onError={() => setMediaFailed(true)}
+        onEnded={() => setAnimationComplete(true)}
+        onError={() => {
+          setMediaFailed(true);
+          setAnimationComplete(true);
+        }}
+        style={{
+          width: "100%",
+          height: "100%",
+          objectFit: "contain",
+          background: LOADING_BACKGROUND
+        }}
         aria-hidden="true"
       >
         <source
