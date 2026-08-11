@@ -7,6 +7,7 @@ import { HomeActionCards } from "@/components/dashboard/HomeActionCards";
 import { HeroProductCarousel } from "@/components/dashboard/HeroProductCarousel";
 import { StockOverview } from "@/components/dashboard/StockOverview";
 import { StudentReservationsExperience } from "@/components/reservations/StudentReservationsExperience";
+import { SiteFooterLinks } from "@/components/layout/SiteFooterLinks";
 import { AssetIcon } from "@/components/ui/AssetIcon";
 import { Button } from "@/components/ui/button";
 import { StudentShopExperience } from "@/components/ui/StudentShopExperience";
@@ -21,12 +22,7 @@ function StudentFooter() {
           <p className="text-xs text-muted-foreground">Integrated Commissary Management System</p>
         </div>
       </div>
-      <div className="flex flex-wrap gap-6 text-xs">
-        <span>Privacy Policy</span>
-        <span>Terms of Service</span>
-        <span>Data Privacy Notice</span>
-        <span>Contact Us</span>
-      </div>
+      <SiteFooterLinks />
       <p className="text-xs text-muted-foreground">(c) 2026 Wesleyan University-Philippines</p>
     </footer>
   );

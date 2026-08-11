@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { ArrowRight, ChevronDown, Megaphone, RefreshCw } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
+import { SiteFooterLinks } from "@/components/layout/SiteFooterLinks";
 import { AssetIcon } from "@/components/ui/AssetIcon";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
@@ -626,12 +627,7 @@ export function StaffDashboard() {
             <p>Integrated Commissary Management System</p>
           </div>
         </div>
-        <div className="flex flex-wrap gap-5">
-          <span>Privacy Policy</span>
-          <span>Terms of Service</span>
-          <span>Data Privacy Notice</span>
-          <span>Contact Us</span>
-        </div>
+        <SiteFooterLinks />
         <p>(c) 2026 Wesleyan University-Philippines</p>
       </footer>
     </div>

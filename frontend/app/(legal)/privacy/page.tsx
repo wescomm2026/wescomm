@@ -1,0 +1,98 @@
+import type { Metadata } from "next";
+import Link from "next/link";
+import { LegalDocument, LegalList, LegalNote, LegalSection } from "@/components/legal/LegalDocument";
+
+export const metadata: Metadata = {
+  title: "Privacy Policy | WESCOMM",
+  description: "How WESCOMM collects, uses, protects, and shares personal and transaction information."
+};
+
+export default function PrivacyPage() {
+  return (
+    <LegalDocument
+      eyebrow="Data privacy notice"
+      title="Privacy Policy"
+      summary="This notice explains what information WESCOMM handles, why it is needed, and the choices available to users."
+    >
+      <LegalSection title="1. Information WESCOMM handles">
+        <LegalList>
+          <li>Account information such as name, Wesleyan email address, student number, department, phone number, address, and profile image when provided.</li>
+          <li>Reservation and purchase information, including selected products, variants, quantities, pickup schedules, status, receipts, and support records.</li>
+          <li>Online payment records such as internal references, PayMongo references, amount, fee, net amount, payment method, status, and timestamps.</li>
+          <li>Security and technical information such as authentication sessions, device or browser details, request identifiers, audit logs, notification preferences, and push-subscription information.</li>
+          <li>Messages and other information you voluntarily provide when contacting WESCOMM Support.</li>
+        </LegalList>
+        <LegalNote>
+          GCash credentials, GCash PINs, and wallet authorization codes are entered on provider-controlled pages. WESCOMM does not ask for or store them.
+        </LegalNote>
+      </LegalSection>
+
+      <LegalSection title="2. Why the information is used">
+        <LegalList>
+          <li>Verify identity and protect student, staff, and administrator access.</li>
+          <li>Manage products, inventory, reservations, pickup, payments, receipts, and customer support.</li>
+          <li>Send transactional emails, status notifications, and security messages.</li>
+          <li>Prevent duplicate reservations or charges, detect misuse, reconcile payments, and maintain financial audit records.</li>
+          <li>Improve availability, usability, security, reporting, and University commissary operations.</li>
+          <li>Meet applicable University, accounting, regulatory, and legal obligations.</li>
+        </LegalList>
+      </LegalSection>
+
+      <LegalSection title="3. Service providers and authorized access">
+        <p>
+          Information is available only to authorized University personnel and service providers that need it to operate WESCOMM. Depending on the feature used, these providers include Supabase for authentication and data services, Vercel for application hosting, Brevo for verification email delivery, and PayMongo for online payments.
+        </p>
+        <p>
+          Each provider handles information under its own terms, security controls, and privacy obligations. WESCOMM does not sell personal information or share it for unrelated advertising.
+        </p>
+      </LegalSection>
+
+      <LegalSection title="4. Cookies and local device storage">
+        <p>
+          WESCOMM uses essential cookies and browser storage for authentication sessions, remembered sign-in preferences, cart state, security controls, and progressive web app functions. Disabling required storage may prevent login, checkout, or other core functions from working correctly.
+        </p>
+      </LegalSection>
+
+      <LegalSection title="5. Retention">
+        <p>
+          Account, reservation, payment, receipt, support, and audit records are retained only as long as reasonably necessary for the service, University recordkeeping, dispute handling, security, accounting, and applicable legal requirements. Retention periods may differ by record type.
+        </p>
+        <p>
+          Financial and audit records may need to be preserved even after an account becomes inactive. When information is no longer required, it is deleted, anonymized, or securely archived according to the applicable retention process.
+        </p>
+      </LegalSection>
+
+      <LegalSection title="6. Security">
+        <p>
+          WESCOMM uses access controls, encrypted connections, server-side authorization, payment signature verification, audit records, and restricted secret handling. No online service can guarantee absolute security, so users should also protect their email account, verification codes, and devices.
+        </p>
+        <p>
+          Report suspected unauthorized access promptly to <a href="mailto:wescomm2026@gmail.com" className="font-bold text-primary hover:underline">wescomm2026@gmail.com</a>.
+        </p>
+      </LegalSection>
+
+      <LegalSection title="7. Your privacy choices">
+        <p>Subject to applicable University rules and law, you may request to:</p>
+        <LegalList>
+          <li>Access or correct personal information associated with your WESCOMM profile.</li>
+          <li>Ask how your information is being used or shared.</li>
+          <li>Withdraw optional notification permission or update communication preferences.</li>
+          <li>Request deletion, restriction, or review of information when legally and operationally permitted.</li>
+          <li>Raise a concern about inaccurate data, unauthorized access, or privacy handling.</li>
+        </LegalList>
+        <p>
+          To protect your account, WESCOMM may verify your identity before acting on a request. Some records cannot be deleted immediately when retention is required for transactions, audits, disputes, or law.
+        </p>
+      </LegalSection>
+
+      <LegalSection title="8. Updates and contact">
+        <p>
+          This notice may be updated when WESCOMM features, providers, University procedures, or legal requirements change. Material updates will be reflected by the effective date shown above.
+        </p>
+        <p>
+          For privacy questions or requests, visit the <Link href="/contact" className="font-bold text-primary hover:underline">Contact page</Link> or email <a href="mailto:wescomm2026@gmail.com?subject=WESCOMM%20Privacy%20Request" className="font-bold text-primary hover:underline">wescomm2026@gmail.com</a> with the subject “WESCOMM Privacy Request.”
+        </p>
+      </LegalSection>
+    </LegalDocument>
+  );
+}
