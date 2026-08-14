@@ -5,7 +5,7 @@ function json(route: Route, body: unknown, status = 200) {
   return route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
 }
 
-test("visitor receipt search normalizes the code and displays only masked details", async ({ page }) => {
+test("visitor receipt navigation and search display only masked details", async ({ page, isMobile }) => {
   let requestedCode = "";
 
   await page.route("**/api/backend/**", async (route) => {
@@ -39,8 +39,14 @@ test("visitor receipt search normalizes the code and displays only masked detail
     return json(route, { error: `Unexpected mocked request: ${path}` }, 500);
   });
 
-  await page.goto("/verify-receipt");
+  await page.goto("/student/receipts");
   await dismissWelcomeGate(page);
+
+  if (isMobile) await page.getByRole("button", { name: "Open student menu" }).click();
+  const receiptNavigation = page.getByRole("link", { name: "Receipts", exact: true });
+  await expect(receiptNavigation).toHaveAttribute("href", "/verify-receipt");
+  await receiptNavigation.click();
+  await expect(page).toHaveURL(/\/verify-receipt$/);
 
   const input = page.getByLabel("Receipt code");
   await input.fill("rct-2026-public");

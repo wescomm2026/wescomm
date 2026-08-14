@@ -20,16 +20,21 @@ type NavItem = {
 export function WebHeader({ items, role }: { items: NavItem[]; role: string }) {
   const { user, ready, openAuth, logout } = useStudentAuth();
   const { itemCount, openCart } = useStudentCart();
+  const resolvedItems = role === "Student"
+    ? items.map((item) => item.label === "Receipts"
+      ? { ...item, href: ready && user ? "/student/receipts" : "/verify-receipt" }
+      : item)
+    : items;
 
   return (
     <header className="sticky left-0 right-0 top-0 z-40 w-full border-b border-[#e6ece6] bg-white/95 backdrop-blur">
       <div className="mx-auto flex h-[74px] w-full max-w-[1500px] items-center gap-1 px-3 sm:h-[86px] sm:gap-4 sm:px-8 lg:px-10">
-        <MobileMenu items={items.map(({ href, label, iconSrc }) => ({ href, label, iconSrc }))} />
+        <MobileMenu items={resolvedItems.map(({ href, label, iconSrc }) => ({ href, label, iconSrc }))} />
         <Link href="/student/dashboard" className="relative h-11 w-[92px] shrink-0 min-[390px]:w-[116px] sm:h-14 sm:w-[185px]">
           <Image src="/assets/wescomm-logo.png" alt="WESCOMM" fill priority className="object-contain object-left" />
         </Link>
         <nav className="ml-6 hidden items-center gap-6 lg:flex xl:gap-8">
-          {items.map((item) => (
+          {resolvedItems.map((item) => (
             <StudentNavLink key={item.href} href={item.href} label={item.label} iconSrc={item.iconSrc} />
           ))}
         </nav>

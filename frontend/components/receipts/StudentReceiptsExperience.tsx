@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from "react";
 import { createPortal } from "react-dom";
 import { Download, Eye, ShieldCheck, X } from "lucide-react";
@@ -863,7 +864,15 @@ export function StudentReceiptsExperience() {
           <p className="mt-2 max-w-xl text-sm leading-6 text-[#68746d]">
             Use your Wesleyan account to access official receipt copies, verification references, and downloads.
           </p>
-          <Button className="mt-5 h-11" onClick={openAuth}>Log in with Wesleyan account</Button>
+          <div className="mt-5 flex flex-wrap gap-3">
+            <Link
+              href="/verify-receipt"
+              className="inline-flex h-11 items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground shadow-[0_8px_18px_rgba(0,91,43,0.22)] transition-colors hover:bg-[#004320] focus:outline-none focus:ring-2 focus:ring-primary/30"
+            >
+              Search Receipt Code
+            </Link>
+            <Button className="h-11" variant="secondary" onClick={openAuth}>Log in with Wesleyan account</Button>
+          </div>
         </section>
       ) : (
         <>
