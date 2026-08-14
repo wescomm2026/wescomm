@@ -73,6 +73,8 @@ await import("./restriction-transaction.test.js");
 await import("./user-role-concurrency.test.js");
 await import("./reservation-safety.test.js");
 await import("./reservation-state.test.js");
+await import("./student-reservation-cancellation.test.js");
+await import("./public-receipt.test.js");
 await import("./online-payment.test.js");
 await import("./paymongo-webhook.test.js");
 await import("./paymongo-payment-validation.test.js");

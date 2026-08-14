@@ -3,7 +3,12 @@ import { z } from "zod";
 import { requireAuth, type AuthenticatedRequest } from "../middleware/auth.js";
 import { createRateLimiter, userRateLimitKey } from "../middleware/rate-limit.js";
 import { requireRole } from "../middleware/require-role.js";
-import { createReservation, listReservations, updateReservationStatus } from "../services/reservation.service.js";
+import {
+  cancelStudentReservation,
+  createReservation,
+  listReservations,
+  updateReservationStatus
+} from "../services/reservation.service.js";
 import { PAYMENT_METHODS, RESERVATION_STATUSES } from "../types/app.js";
 import { asyncHandler } from "../utils/async-handler.js";
 
@@ -79,6 +84,20 @@ reservationsRoutes.post(
     });
     response.setHeader("Idempotent-Replayed", result.idempotentReplay ? "true" : "false");
     response.status(result.idempotentReplay ? 200 : 201).json(result);
+  })
+);
+
+reservationsRoutes.post(
+  "/:id/cancel",
+  requireAuth,
+  requireRole("STUDENT"),
+  reservationStatusLimiter,
+  asyncHandler(async (request: AuthenticatedRequest, response) => {
+    const result = await cancelStudentReservation(
+      reservationIdSchema.parse(request.params.id),
+      request.auth!.id
+    );
+    response.json(result);
   })
 );
 

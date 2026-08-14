@@ -11,6 +11,7 @@ import {
   paymentCanRetry
 } from "../domain/online-payment.js";
 import { RESERVATION_RESTRICTION_POLICY, getNoShowEligibleAt } from "../domain/reservation-policy.js";
+import { assertStudentCanCancelReservation } from "../domain/student-reservation-cancellation.js";
 import {
   assertReservationTransition,
   deriveProductStatus,
@@ -763,7 +764,12 @@ export async function createReservation(input: {
   return { reservation, idempotentReplay: transactionResult.idempotentReplay };
 }
 
-export async function updateReservationStatus(reservationId: string, status: ReservationStatus, performedById?: string) {
+export async function updateReservationStatus(
+  reservationId: string,
+  status: ReservationStatus,
+  performedById?: string,
+  actorRole?: AppRole
+) {
   const result = await prisma
     .$transaction(
       async (tx) => {
@@ -797,6 +803,18 @@ export async function updateReservationStatus(reservationId: string, status: Res
         });
 
         if (!existingReservation) throw new HttpError(404, "Reservation not found.");
+
+        if (actorRole === "STUDENT") {
+          if (!performedById) throw new HttpError(401, "Authentication is required.");
+          assertStudentCanCancelReservation({
+            studentId: performedById,
+            reservationStudentId: existingReservation.studentId,
+            currentStatus: existingReservation.status as ReservationStatus,
+            nextStatus: status,
+            paymentMethod: existingReservation.paymentMethod as PaymentMethod,
+            paymentStatus: existingReservation.onlinePayment?.status as OnlinePaymentStatus | undefined
+          });
+        }
 
         assertReservationTransition(existingReservation.status as ReservationStatus, status);
         assertPaymentAllowsReservationTransition({
@@ -1131,4 +1149,8 @@ export async function updateReservationStatus(reservationId: string, status: Res
   }
 
   return { reservation, receipt: generatedReceipt, policyOutcome: result.policyOutcome };
+}
+
+export function cancelStudentReservation(reservationId: string, studentId: string) {
+  return updateReservationStatus(reservationId, "CANCELLED", studentId, "STUDENT");
 }

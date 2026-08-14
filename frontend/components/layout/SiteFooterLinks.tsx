@@ -4,6 +4,7 @@ const footerLinks = [
   { href: "/privacy", label: "Privacy Policy" },
   { href: "/terms", label: "Terms & Conditions" },
   { href: "/refund-policy", label: "Refund Policy" },
+  { href: "/verify-receipt", label: "Verify Receipt" },
   { href: "/contact", label: "Contact Us" }
 ] as const;
 

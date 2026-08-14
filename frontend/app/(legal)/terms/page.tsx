@@ -45,6 +45,8 @@ export default function TermsPage() {
         <LegalList>
           <li>Select the correct item, quantity, variant, and pickup schedule before confirming.</li>
           <li>Monitor the reservation status and notifications for confirmation and pickup instructions.</li>
+          <li>Students may directly cancel only their own pending reservation when no confirmed GCash payment or refund issue requires review.</li>
+          <li>After confirmation, or when a pending reservation already has a confirmed online GCash payment, cancellation must be handled by authorized staff or an administrator under the refund rules.</li>
           <li>Bring any identification or transaction reference reasonably required for release.</li>
           <li>A reservation may be marked as a no-show only after its pickup window and the current 24-hour grace period have passed.</li>
           <li>Repeated confirmed no-shows may result in warnings or temporary reservation restrictions.</li>

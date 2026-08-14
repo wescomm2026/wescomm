@@ -16,11 +16,13 @@ export default function RefundPolicyPage() {
     >
       <LegalSection title="1. Requesting a cancellation">
         <p>
-          Contact WESCOMM as soon as possible and include your reservation reference. Cancellation depends on the reservation, payment, and fulfillment status and is not final until staff confirms it.
+          Cancellation depends on the reservation, payment, and fulfillment status. Student self-cancellation is available only under the limited pending-reservation rule below.
         </p>
         <LegalList>
-          <li>Unpaid reservations may be cancelled by authorized staff before completion, subject to current processing and pickup status.</li>
-          <li>A paid reservation requires refund review before it can be treated as cancelled.</li>
+          <li>A student may directly cancel only their own reservation while its status is Pending and no confirmed online payment or refund issue requires staff review.</li>
+          <li>Once a reservation is Confirmed or Ready for Pickup, the student can no longer cancel it directly. Authorized staff or an administrator must handle the request when system rules allow.</li>
+          <li>A Pending reservation with a successful or Paid online GCash transaction cannot be automatically self-cancelled. Staff or an administrator must review the payment and required refund first.</li>
+          <li>Submit staff-handled requests as soon as possible through WESCOMM Support or the contact email below.</li>
           <li>Leaving PayMongo, closing the checkout page, or returning through a cancel link does not by itself cancel a reservation or payment session.</li>
           <li>Completed reservations cannot be reopened. Any item concern after pickup follows the return review below.</li>
         </LegalList>

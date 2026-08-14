@@ -211,13 +211,8 @@ export type BackendPublicReceiptVerification = {
   reservation: {
     referenceCode: string;
     status: BackendReservationStatus;
-    items: Array<{
-      name: string;
-      variantSummary: string | null;
-      quantity: number;
-      unitPrice: string | number;
-      subtotal: string | number;
-    }>;
+    itemCount: number;
+    totalQuantity: number;
   } | null;
 };
 
@@ -657,6 +652,16 @@ export async function getPaymentFromApi(token: string, paymentId: string) {
 export async function getReservationsFromApi(token: string) {
   const data = await authApiFetch<{ reservations: BackendReservation[] }>("/reservations", token);
   return data.reservations;
+}
+
+export async function cancelMyReservationFromApi(token: string, reservationId: string) {
+  const data = await authApiFetch<{
+    reservation: BackendReservation;
+    receipt: BackendReceipt | null;
+  }>(`/reservations/${encodeURIComponent(reservationId)}/cancel`, token, {
+    method: "POST"
+  });
+  return data.reservation;
 }
 
 export async function updateReservationStatusFromApi(

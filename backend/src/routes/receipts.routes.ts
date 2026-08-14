@@ -19,7 +19,13 @@ const voidReceiptSchema = z.object({
   reason: z.string().trim().max(300).optional()
 });
 
-const receiptCodeSchema = z.string().trim().min(5).max(64).regex(/^[A-Za-z0-9-]+$/, "Invalid receipt code.");
+const receiptCodeSchema = z
+  .string()
+  .trim()
+  .min(5)
+  .max(64)
+  .regex(/^[A-Za-z0-9-]+$/, "Invalid receipt code.")
+  .transform((value) => value.toUpperCase());
 const receiptIdSchema = z.string().uuid();
 const publicVerificationLimiter = createRateLimiter({
   namespace: "public-receipt-verification",

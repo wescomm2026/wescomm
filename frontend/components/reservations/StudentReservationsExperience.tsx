@@ -3,12 +3,13 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CalendarDays, Clock3 } from "lucide-react";
+import { CalendarDays, Clock3, XCircle } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import { AssetIcon } from "@/components/ui/AssetIcon";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import {
+  cancelMyReservationFromApi,
   createGcashCheckoutFromApi,
   getReservationsFromApi,
   type BackendPaymentMethod,
@@ -107,9 +108,15 @@ function reservationGuidance(
   const isPaidOnline = isOnlineGcash && payment?.status === "PAID";
 
   if (status === "Pending") {
+    if (isPaidOnline) {
+      return {
+        title: "GCash payment confirmed",
+        detail: "This paid reservation cannot be self-cancelled. Staff or an administrator must review the cancellation and refund first."
+      };
+    }
     return {
-      title: isOnlineGcash && !isPaidOnline ? "Online payment is not yet confirmed" : "Waiting for staff confirmation",
-      detail: isOnlineGcash && !isPaidOnline
+      title: isOnlineGcash ? "Online payment is not yet confirmed" : "Waiting for staff confirmation",
+      detail: isOnlineGcash
         ? "Your reservation is saved. Complete or check the secure GCash payment below before staff processing."
         : "Your item is held while commissary staff reviews the reservation."
     };
@@ -153,6 +160,14 @@ function reservationGuidance(
     title: "Reservation update",
     detail: "Check this page for the latest commissary status."
   };
+}
+
+function paymentRequiresStaffCancellation(
+  paymentMethod: BackendPaymentMethod,
+  payment: BackendPaymentSummary | null
+) {
+  return paymentMethod === "PAYMONGO_GCASH"
+    && ["PAID", "REFUND_REVIEW_REQUIRED", "PARTIALLY_REFUNDED"].includes(payment?.status ?? "");
 }
 
 function formatBackendPayment(value: string) {
@@ -233,17 +248,29 @@ function paymentStatusDisplay(status?: BackendPaymentStatus) {
 
 function ReservationCard({
   reservation,
-  accessToken
+  accessToken,
+  onCancelled
 }: {
   reservation: StoredReservation;
   accessToken: string;
+  onCancelled: (reservation: BackendReservation) => void;
 }) {
   const guidance = reservationGuidance(reservation.status, reservation.paymentMethod, reservation.payment);
   const totalQuantity = reservation.items.reduce((sum, item) => sum + item.quantity, 0);
   const [paymentError, setPaymentError] = useState("");
   const [openingPayment, setOpeningPayment] = useState(false);
+  const [confirmingCancellation, setConfirmingCancellation] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+  const [cancellationError, setCancellationError] = useState("");
   const paymentErrorRef = useRef<HTMLParagraphElement | null>(null);
+  const cancellationErrorRef = useRef<HTMLParagraphElement | null>(null);
   const isOnlineGcash = reservation.paymentMethod === "PAYMONGO_GCASH";
+  const requiresStaffCancellation = paymentRequiresStaffCancellation(
+    reservation.paymentMethod,
+    reservation.payment
+  );
+  const canSelfCancel = reservation.status === "Pending" && !requiresStaffCancellation;
+  const selfCancellationClosed = reservation.status === "Confirmed" || reservation.status === "Ready for Pickup";
   const canContinuePayment = isOnlineGcash
     && reservation.payment?.status !== "PAID"
     && (reservation.payment ? reservation.payment.canResume || reservation.payment.canRetry : true);
@@ -251,6 +278,10 @@ function ReservationCard({
   useEffect(() => {
     if (paymentError) paymentErrorRef.current?.focus();
   }, [paymentError]);
+
+  useEffect(() => {
+    if (cancellationError) cancellationErrorRef.current?.focus();
+  }, [cancellationError]);
 
   const continuePayment = async () => {
     if (!accessToken || !canContinuePayment) return;
@@ -270,6 +301,22 @@ function ReservationCard({
       setPaymentError(error instanceof Error ? error.message : "Unable to continue this payment.");
     } finally {
       setOpeningPayment(false);
+    }
+  };
+
+  const cancelReservation = async () => {
+    if (!accessToken || !canSelfCancel) return;
+    setCancelling(true);
+    setCancellationError("");
+
+    try {
+      const updatedReservation = await cancelMyReservationFromApi(accessToken, reservation.id);
+      setConfirmingCancellation(false);
+      onCancelled(updatedReservation);
+    } catch (error) {
+      setCancellationError(error instanceof Error ? error.message : "Unable to cancel this reservation.");
+    } finally {
+      setCancelling(false);
     }
   };
 
@@ -379,6 +426,81 @@ function ReservationCard({
                 : reservation.payment?.canRetry ? "Try GCash Again" : "Continue GCash Payment"}
             </Button>
           ) : null}
+        </section>
+      ) : null}
+
+      {canSelfCancel || requiresStaffCancellation || selfCancellationClosed ? (
+        <section className="mx-4 mb-4 rounded-lg border border-[#eadfda] bg-[#fffaf8] p-4 sm:mx-5 sm:mb-5" aria-label="Reservation cancellation">
+          {canSelfCancel ? (
+            confirmingCancellation ? (
+              <div>
+                <p className="font-extrabold text-[#692f24]">Cancel this pending reservation?</p>
+                <p className="mt-1 text-sm leading-6 text-[#765e58]">
+                  The held stock will be released and this action cannot be undone.
+                </p>
+                {cancellationError ? (
+                  <p ref={cancellationErrorRef} tabIndex={-1} role="alert" className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">
+                    {cancellationError}
+                  </p>
+                ) : null}
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => {
+                      setConfirmingCancellation(false);
+                      setCancellationError("");
+                    }}
+                    disabled={cancelling}
+                  >
+                    Keep Reservation
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="border border-red-200 text-red-700 hover:bg-red-50"
+                    onClick={() => void cancelReservation()}
+                    disabled={cancelling}
+                    aria-busy={cancelling}
+                  >
+                    <XCircle className="size-4" />
+                    {cancelling ? "Cancelling..." : "Confirm Cancellation"}
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="font-extrabold text-[#422f29]">Need to cancel?</p>
+                  <p className="mt-1 text-sm leading-6 text-[#765e58]">Students may cancel only while a reservation is pending.</p>
+                </div>
+                <Button type="button" variant="ghost" className="shrink-0 border border-red-200 text-red-700 hover:bg-red-50" onClick={() => setConfirmingCancellation(true)}>
+                  <XCircle className="size-4" />
+                  Cancel Reservation
+                </Button>
+              </div>
+            )
+          ) : requiresStaffCancellation ? (
+            <div>
+              <p className="font-extrabold text-[#692f24]">Staff review is required</p>
+              <p className="mt-1 text-sm leading-6 text-[#765e58]">
+                This pending reservation has a confirmed or refund-related GCash payment. Staff or an administrator must handle the cancellation and refund.
+              </p>
+              <Link href="/student/support" className="mt-3 inline-flex min-h-10 items-center rounded-md border border-[#dfc5bd] bg-white px-4 text-sm font-bold text-primary hover:bg-[#fff4ef] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2">
+                Contact Support
+              </Link>
+            </div>
+          ) : (
+            <div>
+              <p className="font-extrabold text-[#422f29]">Student cancellation is closed</p>
+              <p className="mt-1 text-sm leading-6 text-[#765e58]">
+                Confirmed and ready-for-pickup reservations can only be cancelled by authorized staff or an administrator when system rules allow.
+              </p>
+              <Link href="/student/support" className="mt-3 inline-flex min-h-10 items-center rounded-md border border-[#dfc5bd] bg-white px-4 text-sm font-bold text-primary hover:bg-[#fff4ef] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2">
+                Request Assistance
+              </Link>
+            </div>
+          )}
         </section>
       ) : null}
 
@@ -493,6 +615,14 @@ export function StudentReservationsExperience() {
     [activeFilter, reservations]
   );
 
+  const handleReservationCancelled = useCallback((updatedReservation: BackendReservation) => {
+    const mappedReservation = mapBackendReservations([updatedReservation])[0];
+    if (!mappedReservation) return;
+    setSavedReservations((currentReservations) => currentReservations.map((reservation) => (
+      reservation.id === mappedReservation.id ? mappedReservation : reservation
+    )));
+  }, []);
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
@@ -568,7 +698,12 @@ export function StudentReservationsExperience() {
             {filteredReservations.length ? (
               <div className="grid gap-5 xl:grid-cols-2">
                 {filteredReservations.map((reservation) => (
-                  <ReservationCard key={reservation.id} reservation={reservation} accessToken={user.accessToken ?? ""} />
+                  <ReservationCard
+                    key={reservation.id}
+                    reservation={reservation}
+                    accessToken={user.accessToken ?? ""}
+                    onCancelled={handleReservationCancelled}
+                  />
                 ))}
               </div>
             ) : (

@@ -1,4 +1,10 @@
 import { randomBytes } from "node:crypto";
+import {
+  maskPublicPersonName,
+  maskPublicReferenceCode,
+  maskPublicStudentNumber,
+  summarizePublicReceiptItems
+} from "../domain/public-receipt.js";
 import { supabaseAdmin } from "../lib/supabase.js";
 import { safelyRecordAuditLog } from "./audit-log.service.js";
 import { createNotification, createNotificationsForRoles } from "./notification.service.js";
@@ -80,22 +86,14 @@ type RawPublicReceipt = {
         reference_code: string;
         status: string;
         items: Array<{
-          variant_summary: string | null;
           quantity: number;
-          unit_price: string | number;
-          subtotal: string | number;
-          product: { name: string } | Array<{ name: string }> | null;
         }> | null;
       }
     | Array<{
         reference_code: string;
         status: string;
         items: Array<{
-          variant_summary: string | null;
           quantity: number;
-          unit_price: string | number;
-          subtotal: string | number;
-          product: { name: string } | Array<{ name: string }> | null;
         }> | null;
       }>
     | null;
@@ -147,11 +145,7 @@ const publicReceiptSelect = `
     reference_code,
     status,
     items:reservation_items(
-      variant_summary,
-      quantity,
-      unit_price,
-      subtotal,
-      product:products(name)
+      quantity
     )
   )
 `;
@@ -166,22 +160,10 @@ function createVerificationHash() {
   return randomBytes(32).toString("hex");
 }
 
-function maskPersonName(value?: string | null) {
-  const parts = value?.trim().split(/\s+/).filter(Boolean) ?? [];
-  if (!parts.length) return "Verified student";
-  if (parts.length === 1) return `${parts[0].slice(0, 1)}${"*".repeat(Math.min(4, Math.max(1, parts[0].length - 1)))}`;
-  return `${parts[0]} ${parts.at(-1)?.slice(0, 1) ?? ""}.`;
-}
-
-function maskStudentNumber(value?: string | null) {
-  const cleanValue = value?.trim() ?? "";
-  if (!cleanValue) return null;
-  return `${"*".repeat(Math.max(4, cleanValue.length - 4))}${cleanValue.slice(-4)}`;
-}
-
 function mapPublicReceipt(row: RawPublicReceipt) {
   const student = firstRow(row.student);
   const reservation = firstRow(row.reservation);
+  const itemSummary = summarizePublicReceiptItems(reservation?.items);
 
   return {
     receiptCode: row.receipt_code,
@@ -190,20 +172,15 @@ function mapPublicReceipt(row: RawPublicReceipt) {
     status: row.status,
     issuedAt: row.issued_at,
     student: {
-      displayName: maskPersonName(student?.full_name),
-      studentNumber: maskStudentNumber(student?.student_number)
+      displayName: maskPublicPersonName(student?.full_name),
+      studentNumber: maskPublicStudentNumber(student?.student_number)
     },
     reservation: reservation
       ? {
-          referenceCode: reservation.reference_code,
+          referenceCode: maskPublicReferenceCode(reservation.reference_code),
           status: reservation.status,
-          items: (reservation.items ?? []).map((item) => ({
-            name: firstRow(item.product)?.name ?? "Commissary item",
-            variantSummary: item.variant_summary,
-            quantity: item.quantity,
-            unitPrice: item.unit_price,
-            subtotal: item.subtotal
-          }))
+          itemCount: itemSummary.itemCount,
+          totalQuantity: itemSummary.totalQuantity
         }
       : null
   };
