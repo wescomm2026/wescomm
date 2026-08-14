@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, MessageCircle, Plus, RefreshCw, Send } from "lucide-react";
+import { ArrowLeft, Bot, Headphones, Plus, RefreshCw, Send } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import { AssetIcon } from "@/components/ui/AssetIcon";
 import { Button } from "@/components/ui/button";
@@ -9,6 +9,7 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import {
   createConversationFromApi,
   getConversationsFromApi,
+  requestConversationHandoffFromApi,
   sendConversationMessageFromApi,
   updateConversationTypingFromApi,
   type BackendConversation
@@ -28,9 +29,21 @@ function formatSupportTime(value: string) {
   });
 }
 
-function supportStatus(status: BackendConversation["status"]) {
-  return status === "RESOLVED" ? "Resolved" : "Open";
+function supportStatus(conversation: BackendConversation) {
+  if (conversation.mode === "BOT_ACTIVE") return "WesBot active";
+  if (conversation.mode === "WAITING_FOR_STAFF") return "Waiting for Staff";
+  if (conversation.mode === "STAFF_ACTIVE") return "Staff active";
+  return "Resolved";
 }
+
+const quickQuestions = [
+  { label: "Product availability", subject: "Product inquiry", message: "Available ba ang item na ito? Pangalan ng item: " },
+  { label: "My reservation", subject: "Reservation status", message: "Ano na ang status ng reservation ko? Reservation code: " },
+  { label: "GCash payment", subject: "Payment status", message: "Paki-check ang status ng GCash payment ko. Reservation code: " },
+  { label: "My receipt", subject: "Receipt status", message: "Paki-check ang receipt ko. Receipt code: " },
+  { label: "Pickup schedule", subject: "Pickup information", message: "Kailan ko puwedeng i-pick up ang reservation ko? Reservation code: " },
+  { label: "Cancellation", subject: "Cancellation request", message: "Puwede ko pa bang i-cancel ang reservation ko? Reservation code: " }
+];
 
 export function StudentSupportExperience() {
   const { user, ready, openAuth } = useStudentAuth();
@@ -132,6 +145,14 @@ export function StudentSupportExperience() {
     setThreadOpen(true);
   };
 
+  const chooseQuickQuestion = (subject: string, message: string) => {
+    setNewSubject(subject);
+    setNewMessage(message);
+    setSelectedId("");
+    setComposingNew(true);
+    setThreadOpen(true);
+  };
+
   const closeMobileThread = () => {
     if (selectedConversation?.id && user?.accessToken) {
       void updateConversationTypingFromApi(user.accessToken, selectedConversation.id, false);
@@ -148,7 +169,7 @@ export function StudentSupportExperience() {
 
   const handleReplyChange = (value: string) => {
     setReply(value);
-    if (!selectedConversation) return;
+    if (!selectedConversation || selectedConversation.mode === "BOT_ACTIVE" || selectedConversation.mode === "RESOLVED") return;
 
     if (!value.trim()) {
       if (typingStopTimerRef.current) window.clearTimeout(typingStopTimerRef.current);
@@ -186,7 +207,7 @@ export function StudentSupportExperience() {
       setThreadOpen(true);
       setNewSubject("");
       setNewMessage("");
-      setNotice("Support conversation submitted.");
+      setNotice("WesBot received your question and checked the current WESCOMM records.");
     } catch (supportError) {
       setError(supportError instanceof Error ? supportError.message : "Unable to start support conversation.");
     } finally {
@@ -200,23 +221,34 @@ export function StudentSupportExperience() {
     setError("");
 
     try {
-      const message = await sendConversationMessageFromApi(user.accessToken, selectedConversation.id, reply.trim());
+      const result = await sendConversationMessageFromApi(user.accessToken, selectedConversation.id, reply.trim());
       sendTypingSignal(selectedConversation.id, false);
       setConversations((current) =>
-        current.map((conversation) =>
-          conversation.id === selectedConversation.id
-            ? {
-                ...conversation,
-                status: "OPEN",
-                updatedAt: message.createdAt,
-                messages: [...conversation.messages, message]
-              }
-            : conversation
-        )
+        current.map((conversation) => conversation.id === selectedConversation.id ? result.conversation : conversation)
       );
       setReply("");
     } catch (supportError) {
       setError(supportError instanceof Error ? supportError.message : "Unable to send message.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const requestStaff = async () => {
+    if (!user?.accessToken || !selectedConversation || selectedConversation.mode !== "BOT_ACTIVE") return;
+    setSubmitting(true);
+    setError("");
+
+    try {
+      const conversation = await requestConversationHandoffFromApi(
+        user.accessToken,
+        selectedConversation.id,
+        "Student requested a real staff member."
+      );
+      setConversations((current) => current.map((item) => item.id === conversation.id ? conversation : item));
+      setNotice("Nasa staff queue na ang conversation mo. Puwede ka pa ring magdagdag ng detalye habang naghihintay.");
+    } catch (supportError) {
+      setError(supportError instanceof Error ? supportError.message : "Unable to request staff support.");
     } finally {
       setSubmitting(false);
     }
@@ -227,7 +259,7 @@ export function StudentSupportExperience() {
       <div className="space-y-5">
         <header>
           <p className="text-sm font-bold uppercase text-primary">Support</p>
-          <h1 className="mt-1 text-3xl font-extrabold text-[#101820]">Message commissary support</h1>
+          <h1 className="mt-1 text-3xl font-extrabold text-[#101820]">WesBot support</h1>
         </header>
         <section className="rounded-lg border border-[#dce5dd] bg-white p-6 text-sm font-semibold text-[#68746d] shadow-sm">
           Loading support conversations...
@@ -241,7 +273,7 @@ export function StudentSupportExperience() {
       <div className="space-y-5">
         <header>
           <p className="text-sm font-bold uppercase text-primary">Support</p>
-          <h1 className="mt-1 text-3xl font-extrabold text-[#101820]">Message commissary support</h1>
+          <h1 className="mt-1 text-3xl font-extrabold text-[#101820]">WesBot support</h1>
         </header>
         <section className="rounded-lg border border-[#dce5dd] bg-white p-6 shadow-sm">
           <p className="font-extrabold text-[#17211b]">Log in to contact support</p>
@@ -259,8 +291,8 @@ export function StudentSupportExperience() {
       <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p className="text-sm font-bold uppercase text-primary">Support</p>
-          <h1 className="mt-1 text-3xl font-extrabold text-[#101820]">Message commissary support</h1>
-          <p className="mt-2 text-sm text-[#68746d]">Ask about stock, reservations, receipts, and pickup schedules.</p>
+          <h1 className="mt-1 text-3xl font-extrabold text-[#101820]">WesBot support</h1>
+          <p className="mt-2 text-sm text-[#68746d]">Get instant, database-backed answers or ask to speak with commissary staff.</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <Button variant="secondary" onClick={() => void loadConversations()} disabled={loading || submitting}>
@@ -269,13 +301,13 @@ export function StudentSupportExperience() {
           </Button>
           <Button onClick={openComposer}>
             <Plus className="size-5" />
-            New message
+            Ask WesBot
           </Button>
         </div>
       </header>
 
-      {notice ? <p className="rounded-md border border-[#cfe0d0] bg-[#f3f9f3] px-4 py-3 text-sm font-semibold text-primary">{notice}</p> : null}
-      {error ? <p className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p> : null}
+      {notice ? <p role="status" className="rounded-md border border-[#cfe0d0] bg-[#f3f9f3] px-4 py-3 text-sm font-semibold text-primary">{notice}</p> : null}
+      {error ? <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p> : null}
 
       <section className="grid min-h-[calc(100dvh-230px)] overflow-hidden rounded-lg border border-[#dce5dd] bg-white shadow-sm lg:min-h-[620px] lg:grid-cols-[340px_1fr]">
         <aside className={cn(
@@ -302,7 +334,7 @@ export function StudentSupportExperience() {
               >
                 <div className="flex items-start gap-2">
                   <p className="min-w-0 flex-1 truncate font-extrabold">{conversation.subject}</p>
-                  <StatusBadge status={supportStatus(conversation.status)} />
+                  <StatusBadge status={supportStatus(conversation)} />
                 </div>
                 <p className="mt-1 truncate text-sm text-[#68746d]">
                   {conversation.messages.at(-1)?.message ?? "No messages yet"}
@@ -310,7 +342,7 @@ export function StudentSupportExperience() {
                 <p className="mt-2 text-xs font-semibold text-[#79837d]">{formatSupportTime(conversation.updatedAt)}</p>
               </button>
             )) : (
-              <div className="p-5 text-sm leading-6 text-[#68746d]">No conversations yet. Start one so staff can help you.</div>
+              <div className="p-5 text-sm leading-6 text-[#68746d]">No conversations yet. Ask WesBot a question to get started.</div>
             )}
           </div>
         </aside>
@@ -330,11 +362,26 @@ export function StudentSupportExperience() {
                 <ArrowLeft className="size-5" />
               </button>
               <span className="grid size-12 place-items-center rounded-md bg-[#eef6ee]">
-                <MessageCircle className="size-6 text-primary" />
+                <Bot className="size-6 text-primary" />
               </span>
               <div>
-                <h2 className="text-xl font-extrabold">Start a support conversation</h2>
-                <p className="text-sm text-[#68746d]">Include the item, reservation code, or receipt code if available.</p>
+                <h2 className="text-xl font-extrabold">Ask WesBot</h2>
+                <p className="text-sm text-[#68746d]">WesBot checks current commissary data. Include the exact item, reservation code, or receipt code.</p>
+              </div>
+            </div>
+            <div className="mt-6">
+              <p className="text-xs font-extrabold uppercase tracking-wide text-[#68746d]">Quick questions</p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {quickQuestions.map((question) => (
+                  <button
+                    key={question.label}
+                    type="button"
+                    onClick={() => chooseQuickQuestion(question.subject, question.message)}
+                    className="rounded-full border border-[#cfe0d0] bg-[#f4faf4] px-3 py-2 text-xs font-bold text-primary transition hover:bg-[#e8f4e9]"
+                  >
+                    {question.label}
+                  </button>
+                ))}
               </div>
             </div>
             <div className="mt-6 grid gap-4">
@@ -358,7 +405,7 @@ export function StudentSupportExperience() {
               </label>
               <Button className="h-12 justify-self-start px-6" onClick={() => void startConversation()} disabled={submitting || !newSubject.trim() || !newMessage.trim()}>
                 <Send className="size-5" />
-                {submitting ? "Sending..." : "Send to support"}
+                {submitting ? "Sending..." : "Ask WesBot"}
               </Button>
             </div>
           </div>
@@ -381,19 +428,65 @@ export function StudentSupportExperience() {
                   <h2 className="truncate text-xl font-extrabold">{selectedConversation.subject}</h2>
                   <p className="mt-1 text-xs text-[#68746d]">Started {formatSupportTime(selectedConversation.createdAt)}</p>
                 </div>
-                <StatusBadge status={supportStatus(selectedConversation.status)} />
+                <StatusBadge status={supportStatus(selectedConversation)} />
               </div>
+              {selectedConversation.mode === "BOT_ACTIVE" ? (
+                <div className="mt-4 flex flex-col gap-3 rounded-md border border-[#cfe0d0] bg-[#f3f9f3] p-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex items-start gap-2">
+                    <Bot className="mt-0.5 size-5 shrink-0 text-primary" />
+                    <p className="text-sm leading-5 text-[#445149]">
+                      <span className="font-extrabold text-[#17211b]">WesBot is answering.</span> Its replies use your live commissary records. You can switch to a real staff member anytime.
+                    </p>
+                  </div>
+                  <Button variant="secondary" className="h-9 shrink-0" disabled={submitting} onClick={() => void requestStaff()}>
+                    <Headphones className="size-4" />
+                    Talk to Staff
+                  </Button>
+                </div>
+              ) : null}
+              {selectedConversation.mode === "WAITING_FOR_STAFF" ? (
+                <div className="mt-4 flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm leading-5 text-amber-900">
+                  <Headphones className="mt-0.5 size-5 shrink-0" />
+                  <p><span className="font-extrabold">Waiting for commissary staff.</span> Your concern and WesBot conversation are already in the staff queue.</p>
+                </div>
+              ) : null}
+              {selectedConversation.mode === "STAFF_ACTIVE" ? (
+                <div className="mt-4 flex items-start gap-2 rounded-md border border-sky-200 bg-sky-50 p-3 text-sm leading-5 text-sky-900">
+                  <Headphones className="mt-0.5 size-5 shrink-0" />
+                  <p><span className="font-extrabold">A real staff member is handling this conversation.</span> WesBot will stay paused until staff returns the thread.</p>
+                </div>
+              ) : null}
             </header>
 
             <div className="flex-1 space-y-3 overflow-y-auto bg-[#fafcfb] p-4 sm:p-5">
               {selectedConversation.messages.map((message) => {
-                const mine = message.senderId === user.id;
+                const mine = message.senderType === "STUDENT" && message.senderId === user.id;
+                if (message.senderType === "SYSTEM") {
+                  return (
+                    <div key={message.id} className="flex justify-center">
+                      <p className="max-w-[90%] rounded-full bg-[#edf1ed] px-3 py-1.5 text-center text-xs font-semibold text-[#68746d]">
+                        {message.message}
+                      </p>
+                    </div>
+                  );
+                }
+
+                const botMessage = message.senderType === "BOT";
                 return (
                   <div key={message.id} className={cn("flex", mine ? "justify-end" : "justify-start")}>
-                    <div className={cn("max-w-[82%] rounded-lg p-3 text-sm shadow-sm", mine ? "bg-primary text-white" : "border border-[#dce5dd] bg-white text-[#17211b]")}>
-                      <p className="leading-6">{message.message}</p>
+                    <div className={cn(
+                      "max-w-[82%] rounded-lg p-3 text-sm shadow-sm",
+                      mine ? "bg-primary text-white" : botMessage ? "border border-[#cfe0d0] bg-[#f3f9f3] text-[#17211b]" : "border border-sky-200 bg-white text-[#17211b]"
+                    )}>
+                      {!mine ? (
+                        <p className={cn("mb-1 flex items-center gap-1.5 text-xs font-extrabold", botMessage ? "text-primary" : "text-sky-800")}>
+                          {botMessage ? <Bot className="size-3.5" /> : <Headphones className="size-3.5" />}
+                          {botMessage ? "WesBot · Automated Assistant" : `Staff · ${message.sender?.fullName || "Commissary staff"}`}
+                        </p>
+                      ) : null}
+                      <p className="whitespace-pre-wrap leading-6">{message.message}</p>
                       <p className={cn("mt-2 text-[11px] font-semibold", mine ? "text-white/75" : "text-[#79837d]")}>
-                        {mine ? "You" : message.sender?.fullName || "Commissary staff"} - {formatSupportTime(message.createdAt)}
+                        {mine ? "You" : botMessage ? "Automated reply" : "Staff reply"} - {formatSupportTime(message.createdAt)}
                       </p>
                     </div>
                   </div>

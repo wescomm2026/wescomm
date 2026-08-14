@@ -133,6 +133,10 @@ separately but deploy together under one project, domain, and release.
    VAPID_PRIVATE_KEY=<private VAPID key>
    VAPID_SUBJECT=mailto:wescomm@wesleyan.edu.ph
 
+   WESBOT_ENABLED=false
+   WESBOT_AI_ENABLED=false
+   WESBOT_MODEL=openai/gpt-5.6-luna
+
    NEXT_PUBLIC_APP_ENV=production
    NEXT_PUBLIC_API_URL=/api
    NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=<public publishable key, if used>
@@ -276,6 +280,12 @@ Create a branch for each change:
 Open a Pull Request on GitHub. Vercel will create Preview deployments. After QA
 and review, merge the Pull Request into main. The stable QA projects will deploy
 the updated main branch automatically.
+
+For the first WesBot release, apply its Prisma migration while both WesBot flags
+remain false, deploy the combined Services artifact, verify health and messaging,
+then set WESBOT_ENABLED=true and redeploy. WESBOT_AI_ENABLED is optional and must
+remain false until Vercel AI Gateway authentication is configured and spending is
+approved. The database-grounded bot works without the optional AI wording layer.
 
 
 PART 9 - RELEASE GATE

@@ -225,6 +225,26 @@ npm run prisma:migrate:deploy
 npm run prisma:migrate:verify
 ```
 
+### WesBot rollout
+
+The WesBot support lifecycle requires the
+`20260814000000_add_wesbot_support` migration. Roll it out in this order so the
+previous backend remains compatible throughout the release:
+
+1. Keep `WESBOT_ENABLED=false` and `WESBOT_AI_ENABLED=false`.
+2. Run `npm run prisma:migrate:deploy`, then `npm run prisma:migrate:verify`.
+3. Deploy the backend and frontend together through the root Vercel Services project.
+4. Verify `/api/health/ready`, student Support, and the Staff Message Center.
+5. Set `WESBOT_ENABLED=true` and redeploy. This enables deterministic,
+   database-grounded replies without any model or Gateway cost.
+
+Optional AI wording polish is a separate release toggle. Enable Vercel AI
+Gateway/OIDC (or configure `AI_GATEWAY_API_KEY` server-side), keep
+`WESBOT_MODEL` in `provider/model` form, and only then set
+`WESBOT_AI_ENABLED=true`. Never expose the Gateway credential to the frontend.
+If the model, Gateway, or factual validation fails, WesBot automatically sends
+the deterministic database answer.
+
 Never mark `20260718000000_enforce_single_active_restriction` as applied unless
 its SQL was executed manually and its exact partial unique index was verified.
 `migrate deploy` does not detect schema drift, and `db push` is not a production

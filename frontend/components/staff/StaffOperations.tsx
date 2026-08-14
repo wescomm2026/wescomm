@@ -3,7 +3,7 @@
 import Link from "next/link";
 import Image from "next/image";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, Ban, Check, Edit3, Eye, Filter, Plus, RefreshCw, Search, Send, Trash2, Upload, X } from "lucide-react";
+import { ArrowLeft, Ban, Bot, Check, Edit3, Eye, Filter, Headphones, Plus, RefreshCw, Search, Send, Trash2, Upload, X } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import { FaqManagementExperience } from "@/components/faq/FaqManagementExperience";
 import { WebPushSettings } from "@/components/notifications/WebPushSettings";
@@ -12,11 +12,13 @@ import { AssetIcon } from "@/components/ui/AssetIcon";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import {
+  acceptConversationFromApi,
   getConversationsFromApi,
   getReceiptsFromApi,
   getReservationsFromApi,
   getStaffUsersFromApi,
   markReceiptVerifiedFromApi,
+  returnConversationToBotFromApi,
   sendConversationMessageFromApi,
   type BackendAdminUser,
   type BackendConversation,
@@ -247,8 +249,11 @@ function mapStaffReceipt(row: BackendReceipt): StaffReceiptRow {
   };
 }
 
-function formatConversationStatus(status: BackendConversationStatus) {
-  return status === "RESOLVED" ? "Resolved" : "Open";
+function formatConversationStatus(conversation: BackendConversation) {
+  if (conversation.mode === "BOT_ACTIVE") return "WesBot active";
+  if (conversation.mode === "WAITING_FOR_STAFF") return "Waiting for Staff";
+  if (conversation.mode === "STAFF_ACTIVE") return "Staff active";
+  return "Resolved";
 }
 
 function formatConversationTime(value: string) {
@@ -711,7 +716,7 @@ export function StaffInventoryExperience() {
         }
       />
       <Toolbar search={search} onSearch={setSearch} status={status} onStatus={setStatus} placeholder="Search product or category" statuses={stockStatusOptions} />
-      {error ? <p className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p> : null}
+      {error ? <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p> : null}
       <section className="overflow-hidden rounded-lg border border-[#dce5dd] bg-white shadow-sm">
         <div className="hidden grid-cols-[1.35fr_1fr_.7fr_.75fr_.6fr_.85fr_auto] gap-4 bg-[#f6f9f6] px-4 py-3 text-xs font-bold text-[#59655d] md:grid">
           <span>Product</span><span>Category</span><span>Current Stock</span><span>Restock Alert At</span><span>Price</span><span>Stock Status</span><span>Actions</span>
@@ -1389,6 +1394,7 @@ export function StaffMessagesExperience() {
   const typingStopTimerRef = useRef<number | null>(null);
   const lastTypingSignalRef = useRef(0);
   const selected = conversations.find((conversation) => conversation.id === selectedId) ?? conversations[0] ?? null;
+  const canReply = selected?.mode === "STAFF_ACTIVE" && selected.assignedStaffId === user?.id;
 
   const loadConversations = useCallback(async ({ background = false }: { background?: boolean } = {}) => {
     const session = getStoredStaffSession();
@@ -1447,7 +1453,7 @@ export function StaffMessagesExperience() {
     `${conversation.subject} ${conversation.student?.fullName ?? ""} ${conversation.student?.email ?? ""}`
       .toLowerCase()
       .includes(search.toLowerCase()) &&
-    (status === "All" || formatConversationStatus(conversation.status) === status)
+    (status === "All" || formatConversationStatus(conversation) === status)
   );
 
   const openConversation = (conversationId: string) => {
@@ -1502,25 +1508,51 @@ export function StaffMessagesExperience() {
     setError("");
 
     try {
-      const message = await sendConversationMessageFromApi(session.token, selected.id, reply.trim());
+      const result = await sendConversationMessageFromApi(session.token, selected.id, reply.trim());
       sendTypingSignal(selected.id, false);
       setConversations((current) =>
-        current.map((conversation) =>
-          conversation.id === selected.id
-            ? {
-                ...conversation,
-                status: "OPEN",
-                assignedStaffId: conversation.assignedStaffId ?? user?.id ?? null,
-                updatedAt: message.createdAt,
-                messages: [...conversation.messages, message]
-              }
-            : conversation
-        )
+        current.map((conversation) => conversation.id === selected.id ? result.conversation : conversation)
       );
       setReply("");
       setNotice("Reply sent to student.");
     } catch (messageError) {
       setError(messageError instanceof Error ? messageError.message : "Unable to send reply.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const acceptConversation = async (conversation: BackendConversation) => {
+    const session = getStoredStaffSession();
+    if (!session.token) return;
+    setSubmitting(true);
+    setError("");
+
+    try {
+      const updatedConversation = await acceptConversationFromApi(session.token, conversation.id);
+      setConversations((current) => current.map((item) => item.id === conversation.id ? updatedConversation : item));
+      setNotice(`You are now handling ${conversation.student?.fullName || "this student"}'s concern.`);
+    } catch (messageError) {
+      setError(messageError instanceof Error ? messageError.message : "Unable to accept conversation.");
+      void loadConversations({ background: true });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const returnToWesBot = async (conversation: BackendConversation) => {
+    const session = getStoredStaffSession();
+    if (!session.token) return;
+    setSubmitting(true);
+    setError("");
+
+    try {
+      const updatedConversation = await returnConversationToBotFromApi(session.token, conversation.id);
+      setConversations((current) => current.map((item) => item.id === conversation.id ? updatedConversation : item));
+      setReply("");
+      setNotice("Conversation returned to WesBot.");
+    } catch (messageError) {
+      setError(messageError instanceof Error ? messageError.message : "Unable to return conversation to WesBot.");
     } finally {
       setSubmitting(false);
     }
@@ -1536,7 +1568,7 @@ export function StaffMessagesExperience() {
     try {
       const updatedConversation = await updateConversationStatusFromApi(session.token, conversation.id, nextStatus);
       setConversations((current) => current.map((item) => item.id === conversation.id ? updatedConversation : item));
-      setNotice(`${conversation.subject} marked as ${formatConversationStatus(nextStatus).toLowerCase()}.`);
+      setNotice(`${conversation.subject} marked as ${nextStatus === "RESOLVED" ? "resolved" : "open"}.`);
     } catch (messageError) {
       setError(messageError instanceof Error ? messageError.message : "Unable to update conversation.");
     } finally {
@@ -1549,11 +1581,11 @@ export function StaffMessagesExperience() {
       <PageHeading
         eyebrow="Student messaging"
         title="Message center"
-        detail="Read student inquiries, reply from one workspace, and resolve completed conversations."
+        detail="Monitor WesBot, accept human handoffs, reply from one workspace, and resolve completed conversations."
         action={<Button variant="secondary" onClick={() => void loadConversations()} disabled={loading || submitting}>Refresh</Button>}
       />
       <div className={threadOpen ? "hidden lg:block" : ""}>
-        <Toolbar search={search} onSearch={setSearch} status={status} onStatus={setStatus} placeholder="Search student, topic, or message" statuses={["Open", "Resolved"]} />
+        <Toolbar search={search} onSearch={setSearch} status={status} onStatus={setStatus} placeholder="Search student, topic, or message" statuses={["WesBot active", "Waiting for Staff", "Staff active", "Resolved"]} />
       </div>
       {error ? <p className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p> : null}
       <div className="grid min-h-[calc(100dvh-230px)] overflow-hidden rounded-lg border border-[#dce5dd] bg-white shadow-sm lg:min-h-[620px] lg:grid-cols-[360px_1fr]">
@@ -1578,7 +1610,7 @@ export function StaffMessagesExperience() {
             >
               <div className="flex items-start gap-2">
                 <p className="min-w-0 flex-1 truncate font-extrabold">{conversation.student?.fullName || conversation.student?.email || "Student"}</p>
-                <StatusBadge status={formatConversationStatus(conversation.status)} />
+                <StatusBadge status={formatConversationStatus(conversation)} />
               </div>
               <p className="mt-1 truncate text-sm font-semibold">{conversation.subject}</p>
               <p className="mt-1 truncate text-xs text-[#68746d]">{conversationPreview(conversation)}</p>
@@ -1603,7 +1635,19 @@ export function StaffMessagesExperience() {
                 <h2 className="truncate font-extrabold">{selected.subject}</h2>
                 <p className="text-xs text-[#68746d]">{selected.student?.fullName || selected.student?.email || "Student"}</p>
               </div>
-              <StatusBadge status={formatConversationStatus(selected.status)} />
+              <StatusBadge status={formatConversationStatus(selected)} />
+              {selected.mode === "WAITING_FOR_STAFF" ? (
+                <Button className="h-9" disabled={submitting} onClick={() => void acceptConversation(selected)}>
+                  <Headphones className="size-4" />
+                  Accept
+                </Button>
+              ) : null}
+              {selected.mode === "STAFF_ACTIVE" && selected.assignedStaffId === user?.id ? (
+                <Button variant="secondary" className="h-9" disabled={submitting} onClick={() => void returnToWesBot(selected)}>
+                  <Bot className="size-4" />
+                  Return to WesBot
+                </Button>
+              ) : null}
               <Button
                 variant={selected.status === "RESOLVED" ? "secondary" : "ghost"}
                 className="h-9"
@@ -1613,15 +1657,54 @@ export function StaffMessagesExperience() {
                 {selected.status === "RESOLVED" ? "Reopen" : "Resolve"}
               </Button>
             </header>
+            {selected.mode === "WAITING_FOR_STAFF" ? (
+              <div className="border-b border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-950">
+                <div className="flex items-start gap-2">
+                  <Headphones className="mt-0.5 size-5 shrink-0" />
+                  <div>
+                    <p className="font-extrabold">Student requested human support</p>
+                    <p className="mt-1 leading-5">{selected.escalationReason || "No escalation reason was provided."}</p>
+                    {selected.botSummary ? <p className="mt-2 whitespace-pre-wrap rounded-md bg-white/70 p-3 leading-5"><span className="font-extrabold">WesBot summary:</span> {selected.botSummary}</p> : null}
+                  </div>
+                </div>
+              </div>
+            ) : null}
+            {selected.mode === "STAFF_ACTIVE" && selected.assignedStaffId !== user?.id ? (
+              <div className="border-b border-sky-200 bg-sky-50 px-5 py-3 text-sm font-semibold text-sky-900">
+                This conversation is being handled by {selected.assignedStaff?.fullName || "another staff member"}. Replies are locked to prevent duplicate responses.
+              </div>
+            ) : null}
+            {selected.mode === "BOT_ACTIVE" ? (
+              <div className="flex items-start gap-2 border-b border-[#cfe0d0] bg-[#f3f9f3] px-5 py-3 text-sm text-[#445149]">
+                <Bot className="mt-0.5 size-5 shrink-0 text-primary" />
+                <p><span className="font-extrabold text-[#17211b]">WesBot is handling this thread.</span> Staff can monitor it; it enters the queue when the student requests staff or the bot escalates.</p>
+              </div>
+            ) : null}
             <div className="flex-1 space-y-3 overflow-y-auto bg-[#fafcfb] p-4 sm:p-5">
               {selected.messages.map((message) => {
-                const mine = message.senderId === user?.id;
+                const mine = message.senderType === "STAFF" && message.senderId === user?.id;
+                if (message.senderType === "SYSTEM") {
+                  return (
+                    <div key={message.id} className="flex justify-center">
+                      <p className="max-w-[90%] rounded-full bg-[#edf1ed] px-3 py-1.5 text-center text-xs font-semibold text-[#68746d]">{message.message}</p>
+                    </div>
+                  );
+                }
+
+                const botMessage = message.senderType === "BOT";
+                const staffMessage = message.senderType === "STAFF";
                 return (
                   <div key={message.id} className={mine ? "flex justify-end" : "flex justify-start"}>
-                    <div className={mine ? "ml-auto max-w-[82%] rounded-lg bg-primary p-3 text-sm leading-6 text-white shadow-sm" : "max-w-[82%] rounded-lg border border-[#dce5dd] bg-white p-3 text-sm leading-6 shadow-sm"}>
-                      <p>{message.message}</p>
+                    <div className={mine ? "ml-auto max-w-[82%] rounded-lg bg-primary p-3 text-sm leading-6 text-white shadow-sm" : botMessage ? "max-w-[82%] rounded-lg border border-[#cfe0d0] bg-[#f3f9f3] p-3 text-sm leading-6 shadow-sm" : "max-w-[82%] rounded-lg border border-[#dce5dd] bg-white p-3 text-sm leading-6 shadow-sm"}>
+                      {!mine ? (
+                        <p className={botMessage ? "mb-1 flex items-center gap-1.5 text-xs font-extrabold text-primary" : "mb-1 flex items-center gap-1.5 text-xs font-extrabold text-[#526058]"}>
+                          {botMessage ? <Bot className="size-3.5" /> : staffMessage ? <Headphones className="size-3.5" /> : null}
+                          {botMessage ? "WesBot · Automated Assistant" : staffMessage ? `Staff · ${message.sender?.fullName || "Commissary staff"}` : selected.student?.fullName || "Student"}
+                        </p>
+                      ) : null}
+                      <p className="whitespace-pre-wrap">{message.message}</p>
                       <p className={mine ? "mt-2 text-[11px] font-semibold text-white/75" : "mt-2 text-[11px] font-semibold text-[#79837d]"}>
-                        {mine ? "You" : message.sender?.fullName || selected.student?.fullName || "Student"} - {formatConversationTime(message.createdAt)}
+                        {mine ? "You" : botMessage ? "Automated reply" : message.sender?.fullName || selected.student?.fullName || "Student"} - {formatConversationTime(message.createdAt)}
                       </p>
                     </div>
                   </div>
@@ -1647,10 +1730,21 @@ export function StaffMessagesExperience() {
                 value={reply}
                 onChange={(event) => handleReplyChange(event.target.value)}
                 onBlur={() => selected ? sendTypingSignal(selected.id, false) : undefined}
-                placeholder="Write a reply..."
+                placeholder={
+                  selected.mode === "WAITING_FOR_STAFF"
+                    ? "Accept this conversation before replying..."
+                    : selected.mode === "BOT_ACTIVE"
+                      ? "WesBot is handling this conversation..."
+                      : selected.mode === "RESOLVED"
+                        ? "Reopen this conversation before replying..."
+                        : selected.assignedStaffId !== user?.id
+                          ? "Another staff member is handling this conversation..."
+                          : "Write a reply..."
+                }
+                disabled={!canReply}
                 className="h-11 min-w-0 flex-1 rounded-md border border-[#d7e1d8] px-3 outline-none focus:border-primary"
               />
-              <Button type="submit" className="h-11 px-3 sm:px-4" disabled={submitting || !reply.trim()}>
+              <Button type="submit" className="h-11 px-3 sm:px-4" disabled={submitting || !canReply || !reply.trim()}>
                 <Send className="size-4" />
                 <span className="hidden sm:inline">Send</span>
               </Button>

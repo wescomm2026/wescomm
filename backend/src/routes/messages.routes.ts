@@ -3,7 +3,16 @@ import { z } from "zod";
 import { requireAuth, type AuthenticatedRequest } from "../middleware/auth.js";
 import { createRateLimiter, userRateLimitKey } from "../middleware/rate-limit.js";
 import { requireRole } from "../middleware/require-role.js";
-import { createConversation, createMessage, listConversations, setConversationTyping, updateConversationStatus } from "../services/message.service.js";
+import {
+  acceptConversation,
+  createConversation,
+  createMessage,
+  listConversations,
+  requestStaffHandoff,
+  returnConversationToBot,
+  setConversationTyping,
+  updateConversationStatus
+} from "../services/message.service.js";
 import { CONVERSATION_STATUSES } from "../types/app.js";
 import { asyncHandler } from "../utils/async-handler.js";
 
@@ -24,6 +33,10 @@ const statusSchema = z.object({
 
 const typingSchema = z.object({
   isTyping: z.boolean()
+});
+
+const handoffSchema = z.object({
+  reason: z.string().trim().min(3).max(500).optional()
 });
 
 const conversationIdSchema = z.string().uuid();
@@ -94,6 +107,48 @@ messagesRoutes.patch(
   })
 );
 
+messagesRoutes.post(
+  "/:conversationId/handoff",
+  requireRole("STUDENT"),
+  conversationStatusLimiter,
+  asyncHandler(async (request: AuthenticatedRequest, response) => {
+    const input = handoffSchema.parse(request.body ?? {});
+    const conversation = await requestStaffHandoff({
+      conversationId: conversationIdSchema.parse(request.params.conversationId),
+      studentId: request.auth!.id,
+      reason: input.reason
+    });
+    response.json({ conversation });
+  })
+);
+
+messagesRoutes.post(
+  "/:conversationId/accept",
+  requireRole("STAFF", "ADMIN"),
+  conversationStatusLimiter,
+  asyncHandler(async (request: AuthenticatedRequest, response) => {
+    const conversation = await acceptConversation({
+      conversationId: conversationIdSchema.parse(request.params.conversationId),
+      staffId: request.auth!.id
+    });
+    response.json({ conversation });
+  })
+);
+
+messagesRoutes.post(
+  "/:conversationId/return-to-bot",
+  requireRole("STAFF", "ADMIN"),
+  conversationStatusLimiter,
+  asyncHandler(async (request: AuthenticatedRequest, response) => {
+    const conversation = await returnConversationToBot({
+      conversationId: conversationIdSchema.parse(request.params.conversationId),
+      performedById: request.auth!.id,
+      performedByRole: request.auth!.role
+    });
+    response.json({ conversation });
+  })
+);
+
 messagesRoutes.patch(
   "/:conversationId/typing",
   typingLimiter,
@@ -118,12 +173,12 @@ messagesRoutes.post(
   messageCreateLimiter,
   asyncHandler(async (request: AuthenticatedRequest, response) => {
     const input = messageSchema.parse(request.body);
-    const message = await createMessage({
+    const result = await createMessage({
       conversationId: conversationIdSchema.parse(request.params.conversationId),
       senderId: request.auth!.id,
       senderRole: request.auth!.role,
       message: input.message
     });
-    response.status(201).json({ message });
+    response.status(201).json(result);
   })
 );

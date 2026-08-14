@@ -149,6 +149,24 @@ enum ConversationStatus {
   @@map("conversation_status")
 }
 
+enum ConversationMode {
+  BOT_ACTIVE
+  WAITING_FOR_STAFF
+  STAFF_ACTIVE
+  RESOLVED
+
+  @@map("conversation_mode")
+}
+
+enum ConversationMessageSenderType {
+  STUDENT
+  BOT
+  STAFF
+  SYSTEM
+
+  @@map("conversation_message_sender_type")
+}
+
 model Profile {
   id                    String                      @id @db.Uuid
   fullName              String                      @default("") @map("full_name")
@@ -545,29 +563,46 @@ model PushSubscription {
 }
 
 model Conversation {
-  id              String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  studentId       String                @map("student_id") @db.Uuid
-  assignedStaffId String?               @map("assigned_staff_id") @db.Uuid
-  subject         String
-  status          ConversationStatus    @default(OPEN)
-  createdAt       DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt       DateTime              @default(now()) @map("updated_at") @db.Timestamptz(6)
-  student         Profile               @relation("StudentConversations", fields: [studentId], references: [id], onDelete: Cascade)
-  assignedStaff   Profile?              @relation("AssignedStaffConversations", fields: [assignedStaffId], references: [id], onDelete: SetNull)
-  messages        ConversationMessage[]
+  id               String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  studentId        String                @map("student_id") @db.Uuid
+  assignedStaffId  String?               @map("assigned_staff_id") @db.Uuid
+  subject          String
+  status           ConversationStatus    @default(OPEN)
+  mode             ConversationMode      @default(BOT_ACTIVE)
+  category         String?
+  priority         Int                   @default(0)
+  escalationReason String?               @map("escalation_reason")
+  escalatedAt      DateTime?             @map("escalated_at") @db.Timestamptz(6)
+  acceptedAt       DateTime?             @map("accepted_at") @db.Timestamptz(6)
+  resolvedAt       DateTime?             @map("resolved_at") @db.Timestamptz(6)
+  botSummary       String?               @map("bot_summary")
+  lastIntent       String?               @map("last_intent")
+  lastConcernKey   String?               @map("last_concern_key")
+  botReplyCount    Int                   @default(0) @map("bot_reply_count")
+  createdAt        DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime              @default(now()) @map("updated_at") @db.Timestamptz(6)
+  student          Profile               @relation("StudentConversations", fields: [studentId], references: [id], onDelete: Cascade)
+  assignedStaff    Profile?              @relation("AssignedStaffConversations", fields: [assignedStaffId], references: [id], onDelete: SetNull)
+  messages         ConversationMessage[]
 
+  @@index([mode, priority, updatedAt(sort: Desc)])
+  @@index([studentId, updatedAt(sort: Desc)])
   @@map("conversations")
 }
 
 model ConversationMessage {
-  id             String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  conversationId String       @map("conversation_id") @db.Uuid
-  senderId       String       @map("sender_id") @db.Uuid
+  id             String                        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  conversationId String                        @map("conversation_id") @db.Uuid
+  senderId       String?                       @map("sender_id") @db.Uuid
+  senderType     ConversationMessageSenderType @default(STUDENT) @map("sender_type")
   message        String
-  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
-  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  sender         Profile      @relation("MessageSender", fields: [senderId], references: [id], onDelete: Cascade)
+  intent         String?
+  metadata       Json                          @default("{}")
+  createdAt      DateTime                      @default(now()) @map("created_at") @db.Timestamptz(6)
+  conversation   Conversation                  @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender         Profile?                      @relation("MessageSender", fields: [senderId], references: [id], onDelete: SetNull)
 
+  @@index([conversationId, createdAt])
   @@map("conversation_messages")
 }
 

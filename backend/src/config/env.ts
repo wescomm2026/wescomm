@@ -59,6 +59,11 @@ const envSchema = z.object({
   VAPID_PUBLIC_KEY: z.string().trim().optional(),
   VAPID_PRIVATE_KEY: z.string().trim().optional(),
   VAPID_SUBJECT: z.string().trim().default("mailto:wescomm@wesleyan.edu.ph"),
+  WESBOT_ENABLED: booleanEnv.default(false),
+  WESBOT_AI_ENABLED: booleanEnv.default(false),
+  WESBOT_MODEL: z.string().trim().min(3).default("openai/gpt-5.6-luna"),
+  AI_GATEWAY_API_KEY: optionalTrimmedString,
+  VERCEL_OIDC_TOKEN: optionalTrimmedString,
   PAYMONGO_ENABLED: booleanEnv.default(false),
   PAYMONGO_SECRET_KEY: optionalTrimmedString,
   PAYMONGO_WEBHOOK_SECRET: optionalTrimmedString,
@@ -131,6 +136,18 @@ if (parsedEnv.PAYMONGO_ENABLED) {
 
 if (parsedEnv.PAYMONGO_LIVEMODE && !isProductionDeployment) {
   throw new Error("Live PayMongo payment processing is allowed only in the production deployment.");
+}
+
+if (parsedEnv.WESBOT_AI_ENABLED) {
+  if (!parsedEnv.WESBOT_ENABLED) {
+    throw new Error("WESBOT_AI_ENABLED requires WESBOT_ENABLED to be true.");
+  }
+  if (!parsedEnv.WESBOT_MODEL.includes("/")) {
+    throw new Error("WESBOT_MODEL must use the AI Gateway provider/model format.");
+  }
+  if (!parsedEnv.AI_GATEWAY_API_KEY && !parsedEnv.VERCEL_OIDC_TOKEN) {
+    throw new Error("WesBot AI requires Vercel OIDC or an AI Gateway API key.");
+  }
 }
 
 function validateEncryptionKeys(value: string | undefined, currentVersion: string) {

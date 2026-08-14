@@ -86,6 +86,8 @@ export type BackendNotificationType =
   | "SYSTEM"
   | "BACK_IN_STOCK";
 export type BackendConversationStatus = "OPEN" | "RESOLVED";
+export type BackendConversationMode = "BOT_ACTIVE" | "WAITING_FOR_STAFF" | "STAFF_ACTIVE" | "RESOLVED";
+export type BackendConversationMessageSenderType = "STUDENT" | "BOT" | "STAFF" | "SYSTEM";
 
 export type BackendProfileSummary = {
   id: string;
@@ -350,8 +352,11 @@ export async function onlineFetch(input: RequestInfo | URL, init?: RequestInit) 
 export type BackendConversationMessage = {
   id: string;
   conversationId: string;
-  senderId: string;
+  senderId: string | null;
+  senderType: BackendConversationMessageSenderType;
   message: string;
+  intent?: string | null;
+  metadata?: Record<string, unknown>;
   createdAt: string;
   sender?: BackendProfileSummary | null;
 };
@@ -370,6 +375,16 @@ export type BackendConversation = {
   assignedStaffId: string | null;
   subject: string;
   status: BackendConversationStatus;
+  mode: BackendConversationMode;
+  category?: string | null;
+  priority?: number;
+  escalationReason?: string | null;
+  escalatedAt?: string | null;
+  acceptedAt?: string | null;
+  resolvedAt?: string | null;
+  botSummary?: string | null;
+  lastIntent?: string | null;
+  botReplyCount?: number;
   createdAt: string;
   updatedAt: string;
   student?: BackendProfileSummary | null;
@@ -818,11 +833,36 @@ export async function createConversationFromApi(token: string, payload: { subjec
 }
 
 export async function sendConversationMessageFromApi(token: string, conversationId: string, message: string) {
-  const data = await authApiFetch<{ message: BackendConversationMessage }>(`/conversations/${conversationId}/messages`, token, {
+  return authApiFetch<{
+    message: BackendConversationMessage;
+    botMessage: BackendConversationMessage | null;
+    conversation: BackendConversation;
+  }>(`/conversations/${conversationId}/messages`, token, {
     method: "POST",
     body: JSON.stringify({ message })
   });
-  return data.message;
+}
+
+export async function requestConversationHandoffFromApi(token: string, conversationId: string, reason?: string) {
+  const data = await authApiFetch<{ conversation: BackendConversation }>(`/conversations/${conversationId}/handoff`, token, {
+    method: "POST",
+    body: JSON.stringify(reason ? { reason } : {})
+  });
+  return data.conversation;
+}
+
+export async function acceptConversationFromApi(token: string, conversationId: string) {
+  const data = await authApiFetch<{ conversation: BackendConversation }>(`/conversations/${conversationId}/accept`, token, {
+    method: "POST"
+  });
+  return data.conversation;
+}
+
+export async function returnConversationToBotFromApi(token: string, conversationId: string) {
+  const data = await authApiFetch<{ conversation: BackendConversation }>(`/conversations/${conversationId}/return-to-bot`, token, {
+    method: "POST"
+  });
+  return data.conversation;
 }
 
 export async function updateConversationTypingFromApi(token: string, conversationId: string, isTyping: boolean) {

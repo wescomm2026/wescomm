@@ -1,9 +1,18 @@
+import { env } from "../config/env.js";
+import { createWesbotConcernKey, detectWesbotIntent } from "../domain/wesbot.js";
 import { supabaseAdmin } from "../lib/supabase.js";
-import { safelyRecordAuditLog } from "./audit-log.service.js";
-import { createNotification, createNotificationsForRoles } from "./notification.service.js";
-import { type AppRole, type ConversationStatus, type RawProfileSummary, mapProfileSummary } from "../types/app.js";
+import {
+  type AppRole,
+  type ConversationMode,
+  type ConversationStatus,
+  type RawProfileSummary,
+  mapProfileSummary
+} from "../types/app.js";
 import { decryptSensitiveText, encryptSensitiveText } from "../utils/field-encryption.js";
 import { HttpError } from "../utils/http-error.js";
+import { safelyRecordAuditLog } from "./audit-log.service.js";
+import { createNotification, createNotificationsForRoles } from "./notification.service.js";
+import { buildWesbotHandoffSummary, resolveWesbotReply } from "./wesbot.service.js";
 
 const TYPING_TTL_MS = 6000;
 
@@ -17,11 +26,16 @@ type TypingUser = {
 
 const typingState = new Map<string, Map<string, TypingUser>>();
 
+type ConversationMessageSenderType = "STUDENT" | "BOT" | "STAFF" | "SYSTEM";
+
 type RawConversationMessage = {
   id: string;
   conversation_id: string;
-  sender_id: string;
+  sender_id: string | null;
+  sender_type: ConversationMessageSenderType;
   message: string;
+  intent: string | null;
+  metadata: Record<string, unknown> | null;
   created_at: string;
   sender?: RawProfileSummary | RawProfileSummary[] | null;
 };
@@ -31,7 +45,18 @@ type RawConversation = {
   student_id: string;
   assigned_staff_id: string | null;
   subject: string;
-  status: string;
+  status: ConversationStatus;
+  mode: ConversationMode;
+  category: string | null;
+  priority: number;
+  escalation_reason: string | null;
+  escalated_at: string | null;
+  accepted_at: string | null;
+  resolved_at: string | null;
+  bot_summary: string | null;
+  last_intent: string | null;
+  last_concern_key: string | null;
+  bot_reply_count: number;
   created_at: string;
   updated_at: string;
   student: RawProfileSummary | RawProfileSummary[] | null;
@@ -39,32 +64,55 @@ type RawConversation = {
   messages: RawConversationMessage[] | null;
 };
 
+const messageSelect = `
+  id,
+  conversation_id,
+  sender_id,
+  sender_type,
+  message,
+  intent,
+  metadata,
+  created_at,
+  sender:profiles!conversation_messages_sender_id_fkey(id,full_name,email,student_number)
+`;
+
 const conversationSelect = `
   id,
   student_id,
   assigned_staff_id,
   subject,
   status,
+  mode,
+  category,
+  priority,
+  escalation_reason,
+  escalated_at,
+  accepted_at,
+  resolved_at,
+  bot_summary,
+  last_intent,
+  last_concern_key,
+  bot_reply_count,
   created_at,
   updated_at,
   student:profiles!conversations_student_id_fkey(id,full_name,email,student_number),
   assignedStaff:profiles!conversations_assigned_staff_id_fkey(id,full_name,email,student_number),
-  messages:conversation_messages(
-    id,
-    conversation_id,
-    sender_id,
-    message,
-    created_at,
-    sender:profiles!conversation_messages_sender_id_fkey(id,full_name,email,student_number)
-  )
+  messages:conversation_messages(${messageSelect})
 `;
+
+function safeMetadata(value: RawConversationMessage["metadata"]) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
 
 function mapMessage(row: RawConversationMessage) {
   return {
     id: row.id,
     conversationId: row.conversation_id,
     senderId: row.sender_id,
+    senderType: row.sender_type,
     message: decryptSensitiveText(row.message, "conversation.message") ?? "",
+    intent: row.intent,
+    metadata: safeMetadata(row.metadata),
     createdAt: row.created_at,
     sender: mapProfileSummary(row.sender)
   };
@@ -79,9 +127,7 @@ function pruneTypingState(conversationId?: string) {
     if (!users) return;
 
     users.forEach((typingUser, userId) => {
-      if (now - new Date(typingUser.updatedAt).getTime() > TYPING_TTL_MS) {
-        users.delete(userId);
-      }
+      if (now - new Date(typingUser.updatedAt).getTime() > TYPING_TTL_MS) users.delete(userId);
     });
 
     if (!users.size) typingState.delete(id);
@@ -107,13 +153,22 @@ function mapConversation(row: RawConversation, viewerId?: string) {
     assignedStaffId: row.assigned_staff_id,
     subject: decryptSensitiveText(row.subject, "conversation.subject") ?? "Support request",
     status: row.status,
+    mode: row.mode,
+    category: row.category,
+    priority: row.priority,
+    escalationReason: row.escalation_reason,
+    escalatedAt: row.escalated_at,
+    acceptedAt: row.accepted_at,
+    resolvedAt: row.resolved_at,
+    botSummary: decryptSensitiveText(row.bot_summary, "conversation.bot_summary"),
+    lastIntent: row.last_intent,
+    lastConcernKey: row.last_concern_key,
+    botReplyCount: row.bot_reply_count,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     student: mapProfileSummary(row.student),
     assignedStaff: mapProfileSummary(row.assignedStaff),
-    messages: (row.messages ?? [])
-      .map(mapMessage)
-      .sort((left, right) => String(left.createdAt).localeCompare(String(right.createdAt))),
+    messages: (row.messages ?? []).map(mapMessage).sort((left, right) => left.createdAt.localeCompare(right.createdAt)),
     typingUsers: getTypingUsers(row.id, viewerId)
   };
 }
@@ -127,13 +182,164 @@ async function requireConversation(conversationId: string, viewerId?: string) {
 
   if (error) throw HttpError.fromSupabase(error);
   if (!data) throw new HttpError(404, "Conversation not found.");
-  return mapConversation(data as RawConversation, viewerId);
+  return mapConversation(data as unknown as RawConversation, viewerId);
 }
 
-function assertConversationAccess(conversation: ReturnType<typeof mapConversation>, userId: string, role: AppRole) {
+function assertConversationAccess(conversation: Awaited<ReturnType<typeof requireConversation>>, userId: string, role: AppRole) {
   if (role === "STUDENT" && conversation.studentId !== userId) {
     throw new HttpError(403, "You do not have access to this conversation.");
   }
+}
+
+async function insertConversationMessage(input: {
+  conversationId: string;
+  senderId?: string | null;
+  senderType: ConversationMessageSenderType;
+  message: string;
+  intent?: string | null;
+  metadata?: Record<string, unknown>;
+}) {
+  const { data, error } = await supabaseAdmin
+    .from("conversation_messages")
+    .insert({
+      conversation_id: input.conversationId,
+      sender_id: input.senderId ?? null,
+      sender_type: input.senderType,
+      message: encryptSensitiveText(input.message.trim(), "conversation.message"),
+      intent: input.intent ?? null,
+      metadata: input.metadata ?? {}
+    })
+    .select(messageSelect)
+    .single();
+
+  if (error) throw HttpError.fromSupabase(error);
+  return mapMessage(data as unknown as RawConversationMessage);
+}
+
+async function notifyStaffQueue(conversation: Awaited<ReturnType<typeof requireConversation>>) {
+  await createNotificationsForRoles(["STAFF", "ADMIN"], {
+    type: "MESSAGE",
+    title: "Student waiting for Staff",
+    message: `${conversation.student?.fullName || conversation.student?.email || "A student"} requested human support for ${conversation.subject}.`
+  });
+}
+
+function handoffSummary(conversation: Awaited<ReturnType<typeof requireConversation>>, reason: string) {
+  return buildWesbotHandoffSummary({
+    subject: conversation.subject,
+    intent: conversation.lastIntent,
+    reason,
+    studentMessages: conversation.messages
+      .filter((message) => message.senderType === "STUDENT")
+      .map((message) => message.message)
+  });
+}
+
+async function moveConversationToStaffQueue(input: {
+  conversation: Awaited<ReturnType<typeof requireConversation>>;
+  reason: string;
+  requestedById: string;
+}) {
+  if (input.conversation.mode === "WAITING_FOR_STAFF" || input.conversation.mode === "STAFF_ACTIVE") {
+    return input.conversation;
+  }
+
+  const now = new Date().toISOString();
+  const summary = handoffSummary(input.conversation, input.reason);
+  const { data, error } = await supabaseAdmin
+    .from("conversations")
+    .update({
+      status: "OPEN",
+      mode: "WAITING_FOR_STAFF",
+      assigned_staff_id: null,
+      escalation_reason: input.reason.slice(0, 500),
+      escalated_at: now,
+      accepted_at: null,
+      resolved_at: null,
+      bot_summary: encryptSensitiveText(summary, "conversation.bot_summary"),
+      priority: Math.max(1, input.conversation.priority),
+      updated_at: now
+    })
+    .eq("id", input.conversation.id)
+    .select(conversationSelect)
+    .single();
+
+  if (error) throw HttpError.fromSupabase(error);
+  const updated = mapConversation(data as unknown as RawConversation, input.requestedById);
+  await notifyStaffQueue(updated);
+  await safelyRecordAuditLog({
+    actorId: input.requestedById,
+    action: "SUPPORT_HANDOFF_REQUESTED",
+    entityType: "conversation",
+    entityId: input.conversation.id,
+    summary: "Requested Commissary Staff assistance from WesBot.",
+    metadata: { reason: input.reason.slice(0, 180), studentId: input.conversation.studentId }
+  });
+  return updated;
+}
+
+async function createBotReply(conversationId: string, studentId: string, userMessage: string) {
+  const conversation = await requireConversation(conversationId, studentId);
+  if (!env.WESBOT_ENABLED || conversation.mode !== "BOT_ACTIVE" || conversation.status === "RESOLVED") return null;
+
+  const detectedIntent = detectWesbotIntent(userMessage);
+  const candidateConcernKey = createWesbotConcernKey(detectedIntent, userMessage);
+  const repeatCount = candidateConcernKey === conversation.lastConcernKey ? conversation.botReplyCount : 0;
+
+  let reply;
+  try {
+    reply = await resolveWesbotReply({ studentId, message: userMessage, repeatCount });
+  } catch (error) {
+    const detail = error instanceof Error ? error.name : "unknown";
+    console.warn(`WesBot grounded lookup failed; returning safe fallback (${detail}).`);
+    reply = {
+      message: "I’m unable to verify the current WESCOMM information right now. Please try again or choose Talk to Staff.",
+      intent: detectedIntent,
+      category: "GENERAL",
+      concernKey: candidateConcernKey,
+      sourceReferences: ["support:lookup-failed"],
+      handoffRequested: false,
+      staffRecommended: true,
+      usedAi: false
+    } as const;
+  }
+
+  const botMessage = await insertConversationMessage({
+    conversationId,
+    senderType: "BOT",
+    message: reply.message,
+    intent: reply.intent,
+    metadata: {
+      automated: true,
+      sources: reply.sourceReferences,
+      staffRecommended: reply.staffRecommended,
+      usedAi: reply.usedAi
+    }
+  });
+
+  const nextCount = reply.concernKey === conversation.lastConcernKey ? conversation.botReplyCount + 1 : 1;
+  const { error: updateError } = await supabaseAdmin
+    .from("conversations")
+    .update({
+      category: reply.category,
+      last_intent: reply.intent,
+      last_concern_key: reply.concernKey,
+      bot_reply_count: nextCount,
+      updated_at: botMessage.createdAt
+    })
+    .eq("id", conversationId);
+  if (updateError) throw HttpError.fromSupabase(updateError);
+
+  if (reply.handoffRequested) {
+    const refreshed = await requireConversation(conversationId, studentId);
+    await moveConversationToStaffQueue({
+      conversation: refreshed,
+      reason: "Student explicitly requested a real Staff member.",
+      requestedById: studentId
+    });
+  }
+
+  return botMessage;
 }
 
 export async function listConversations(userId: string, role: AppRole) {
@@ -142,46 +348,43 @@ export async function listConversations(userId: string, role: AppRole) {
 
   const { data, error } = await query;
   if (error) throw HttpError.fromSupabase(error);
-  const conversations = ((data ?? []) as RawConversation[]).map((conversation) => mapConversation(conversation, userId));
-  return role === "STUDENT"
-    ? conversations.filter((conversation) => conversation.studentId === userId)
-    : conversations;
+  const conversations = ((data ?? []) as unknown as RawConversation[]).map((conversation) => mapConversation(conversation, userId));
+  return role === "STUDENT" ? conversations.filter((conversation) => conversation.studentId === userId) : conversations;
 }
 
-export async function createConversation(input: {
-  studentId: string;
-  subject: string;
-  message: string;
-}) {
+export async function createConversation(input: { studentId: string; subject: string; message: string }) {
+  const mode: ConversationMode = env.WESBOT_ENABLED ? "BOT_ACTIVE" : "WAITING_FOR_STAFF";
   const { data: conversationData, error: conversationError } = await supabaseAdmin
     .from("conversations")
     .insert({
       student_id: input.studentId,
       subject: encryptSensitiveText(input.subject.trim(), "conversation.subject"),
-      status: "OPEN"
+      status: "OPEN",
+      mode,
+      escalation_reason: env.WESBOT_ENABLED ? null : "WesBot is disabled; routed directly to Staff.",
+      escalated_at: env.WESBOT_ENABLED ? null : new Date().toISOString(),
+      priority: env.WESBOT_ENABLED ? 0 : 1
     })
     .select("id")
     .single();
-
   if (conversationError) throw HttpError.fromSupabase(conversationError);
 
   const conversation = conversationData as { id: string };
-  const { error: messageError } = await supabaseAdmin.from("conversation_messages").insert({
-    conversation_id: conversation.id,
-    sender_id: input.studentId,
-    message: encryptSensitiveText(input.message.trim(), "conversation.message")
+  await insertConversationMessage({
+    conversationId: conversation.id,
+    senderId: input.studentId,
+    senderType: "STUDENT",
+    message: input.message
   });
 
-  if (messageError) throw HttpError.fromSupabase(messageError);
+  if (env.WESBOT_ENABLED) {
+    await createBotReply(conversation.id, input.studentId, input.message);
+  } else {
+    const created = await requireConversation(conversation.id, input.studentId);
+    await notifyStaffQueue(created);
+  }
 
-  const createdConversation = await requireConversation(conversation.id, input.studentId);
-  await createNotificationsForRoles(["STAFF", "ADMIN"], {
-    type: "MESSAGE",
-    title: "New student support message",
-    message: `${createdConversation.student?.fullName || createdConversation.student?.email || "A student"} started a support conversation.`
-  });
-
-  return createdConversation;
+  return requireConversation(conversation.id, input.studentId);
 }
 
 export async function createMessage(input: {
@@ -190,67 +393,199 @@ export async function createMessage(input: {
   senderRole: AppRole;
   message: string;
 }) {
-  const conversation = await requireConversation(input.conversationId, input.senderId);
+  let conversation = await requireConversation(input.conversationId, input.senderId);
   assertConversationAccess(conversation, input.senderId, input.senderRole);
   clearTypingUser(input.conversationId, input.senderId);
 
-  const updateConversation: Record<string, unknown> = {
-    status: "OPEN",
-    updated_at: new Date().toISOString()
-  };
+  const isStudent = input.senderRole === "STUDENT";
+  const now = new Date().toISOString();
 
-  if (input.senderRole !== "STUDENT" && !conversation.assignedStaffId) {
-    updateConversation.assigned_staff_id = input.senderId;
+  if (conversation.status === "RESOLVED") {
+    const mode: ConversationMode = isStudent
+      ? (env.WESBOT_ENABLED ? "BOT_ACTIVE" : "WAITING_FOR_STAFF")
+      : "STAFF_ACTIVE";
+    const { error } = await supabaseAdmin
+      .from("conversations")
+      .update({
+        status: "OPEN",
+        mode,
+        assigned_staff_id: isStudent ? null : input.senderId,
+        resolved_at: null,
+        accepted_at: isStudent ? null : now,
+        updated_at: now
+      })
+      .eq("id", input.conversationId);
+    if (error) throw HttpError.fromSupabase(error);
+    conversation = await requireConversation(input.conversationId, input.senderId);
   }
 
-  const { data, error } = await supabaseAdmin
-    .from("conversation_messages")
-    .insert({
-      conversation_id: input.conversationId,
-      sender_id: input.senderId,
-      message: encryptSensitiveText(input.message, "conversation.message")
-    })
-    .select("id,conversation_id,sender_id,message,created_at,sender:profiles!conversation_messages_sender_id_fkey(id,full_name,email,student_number)")
-    .single();
+  if (!isStudent && (conversation.mode !== "STAFF_ACTIVE" || conversation.assignedStaffId !== input.senderId)) {
+    throw new HttpError(
+      409,
+      conversation.mode === "WAITING_FOR_STAFF"
+        ? "Accept this conversation before replying."
+        : "This conversation is not assigned to you.",
+      conversation.mode === "WAITING_FOR_STAFF" ? "CONVERSATION_ACCEPT_REQUIRED" : "CONVERSATION_ALREADY_ASSIGNED"
+    );
+  }
 
-  if (error) throw HttpError.fromSupabase(error);
+  const message = await insertConversationMessage({
+    conversationId: input.conversationId,
+    senderId: input.senderId,
+    senderType: isStudent ? "STUDENT" : "STAFF",
+    message: input.message
+  });
 
-  const { error: updateError } = await supabaseAdmin
-    .from("conversations")
-    .update(updateConversation)
-    .eq("id", input.conversationId);
-
+  const updates: Record<string, unknown> = { status: "OPEN", updated_at: message.createdAt };
+  if (!isStudent) {
+    updates.mode = "STAFF_ACTIVE";
+    updates.assigned_staff_id = input.senderId;
+    updates.accepted_at = conversation.acceptedAt ?? now;
+  }
+  const { error: updateError } = await supabaseAdmin.from("conversations").update(updates).eq("id", input.conversationId);
   if (updateError) throw HttpError.fromSupabase(updateError);
 
-  const message = mapMessage(data as RawConversationMessage);
-
-  if (input.senderRole === "STUDENT") {
-    await createNotificationsForRoles(["STAFF", "ADMIN"], {
-      type: "MESSAGE",
-      title: "Student replied in support",
-      message: `${conversation.student?.fullName || conversation.student?.email || "A student"} sent a support reply.`
-    });
+  let botMessage = null;
+  if (isStudent) {
+    if (conversation.mode === "BOT_ACTIVE" && env.WESBOT_ENABLED) {
+      botMessage = await createBotReply(input.conversationId, input.senderId, input.message);
+    } else {
+      await createNotificationsForRoles(["STAFF", "ADMIN"], {
+        type: "MESSAGE",
+        title: conversation.mode === "WAITING_FOR_STAFF" ? "Student replied while waiting" : "Student replied to Staff",
+        message: `${conversation.student?.fullName || conversation.student?.email || "A student"} sent a support reply.`
+      });
+    }
   } else {
     await createNotification({
       userId: conversation.studentId,
       type: "MESSAGE",
-      title: "Support replied",
-      message: `Commissary staff replied to ${conversation.subject}.`
+      title: "Staff replied",
+      message: `Commissary Staff replied to ${conversation.subject}.`
     });
-
     await safelyRecordAuditLog({
       actorId: input.senderId,
       action: "SUPPORT_MESSAGE_SENT",
       entityType: "conversation",
       entityId: input.conversationId,
-      summary: "Sent a support conversation reply.",
-      metadata: {
-        studentId: conversation.studentId
-      }
+      summary: "Sent a Staff support reply.",
+      metadata: { studentId: conversation.studentId }
     });
   }
 
-  return message;
+  return {
+    message,
+    botMessage,
+    conversation: await requireConversation(input.conversationId, input.senderId)
+  };
+}
+
+export async function requestStaffHandoff(input: { conversationId: string; studentId: string; reason?: string }) {
+  const conversation = await requireConversation(input.conversationId, input.studentId);
+  assertConversationAccess(conversation, input.studentId, "STUDENT");
+
+  const updated = await moveConversationToStaffQueue({
+    conversation,
+    reason: input.reason?.trim() || "Student selected Talk to Staff.",
+    requestedById: input.studentId
+  });
+
+  if (conversation.mode !== "WAITING_FOR_STAFF" && conversation.mode !== "STAFF_ACTIVE") {
+    await insertConversationMessage({
+      conversationId: input.conversationId,
+      senderType: "SYSTEM",
+      message: "Your conversation is now in the Commissary Staff queue. WesBot automatic replies are paused."
+    });
+  }
+  return requireConversation(updated.id, input.studentId);
+}
+
+export async function acceptConversation(input: { conversationId: string; staffId: string }) {
+  const conversation = await requireConversation(input.conversationId, input.staffId);
+  if (conversation.status === "RESOLVED") throw new HttpError(409, "Reopen this conversation before accepting it.");
+  if (conversation.mode === "STAFF_ACTIVE" && conversation.assignedStaffId === input.staffId) return conversation;
+  if (conversation.mode === "STAFF_ACTIVE" && conversation.assignedStaffId !== input.staffId) {
+    throw new HttpError(409, "Another Staff member is already handling this conversation.", "CONVERSATION_ALREADY_ASSIGNED");
+  }
+  if (conversation.mode !== "WAITING_FOR_STAFF") {
+    throw new HttpError(409, "This conversation is not waiting for Staff.", "CONVERSATION_NOT_WAITING");
+  }
+
+  const now = new Date().toISOString();
+  let query = supabaseAdmin
+    .from("conversations")
+    .update({ mode: "STAFF_ACTIVE", assigned_staff_id: input.staffId, accepted_at: now, updated_at: now })
+    .eq("id", input.conversationId)
+    .eq("status", "OPEN")
+    .eq("mode", "WAITING_FOR_STAFF");
+  query = conversation.assignedStaffId ? query.eq("assigned_staff_id", input.staffId) : query.is("assigned_staff_id", null);
+  const { data, error } = await query.select(conversationSelect).maybeSingle();
+  if (error) throw HttpError.fromSupabase(error);
+  if (!data) throw new HttpError(409, "Another Staff member accepted this conversation first.", "CONVERSATION_ALREADY_ASSIGNED");
+
+  const accepted = mapConversation(data as unknown as RawConversation, input.staffId);
+  await insertConversationMessage({
+    conversationId: input.conversationId,
+    senderType: "SYSTEM",
+    message: `You are now connected to ${accepted.assignedStaff?.fullName || "Commissary Staff"}. WesBot automatic replies are off.`
+  });
+  await createNotification({
+    userId: accepted.studentId,
+    type: "MESSAGE",
+    title: "Staff joined your support conversation",
+    message: `${accepted.assignedStaff?.fullName || "Commissary Staff"} is now handling ${accepted.subject}.`
+  });
+  await safelyRecordAuditLog({
+    actorId: input.staffId,
+    action: "SUPPORT_CONVERSATION_ACCEPTED",
+    entityType: "conversation",
+    entityId: input.conversationId,
+    summary: "Accepted a WesBot handoff.",
+    metadata: { studentId: accepted.studentId }
+  });
+  return requireConversation(input.conversationId, input.staffId);
+}
+
+export async function returnConversationToBot(input: { conversationId: string; performedById: string; performedByRole: AppRole }) {
+  if (!env.WESBOT_ENABLED) throw new HttpError(503, "WesBot is currently unavailable.", "WESBOT_DISABLED");
+  const conversation = await requireConversation(input.conversationId, input.performedById);
+  if (conversation.status === "RESOLVED") throw new HttpError(409, "Reopen this conversation before returning it to WesBot.");
+  if (conversation.mode !== "STAFF_ACTIVE") {
+    throw new HttpError(409, "Only a Staff-managed conversation can be returned to WesBot.", "CONVERSATION_NOT_STAFF_ACTIVE");
+  }
+  if (input.performedByRole !== "ADMIN" && conversation.assignedStaffId !== input.performedById) {
+    throw new HttpError(409, "Only the assigned Staff member or an Administrator can return this conversation to WesBot.", "CONVERSATION_ALREADY_ASSIGNED");
+  }
+
+  const now = new Date().toISOString();
+  const { error } = await supabaseAdmin
+    .from("conversations")
+    .update({
+      mode: "BOT_ACTIVE",
+      assigned_staff_id: null,
+      accepted_at: null,
+      escalation_reason: null,
+      escalated_at: null,
+      priority: 0,
+      updated_at: now
+    })
+    .eq("id", input.conversationId);
+  if (error) throw HttpError.fromSupabase(error);
+
+  await insertConversationMessage({
+    conversationId: input.conversationId,
+    senderType: "SYSTEM",
+    message: "This conversation has returned to WesBot. Ask a new question anytime, or choose Talk to Staff again."
+  });
+  await safelyRecordAuditLog({
+    actorId: input.performedById,
+    action: "SUPPORT_RETURNED_TO_BOT",
+    entityType: "conversation",
+    entityId: input.conversationId,
+    summary: "Returned a Staff conversation to WesBot.",
+    metadata: { studentId: conversation.studentId }
+  });
+  return requireConversation(input.conversationId, input.performedById);
 }
 
 export async function updateConversationStatus(input: {
@@ -259,22 +594,24 @@ export async function updateConversationStatus(input: {
   performedById: string;
 }) {
   const conversation = await requireConversation(input.conversationId, input.performedById);
-
+  const now = new Date().toISOString();
+  const mode: ConversationMode = input.status === "RESOLVED" ? "RESOLVED" : "STAFF_ACTIVE";
   const { data, error } = await supabaseAdmin
     .from("conversations")
     .update({
       status: input.status,
+      mode,
       assigned_staff_id: conversation.assignedStaffId ?? input.performedById,
-      updated_at: new Date().toISOString()
+      resolved_at: input.status === "RESOLVED" ? now : null,
+      accepted_at: input.status === "OPEN" ? (conversation.acceptedAt ?? now) : conversation.acceptedAt,
+      updated_at: now
     })
     .eq("id", input.conversationId)
     .select(conversationSelect)
     .single();
-
   if (error) throw HttpError.fromSupabase(error);
 
-  const updatedConversation = mapConversation(data as RawConversation);
-
+  const updatedConversation = mapConversation(data as unknown as RawConversation);
   if (input.status === "RESOLVED") {
     await createNotification({
       userId: conversation.studentId,
@@ -294,11 +631,12 @@ export async function updateConversationStatus(input: {
       metadata: {
         previousStatus: conversation.status,
         nextStatus: input.status,
+        previousMode: conversation.mode,
+        nextMode: mode,
         studentId: conversation.studentId
       }
     });
   }
-
   return updatedConversation;
 }
 
@@ -306,14 +644,19 @@ export async function setConversationTyping(input: {
   conversationId: string;
   userId: string;
   role: AppRole;
-  profile: {
-    fullName: string;
-    email: string;
-  };
+  profile: { fullName: string; email: string };
   isTyping: boolean;
 }) {
   const conversation = await requireConversation(input.conversationId, input.userId);
   assertConversationAccess(conversation, input.userId, input.role);
+
+  if (
+    input.isTyping
+    && input.role !== "STUDENT"
+    && (conversation.mode !== "STAFF_ACTIVE" || conversation.assignedStaffId !== input.userId)
+  ) {
+    throw new HttpError(409, "Accept this conversation before sending a typing indicator.", "CONVERSATION_ACCEPT_REQUIRED");
+  }
 
   if (!input.isTyping) {
     clearTypingUser(input.conversationId, input.userId);
@@ -329,6 +672,5 @@ export async function setConversationTyping(input: {
     updatedAt: new Date().toISOString()
   });
   typingState.set(input.conversationId, users);
-
   return getTypingUsers(input.conversationId, input.userId);
 }
