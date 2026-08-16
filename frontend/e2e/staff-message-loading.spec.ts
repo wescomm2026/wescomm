@@ -147,7 +147,10 @@ test("staff send and resolve actions show immediate progress instead of appearin
   await dismissWelcomeGate(page);
 
   await expect(page.getByRole("heading", { name: "Message center" })).toBeVisible();
+  await expect(page.getByLabel("WESCOMM staff messenger")).toBeVisible();
   await page.getByRole("button", { name: /Juan Dela Cruz/ }).click();
+  await expect(page.getByTestId("staff-conversation-thread")).toBeVisible();
+  await expect(page.getByRole("log")).toBeVisible();
 
   const replyInput = page.getByLabel("Reply to student");
   await replyInput.fill("Available pa. I can reserve one for you.");
@@ -159,8 +162,7 @@ test("staff send and resolve actions show immediate progress instead of appearin
   await expect(replyInput).toBeDisabled();
   await expect(page.getByRole("status").filter({ hasText: "Sending reply to student" })).toBeVisible();
 
-  const activeThread = replyInput.locator("xpath=ancestor::section[1]");
-  await expect(activeThread.getByText("Available pa. I can reserve one for you.", { exact: true })).toBeVisible();
+  await expect(page.getByRole("log").getByText("Available pa. I can reserve one for you.", { exact: true })).toBeVisible();
   await expect(page.getByText("Reply sent to student.", { exact: true })).toBeVisible();
 
   await page.getByRole("button", { name: "Resolve", exact: true }).click();

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import Image from "next/image";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Ban, Bot, Check, Edit3, Eye, Filter, Headphones, LoaderCircle, Plus, RefreshCw, Search, Send, Trash2, Upload, X } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import { FaqManagementExperience } from "@/components/faq/FaqManagementExperience";
@@ -47,6 +47,7 @@ import {
 } from "@/lib/staff-api";
 import { isUniformClothOnly } from "@/lib/product-display";
 import { WUP_DEFAULT_PRODUCT_TEMPLATES } from "@/lib/wup-default-catalog";
+import { cn } from "@/lib/utils";
 
 type Product = {
   id: string;
@@ -269,8 +270,61 @@ function formatConversationTime(value: string) {
   });
 }
 
+function formatConversationDay(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+
+  return date.toLocaleDateString("en-PH", {
+    month: "short",
+    day: "numeric",
+    year: date.getFullYear() === new Date().getFullYear() ? undefined : "numeric",
+    timeZone: "Asia/Manila"
+  });
+}
+
 function conversationPreview(conversation: BackendConversation) {
   return conversation.messages.at(-1)?.message ?? "No messages yet";
+}
+
+function StaffConversationAvatar({
+  kind,
+  name = "Student",
+  size = "md"
+}: {
+  kind: "BOT" | "STAFF" | "STUDENT";
+  name?: string;
+  size?: "sm" | "md" | "lg";
+}) {
+  const sizeClass = size === "sm" ? "size-8" : size === "lg" ? "size-16" : "size-11";
+
+  if (kind === "BOT") {
+    return (
+      <span className={cn("relative inline-grid shrink-0 place-items-center overflow-hidden rounded-full", sizeClass)} aria-hidden="true">
+        <Image src="/assets/chat-with-wesbot.svg" alt="" fill sizes={size === "sm" ? "32px" : size === "lg" ? "64px" : "44px"} className="object-contain" />
+      </span>
+    );
+  }
+
+  if (kind === "STAFF") {
+    return (
+      <span className={cn("inline-grid shrink-0 place-items-center rounded-full bg-sky-50 text-sky-800 ring-1 ring-inset ring-sky-200", sizeClass)} aria-hidden="true">
+        <Headphones className={size === "sm" ? "size-4" : size === "lg" ? "size-7" : "size-5"} />
+      </span>
+    );
+  }
+
+  const initials = name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join("") || "ST";
+
+  return (
+    <span className={cn("inline-grid shrink-0 place-items-center rounded-full bg-[#e8f3e9] font-extrabold text-primary ring-1 ring-inset ring-[#c8ddca]", sizeClass, size === "sm" ? "text-[10px]" : size === "lg" ? "text-lg" : "text-xs")} aria-hidden="true">
+      {initials}
+    </span>
+  );
 }
 
 function getNextReservationStatus(status: BackendReservationStatus): BackendReservationStatus | null {
@@ -1383,6 +1437,7 @@ export function StaffMessagesExperience() {
   const [conversations, setConversations] = useState<BackendConversation[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [reply, setReply] = useState("");
+  const [pendingReply, setPendingReply] = useState("");
   const [threadOpen, setThreadOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("All");
@@ -1393,10 +1448,14 @@ export function StaffMessagesExperience() {
     conversationId: string;
     type: "accept" | "return-to-bot" | "resolve" | "reopen" | "send";
   } | null>(null);
-  const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const messagesLogRef = useRef<HTMLDivElement | null>(null);
+  const replyComposerRef = useRef<HTMLTextAreaElement | null>(null);
   const typingStopTimerRef = useRef<number | null>(null);
   const lastTypingSignalRef = useRef(0);
-  const selected = conversations.find((conversation) => conversation.id === selectedId) ?? conversations[0] ?? null;
+  const selected = useMemo(
+    () => conversations.find((conversation) => conversation.id === selectedId) ?? conversations[0] ?? null,
+    [conversations, selectedId]
+  );
   const submitting = pendingAction !== null;
   const activeAction = selected && pendingAction?.conversationId === selected.id ? pendingAction.type : null;
   const canReply = selected?.status !== "RESOLVED" && selected?.mode === "STAFF_ACTIVE" && selected.assignedStaffId === user?.id;
@@ -1462,15 +1521,16 @@ export function StaffMessagesExperience() {
 
   useEffect(() => {
     if (!threadOpen) return;
-    messagesEndRef.current?.scrollIntoView({ block: "end" });
-  }, [threadOpen, selected?.messages.length]);
+    const messagesLog = messagesLogRef.current;
+    if (messagesLog) messagesLog.scrollTop = messagesLog.scrollHeight;
+  }, [pendingReply, threadOpen, selected?.messages.length, selected?.typingUsers?.length]);
 
-  const filtered = conversations.filter((conversation) =>
+  const filtered = useMemo(() => conversations.filter((conversation) =>
     `${conversation.subject} ${conversation.student?.fullName ?? ""} ${conversation.student?.email ?? ""}`
       .toLowerCase()
       .includes(search.toLowerCase()) &&
     (status === "All" || formatConversationStatus(conversation) === status)
-  );
+  ), [conversations, search, status]);
 
   const openConversation = (conversationId: string) => {
     setSelectedId(conversationId);
@@ -1520,20 +1580,24 @@ export function StaffMessagesExperience() {
     const session = getStoredStaffSession();
     if (!session.token || !selected || !reply.trim() || submitting) return;
 
+    const message = reply.trim();
     setPendingAction({ conversationId: selected.id, type: "send" });
+    setPendingReply(message);
     setError("");
 
     try {
-      const result = await sendConversationMessageFromApi(session.token, selected.id, reply.trim());
+      const result = await sendConversationMessageFromApi(session.token, selected.id, message);
       sendTypingSignal(selected.id, false);
       setConversations((current) =>
         current.map((conversation) => conversation.id === selected.id ? result.conversation : conversation)
       );
       setReply("");
+      if (replyComposerRef.current) replyComposerRef.current.style.height = "auto";
       setNotice("Reply sent to student.");
     } catch (messageError) {
       setError(messageError instanceof Error ? messageError.message : "Unable to send reply.");
     } finally {
+      setPendingReply("");
       setPendingAction(null);
     }
   };
@@ -1608,84 +1672,157 @@ export function StaffMessagesExperience() {
           </Button>
         )}
       />
-      <div className={threadOpen ? "hidden lg:block" : ""}>
-        <Toolbar search={search} onSearch={setSearch} status={status} onStatus={setStatus} placeholder="Search student, topic, or message" statuses={["WesBot active", "Waiting for Staff", "Staff active", "Resolved"]} />
-      </div>
-      {error ? <p className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p> : null}
-      <div className="grid min-h-[calc(100dvh-230px)] overflow-hidden rounded-lg border border-[#dce5dd] bg-white shadow-sm lg:min-h-[620px] lg:grid-cols-[360px_1fr]">
-        <aside className={`${threadOpen ? "hidden lg:block" : "block"} border-b border-[#e5ebe6] lg:border-b-0 lg:border-r`}>
-          <div className="flex items-center gap-3 border-b border-[#edf1ed] bg-white px-4 py-4">
-            <span className="grid size-11 shrink-0 place-items-center rounded-md bg-[#eef6ee]">
-              <AssetIcon src="/assets/messages.svg" className="size-8" />
+      {error ? <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p> : null}
+      <section
+        aria-label="WESCOMM staff messenger"
+        className="grid h-[calc(100svh-11.375rem)] min-h-[520px] grid-cols-[minmax(0,1fr)] overflow-hidden rounded-2xl border border-[#dce5dd] bg-white shadow-[0_16px_48px_rgba(16,24,32,0.08)] sm:h-[calc(100svh-15.5rem)] sm:min-h-[620px] lg:grid-cols-[320px_minmax(0,1fr)]"
+      >
+        <aside className={cn(
+          "h-full min-h-0 min-w-0 flex-col border-[#e5ebe6] bg-[#fbfcfb] lg:flex lg:border-r",
+          threadOpen ? "hidden" : "flex"
+        )}>
+          <div className="flex min-h-[68px] items-center gap-3 border-b border-[#edf1ed] px-4 py-3">
+            <span className="grid size-10 shrink-0 place-items-center rounded-full bg-[#eaf6eb] text-primary" aria-hidden="true">
+              <AssetIcon src="/assets/messages.svg" className="size-6" />
             </span>
             <div className="min-w-0">
-              <p className="font-extrabold text-[#17211b]">Message inbox</p>
-              <p className="text-xs text-[#68746d]">{filtered.length} conversation{filtered.length === 1 ? "" : "s"} shown</p>
+              <p className="font-extrabold text-[#17211b]">Messages</p>
+              <p className="text-xs text-[#68746d]">{filtered.length} conversation{filtered.length === 1 ? "" : "s"}</p>
             </div>
+            <button
+              type="button"
+              onClick={() => void loadConversations()}
+              disabled={loading || submitting}
+              aria-label="Refresh conversations"
+              title="Refresh"
+              className="ml-auto grid size-10 shrink-0 place-items-center rounded-full text-[#5d6962] transition hover:bg-[#edf4ee] hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
+            >
+              <RefreshCw className={cn("size-[18px]", loading && "motion-safe:animate-spin")} aria-hidden="true" />
+            </button>
           </div>
+
+          <div className="space-y-2 border-b border-[#edf1ed] p-3">
+            <label className="flex h-10 items-center rounded-full border border-[#d7e1d8] bg-white px-3 focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/15">
+              <Search className="mr-2 size-4 shrink-0 text-[#68746d]" aria-hidden="true" />
+              <span className="sr-only">Search conversations</span>
+              <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search messages" className="min-w-0 flex-1 bg-transparent text-sm outline-none" />
+            </label>
+            <label className="flex h-9 items-center gap-2 rounded-full border border-[#d7e1d8] bg-white px-3 text-xs">
+              <Filter className="size-3.5 shrink-0 text-primary" aria-hidden="true" />
+              <span className="sr-only">Filter conversation status</span>
+              <select value={status} onChange={(event) => setStatus(event.target.value)} className="min-w-0 flex-1 bg-transparent font-bold outline-none">
+                {["All", "WesBot active", "Waiting for Staff", "Staff active", "Resolved"].map((option) => <option key={option}>{option}</option>)}
+              </select>
+            </label>
+          </div>
+
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-2">
           {loading ? (
-            <p className="p-5 text-sm font-semibold text-[#68746d]">Loading conversations...</p>
+            <div className="grid min-h-48 place-items-center px-5 text-center">
+              <div>
+                <LoaderCircle className="mx-auto size-6 motion-safe:animate-spin text-primary" aria-hidden="true" />
+                <p className="mt-3 text-sm font-semibold text-[#68746d]">Loading conversations...</p>
+              </div>
+            </div>
           ) : filtered.length ? filtered.map((conversation) => (
             <button
               key={conversation.id}
               type="button"
               onClick={() => openConversation(conversation.id)}
               disabled={submitting}
-              className={`w-full border-b border-[#edf1ed] p-4 text-left transition hover:bg-[#f4f8f4] disabled:cursor-wait disabled:opacity-70 ${selected?.id === conversation.id ? "bg-[#eef6ee]" : ""}`}
+              aria-current={selected?.id === conversation.id ? "true" : undefined}
+              className={cn(
+                "mb-1 flex w-full items-start gap-3 rounded-xl p-3 text-left transition hover:bg-[#f0f6f1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary disabled:cursor-wait disabled:opacity-70",
+                selected?.id === conversation.id && "bg-[#e8f3e9]"
+              )}
             >
-              <div className="flex items-start gap-2">
-                <p className="min-w-0 flex-1 truncate font-extrabold">{conversation.student?.fullName || conversation.student?.email || "Student"}</p>
-                <StatusBadge status={formatConversationStatus(conversation)} />
-              </div>
-              <p className="mt-1 truncate text-sm font-semibold">{conversation.subject}</p>
-              <p className="mt-1 truncate text-xs text-[#68746d]">{conversationPreview(conversation)}</p>
-              <p className="mt-2 text-xs font-semibold text-[#79837d]">{formatConversationTime(conversation.updatedAt)}</p>
+              <StaffConversationAvatar kind="STUDENT" name={conversation.student?.fullName || conversation.student?.email || "Student"} />
+              <span className="min-w-0 flex-1">
+                <span className="flex items-start gap-2">
+                  <span className="min-w-0 flex-1 truncate text-sm font-extrabold text-[#17211b]">{conversation.student?.fullName || conversation.student?.email || "Student"}</span>
+                  <span className="shrink-0 text-[10px] font-semibold text-[#879089]">{formatConversationTime(conversation.updatedAt)}</span>
+                </span>
+                <span className="mt-0.5 block truncate text-xs font-semibold text-[#3f4a44]">{conversation.subject}</span>
+                <span className="mt-1 block truncate text-xs text-[#68746d]">{conversationPreview(conversation)}</span>
+                <span className="mt-1.5 flex items-center gap-1.5 text-[10px] font-bold text-[#68746d]">
+                  <span className={cn(
+                    "size-1.5 rounded-full",
+                    conversation.mode === "BOT_ACTIVE" ? "bg-emerald-500" : conversation.mode === "WAITING_FOR_STAFF" ? "bg-amber-500" : conversation.mode === "STAFF_ACTIVE" ? "bg-sky-500" : "bg-slate-400"
+                  )} />
+                  {formatConversationStatus(conversation)}
+                </span>
+              </span>
             </button>
           )) : (
-            <p className="p-5 text-sm font-semibold text-[#68746d]">No matching student messages found.</p>
+            <div className="grid h-full min-h-56 place-items-center px-6 text-center">
+              <div>
+                <span className="mx-auto grid size-14 place-items-center rounded-full bg-[#eaf6eb] text-primary"><Search className="size-6" /></span>
+                <p className="mt-3 font-extrabold text-[#17211b]">No matching messages</p>
+                <p className="mt-1 text-sm leading-5 text-[#68746d]">Try another student name, topic, or status.</p>
+              </div>
+            </div>
           )}
+          </div>
         </aside>
         {selected ? (
-          <section className={`${threadOpen ? "flex" : "hidden"} min-h-[calc(100dvh-230px)] flex-col lg:flex lg:min-h-[500px]`}>
-            <header className="flex flex-wrap items-start gap-3 border-b border-[#e5ebe6] px-5 py-4" aria-busy={Boolean(activeAction)}>
+          <div
+            data-testid="staff-conversation-thread"
+            className={cn("h-full min-h-0 min-w-0 flex-col lg:flex", threadOpen ? "flex" : "hidden")}
+          >
+            <header className="flex min-h-[68px] shrink-0 items-center gap-2 border-b border-[#e5ebe6] bg-white px-3 py-2.5 sm:gap-3 sm:px-5" aria-busy={Boolean(activeAction)}>
               <button
                 type="button"
                 onClick={closeConversation}
                 disabled={submitting}
-                className="grid size-10 place-items-center rounded-md border border-[#d7e1d8] text-primary disabled:cursor-wait disabled:opacity-50 lg:hidden"
+                className="grid size-10 shrink-0 place-items-center rounded-full text-primary transition hover:bg-[#eef6ee] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-wait disabled:opacity-50 lg:hidden"
                 aria-label="Back to message inbox"
               >
-                <ArrowLeft className="size-5" />
+                <ArrowLeft className="size-5" aria-hidden="true" />
               </button>
+              <StaffConversationAvatar kind="STUDENT" name={selected.student?.fullName || selected.student?.email || "Student"} />
               <div className="min-w-0 flex-1">
-                <h2 className="truncate font-extrabold">{selected.subject}</h2>
-                <p className="text-xs text-[#68746d]">{selected.student?.fullName || selected.student?.email || "Student"}</p>
+                <h2 className="truncate text-[15px] font-extrabold text-[#17211b] sm:text-base">{selected.student?.fullName || selected.student?.email || "Student"}</h2>
+                <p className="truncate text-[11px] font-semibold text-[#68746d] sm:text-xs">{selected.subject}</p>
               </div>
-              <StatusBadge status={formatConversationStatus(selected)} />
+              <span className="hidden shrink-0 md:inline-flex"><StatusBadge status={formatConversationStatus(selected)} /></span>
+              <button
+                type="button"
+                onClick={() => void loadConversations({ background: true })}
+                disabled={submitting}
+                aria-label="Refresh conversations"
+                title="Refresh"
+                className="grid size-10 shrink-0 place-items-center rounded-full text-[#5d6962] transition hover:bg-[#f0f5f1] hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
+              >
+                <RefreshCw className="size-[18px]" aria-hidden="true" />
+              </button>
+            </header>
+            {pendingActionLabel ? <p className="sr-only" role="status" aria-live="polite">{pendingActionLabel}</p> : null}
+
+            <div className="flex min-h-[52px] shrink-0 items-center gap-2 overflow-x-auto border-b border-[#e5ebe6] bg-[#fbfcfb] px-3 py-2 sm:px-5">
+              <span className="shrink-0 md:hidden"><StatusBadge status={formatConversationStatus(selected)} /></span>
               {selected.mode === "WAITING_FOR_STAFF" ? (
-                <Button className="h-9" disabled={submitting} aria-busy={activeAction === "accept"} onClick={() => void acceptConversation(selected)}>
+                <Button className="h-9 shrink-0 rounded-full px-3" disabled={submitting} aria-busy={activeAction === "accept"} onClick={() => void acceptConversation(selected)}>
                   {activeAction === "accept" ? <LoaderCircle className="size-4 motion-safe:animate-spin" aria-hidden="true" /> : <Headphones className="size-4" aria-hidden="true" />}
-                  {activeAction === "accept" ? "Accepting..." : "Accept"}
+                  {activeAction === "accept" ? "Accepting..." : "Accept chat"}
                 </Button>
               ) : null}
               {selected.mode === "STAFF_ACTIVE" && selected.assignedStaffId === user?.id ? (
-                <Button variant="secondary" className="h-9" disabled={submitting} aria-busy={activeAction === "return-to-bot"} onClick={() => void returnToWesBot(selected)}>
+                <Button variant="secondary" className="h-9 shrink-0 rounded-full px-3" disabled={submitting} aria-busy={activeAction === "return-to-bot"} onClick={() => void returnToWesBot(selected)}>
                   {activeAction === "return-to-bot" ? <LoaderCircle className="size-4 motion-safe:animate-spin" aria-hidden="true" /> : <Bot className="size-4" aria-hidden="true" />}
                   {activeAction === "return-to-bot" ? "Returning..." : "Return to WesBot"}
                 </Button>
               ) : null}
               <Button
                 variant={selected.status === "RESOLVED" ? "secondary" : "ghost"}
-                className="h-9"
+                className="h-9 shrink-0 rounded-full border border-[#d7e1d8] px-3"
                 disabled={submitting}
                 aria-busy={activeAction === "resolve" || activeAction === "reopen"}
                 onClick={() => void updateStatus(selected, selected.status === "RESOLVED" ? "OPEN" : "RESOLVED")}
               >
-                {activeAction === "resolve" || activeAction === "reopen" ? <LoaderCircle className="size-4 motion-safe:animate-spin" aria-hidden="true" /> : null}
+                {activeAction === "resolve" || activeAction === "reopen" ? <LoaderCircle className="size-4 motion-safe:animate-spin" aria-hidden="true" /> : <Check className="size-4" aria-hidden="true" />}
                 {activeAction === "resolve" ? "Resolving..." : activeAction === "reopen" ? "Reopening..." : selected.status === "RESOLVED" ? "Reopen" : "Resolve"}
               </Button>
-            </header>
-            {pendingActionLabel ? <p className="sr-only" role="status" aria-live="polite">{pendingActionLabel}</p> : null}
+            </div>
             {selected.mode === "WAITING_FOR_STAFF" ? (
               <div className="border-b border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-950">
                 <div className="flex items-start gap-2">
@@ -1709,58 +1846,106 @@ export function StaffMessagesExperience() {
                 <p><span className="font-extrabold text-[#17211b]">WesBot is handling this thread.</span> Staff can monitor it; it enters the queue when the student requests staff or the bot escalates.</p>
               </div>
             ) : null}
-            <div className="flex-1 space-y-3 overflow-y-auto bg-[#fafcfb] p-4 sm:p-5">
-              {selected.messages.map((message) => {
+            <div ref={messagesLogRef} role="log" aria-live="polite" aria-relevant="additions" className="min-h-0 min-w-0 flex-1 space-y-3 overflow-x-hidden overflow-y-auto overscroll-contain bg-[#f4f7f4] px-3 py-4 scroll-smooth sm:px-5 sm:py-5">
+              {selected.messages.map((message, index, messages) => {
                 const mine = message.senderType === "STAFF" && message.senderId === user?.id;
+                const day = formatConversationDay(message.createdAt);
+                const showDay = index === 0 || formatConversationDay(messages[index - 1].createdAt) !== day;
                 if (message.senderType === "SYSTEM") {
                   return (
-                    <div key={message.id} className="flex justify-center">
-                      <p className="max-w-[90%] rounded-full bg-[#edf1ed] px-3 py-1.5 text-center text-xs font-semibold text-[#68746d]">{message.message}</p>
+                    <div key={message.id}>
+                      {showDay ? <p className="mb-3 text-center text-[11px] font-bold text-[#879089]">{day}</p> : null}
+                      <div className="flex justify-center py-1">
+                        <p className="max-w-[92%] rounded-full bg-[#e3e9e4] px-3 py-1.5 text-center text-[11px] font-semibold leading-4 text-[#667169]">{message.message}</p>
+                      </div>
                     </div>
                   );
                 }
 
                 const botMessage = message.senderType === "BOT";
                 const staffMessage = message.senderType === "STAFF";
+                const senderName = botMessage
+                  ? "WesBot"
+                  : staffMessage
+                    ? message.sender?.fullName || "Commissary staff"
+                    : selected.student?.fullName || "Student";
+                const senderKind = botMessage ? "BOT" : staffMessage ? "STAFF" : "STUDENT";
                 return (
-                  <div key={message.id} className={mine ? "flex justify-end" : "flex justify-start"}>
-                    <div className={mine ? "ml-auto max-w-[82%] rounded-lg bg-primary p-3 text-sm leading-6 text-white shadow-sm" : botMessage ? "max-w-[82%] rounded-lg border border-[#cfe0d0] bg-[#f3f9f3] p-3 text-sm leading-6 shadow-sm" : "max-w-[82%] rounded-lg border border-[#dce5dd] bg-white p-3 text-sm leading-6 shadow-sm"}>
-                      {!mine ? (
-                        <p className={botMessage ? "mb-1 flex items-center gap-1.5 text-xs font-extrabold text-primary" : "mb-1 flex items-center gap-1.5 text-xs font-extrabold text-[#526058]"}>
-                          {botMessage ? <Bot className="size-3.5" /> : staffMessage ? <Headphones className="size-3.5" /> : null}
-                          {botMessage ? "WesBot · Automated Assistant" : staffMessage ? `Staff · ${message.sender?.fullName || "Commissary staff"}` : selected.student?.fullName || "Student"}
-                        </p>
-                      ) : null}
-                      <p className="whitespace-pre-wrap">{message.message}</p>
-                      <p className={mine ? "mt-2 text-[11px] font-semibold text-white/75" : "mt-2 text-[11px] font-semibold text-[#79837d]"}>
-                        {mine ? "You" : botMessage ? "Automated reply" : message.sender?.fullName || selected.student?.fullName || "Student"} - {formatConversationTime(message.createdAt)}
-                      </p>
+                  <div key={message.id}>
+                    {showDay ? <p className="mb-3 text-center text-[11px] font-bold text-[#879089]">{day}</p> : null}
+                    <div className={cn("flex items-end gap-2", mine ? "justify-end" : "justify-start")}>
+                      {!mine ? <StaffConversationAvatar kind={senderKind} name={senderName} size="sm" /> : null}
+                      <div className={cn("flex min-w-0 max-w-[82%] flex-col sm:max-w-[72%]", mine ? "items-end" : "items-start")}>
+                      {!mine ? <p className={cn("mb-1 px-1 text-[11px] font-bold", botMessage ? "text-primary" : staffMessage ? "text-sky-800" : "text-[#526058]")}>{senderName}</p> : null}
+                      <div className={cn(
+                        "rounded-[20px] px-4 py-2.5 text-sm shadow-sm",
+                        mine
+                          ? "rounded-br-md bg-primary text-white"
+                          : botMessage
+                            ? "rounded-bl-md bg-white text-[#17211b] ring-1 ring-[#dfe8e0]"
+                            : staffMessage
+                              ? "rounded-bl-md bg-white text-[#17211b] ring-1 ring-sky-200"
+                              : "rounded-bl-md bg-white text-[#17211b] ring-1 ring-[#dce5dd]"
+                      )}>
+                        <p className="whitespace-pre-wrap break-words leading-6">{message.message}</p>
+                      </div>
+                      <p className="mt-1 px-1 text-[10px] font-semibold text-[#7b867f]">{mine ? "You" : senderName} · {formatConversationTime(message.createdAt)}</p>
+                    </div>
                     </div>
                   </div>
                 );
               })}
-              {selected.typingUsers?.length ? (
-                <div className="flex justify-start">
-                  <div className="max-w-[82%] rounded-lg border border-[#dce5dd] bg-white px-3 py-2 text-sm font-semibold text-[#68746d] shadow-sm">
-                    {selected.typingUsers[0].fullName || selected.typingUsers[0].email || "Student"} is typing...
+              {pendingReply ? (
+                <div className="flex justify-end">
+                  <div className="flex max-w-[82%] flex-col items-end sm:max-w-[72%]">
+                    <div className="rounded-[20px] rounded-br-md bg-primary px-4 py-2.5 text-sm text-white opacity-80 shadow-sm">
+                      <p className="whitespace-pre-wrap break-words leading-6">{pendingReply}</p>
+                    </div>
+                    <p className="mt-1 px-1 text-[10px] font-semibold text-[#718078]">Sending...</p>
                   </div>
                 </div>
               ) : null}
-              <div ref={messagesEndRef} />
+              {selected.typingUsers?.length ? (
+                <div className="flex items-end gap-2">
+                  <StaffConversationAvatar kind="STUDENT" name={selected.typingUsers[0].fullName || selected.typingUsers[0].email || "Student"} size="sm" />
+                  <div className="rounded-[20px] rounded-bl-md bg-white px-4 py-2.5 text-xs font-semibold text-[#68746d] shadow-sm ring-1 ring-[#dce5dd]">
+                    {selected.typingUsers[0].fullName || selected.typingUsers[0].email || "Student"} is typing<span className="animate-pulse">...</span>
+                  </div>
+                </div>
+              ) : null}
             </div>
+            <div className="shrink-0 border-t border-[#e5ebe6] bg-white px-3 py-2.5 sm:px-4 sm:py-3">
+              {selected.mode === "WAITING_FOR_STAFF" ? <p className="mb-2 rounded-xl bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800 ring-1 ring-inset ring-amber-200">Accept this conversation before replying.</p> : null}
+              {selected.mode === "BOT_ACTIVE" ? <p className="mb-2 rounded-xl bg-[#eef7ef] px-3 py-2 text-xs font-bold text-primary ring-1 ring-inset ring-[#cfe0d0]">WesBot is currently replying. Accept a handoff before sending a staff response.</p> : null}
+              {selected.mode === "STAFF_ACTIVE" && selected.assignedStaffId !== user?.id ? <p className="mb-2 rounded-xl bg-sky-50 px-3 py-2 text-xs font-bold text-sky-800 ring-1 ring-inset ring-sky-200">Another staff member owns this conversation.</p> : null}
+              {selected.status === "RESOLVED" ? <p className="mb-2 rounded-xl bg-slate-50 px-3 py-2 text-xs font-bold text-slate-700 ring-1 ring-inset ring-slate-200">Reopen this conversation before replying.</p> : null}
             <form
-              className="flex gap-2 border-t border-[#e5ebe6] bg-white p-3 sm:p-4"
+              className="flex min-w-0 items-end gap-1.5 rounded-[24px] border border-[#d7e1d8] bg-[#f6f8f6] p-1.5 transition focus-within:border-primary focus-within:bg-white focus-within:ring-2 focus-within:ring-primary/15"
               aria-busy={activeAction === "send"}
               onSubmit={(event) => {
                 event.preventDefault();
                 void sendReply();
               }}
             >
-              <input
-                aria-label="Reply to student"
+              <label htmlFor="staff-message-reply" className="sr-only">Reply to student</label>
+              <textarea
+                ref={replyComposerRef}
+                id="staff-message-reply"
                 value={reply}
-                onChange={(event) => handleReplyChange(event.target.value)}
+                onChange={(event) => {
+                  handleReplyChange(event.target.value);
+                  event.currentTarget.style.height = "auto";
+                  event.currentTarget.style.height = `${Math.min(event.currentTarget.scrollHeight, 128)}px`;
+                }}
                 onBlur={() => selected ? sendTypingSignal(selected.id, false) : undefined}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    void sendReply();
+                  }
+                }}
+                maxLength={2000}
+                rows={1}
                 placeholder={
                   activeAction === "send"
                     ? "Sending reply..."
@@ -1768,37 +1953,38 @@ export function StaffMessagesExperience() {
                     ? "Accept this conversation before replying..."
                     : selected.mode === "BOT_ACTIVE"
                       ? "WesBot is handling this conversation..."
-                      : selected.mode === "RESOLVED"
+                      : selected.status === "RESOLVED"
                         ? "Reopen this conversation before replying..."
                         : selected.assignedStaffId !== user?.id
                           ? "Another staff member is handling this conversation..."
                           : "Write a reply..."
                 }
                 disabled={!canReply || submitting}
-                className="h-11 min-w-0 flex-1 rounded-md border border-[#d7e1d8] px-3 outline-none focus:border-primary disabled:cursor-wait disabled:bg-[#f6f8f6]"
+                className="max-h-32 min-h-10 min-w-0 flex-1 resize-none bg-transparent px-3 py-2 text-sm leading-6 text-[#17211b] outline-none placeholder:text-[#8a948e] disabled:cursor-wait"
               />
               <Button
                 type="submit"
-                className="h-11 px-3 sm:px-4"
+                className="size-10 shrink-0 rounded-full p-0"
                 disabled={submitting || !canReply || !reply.trim()}
                 aria-busy={activeAction === "send"}
                 aria-label={activeAction === "send" ? "Sending reply" : "Send reply"}
               >
-                {activeAction === "send" ? <LoaderCircle className="size-4 motion-safe:animate-spin" aria-hidden="true" /> : <Send className="size-4" aria-hidden="true" />}
-                <span className="hidden sm:inline">{activeAction === "send" ? "Sending..." : "Send"}</span>
+                {activeAction === "send" ? <LoaderCircle className="size-[18px] motion-safe:animate-spin" aria-hidden="true" /> : <Send className="size-[18px]" aria-hidden="true" />}
               </Button>
             </form>
-          </section>
+              <p className="mt-2 hidden px-1 text-[11px] text-[#88918b] sm:block">Press Enter to send, Shift+Enter for a new line.</p>
+            </div>
+          </div>
         ) : (
-          <section className="hidden min-h-[500px] place-items-center bg-[#fafcfb] p-6 text-center lg:grid">
+          <div className="hidden h-full place-items-center bg-[#f4f7f4] p-6 text-center lg:grid">
             <div>
-              <AssetIcon src="/assets/messages.svg" className="mx-auto size-12" />
+              <span className="mx-auto grid size-16 place-items-center rounded-full bg-white shadow-sm ring-1 ring-[#dce5dd]"><AssetIcon src="/assets/messages.svg" className="size-9" /></span>
               <p className="mt-3 font-extrabold text-[#17211b]">No conversation selected</p>
               <p className="mt-1 text-sm text-[#68746d]">Choose a student message from the inbox.</p>
             </div>
-          </section>
+          </div>
         )}
-      </div>
+      </section>
       {notice ? <Notice text={notice} onClose={() => setNotice("")} /> : null}
     </div>
   );
