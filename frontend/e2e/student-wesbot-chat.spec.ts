@@ -61,7 +61,7 @@ function conversation(mode: BackendConversation["mode"]): BackendConversation {
   };
 }
 
-test("WesBot opens as one messenger thread and hands the same chat to staff", async ({ page }) => {
+test("WesBot opens as one messenger thread and hands the same chat to staff", async ({ page }, testInfo) => {
   const unhandledApiPaths: string[] = [];
   let conversations: BackendConversation[] = [];
   let firstMessagePayload: { subject?: string; message?: string } | null = null;
@@ -138,8 +138,10 @@ test("WesBot opens as one messenger thread and hands the same chat to staff", as
   await dismissWelcomeGate(page);
 
   await expect(page.getByRole("heading", { name: "Chat with WesBot" })).toBeVisible();
+  await expect(page.getByTestId("conversation-header").locator('img[src="/assets/wesbot-chat.svg"]')).toBeVisible();
   await expect(page.getByText("Automated assistant · Online", { exact: true })).toBeVisible();
   await expect(page.getByText("Hi! I'm WesBot.", { exact: false })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Product availability" })).toBeVisible();
   await expect(page.getByRole("log")).toHaveCount(1);
   await expect(page.getByLabel("Message WesBot or commissary staff")).toHaveCount(1);
   await expect(page.getByLabel("Topic")).toHaveCount(0);
@@ -159,6 +161,13 @@ test("WesBot opens as one messenger thread and hands the same chat to staff", as
   await expect(page.getByText("Waiting for commissary staff. You can keep adding details here.")).toBeVisible();
   await expect(page.getByLabel("Message WesBot or commissary staff")).toBeVisible();
   await expect(page.getByRole("log")).toHaveCount(1);
+
+  if (testInfo.project.name === "mobile-chromium") {
+    await page.getByRole("button", { name: "Open chat history" }).click();
+    await expect(page.getByText("Messages", { exact: true })).toBeVisible();
+    await page.locator("aside button").filter({ hasText: "Available ba ang WESCOMM PE shirt?" }).click();
+    await expect(page.getByRole("log")).toBeVisible();
+  }
 
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
   expect(unhandledApiPaths).toEqual([]);

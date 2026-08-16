@@ -20,7 +20,7 @@ function notificationIcon(type: BackendNotificationType) {
   if (type === "PAYMENT") return "/assets/payment.svg";
   if (type === "LOW_STOCK") return "/assets/restock-soon.svg";
   if (type === "BACK_IN_STOCK") return "/assets/restock-soon.svg";
-  if (type === "MESSAGE") return "/assets/support.svg";
+  if (type === "MESSAGE") return "/assets/wesbot-chat.svg";
   return "/assets/notifications.svg";
 }
 

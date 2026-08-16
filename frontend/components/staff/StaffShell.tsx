@@ -133,7 +133,7 @@ function staffNotificationIcon(type: BackendNotificationType) {
   if (type === "RECEIPT") return "/assets/receipts.svg";
   if (type === "PAYMENT") return "/assets/payment.svg";
   if (type === "LOW_STOCK") return "/assets/low-stock.svg";
-  if (type === "MESSAGE") return "/assets/support.svg";
+  if (type === "MESSAGE") return "/assets/wesbot-chat.svg";
   return "/assets/notifications.svg";
 }
 

@@ -1,7 +1,8 @@
 "use client";
 
+import Image from "next/image";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Bot, Headphones, MessageCircleMore, Plus, RefreshCw, Send } from "lucide-react";
+import { ArrowLeft, Headphones, MessageCircleMore, Plus, RefreshCw, Send } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
@@ -33,6 +34,18 @@ function formatSupportTime(value: string) {
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
+    timeZone: "Asia/Manila"
+  });
+}
+
+function formatSupportDay(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+
+  return date.toLocaleDateString("en-PH", {
+    month: "short",
+    day: "numeric",
+    year: date.getFullYear() === new Date().getFullYear() ? undefined : "numeric",
     timeZone: "Asia/Manila"
   });
 }
@@ -83,6 +96,24 @@ function conversationIdentity(conversation: BackendConversation | null) {
   };
 }
 
+function ChatAvatar({ kind, size = "md" }: { kind: "BOT" | "STAFF"; size?: "sm" | "md" | "lg" }) {
+  const sizeClass = size === "sm" ? "size-8" : size === "lg" ? "size-16" : "size-11";
+
+  if (kind === "BOT") {
+    return (
+      <span className={cn("relative inline-grid shrink-0 place-items-center overflow-hidden rounded-full", sizeClass)} aria-hidden="true">
+        <Image src="/assets/wesbot-chat.svg" alt="" fill sizes={size === "sm" ? "32px" : size === "lg" ? "64px" : "44px"} className="object-contain" />
+      </span>
+    );
+  }
+
+  return (
+    <span className={cn("inline-grid shrink-0 place-items-center rounded-full bg-sky-50 text-sky-800 ring-1 ring-inset ring-sky-200", sizeClass)} aria-hidden="true">
+      <Headphones className={size === "sm" ? "size-4" : size === "lg" ? "size-7" : "size-5"} />
+    </span>
+  );
+}
+
 export function StudentSupportExperience() {
   const { user, ready, openAuth } = useStudentAuth();
   const [conversations, setConversations] = useState<BackendConversation[]>([]);
@@ -94,7 +125,7 @@ export function StudentSupportExperience() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
-  const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const messagesLogRef = useRef<HTMLDivElement | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const typingStopTimerRef = useRef<number | null>(null);
   const lastTypingSignalRef = useRef(0);
@@ -171,8 +202,17 @@ export function StudentSupportExperience() {
 
   useEffect(() => {
     if (!threadOpen) return;
-    messagesEndRef.current?.scrollIntoView({ block: "end" });
-  }, [pendingMessage, selectedConversation?.messages.length, threadOpen]);
+    const messageLog = messagesLogRef.current;
+    if (!messageLog) return;
+    messageLog.scrollTop = selectedConversation?.id || pendingMessage ? messageLog.scrollHeight : 0;
+  }, [pendingMessage, selectedConversation?.id, selectedConversation?.messages.length, threadOpen]);
+
+  useEffect(() => {
+    const input = composerRef.current;
+    if (!input) return;
+    input.style.height = "0px";
+    input.style.height = `${Math.min(input.scrollHeight, 128)}px`;
+  }, [composer]);
 
   useEffect(() => () => {
     if (typingStopTimerRef.current) window.clearTimeout(typingStopTimerRef.current);
@@ -335,15 +375,15 @@ export function StudentSupportExperience() {
   const botWillReply = !selectedConversation || selectedConversation.mode === "BOT_ACTIVE";
 
   return (
-    <div className="space-y-5">
-      <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+    <div className="space-y-4">
+      <header className="hidden flex-col gap-4 sm:flex sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p className="text-sm font-bold uppercase text-primary">Support</p>
           <h1 className="mt-1 text-3xl font-extrabold text-[#101820]">Chat with WesBot</h1>
-          <p className="mt-2 text-sm text-[#68746d]">Message WesBot first. Ask for a real staff member anytime without leaving the chat.</p>
+          <p className="mt-2 text-sm text-[#68746d]">Ask WesBot first, then switch to a real staff member in the same conversation anytime.</p>
         </div>
         <div className="flex gap-2">
-          <Button variant="secondary" onClick={() => void loadConversations()} disabled={loading || submitting} aria-label="Refresh conversations">
+          <Button variant="secondary" onClick={() => void loadConversations({ background: true })} disabled={submitting} aria-label="Refresh conversations">
             <RefreshCw className="size-4" />
             Refresh
           </Button>
@@ -355,103 +395,154 @@ export function StudentSupportExperience() {
       </header>
 
       {error ? <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p> : null}
+      <h1 className="sr-only sm:hidden">Chat with WesBot</h1>
 
-      <section className="grid min-h-[calc(100dvh-230px)] overflow-hidden rounded-lg border border-[#dce5dd] bg-white shadow-sm lg:min-h-[620px] lg:grid-cols-[320px_1fr]">
+      <section
+        aria-label="WESCOMM support messenger"
+        className="grid h-[calc(100svh-11.375rem)] min-h-[480px] grid-cols-[minmax(0,1fr)] overflow-hidden rounded-2xl border border-[#dce5dd] bg-white shadow-[0_16px_48px_rgba(16,24,32,0.08)] sm:h-[calc(100svh-15.5rem)] sm:min-h-[620px] lg:grid-cols-[310px_minmax(0,1fr)]"
+      >
         <aside className={cn(
-          "border-b border-[#e5ebe6] lg:block lg:border-b-0 lg:border-r",
-          threadOpen ? "hidden" : "block"
+          "h-full min-h-0 min-w-0 flex-col border-[#e5ebe6] bg-[#fbfcfb] lg:flex lg:border-r",
+          threadOpen ? "hidden" : "flex"
         )}>
-          <div className="flex items-center gap-3 border-b border-[#edf1ed] px-4 py-4">
-            <span className="grid size-10 place-items-center rounded-full bg-[#eef6ee]">
-              <MessageCircleMore className="size-5 text-primary" />
+          <div className="flex min-h-[68px] items-center gap-3 border-b border-[#edf1ed] px-4 py-3">
+            <span className="grid size-10 shrink-0 place-items-center rounded-full bg-[#eaf6eb] text-primary" aria-hidden="true">
+              <MessageCircleMore className="size-5" />
             </span>
             <div className="min-w-0">
-              <p className="font-extrabold text-[#17211b]">Chats</p>
-              <p className="text-xs text-[#68746d]">Your WesBot and staff message history</p>
+              <p className="font-extrabold text-[#17211b]">Messages</p>
+              <p className="text-xs text-[#68746d]">WesBot and staff history</p>
             </div>
+            <button
+              type="button"
+              onClick={startNewChat}
+              disabled={submitting}
+              aria-label="Start a new chat"
+              title="New chat"
+              className="ml-auto grid size-10 shrink-0 place-items-center rounded-full text-primary transition hover:bg-[#eaf4eb] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
+            >
+              <Plus className="size-5" />
+            </button>
           </div>
-          <div className="max-h-[280px] overflow-y-auto lg:max-h-[560px]">
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-2">
             {conversations.length ? conversations.map((conversation) => (
               <button
                 key={conversation.id}
                 type="button"
                 onClick={() => openConversation(conversation.id)}
+                aria-current={selectedConversation?.id === conversation.id ? "true" : undefined}
                 className={cn(
-                  "w-full border-b border-[#edf1ed] p-4 text-left transition hover:bg-[#f4f8f4] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary",
-                  selectedConversation?.id === conversation.id ? "bg-[#eef6ee]" : ""
+                  "mb-1 flex w-full items-start gap-3 rounded-xl p-3 text-left transition hover:bg-[#f0f6f1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary",
+                  selectedConversation?.id === conversation.id ? "bg-[#e8f3e9]" : ""
                 )}
               >
-                <div className="flex items-start gap-2">
-                  <p className="min-w-0 flex-1 truncate font-extrabold">{conversation.subject}</p>
-                  <StatusBadge status={supportStatus(conversation)} />
-                </div>
-                <p className="mt-1 truncate text-sm text-[#68746d]">
-                  {conversation.messages.at(-1)?.message ?? "No messages yet"}
-                </p>
-                <p className="mt-2 text-xs font-semibold text-[#79837d]">{formatSupportTime(conversation.updatedAt)}</p>
+                <ChatAvatar kind={conversation.mode === "BOT_ACTIVE" ? "BOT" : "STAFF"} />
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-start gap-2">
+                    <span className="min-w-0 flex-1 truncate text-sm font-extrabold text-[#17211b]">{conversation.subject}</span>
+                    <span className="shrink-0 text-[10px] font-semibold text-[#879089]">{formatSupportTime(conversation.updatedAt)}</span>
+                  </span>
+                  <span className="mt-1 block truncate text-xs text-[#68746d]">
+                    {conversation.messages.at(-1)?.message ?? "No messages yet"}
+                  </span>
+                  <span className="mt-1.5 flex items-center gap-1.5 text-[10px] font-bold text-[#68746d]">
+                    <span className={cn(
+                      "size-1.5 rounded-full",
+                      conversation.mode === "BOT_ACTIVE" ? "bg-emerald-500" : conversation.mode === "WAITING_FOR_STAFF" ? "bg-amber-500" : conversation.mode === "STAFF_ACTIVE" ? "bg-sky-500" : "bg-slate-400"
+                    )} />
+                    {supportStatus(conversation)}
+                  </span>
+                </span>
               </button>
             )) : (
-              <div className="p-5 text-sm leading-6 text-[#68746d]">Your first message to WesBot will appear here.</div>
+              <div className="grid h-full min-h-56 place-items-center px-6 text-center">
+                <div>
+                  <ChatAvatar kind="BOT" size="lg" />
+                  <p className="mt-3 font-extrabold text-[#17211b]">No messages yet</p>
+                  <p className="mt-1 text-sm leading-5 text-[#68746d]">Start with WesBot and your conversation will stay here.</p>
+                </div>
+              </div>
             )}
           </div>
         </aside>
 
         <div className={cn(
-          "min-h-[calc(100dvh-230px)] flex-col lg:flex lg:min-h-[500px]",
+          "h-full min-h-0 min-w-0 flex-col lg:flex",
           threadOpen ? "flex" : "hidden"
         )}>
-          <header className="flex items-center gap-3 border-b border-[#e5ebe6] px-4 py-3 sm:px-5">
+          <header data-testid="conversation-header" className="flex min-h-[68px] shrink-0 items-center gap-2 border-b border-[#e5ebe6] bg-white px-3 py-2.5 sm:gap-3 sm:px-5">
             <button
               type="button"
               onClick={showConversationList}
-              className="grid size-10 place-items-center rounded-md border border-[#d7e1d8] text-primary lg:hidden"
+              className="grid size-10 shrink-0 place-items-center rounded-full text-primary transition hover:bg-[#eef6ee] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary lg:hidden"
               aria-label="Open chat history"
             >
               <ArrowLeft className="size-5" />
             </button>
-            <span className={cn(
-              "grid size-11 shrink-0 place-items-center rounded-full",
-              identity.icon === "BOT" ? "bg-[#eaf6eb] text-primary" : "bg-sky-50 text-sky-800"
-            )}>
-              {identity.icon === "BOT" ? <Bot className="size-6" /> : <Headphones className="size-5" />}
-            </span>
+            <ChatAvatar kind={identity.icon} />
             <div className="min-w-0 flex-1">
-              <h2 className="truncate font-extrabold text-[#17211b]">{identity.title}</h2>
-              <p className="truncate text-xs font-semibold text-[#68746d]">{identity.subtitle}</p>
+              <h2 className="truncate text-[15px] font-extrabold text-[#17211b] sm:text-base">{identity.title}</h2>
+              <p className="flex items-center gap-1.5 truncate text-[11px] font-semibold text-[#68746d] sm:text-xs">
+                {identity.icon === "BOT" && selectedConversation?.mode !== "WAITING_FOR_STAFF" ? <span className="size-2 shrink-0 rounded-full bg-emerald-500" /> : null}
+                <span className="truncate">{identity.subtitle}</span>
+              </p>
             </div>
             {selectedConversation ? (
-              <span className="hidden shrink-0 sm:inline-flex"><StatusBadge status={supportStatus(selectedConversation)} /></span>
-            ) : (
-              <span className="hidden shrink-0 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-bold text-emerald-700 ring-1 ring-emerald-200 sm:inline-flex">Online</span>
-            )}
+              <span className="hidden shrink-0 md:inline-flex"><StatusBadge status={supportStatus(selectedConversation)} /></span>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => void loadConversations({ background: true })}
+              disabled={submitting}
+              aria-label="Refresh conversations"
+              title="Refresh"
+              className="grid size-10 shrink-0 place-items-center rounded-full text-[#5d6962] transition hover:bg-[#f0f5f1] hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
+            >
+              <RefreshCw className="size-[18px]" />
+            </button>
+            <button
+              type="button"
+              onClick={startNewChat}
+              disabled={submitting}
+              aria-label="Start a new chat"
+              title="New chat"
+              className="grid size-10 shrink-0 place-items-center rounded-full bg-[#eaf6eb] text-primary transition hover:bg-[#dceede] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50 sm:hidden"
+            >
+              <Plus className="size-5" />
+            </button>
           </header>
 
-          <div role="log" aria-live="polite" aria-relevant="additions" className="flex-1 space-y-3 overflow-y-auto bg-[#fafcfb] p-4 sm:p-5">
+          <div ref={messagesLogRef} role="log" aria-live="polite" aria-relevant="additions" className="min-h-0 min-w-0 flex-1 space-y-3 overflow-x-hidden overflow-y-auto overscroll-contain bg-[#f4f7f4] px-3 py-4 scroll-smooth sm:px-5 sm:py-5">
             {showWelcome ? (
               <>
-                <div className="flex justify-start">
-                  <div className="max-w-[88%] rounded-2xl rounded-bl-md border border-[#cfe0d0] bg-[#f3f9f3] p-3 text-sm text-[#17211b] shadow-sm sm:max-w-[78%]">
-                    <p className="mb-1 flex items-center gap-1.5 text-xs font-extrabold text-primary">
-                      <Bot className="size-3.5" />
-                      WesBot · Automated Assistant
-                    </p>
-                    <p className="whitespace-pre-wrap leading-6">
-                      Hi! I&apos;m WesBot. Ask me about products, live availability, reservations, GCash payments, receipts, cancellations, or pickup schedules.
-                    </p>
+                <div className="pb-2 pt-1 text-center">
+                  <ChatAvatar kind="BOT" size="lg" />
+                  <h2 className="mt-2 font-extrabold text-[#17211b]">WesBot</h2>
+                  <p className="mx-auto mt-1 max-w-[min(24rem,100%)] text-xs leading-5 text-[#68746d]">WESCOMM&apos;s automated assistant using current product, reservation, payment, and receipt records.</p>
+                </div>
+                <div className="flex items-end gap-2">
+                  <ChatAvatar kind="BOT" size="sm" />
+                  <div className="min-w-0 max-w-[84%] sm:max-w-[72%]">
+                    <p className="mb-1 px-1 text-[11px] font-bold text-primary">WesBot</p>
+                    <div className="rounded-[20px] rounded-bl-md bg-white px-4 py-3 text-sm text-[#17211b] shadow-sm ring-1 ring-[#dfe8e0]">
+                      <p className="whitespace-pre-wrap leading-6">
+                        Hi! I&apos;m WesBot. Ask me about products, live availability, reservations, GCash payments, receipts, cancellations, or pickup schedules.
+                      </p>
+                    </div>
                   </div>
                 </div>
-                <div className="flex justify-start">
-                  <div className="max-w-[88%] rounded-2xl rounded-bl-md border border-[#cfe0d0] bg-[#f3f9f3] p-3 text-sm leading-6 text-[#17211b] shadow-sm sm:max-w-[78%]">
+                <div className="flex items-end gap-2 pl-10">
+                  <div className="max-w-[84%] rounded-[20px] rounded-bl-md bg-white px-4 py-3 text-sm leading-6 text-[#17211b] shadow-sm ring-1 ring-[#dfe8e0] sm:max-w-[72%]">
                     If you want a real person, type <strong>staff</strong> anytime. I&apos;ll keep this same chat and connect it to the commissary team.
                   </div>
                 </div>
-                <div className="flex flex-wrap gap-2 pt-2">
+                <div className="flex w-full min-w-0 max-w-full gap-2 overflow-x-auto pb-1 pl-10 pt-2 sm:flex-wrap sm:overflow-visible">
                   {quickQuestions.map((question) => (
                     <button
                       key={question.label}
                       type="button"
                       onClick={() => chooseQuickQuestion(question.message)}
-                      className="rounded-full border border-[#cfe0d0] bg-white px-3 py-2 text-xs font-bold text-primary transition hover:bg-[#eef7ef] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+                      className="shrink-0 rounded-full border border-[#bcd5bf] bg-white px-3.5 py-2 text-xs font-bold text-primary shadow-sm transition hover:bg-[#eef7ef] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
                     >
                       {question.label}
                     </button>
@@ -460,39 +551,50 @@ export function StudentSupportExperience() {
               </>
             ) : null}
 
-            {selectedConversation?.messages.map((message) => {
+            {selectedConversation?.messages.map((message, index, messages) => {
               const mine = message.senderType === "STUDENT" && message.senderId === user.id;
+              const day = formatSupportDay(message.createdAt);
+              const showDay = index === 0 || formatSupportDay(messages[index - 1].createdAt) !== day;
+
               if (message.senderType === "SYSTEM") {
                 return (
-                  <div key={message.id} className="flex justify-center py-1">
-                    <p className="max-w-[92%] rounded-full bg-[#edf1ed] px-3 py-1.5 text-center text-xs font-semibold text-[#68746d]">
-                      {message.message}
-                    </p>
+                  <div key={message.id}>
+                    {showDay ? <p className="mb-3 text-center text-[11px] font-bold text-[#879089]">{day}</p> : null}
+                    <div className="flex justify-center py-1">
+                      <p className="max-w-[92%] rounded-full bg-[#e3e9e4] px-3 py-1.5 text-center text-[11px] font-semibold leading-4 text-[#667169]">
+                        {message.message}
+                      </p>
+                    </div>
                   </div>
                 );
               }
 
               const botMessage = message.senderType === "BOT";
               return (
-                <div key={message.id} className={cn("flex", mine ? "justify-end" : "justify-start")}>
-                  <div className={cn(
-                    "max-w-[88%] rounded-2xl p-3 text-sm shadow-sm sm:max-w-[78%]",
-                    mine
-                      ? "rounded-br-md bg-primary text-white"
-                      : botMessage
-                        ? "rounded-bl-md border border-[#cfe0d0] bg-[#f3f9f3] text-[#17211b]"
-                        : "rounded-bl-md border border-sky-200 bg-white text-[#17211b]"
-                  )}>
-                    {!mine ? (
-                      <p className={cn("mb-1 flex items-center gap-1.5 text-xs font-extrabold", botMessage ? "text-primary" : "text-sky-800")}>
-                        {botMessage ? <Bot className="size-3.5" /> : <Headphones className="size-3.5" />}
-                        {botMessage ? "WesBot · Automated Assistant" : `Staff · ${message.sender?.fullName || "Commissary staff"}`}
+                <div key={message.id}>
+                  {showDay ? <p className="mb-3 text-center text-[11px] font-bold text-[#879089]">{day}</p> : null}
+                  <div className={cn("flex items-end gap-2", mine ? "justify-end" : "justify-start")}>
+                    {!mine ? <ChatAvatar kind={botMessage ? "BOT" : "STAFF"} size="sm" /> : null}
+                    <div className={cn("flex min-w-0 max-w-[82%] flex-col sm:max-w-[72%]", mine ? "items-end" : "items-start")}>
+                      {!mine ? (
+                        <p className={cn("mb-1 px-1 text-[11px] font-bold", botMessage ? "text-primary" : "text-sky-800")}>
+                          {botMessage ? "WesBot" : message.sender?.fullName || "Commissary staff"}
+                        </p>
+                      ) : null}
+                      <div className={cn(
+                        "rounded-[20px] px-4 py-2.5 text-sm shadow-sm",
+                        mine
+                          ? "rounded-br-md bg-primary text-white"
+                          : botMessage
+                            ? "rounded-bl-md bg-white text-[#17211b] ring-1 ring-[#dfe8e0]"
+                            : "rounded-bl-md bg-white text-[#17211b] ring-1 ring-sky-200"
+                      )}>
+                        <p className="whitespace-pre-wrap break-words leading-6">{message.message}</p>
+                      </div>
+                      <p className={cn("mt-1 px-1 text-[10px] font-semibold", mine ? "text-[#718078]" : "text-[#7b867f]")}>
+                        {mine ? "You" : botMessage ? "WesBot" : "Staff"} · {formatSupportTime(message.createdAt)}
                       </p>
-                    ) : null}
-                    <p className="whitespace-pre-wrap leading-6">{message.message}</p>
-                    <p className={cn("mt-2 text-[11px] font-semibold", mine ? "text-white/75" : "text-[#79837d]")}>
-                      {mine ? "You" : botMessage ? "WesBot" : "Staff"} · {formatSupportTime(message.createdAt)}
-                    </p>
+                    </div>
                   </div>
                 </div>
               );
@@ -500,55 +602,61 @@ export function StudentSupportExperience() {
 
             {pendingMessage ? (
               <div className="flex justify-end">
-                <div className="max-w-[88%] rounded-2xl rounded-br-md bg-primary p-3 text-sm text-white opacity-80 shadow-sm sm:max-w-[78%]">
-                  <p className="whitespace-pre-wrap leading-6">{pendingMessage}</p>
-                  <p className="mt-2 text-[11px] font-semibold text-white/75">Sending...</p>
+                <div className="flex max-w-[82%] flex-col items-end sm:max-w-[72%]">
+                  <div className="rounded-[20px] rounded-br-md bg-primary px-4 py-2.5 text-sm text-white opacity-80 shadow-sm">
+                    <p className="whitespace-pre-wrap break-words leading-6">{pendingMessage}</p>
+                  </div>
+                  <p className="mt-1 px-1 text-[10px] font-semibold text-[#718078]">Sending...</p>
                 </div>
               </div>
             ) : null}
 
             {submitting && pendingMessage && botWillReply ? (
-              <div className="flex justify-start">
-                <div className="flex items-center gap-2 rounded-2xl rounded-bl-md border border-[#cfe0d0] bg-[#f3f9f3] px-4 py-3 text-sm font-semibold text-[#68746d] shadow-sm">
-                  <Bot className="size-4 text-primary" />
-                  WesBot is checking WESCOMM records...
+              <div className="flex items-end gap-2">
+                <ChatAvatar kind="BOT" size="sm" />
+                <div className="flex items-center gap-1 rounded-[20px] rounded-bl-md bg-white px-4 py-3 shadow-sm ring-1 ring-[#dfe8e0]" aria-label="WesBot is checking WESCOMM records">
+                  <span className="size-2 animate-bounce rounded-full bg-primary/70 [animation-delay:-0.3s]" />
+                  <span className="size-2 animate-bounce rounded-full bg-primary/70 [animation-delay:-0.15s]" />
+                  <span className="size-2 animate-bounce rounded-full bg-primary/70" />
                 </div>
               </div>
             ) : null}
 
             {selectedConversation?.typingUsers?.length ? (
-              <div className="flex justify-start">
-                <div className="max-w-[82%] rounded-2xl rounded-bl-md border border-[#dce5dd] bg-white px-3 py-2 text-sm font-semibold text-[#68746d] shadow-sm">
-                  {selectedConversation.typingUsers[0].fullName || "Commissary staff"} is typing...
+              <div className="flex items-end gap-2">
+                <ChatAvatar kind="STAFF" size="sm" />
+                <div className="rounded-[20px] rounded-bl-md bg-white px-4 py-2.5 text-xs font-semibold text-[#68746d] shadow-sm ring-1 ring-sky-200">
+                  {selectedConversation.typingUsers[0].fullName || "Commissary staff"} is typing<span className="animate-pulse">...</span>
                 </div>
               </div>
             ) : null}
-            <div ref={messagesEndRef} />
           </div>
 
-          <div className="border-t border-[#e5ebe6] bg-white px-3 py-3 sm:px-4">
+          <div className="shrink-0 border-t border-[#e5ebe6] bg-white px-3 py-2.5 sm:px-4 sm:py-3">
             {selectedConversation?.mode === "BOT_ACTIVE" ? (
-              <div className="mb-2 flex items-center justify-between gap-3 px-1 text-xs text-[#68746d]">
-                <span>WesBot is replying in this chat.</span>
+              <div className="mb-2 flex items-center justify-between gap-2 rounded-xl bg-[#eef7ef] px-3 py-2 text-xs text-[#526058]">
+                <span className="flex items-center gap-2"><span className="size-2 rounded-full bg-emerald-500" />WesBot is replying</span>
                 <button
                   type="button"
                   onClick={() => void requestStaff()}
                   disabled={submitting}
-                  className="inline-flex items-center gap-1.5 font-extrabold text-primary hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+                  aria-label="Talk to a real staff member"
+                  className="inline-flex min-h-8 shrink-0 items-center gap-1.5 rounded-full border border-[#bcd5bf] bg-white px-3 font-extrabold text-primary transition hover:bg-[#e7f2e8] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <Headphones className="size-3.5" />
-                  Talk to a real staff member
+                  <span className="hidden min-[390px]:inline">Talk to staff</span>
+                  <span className="min-[390px]:hidden">Staff</span>
                 </button>
               </div>
             ) : null}
             {selectedConversation?.mode === "WAITING_FOR_STAFF" ? (
-              <p className="mb-2 px-1 text-xs font-bold text-amber-800">Waiting for commissary staff. You can keep adding details here.</p>
+              <p className="mb-2 rounded-xl bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800 ring-1 ring-inset ring-amber-200">Waiting for commissary staff. You can keep adding details here.</p>
             ) : null}
             {selectedConversation?.mode === "STAFF_ACTIVE" ? (
-              <p className="mb-2 px-1 text-xs font-bold text-sky-800">You&apos;re now chatting with a real staff member in the same conversation.</p>
+              <p className="mb-2 rounded-xl bg-sky-50 px-3 py-2 text-xs font-bold text-sky-800 ring-1 ring-inset ring-sky-200">You&apos;re now chatting with a real staff member in the same conversation.</p>
             ) : null}
             <form
-              className="flex items-end gap-2"
+              className="flex min-w-0 items-end gap-1.5 rounded-[24px] border border-[#d7e1d8] bg-[#f6f8f6] p-1.5 transition focus-within:border-primary focus-within:bg-white focus-within:ring-2 focus-within:ring-primary/15"
               onSubmit={(event) => {
                 event.preventDefault();
                 void sendMessage();
@@ -569,14 +677,14 @@ export function StudentSupportExperience() {
                 }}
                 maxLength={2000}
                 rows={1}
-                placeholder={selectedConversation?.status === "RESOLVED" ? "Send a message to reopen this chat..." : "Message WesBot..."}
-                className="max-h-32 min-h-11 min-w-0 flex-1 resize-none rounded-2xl border border-[#d7e1d8] px-4 py-2.5 leading-6 outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
+                placeholder={selectedConversation?.status === "RESOLVED" ? "Send a message to reopen this chat..." : selectedConversation?.mode === "STAFF_ACTIVE" ? "Message commissary staff..." : "Message WesBot..."}
+                className="max-h-32 min-h-10 min-w-0 flex-1 resize-none bg-transparent px-3 py-2 text-sm leading-6 text-[#17211b] outline-none placeholder:text-[#8a948e]"
               />
-              <Button type="submit" className="size-11 shrink-0 rounded-full p-0" disabled={submitting || !composer.trim()} aria-label="Send message">
-                <Send className="size-4" />
+              <Button type="submit" className="size-10 shrink-0 rounded-full p-0" disabled={submitting || !composer.trim()} aria-label="Send message">
+                <Send className="size-[18px]" />
               </Button>
             </form>
-            <p className="mt-2 px-1 text-[11px] text-[#88918b]">WesBot is automated and uses current WESCOMM records. Press Enter to send, Shift+Enter for a new line.</p>
+            <p className="mt-2 hidden px-1 text-[11px] text-[#88918b] sm:block">WesBot uses current WESCOMM records. Press Enter to send, Shift+Enter for a new line.</p>
           </div>
         </div>
       </section>
