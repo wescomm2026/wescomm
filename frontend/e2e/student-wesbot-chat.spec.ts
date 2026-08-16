@@ -138,7 +138,7 @@ test("WesBot opens as one messenger thread and hands the same chat to staff", as
   await dismissWelcomeGate(page);
 
   await expect(page.getByRole("heading", { name: "Chat with WesBot" })).toBeVisible();
-  await expect(page.getByTestId("conversation-header").locator('img[src="/assets/wesbot-chat.svg"]')).toBeVisible();
+  await expect(page.getByTestId("conversation-header").locator('img[src="/assets/chat-with-wesbot.svg"]')).toBeVisible();
   await expect(page.getByText("Automated assistant · Online", { exact: true })).toBeVisible();
   await expect(page.getByText("Hi! I'm WesBot.", { exact: false })).toBeVisible();
   await expect(page.getByRole("button", { name: "Product availability" })).toBeVisible();

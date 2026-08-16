@@ -4,7 +4,7 @@ export const studentNav = [
   { href: "/student/reservations", label: "Reservations", iconSrc: "/assets/reservations.svg" },
   { href: "/student/receipts", label: "Receipts", iconSrc: "/assets/receipts.svg" },
   { href: "/student/faq", label: "FAQ", iconSrc: "/assets/faq.svg" },
-  { href: "/student/support", label: "Support", iconSrc: "/assets/wesbot-chat.svg" }
+  { href: "/student/support", label: "Support", iconSrc: "/assets/chat-with-wesbot.svg" }
 ];
 
 export const staffNav = [

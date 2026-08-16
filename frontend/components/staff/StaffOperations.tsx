@@ -3,7 +3,7 @@
 import Link from "next/link";
 import Image from "next/image";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, Ban, Bot, Check, Edit3, Eye, Filter, Headphones, Plus, RefreshCw, Search, Send, Trash2, Upload, X } from "lucide-react";
+import { ArrowLeft, Ban, Bot, Check, Edit3, Eye, Filter, Headphones, LoaderCircle, Plus, RefreshCw, Search, Send, Trash2, Upload, X } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import { FaqManagementExperience } from "@/components/faq/FaqManagementExperience";
 import { WebPushSettings } from "@/components/notifications/WebPushSettings";
@@ -1389,12 +1389,28 @@ export function StaffMessagesExperience() {
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
+  const [pendingAction, setPendingAction] = useState<{
+    conversationId: string;
+    type: "accept" | "return-to-bot" | "resolve" | "reopen" | "send";
+  } | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const typingStopTimerRef = useRef<number | null>(null);
   const lastTypingSignalRef = useRef(0);
   const selected = conversations.find((conversation) => conversation.id === selectedId) ?? conversations[0] ?? null;
-  const canReply = selected?.mode === "STAFF_ACTIVE" && selected.assignedStaffId === user?.id;
+  const submitting = pendingAction !== null;
+  const activeAction = selected && pendingAction?.conversationId === selected.id ? pendingAction.type : null;
+  const canReply = selected?.status !== "RESOLVED" && selected?.mode === "STAFF_ACTIVE" && selected.assignedStaffId === user?.id;
+  const pendingActionLabel = activeAction === "send"
+    ? "Sending reply to student"
+    : activeAction === "accept"
+      ? "Accepting conversation"
+      : activeAction === "return-to-bot"
+        ? "Returning conversation to WesBot"
+        : activeAction === "resolve"
+          ? "Resolving conversation"
+          : activeAction === "reopen"
+            ? "Reopening conversation"
+            : "";
 
   const loadConversations = useCallback(async ({ background = false }: { background?: boolean } = {}) => {
     const session = getStoredStaffSession();
@@ -1502,9 +1518,9 @@ export function StaffMessagesExperience() {
 
   const sendReply = async () => {
     const session = getStoredStaffSession();
-    if (!session.token || !selected || !reply.trim()) return;
+    if (!session.token || !selected || !reply.trim() || submitting) return;
 
-    setSubmitting(true);
+    setPendingAction({ conversationId: selected.id, type: "send" });
     setError("");
 
     try {
@@ -1518,14 +1534,14 @@ export function StaffMessagesExperience() {
     } catch (messageError) {
       setError(messageError instanceof Error ? messageError.message : "Unable to send reply.");
     } finally {
-      setSubmitting(false);
+      setPendingAction(null);
     }
   };
 
   const acceptConversation = async (conversation: BackendConversation) => {
     const session = getStoredStaffSession();
-    if (!session.token) return;
-    setSubmitting(true);
+    if (!session.token || submitting) return;
+    setPendingAction({ conversationId: conversation.id, type: "accept" });
     setError("");
 
     try {
@@ -1536,14 +1552,14 @@ export function StaffMessagesExperience() {
       setError(messageError instanceof Error ? messageError.message : "Unable to accept conversation.");
       void loadConversations({ background: true });
     } finally {
-      setSubmitting(false);
+      setPendingAction(null);
     }
   };
 
   const returnToWesBot = async (conversation: BackendConversation) => {
     const session = getStoredStaffSession();
-    if (!session.token) return;
-    setSubmitting(true);
+    if (!session.token || submitting) return;
+    setPendingAction({ conversationId: conversation.id, type: "return-to-bot" });
     setError("");
 
     try {
@@ -1554,15 +1570,18 @@ export function StaffMessagesExperience() {
     } catch (messageError) {
       setError(messageError instanceof Error ? messageError.message : "Unable to return conversation to WesBot.");
     } finally {
-      setSubmitting(false);
+      setPendingAction(null);
     }
   };
 
   const updateStatus = async (conversation: BackendConversation, nextStatus: BackendConversationStatus) => {
     const session = getStoredStaffSession();
-    if (!session.token) return;
+    if (!session.token || submitting) return;
 
-    setSubmitting(true);
+    setPendingAction({
+      conversationId: conversation.id,
+      type: nextStatus === "RESOLVED" ? "resolve" : "reopen"
+    });
     setError("");
 
     try {
@@ -1572,7 +1591,7 @@ export function StaffMessagesExperience() {
     } catch (messageError) {
       setError(messageError instanceof Error ? messageError.message : "Unable to update conversation.");
     } finally {
-      setSubmitting(false);
+      setPendingAction(null);
     }
   };
 
@@ -1582,7 +1601,12 @@ export function StaffMessagesExperience() {
         eyebrow="Student messaging"
         title="Message center"
         detail="Monitor WesBot, accept human handoffs, reply from one workspace, and resolve completed conversations."
-        action={<Button variant="secondary" onClick={() => void loadConversations()} disabled={loading || submitting}>Refresh</Button>}
+        action={(
+          <Button variant="secondary" onClick={() => void loadConversations()} disabled={loading || submitting} aria-busy={loading}>
+            <RefreshCw className={`size-4 ${loading ? "motion-safe:animate-spin" : ""}`} aria-hidden="true" />
+            {loading ? "Refreshing..." : "Refresh"}
+          </Button>
+        )}
       />
       <div className={threadOpen ? "hidden lg:block" : ""}>
         <Toolbar search={search} onSearch={setSearch} status={status} onStatus={setStatus} placeholder="Search student, topic, or message" statuses={["WesBot active", "Waiting for Staff", "Staff active", "Resolved"]} />
@@ -1606,7 +1630,8 @@ export function StaffMessagesExperience() {
               key={conversation.id}
               type="button"
               onClick={() => openConversation(conversation.id)}
-              className={`w-full border-b border-[#edf1ed] p-4 text-left transition hover:bg-[#f4f8f4] ${selected?.id === conversation.id ? "bg-[#eef6ee]" : ""}`}
+              disabled={submitting}
+              className={`w-full border-b border-[#edf1ed] p-4 text-left transition hover:bg-[#f4f8f4] disabled:cursor-wait disabled:opacity-70 ${selected?.id === conversation.id ? "bg-[#eef6ee]" : ""}`}
             >
               <div className="flex items-start gap-2">
                 <p className="min-w-0 flex-1 truncate font-extrabold">{conversation.student?.fullName || conversation.student?.email || "Student"}</p>
@@ -1622,11 +1647,12 @@ export function StaffMessagesExperience() {
         </aside>
         {selected ? (
           <section className={`${threadOpen ? "flex" : "hidden"} min-h-[calc(100dvh-230px)] flex-col lg:flex lg:min-h-[500px]`}>
-            <header className="flex flex-wrap items-start gap-3 border-b border-[#e5ebe6] px-5 py-4">
+            <header className="flex flex-wrap items-start gap-3 border-b border-[#e5ebe6] px-5 py-4" aria-busy={Boolean(activeAction)}>
               <button
                 type="button"
                 onClick={closeConversation}
-                className="grid size-10 place-items-center rounded-md border border-[#d7e1d8] text-primary lg:hidden"
+                disabled={submitting}
+                className="grid size-10 place-items-center rounded-md border border-[#d7e1d8] text-primary disabled:cursor-wait disabled:opacity-50 lg:hidden"
                 aria-label="Back to message inbox"
               >
                 <ArrowLeft className="size-5" />
@@ -1637,26 +1663,29 @@ export function StaffMessagesExperience() {
               </div>
               <StatusBadge status={formatConversationStatus(selected)} />
               {selected.mode === "WAITING_FOR_STAFF" ? (
-                <Button className="h-9" disabled={submitting} onClick={() => void acceptConversation(selected)}>
-                  <Headphones className="size-4" />
-                  Accept
+                <Button className="h-9" disabled={submitting} aria-busy={activeAction === "accept"} onClick={() => void acceptConversation(selected)}>
+                  {activeAction === "accept" ? <LoaderCircle className="size-4 motion-safe:animate-spin" aria-hidden="true" /> : <Headphones className="size-4" aria-hidden="true" />}
+                  {activeAction === "accept" ? "Accepting..." : "Accept"}
                 </Button>
               ) : null}
               {selected.mode === "STAFF_ACTIVE" && selected.assignedStaffId === user?.id ? (
-                <Button variant="secondary" className="h-9" disabled={submitting} onClick={() => void returnToWesBot(selected)}>
-                  <Bot className="size-4" />
-                  Return to WesBot
+                <Button variant="secondary" className="h-9" disabled={submitting} aria-busy={activeAction === "return-to-bot"} onClick={() => void returnToWesBot(selected)}>
+                  {activeAction === "return-to-bot" ? <LoaderCircle className="size-4 motion-safe:animate-spin" aria-hidden="true" /> : <Bot className="size-4" aria-hidden="true" />}
+                  {activeAction === "return-to-bot" ? "Returning..." : "Return to WesBot"}
                 </Button>
               ) : null}
               <Button
                 variant={selected.status === "RESOLVED" ? "secondary" : "ghost"}
                 className="h-9"
                 disabled={submitting}
+                aria-busy={activeAction === "resolve" || activeAction === "reopen"}
                 onClick={() => void updateStatus(selected, selected.status === "RESOLVED" ? "OPEN" : "RESOLVED")}
               >
-                {selected.status === "RESOLVED" ? "Reopen" : "Resolve"}
+                {activeAction === "resolve" || activeAction === "reopen" ? <LoaderCircle className="size-4 motion-safe:animate-spin" aria-hidden="true" /> : null}
+                {activeAction === "resolve" ? "Resolving..." : activeAction === "reopen" ? "Reopening..." : selected.status === "RESOLVED" ? "Reopen" : "Resolve"}
               </Button>
             </header>
+            {pendingActionLabel ? <p className="sr-only" role="status" aria-live="polite">{pendingActionLabel}</p> : null}
             {selected.mode === "WAITING_FOR_STAFF" ? (
               <div className="border-b border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-950">
                 <div className="flex items-start gap-2">
@@ -1721,17 +1750,21 @@ export function StaffMessagesExperience() {
             </div>
             <form
               className="flex gap-2 border-t border-[#e5ebe6] bg-white p-3 sm:p-4"
+              aria-busy={activeAction === "send"}
               onSubmit={(event) => {
                 event.preventDefault();
                 void sendReply();
               }}
             >
               <input
+                aria-label="Reply to student"
                 value={reply}
                 onChange={(event) => handleReplyChange(event.target.value)}
                 onBlur={() => selected ? sendTypingSignal(selected.id, false) : undefined}
                 placeholder={
-                  selected.mode === "WAITING_FOR_STAFF"
+                  activeAction === "send"
+                    ? "Sending reply..."
+                    : selected.mode === "WAITING_FOR_STAFF"
                     ? "Accept this conversation before replying..."
                     : selected.mode === "BOT_ACTIVE"
                       ? "WesBot is handling this conversation..."
@@ -1741,12 +1774,18 @@ export function StaffMessagesExperience() {
                           ? "Another staff member is handling this conversation..."
                           : "Write a reply..."
                 }
-                disabled={!canReply}
-                className="h-11 min-w-0 flex-1 rounded-md border border-[#d7e1d8] px-3 outline-none focus:border-primary"
+                disabled={!canReply || submitting}
+                className="h-11 min-w-0 flex-1 rounded-md border border-[#d7e1d8] px-3 outline-none focus:border-primary disabled:cursor-wait disabled:bg-[#f6f8f6]"
               />
-              <Button type="submit" className="h-11 px-3 sm:px-4" disabled={submitting || !canReply || !reply.trim()}>
-                <Send className="size-4" />
-                <span className="hidden sm:inline">Send</span>
+              <Button
+                type="submit"
+                className="h-11 px-3 sm:px-4"
+                disabled={submitting || !canReply || !reply.trim()}
+                aria-busy={activeAction === "send"}
+                aria-label={activeAction === "send" ? "Sending reply" : "Send reply"}
+              >
+                {activeAction === "send" ? <LoaderCircle className="size-4 motion-safe:animate-spin" aria-hidden="true" /> : <Send className="size-4" aria-hidden="true" />}
+                <span className="hidden sm:inline">{activeAction === "send" ? "Sending..." : "Send"}</span>
               </Button>
             </form>
           </section>
