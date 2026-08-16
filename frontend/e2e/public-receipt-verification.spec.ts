@@ -5,7 +5,7 @@ function json(route: Route, body: unknown, status = 200) {
   return route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
 }
 
-test("visitor receipt navigation and search display only masked details", async ({ page, isMobile }) => {
+test("visitor receipt navigation and search display only masked details", async ({ page }) => {
   let requestedCode = "";
 
   await page.route("**/api/backend/**", async (route) => {
@@ -42,7 +42,6 @@ test("visitor receipt navigation and search display only masked details", async 
   await page.goto("/student/receipts");
   await dismissWelcomeGate(page);
 
-  if (isMobile) await page.getByRole("button", { name: "Open student menu" }).click();
   const receiptNavigation = page.getByRole("link", { name: "Receipts", exact: true });
   await expect(receiptNavigation).toHaveAttribute("href", "/verify-receipt");
   await receiptNavigation.click();

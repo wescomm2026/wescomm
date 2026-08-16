@@ -22,7 +22,7 @@ export default function LegalLayout({ children }: { children: React.ReactNode })
       <main className="flex-1">{children}</main>
 
       <footer className="border-t border-[#dfe8df] bg-white">
-        <div className="mx-auto grid w-full max-w-[1200px] gap-6 px-4 py-8 text-sm text-[#59655e] sm:px-8 lg:grid-cols-[1fr_auto] lg:items-end">
+        <div className="mx-auto grid w-full max-w-[1200px] gap-6 px-4 py-8 text-center text-sm text-[#59655e] sm:px-8 lg:grid-cols-[1fr_auto] lg:items-end lg:text-left">
           <div>
             <p className="font-extrabold text-[#17211b]">Wesleyan University-Philippines</p>
             <p className="mt-1">Mabini Extension, Cabanatuan City, Nueva Ecija 3100, Philippines</p>

@@ -24,7 +24,7 @@ export function PageShell({
       <WebHeader items={items.map(({ href, label, iconSrc }) => ({ href, label, iconSrc }))} role={role} />
       <div className={sidebar ? "flex" : ""}>
         {sidebar ? <Sidebar items={items} /> : null}
-        <main className="mx-auto w-full max-w-[1500px] px-3 py-5 sm:px-8 sm:py-6 lg:px-10">{children}</main>
+        <main className="mx-auto w-full max-w-[1500px] px-3 pb-[calc(5.5rem+env(safe-area-inset-bottom))] pt-5 sm:px-8 sm:pt-6 lg:px-10 lg:py-6">{children}</main>
       </div>
     </div>
   );

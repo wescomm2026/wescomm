@@ -118,17 +118,35 @@ test("student cancellation follows pending and paid GCash rules", async ({ page 
   const confirmedCard = cards.filter({ hasText: confirmed.referenceCode });
   const readyCard = cards.filter({ hasText: ready.referenceCode });
 
-  await expect(pendingCashCard.getByRole("button", { name: "Cancel Reservation" })).toBeVisible();
-  await expect(pendingPaidCard.getByText("Staff review is required", { exact: true })).toBeVisible();
-  await expect(pendingPaidCard.getByRole("button", { name: "Cancel Reservation" })).toHaveCount(0);
-  await expect(confirmedCard.getByText("Student cancellation is closed", { exact: true })).toBeVisible();
-  await expect(readyCard.getByText("Student cancellation is closed", { exact: true })).toBeVisible();
+  await expect(pendingCashCard.getByRole("button", { name: "Cancel Reservation" })).toHaveCount(0);
+  await expect(pendingPaidCard.getByText("Staff review is required", { exact: true })).toHaveCount(0);
+  await expect(confirmedCard.getByText("Student cancellation is closed", { exact: true })).toHaveCount(0);
+  await expect(readyCard.getByText("Student cancellation is closed", { exact: true })).toHaveCount(0);
 
-  await pendingCashCard.getByRole("button", { name: "Cancel Reservation" }).click();
-  await expect(pendingCashCard.getByText("Cancel this pending reservation?", { exact: true })).toBeVisible();
-  await pendingCashCard.getByRole("button", { name: "Confirm Cancellation" }).click();
+  await pendingCashCard.getByRole("button", { name: `View details for reservation ${pendingCash.referenceCode}` }).click();
+  let details = page.getByRole("dialog", { name: `Reservation details ${pendingCash.referenceCode}` });
+  await details.getByRole("button", { name: "Cancel Reservation" }).click();
+  await expect(details.getByText("Cancel this pending reservation?", { exact: true })).toBeVisible();
+  await details.getByRole("button", { name: "Confirm Cancellation" }).click();
+  await expect(details.getByText("Reservation cancelled", { exact: true })).toBeVisible();
+  await expect(details.getByText("Cancelled", { exact: true })).toBeVisible();
+  await details.getByRole("button", { name: `Close reservation details ${pendingCash.referenceCode}` }).click();
 
-  await expect(pendingCashCard.getByText("Reservation cancelled", { exact: true })).toBeVisible();
-  await expect(pendingCashCard.getByText("Cancelled", { exact: true })).toBeVisible();
+  await pendingPaidCard.getByRole("button", { name: `View details for reservation ${pendingPaid.referenceCode}` }).click();
+  details = page.getByRole("dialog", { name: `Reservation details ${pendingPaid.referenceCode}` });
+  await expect(details.getByText("Staff review is required", { exact: true })).toBeVisible();
+  await expect(details.getByRole("button", { name: "Cancel Reservation" })).toHaveCount(0);
+  await details.getByRole("button", { name: `Close reservation details ${pendingPaid.referenceCode}` }).click();
+
+  await confirmedCard.getByRole("button", { name: `View details for reservation ${confirmed.referenceCode}` }).click();
+  details = page.getByRole("dialog", { name: `Reservation details ${confirmed.referenceCode}` });
+  await expect(details.getByText("Student cancellation is closed", { exact: true })).toBeVisible();
+  await details.getByRole("button", { name: `Close reservation details ${confirmed.referenceCode}` }).click();
+
+  await readyCard.getByRole("button", { name: `View details for reservation ${ready.referenceCode}` }).click();
+  details = page.getByRole("dialog", { name: `Reservation details ${ready.referenceCode}` });
+  await expect(details.getByText("Student cancellation is closed", { exact: true })).toBeVisible();
+  await details.getByRole("button", { name: `Close reservation details ${ready.referenceCode}` }).click();
+
   expect(cancellationRequests).toBe(1);
 });

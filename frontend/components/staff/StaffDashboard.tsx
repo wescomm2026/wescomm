@@ -619,8 +619,8 @@ export function StaffDashboard() {
         </details>
       </div>
 
-      <footer className="flex flex-col gap-4 border-t border-[#e2e8e3] py-6 text-xs text-[#68736c] md:flex-row md:items-center md:justify-between">
-        <div className="flex items-center gap-3">
+      <footer className="flex flex-col items-center gap-4 border-t border-[#e2e8e3] py-6 text-center text-xs text-[#68736c] md:flex-row md:justify-between md:text-left">
+        <div className="flex items-center justify-center gap-3 md:justify-start">
           <AssetIcon src="/assets/wescomm-logo.png" className="h-10 w-24" />
           <div>
             <p className="font-extrabold text-[#26322b]">Wesleyan University-Philippines</p>
@@ -628,7 +628,7 @@ export function StaffDashboard() {
           </div>
         </div>
         <SiteFooterLinks />
-        <p>(c) 2026 Wesleyan University-Philippines</p>
+        <p className="md:text-right">© 2026 Wesleyan University-Philippines</p>
       </footer>
     </div>
   );

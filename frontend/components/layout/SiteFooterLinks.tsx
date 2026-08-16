@@ -12,7 +12,7 @@ export function SiteFooterLinks({ className = "" }: { className?: string }) {
   return (
     <nav
       aria-label="Policies and support"
-      className={`flex flex-wrap gap-x-5 gap-y-3 text-xs ${className}`.trim()}
+      className={`flex flex-wrap justify-center gap-x-5 gap-y-3 text-center text-xs ${className}`.trim()}
     >
       {footerLinks.map((link) => (
         <Link

@@ -71,17 +71,22 @@ test("shop search filters the live catalog", async ({ page }) => {
   await expect(search).toHaveValue("uniform");
 });
 
-test("mobile student navigation opens as a web menu and changes pages", async ({ page }, testInfo) => {
+test("mobile bottom navigation changes pages and opens secondary destinations", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "mobile-chromium", "Mobile navigation is covered by the mobile project.");
 
   await page.goto("/student/faq");
   await dismissWelcomeGate(page);
-  await page.getByRole("button", { name: "Open student menu" }).click();
-
-  await expect(page.getByRole("heading", { name: "WESCOMM Menu" })).toBeVisible();
   await page.getByRole("link", { name: /Shop/ }).click();
   await expect(page).toHaveURL(/\/student\/shop$/);
   await expect(page.getByPlaceholder("Search campus items")).toBeVisible();
+
+  await expect(page.getByRole("button", { name: "Open student menu" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Open more navigation" }).click();
+  const moreNavigation = page.getByRole("dialog", { name: "More from WESCOMM" });
+  await expect(moreNavigation.getByRole("link", { name: "FAQ" })).toBeVisible();
+  await expect(moreNavigation.getByRole("link", { name: "Support" })).toBeVisible();
+  await moreNavigation.getByRole("link", { name: "FAQ" }).click();
+  await expect(page).toHaveURL(/\/student\/faq$/);
 });
 
 test("mobile shop renders wishlist controls in two columns and opens a full image preview", async ({ page }, testInfo) => {
