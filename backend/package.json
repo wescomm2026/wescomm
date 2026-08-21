@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "start": "node dist/server.js",
-    "build": "prisma generate && tsc && esbuild src/app.ts --bundle --platform=node --target=node22 --format=cjs --outfile=app.cjs",
+    "build": "prisma generate && tsc && esbuild src/vercel-entry.ts --bundle --platform=node --target=node22 --format=cjs --outfile=.vercel-bundle/app.cjs",
     "postinstall": "prisma generate",
     "typecheck": "tsc --noEmit",
     "test": "npm run build && node dist/tests/run-tests.js",
