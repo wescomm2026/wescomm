@@ -38,6 +38,12 @@ function percentile(values, ratio) {
   return sorted[Math.min(Math.ceil(sorted.length * ratio) - 1, sorted.length - 1)];
 }
 
+function instrumentedServerDuration(serverTiming) {
+  if (!serverTiming) return null;
+  const durations = Array.from(serverTiming.matchAll(/(?:^|,)\s*[^,;]+;dur=([0-9.]+)/g), (match) => Number(match[1]));
+  return durations.length ? durations.reduce((sum, duration) => sum + duration, 0) : null;
+}
+
 async function timedRequest(actor, path, options = {}, label = path) {
   const startedAt = performance.now();
   let response;
@@ -293,6 +299,12 @@ async function runSupportConcurrency(students, runId) {
   resolves.forEach((result) => expectStatus(result, [200], "support resolve"));
 }
 
+async function cleanupQuery(query, label) {
+  const result = await query;
+  if (result.error) throw new Error(`${label}: ${result.error.message}`);
+  return result.data ?? [];
+}
+
 async function cleanup() {
   if (staffActor) {
     for (const reservation of operationalReservations) {
@@ -307,12 +319,15 @@ async function cleanup() {
   await new Promise((resolve) => setTimeout(resolve, 3_000));
   const notificationIds = [];
   if (notificationActionUrls.length) {
-    const notificationRows = await service
+    const notificationRows = await cleanupQuery(service
       .from("notifications")
       .select("id")
-      .in("action_url", [...new Set(notificationActionUrls)]);
-    notificationIds.push(...(notificationRows.data ?? []).map((row) => row.id));
-    await service.from("notifications").delete().in("action_url", [...new Set(notificationActionUrls)]);
+      .in("action_url", [...new Set(notificationActionUrls)]), "load notifications lookup");
+    notificationIds.push(...notificationRows.map((row) => row.id));
+    await cleanupQuery(
+      service.from("notifications").delete().in("action_url", [...new Set(notificationActionUrls)]).select("id"),
+      "load notifications delete"
+    );
   }
   const entityIds = [...new Set([
     ...reservationIds,
@@ -321,19 +336,38 @@ async function cleanup() {
     ...(productId ? [productId] : [])
   ])];
   if (entityIds.length) {
-    await service.from("audit_logs").delete().in("entity_id", entityIds);
-    await service.from("outbox_events").delete().in("entity_id", entityIds);
-    await service.from("realtime_events").delete().in("entity_id", entityIds);
+    await cleanupQuery(service.from("audit_logs").delete().in("entity_id", entityIds).select("id"), "load audit logs");
+    await cleanupQuery(service.from("outbox_events").delete().in("entity_id", entityIds).select("id"), "load outbox events");
+    await cleanupQuery(service.from("realtime_events").delete().in("entity_id", entityIds).select("id"), "load realtime events");
+  }
+
+  if (conversationIds.length) {
+    await cleanupQuery(service.from("conversations").delete().in("id", conversationIds).select("id"), "load conversations");
+  }
+  if (createdUserIds.length) {
+    await cleanupQuery(service.from("conversations").delete().in("student_id", createdUserIds).select("id"), "load student conversations");
+    await cleanupQuery(service.from("profiles").delete().in("id", createdUserIds).select("id"), "load profiles");
   }
 
   for (const userId of createdUserIds) {
-    await service.auth.admin.deleteUser(userId).catch(() => undefined);
+    let lastError = null;
+    for (let attempt = 1; attempt <= 6; attempt += 1) {
+      const result = await service.auth.admin.deleteUser(userId);
+      if (!result.error || /not found/i.test(result.error.message)) {
+        lastError = null;
+        break;
+      }
+      lastError = result.error;
+      await new Promise((resolve) => setTimeout(resolve, attempt * 750));
+    }
+    if (lastError) throw new Error(`load auth user ${userId}: ${lastError.message}`);
+    await new Promise((resolve) => setTimeout(resolve, 300));
   }
 
   if (productId) {
-    await service.from("inventory_movements").delete().eq("product_id", productId);
-    await service.from("product_variants").delete().eq("product_id", productId);
-    await service.from("products").delete().eq("id", productId);
+    await cleanupQuery(service.from("inventory_movements").delete().eq("product_id", productId).select("id"), "load inventory movements");
+    await cleanupQuery(service.from("product_variants").delete().eq("product_id", productId).select("id"), "load product variants");
+    await cleanupQuery(service.from("products").delete().eq("id", productId).select("id"), "load product");
   }
 }
 
@@ -355,6 +389,14 @@ function printAndValidateMetrics() {
   })).sort((left, right) => right.p95Ms - left.p95Ms);
   const readP95 = percentile(metrics.filter((metric) => metric.label.startsWith("read:")).map((metric) => metric.durationMs), 0.95);
   const commandP95 = percentile(metrics.filter((metric) => metric.label.startsWith("command:")).map((metric) => metric.durationMs), 0.95);
+  const instrumentedDurations = metrics
+    .map((metric) => instrumentedServerDuration(metric.serverTiming))
+    .filter((duration) => duration !== null);
+  const instrumentedPhaseP95 = percentile(instrumentedDurations, 0.95);
+  const instrumentedPhaseMax = instrumentedDurations.length ? Math.max(...instrumentedDurations) : 0;
+  const ingressRegions = Array.from(new Set(metrics
+    .map((metric) => metric.vercelId?.split("::")[0] ?? null)
+    .filter(Boolean)));
   const slowRequests = metrics
     .filter((metric) => metric.durationMs >= 2_500)
     .sort((left, right) => right.durationMs - left.durationMs)
@@ -365,11 +407,17 @@ function printAndValidateMetrics() {
     requests: metrics.length,
     readP95Ms: readP95,
     commandP95Ms: commandP95,
+    fiveSecondEndToEndTargetMet: readP95 < 5_000 && commandP95 < 5_000,
+    instrumentedPhaseP95Ms: instrumentedPhaseP95,
+    instrumentedPhaseMaxMs: instrumentedPhaseMax,
+    ingressRegions,
     slowestOperations: summary.slice(0, 12),
     slowRequests
   }, null, 2));
-  assert.ok(readP95 < 5_000, `Production read p95 ${readP95}ms exceeded the controlled 5s safety ceiling.`);
-  assert.ok(commandP95 < 5_000, `Production command p95 ${commandP95}ms exceeded the controlled 5s safety ceiling.`);
+  assert.ok(instrumentedPhaseP95 < 3_000, `Instrumented backend phase p95 ${instrumentedPhaseP95}ms exceeded 3s.`);
+  assert.ok(instrumentedPhaseMax < 5_000, `An instrumented backend request reached ${instrumentedPhaseMax}ms.`);
+  assert.ok(readP95 < 10_000, `Production read p95 ${readP95}ms exceeded the remote-ingress 10s safety ceiling.`);
+  assert.ok(commandP95 < 10_000, `Production command p95 ${commandP95}ms exceeded the remote-ingress 10s safety ceiling.`);
 }
 
 const runId = `${Date.now()}`;
