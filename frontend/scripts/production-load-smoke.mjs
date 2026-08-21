@@ -42,6 +42,7 @@ async function timedRequest(actor, path, options = {}, label = path) {
   const startedAt = performance.now();
   let response;
   let body = null;
+  let headersMs = null;
   try {
     response = await fetch(`${baseURL}${path}`, {
       ...options,
@@ -52,15 +53,18 @@ async function timedRequest(actor, path, options = {}, label = path) {
         ...options.headers
       }
     });
+    headersMs = Math.round((performance.now() - startedAt) * 10) / 10;
     body = await response.json().catch(() => null);
     return { response, body };
   } finally {
     metrics.push({
       label,
       durationMs: Math.round((performance.now() - startedAt) * 10) / 10,
+      headersMs,
       status: response?.status ?? 0,
       serverTiming: response?.headers.get("server-timing") ?? null,
-      requestId: response?.headers.get("x-request-id") ?? null
+      requestId: response?.headers.get("x-request-id") ?? null,
+      vercelId: response?.headers.get("x-vercel-id") ?? null
     });
   }
 }
@@ -351,13 +355,18 @@ function printAndValidateMetrics() {
   })).sort((left, right) => right.p95Ms - left.p95Ms);
   const readP95 = percentile(metrics.filter((metric) => metric.label.startsWith("read:")).map((metric) => metric.durationMs), 0.95);
   const commandP95 = percentile(metrics.filter((metric) => metric.label.startsWith("command:")).map((metric) => metric.durationMs), 0.95);
+  const slowRequests = metrics
+    .filter((metric) => metric.durationMs >= 2_500)
+    .sort((left, right) => right.durationMs - left.durationMs)
+    .slice(0, 30);
   console.log(JSON.stringify({
     ok: true,
     students: studentCount,
     requests: metrics.length,
     readP95Ms: readP95,
     commandP95Ms: commandP95,
-    slowestOperations: summary.slice(0, 12)
+    slowestOperations: summary.slice(0, 12),
+    slowRequests
   }, null, 2));
   assert.ok(readP95 < 5_000, `Production read p95 ${readP95}ms exceeded the controlled 5s safety ceiling.`);
   assert.ok(commandP95 < 5_000, `Production command p95 ${commandP95}ms exceeded the controlled 5s safety ceiling.`);
