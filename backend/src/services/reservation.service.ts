@@ -56,6 +56,25 @@ async function waitForReservationSerializationRetry(attempt: number) {
   await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
 }
 
+async function withReservationSerializationRetry<T>(operation: () => Promise<T>) {
+  for (let attempt = 1; attempt <= RESERVATION_SERIALIZATION_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      if (
+        !(error instanceof Prisma.PrismaClientKnownRequestError)
+        || error.code !== "P2034"
+        || attempt >= RESERVATION_SERIALIZATION_MAX_ATTEMPTS
+      ) {
+        throw error;
+      }
+      await waitForReservationSerializationRetry(attempt);
+    }
+  }
+
+  throw new Error("Reservation serialization retry exhausted unexpectedly.");
+}
+
 type RawProduct = {
   id: string;
   name: string;
@@ -871,62 +890,46 @@ export async function createReservation(input: {
       }
     );
 
-  const transactionResult = await (async () => {
-    for (let attempt = 1; attempt <= RESERVATION_SERIALIZATION_MAX_ATTEMPTS; attempt += 1) {
-      try {
-        return await executeTransaction();
-      } catch (error) {
-        if (
-          error instanceof Prisma.PrismaClientKnownRequestError
-          && error.code === "P2034"
-          && attempt < RESERVATION_SERIALIZATION_MAX_ATTEMPTS
-        ) {
-          await waitForReservationSerializationRetry(attempt);
-          continue;
-        }
-
-        if (error instanceof HttpError) throw error;
-        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-          const replayRequest = await prisma.reservationIdempotencyKey.findUnique({
-            where: {
-              studentId_key: {
-                studentId: input.studentId,
-                key: input.idempotencyKey
-              }
-            },
-            select: {
-              requestHash: true,
-              reservationId: true,
-              reservation: { select: { referenceCode: true } }
+  const transactionResult = await withReservationSerializationRetry(executeTransaction)
+    .catch(async (error) => {
+      if (error instanceof HttpError) throw error;
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+        const replayRequest = await prisma.reservationIdempotencyKey.findUnique({
+          where: {
+            studentId_key: {
+              studentId: input.studentId,
+              key: input.idempotencyKey
             }
-          });
-
-          if (replayRequest) {
-            assertIdempotencyPayloadMatches(replayRequest.requestHash, requestHash);
-            if (!replayRequest.reservationId || !replayRequest.reservation) {
-              throw new HttpError(409, "This reservation is still being processed. Please wait a moment and try again.", "IDEMPOTENCY_REQUEST_IN_PROGRESS");
-            }
-
-            return {
-              reservation: await loadReservationCommandResult(replayRequest.reservationId),
-              idempotentReplay: true
-            };
+          },
+          select: {
+            requestHash: true,
+            reservationId: true,
+            reservation: { select: { referenceCode: true } }
           }
-        }
-        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034") {
-          throw new HttpError(
-            409,
-            "Reservation stock changed while processing. Please try again.",
-            "RESERVATION_SERIALIZATION_CONFLICT",
-            { retryable: true, attempts: RESERVATION_SERIALIZATION_MAX_ATTEMPTS }
-          );
-        }
-        throw error;
-      }
-    }
+        });
 
-    throw new Error("Reservation serialization retry exhausted unexpectedly.");
-  })();
+        if (replayRequest) {
+          assertIdempotencyPayloadMatches(replayRequest.requestHash, requestHash);
+          if (!replayRequest.reservationId || !replayRequest.reservation) {
+            throw new HttpError(409, "This reservation is still being processed. Please wait a moment and try again.", "IDEMPOTENCY_REQUEST_IN_PROGRESS");
+          }
+
+          return {
+            reservation: await loadReservationCommandResult(replayRequest.reservationId),
+            idempotentReplay: true
+          };
+        }
+      }
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034") {
+        throw new HttpError(
+          409,
+          "Reservation stock changed while processing. Please try again.",
+          "RESERVATION_SERIALIZATION_CONFLICT",
+          { retryable: true, attempts: RESERVATION_SERIALIZATION_MAX_ATTEMPTS }
+        );
+      }
+      throw error;
+    });
 
   return transactionResult;
 }
@@ -937,8 +940,7 @@ export async function updateReservationStatus(
   performedById?: string,
   actorRole?: AppRole
 ) {
-  const result = await prisma
-    .$transaction(
+  const result = await withReservationSerializationRetry(() => prisma.$transaction(
       async (tx) => {
         const existingReservation = await tx.reservation.findUnique({
           where: { id: reservationId },
@@ -1295,7 +1297,7 @@ export async function updateReservationStatus(
         maxWait: 10000,
         timeout: 20000
       }
-    )
+    ))
     .catch((error) => {
       if (error instanceof HttpError) throw error;
       if (

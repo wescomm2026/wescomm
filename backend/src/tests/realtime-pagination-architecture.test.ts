@@ -64,7 +64,9 @@ test("reservation creation retries bounded serialization conflicts without weake
   const reservations = source("src/services/reservation.service.ts");
 
   assert.match(reservations, /RESERVATION_SERIALIZATION_MAX_ATTEMPTS = 6/);
-  assert.match(reservations, /error\.code === "P2034"[\s\S]*waitForReservationSerializationRetry\(attempt\)[\s\S]*continue/);
+  assert.match(reservations, /withReservationSerializationRetry[\s\S]*error\.code !== "P2034"[\s\S]*waitForReservationSerializationRetry\(attempt\)/);
+  assert.match(reservations, /const transactionResult = await withReservationSerializationRetry\(executeTransaction\)/);
+  assert.match(reservations, /const result = await withReservationSerializationRetry\(\(\) => prisma\.\$transaction/);
   assert.match(reservations, /stock: \{ gte: quantity \}/);
   assert.match(reservations, /RESERVATION_SERIALIZATION_CONFLICT/);
 });
