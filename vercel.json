@@ -7,14 +7,7 @@
     },
     "backend": {
       "root": "backend",
-      "framework": "express",
-      "buildCommand": "npm run build && npm prune --omit=dev --ignore-scripts",
-      "entrypoint": "app.cjs",
-      "functions": {
-        "**": {
-          "includeFiles": "node_modules/**"
-        }
-      }
+      "entrypoint": "Dockerfile.vercel"
     }
   },
   "rewrites": [

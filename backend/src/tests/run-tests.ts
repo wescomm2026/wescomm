@@ -60,46 +60,39 @@ process.env.WESBOT_MODEL = "openai/gpt-5.6-luna";
 process.env.AI_GATEWAY_API_KEY = "";
 process.env.VERCEL_OIDC_TOKEN = "";
 
-async function runTests() {
-  await import("./auth-email-policy.test.js");
-  await import("./auth-method-policy.test.js");
-  await import("./auth-session.test.js");
-  await import("./session-exchange-security.test.js");
-  await import("./deployment-environment.test.js");
-  await import("./env-config.test.js");
-  await import("./temporary-staff-login-policy.test.js");
-  await import("./rate-limit.test.js");
-  await import("./request-security.test.js");
-  await import("./profile-security.test.js");
-  await import("./database-url.test.js");
-  await import("./http-error.test.js");
-  await import("./supabase-fetch.test.js");
-  await import("./prisma-retry.test.js");
-  await import("./restriction-transaction.test.js");
-  await import("./user-role-concurrency.test.js");
-  await import("./reservation-safety.test.js");
-  await import("./reservation-state.test.js");
-  await import("./student-reservation-cancellation.test.js");
-  await import("./wesbot.test.js");
-  await import("./public-receipt.test.js");
-  await import("./online-payment.test.js");
-  await import("./paymongo-webhook.test.js");
-  await import("./paymongo-payment-validation.test.js");
-  await import("./paymongo-lifecycle-safety.test.js");
-  await import("./paymongo-migration.test.js");
-  await import("./paymongo-client.test.js");
-  await import("./paymongo-security.test.js");
-  await import("./wishlist-migration.test.js");
-  await import("./wishlist-policy.test.js");
-  await import("./wishlist-notification.test.js");
-  await import("./wishlist-service.test.js");
-  if (process.env.RUN_DATABASE_INTEGRATION_TESTS === "true") {
-    await import("./wishlist-postgres.integration.test.js");
-  }
-  await import("./security.test.js");
+await import("./auth-email-policy.test.js");
+await import("./auth-method-policy.test.js");
+await import("./auth-session.test.js");
+await import("./session-exchange-security.test.js");
+await import("./deployment-environment.test.js");
+await import("./env-config.test.js");
+await import("./temporary-staff-login-policy.test.js");
+await import("./rate-limit.test.js");
+await import("./request-security.test.js");
+await import("./profile-security.test.js");
+await import("./database-url.test.js");
+await import("./http-error.test.js");
+await import("./supabase-fetch.test.js");
+await import("./prisma-retry.test.js");
+await import("./restriction-transaction.test.js");
+await import("./user-role-concurrency.test.js");
+await import("./reservation-safety.test.js");
+await import("./reservation-state.test.js");
+await import("./student-reservation-cancellation.test.js");
+await import("./wesbot.test.js");
+await import("./public-receipt.test.js");
+await import("./online-payment.test.js");
+await import("./paymongo-webhook.test.js");
+await import("./paymongo-payment-validation.test.js");
+await import("./paymongo-lifecycle-safety.test.js");
+await import("./paymongo-migration.test.js");
+await import("./paymongo-client.test.js");
+await import("./paymongo-security.test.js");
+await import("./wishlist-migration.test.js");
+await import("./wishlist-policy.test.js");
+await import("./wishlist-notification.test.js");
+await import("./wishlist-service.test.js");
+if (process.env.RUN_DATABASE_INTEGRATION_TESTS === "true") {
+  await import("./wishlist-postgres.integration.test.js");
 }
-
-void runTests().catch((error: unknown) => {
-  console.error(error);
-  process.exitCode = 1;
-});
+await import("./security.test.js");

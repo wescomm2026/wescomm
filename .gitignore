@@ -14,7 +14,6 @@ out/
 dist/
 build/
 coverage/
-/backend/.vercel-bundle/
 *.tsbuildinfo
 
 # Test output
