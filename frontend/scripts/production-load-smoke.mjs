@@ -167,9 +167,19 @@ async function runReadBurst(students) {
 async function runLastStockContention(students, runId) {
   const attempts = await Promise.all(students.map((student, index) => createReservation(student, `${runId}-last-${index}`)));
   const winners = attempts.filter((result) => result.response.status === 201);
-  const conflicts = attempts.filter((result) => result.response.status === 409);
+  const controlledRejections = attempts.filter((result) => [400, 409].includes(result.response.status));
+  const statusCounts = attempts.reduce((counts, result) => {
+    const status = String(result.response.status);
+    counts[status] = (counts[status] ?? 0) + 1;
+    return counts;
+  }, {});
+  console.log(JSON.stringify({ lastStockContention: statusCounts }));
   assert.equal(winners.length, 1, `Last-stock contention produced ${winners.length} successful reservations.`);
-  assert.equal(conflicts.length, students.length - 1, "Every losing last-stock request must return a controlled 409.");
+  assert.equal(
+    controlledRejections.length,
+    students.length - 1,
+    "Every losing last-stock request must return a controlled stock validation response."
+  );
   assert.equal(attempts.some((result) => result.response.status >= 500), false, "Last-stock contention produced a server error.");
 
   const winner = winners[0];

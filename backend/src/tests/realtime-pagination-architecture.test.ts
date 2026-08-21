@@ -59,3 +59,12 @@ test("restriction and no-show collections use independent bounded cursor pages a
   assert.match(client, /Load more students/);
   assert.match(client, /Load more no-show reviews/);
 });
+
+test("reservation creation retries bounded serialization conflicts without weakening stock checks", () => {
+  const reservations = source("src/services/reservation.service.ts");
+
+  assert.match(reservations, /RESERVATION_SERIALIZATION_MAX_ATTEMPTS = 6/);
+  assert.match(reservations, /error\.code === "P2034"[\s\S]*waitForReservationSerializationRetry\(attempt\)[\s\S]*continue/);
+  assert.match(reservations, /stock: \{ gte: quantity \}/);
+  assert.match(reservations, /RESERVATION_SERIALIZATION_CONFLICT/);
+});
