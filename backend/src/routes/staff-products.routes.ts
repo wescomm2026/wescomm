@@ -99,6 +99,14 @@ const restockSchema = z
 const updateVariantSchema = variantSchema.partial();
 const productIdSchema = z.string().uuid();
 const variantIdSchema = z.string().uuid();
+const inventoryListQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(50).optional(),
+  cursor: z.string().trim().min(1).max(512).optional(),
+  query: z.string().trim().max(120).optional(),
+  categoryId: z.string().uuid().optional(),
+  productId: z.string().uuid().optional(),
+  status: z.enum(PRODUCT_STATUSES).optional()
+});
 const inventoryWriteLimiter = createRateLimiter({
   namespace: "inventory-write",
   windowMs: 10 * 60 * 1000,
@@ -111,9 +119,9 @@ staffProductsRoutes.use(requireAuth, requireRole("STAFF", "ADMIN"));
 
 staffProductsRoutes.get(
   "/",
-  asyncHandler(async (_request, response) => {
-    const products = await listInventory();
-    response.json({ products });
+  asyncHandler(async (request, response) => {
+    const page = await listInventory(inventoryListQuerySchema.parse(request.query));
+    response.json({ products: page.items, nextCursor: page.nextCursor });
   })
 );
 

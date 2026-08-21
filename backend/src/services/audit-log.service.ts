@@ -1,6 +1,9 @@
+import { Prisma } from "@prisma/client";
 import { supabaseAdmin } from "../lib/supabase.js";
+import { prisma } from "../lib/prisma.js";
 import { firstRow } from "../types/app.js";
 import { HttpError } from "../utils/http-error.js";
+import { createPage, decodeCursor, normalizePageLimit } from "../utils/cursor-pagination.js";
 
 type RawAuditLog = {
   id: string;
@@ -22,6 +25,7 @@ export type AuditLogInput = {
   action: string;
   entityType: string;
   entityId?: string | null;
+  dedupeKey?: string | null;
   summary: string;
   metadata?: Record<string, unknown>;
 };
@@ -30,6 +34,10 @@ export type AuditLogFilters = {
   action?: string;
   entityType?: string;
   actorId?: string;
+  query?: string;
+  dateFrom?: Date;
+  dateTo?: Date;
+  cursor?: string;
   limit?: number;
 };
 
@@ -76,6 +84,7 @@ export async function recordAuditLog(input: AuditLogInput) {
       action: input.action,
       entity_type: input.entityType,
       entity_id: input.entityId ?? null,
+      ...(input.dedupeKey ? { dedupe_key: input.dedupeKey } : {}),
       summary: input.summary,
       metadata: input.metadata ?? {}
     })
@@ -96,18 +105,66 @@ export async function safelyRecordAuditLog(input: AuditLogInput) {
 }
 
 export async function listAuditLogs(filters: AuditLogFilters = {}) {
-  let query = supabaseAdmin
-    .from("audit_logs")
-    .select(auditLogSelect)
-    .order("created_at", { ascending: false })
-    .limit(filters.limit ?? 100);
+  const limit = normalizePageLimit(filters.limit);
+  const cursorId = decodeCursor(filters.cursor);
+  const where: Prisma.AuditLogWhereInput = {};
+  if (filters.action) where.action = filters.action;
+  if (filters.entityType) where.entityType = filters.entityType;
+  if (filters.actorId) where.actorId = filters.actorId;
+  if (filters.dateFrom || filters.dateTo) {
+    where.createdAt = {
+      ...(filters.dateFrom ? { gte: filters.dateFrom } : {}),
+      ...(filters.dateTo ? { lte: filters.dateTo } : {})
+    };
+  }
+  if (filters.query?.trim()) {
+    const query = filters.query.trim();
+    where.OR = [
+      { summary: { contains: query, mode: "insensitive" } },
+      { action: { contains: query, mode: "insensitive" } },
+      { entityType: { contains: query, mode: "insensitive" } },
+      { entityId: { contains: query, mode: "insensitive" } },
+      { actor: { is: { OR: [
+        { fullName: { contains: query, mode: "insensitive" } },
+        { email: { contains: query, mode: "insensitive" } }
+      ] } } }
+    ];
+  }
 
-  if (filters.action) query = query.eq("action", filters.action);
-  if (filters.entityType) query = query.eq("entity_type", filters.entityType);
-  if (filters.actorId) query = query.eq("actor_id", filters.actorId);
-
-  const { data, error } = await query;
-  if (error) throw HttpError.fromSupabase(error);
-
-  return ((data ?? []) as unknown as RawAuditLog[]).map(mapAuditLog);
+  const rows = await prisma.auditLog.findMany({
+    where,
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    ...(cursorId ? { cursor: { id: cursorId }, skip: 1 } : {}),
+    take: limit + 1,
+    select: {
+      id: true,
+      actorId: true,
+      action: true,
+      entityType: true,
+      entityId: true,
+      summary: true,
+      metadata: true,
+      createdAt: true,
+      actor: { select: { id: true, fullName: true, email: true, studentNumber: true, role: true } }
+    }
+  });
+  return createPage(rows.map((row) => ({
+    id: row.id,
+    actorId: row.actorId,
+    action: row.action,
+    entityType: row.entityType,
+    entityId: row.entityId,
+    summary: row.summary,
+    metadata: row.metadata as Record<string, unknown>,
+    createdAt: row.createdAt.toISOString(),
+    actor: row.actor
+      ? {
+          id: row.actor.id,
+          fullName: row.actor.fullName,
+          email: row.actor.email,
+          studentNumber: row.actor.studentNumber,
+          role: row.actor.role
+        }
+      : null
+  })), limit);
 }

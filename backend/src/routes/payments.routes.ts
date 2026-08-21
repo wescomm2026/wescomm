@@ -16,6 +16,7 @@ import {
   reconcileOnlinePayment,
   runPaymongoMaintenance
 } from "../services/paymongo-reconciliation.service.js";
+import { runOutboxBatch } from "../services/outbox.service.js";
 
 const paymentIdSchema = z.string().uuid();
 const checkoutSchema = z.object({
@@ -84,8 +85,11 @@ paymentsRoutes.post(
   maintenanceLimiter,
   asyncHandler(async (request, response) => {
     const { limit } = maintenanceSchema.parse(request.body ?? {});
-    const result = await runPaymongoMaintenance({ actorId: null, limit });
-    response.json({ maintenance: result });
+    const [paymentMaintenance, outbox] = await Promise.all([
+      runPaymongoMaintenance({ actorId: null, limit }),
+      runOutboxBatch({ limit })
+    ]);
+    response.json({ maintenance: paymentMaintenance, outbox });
   })
 );
 

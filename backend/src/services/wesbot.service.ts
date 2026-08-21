@@ -22,8 +22,8 @@ import { listReceipts } from "./receipt.service.js";
 import { listReservations } from "./reservation.service.js";
 
 type WesbotProduct = Awaited<ReturnType<typeof listProducts>>[number];
-type WesbotReservation = Awaited<ReturnType<typeof listReservations>>[number];
-type WesbotReceipt = Awaited<ReturnType<typeof listReceipts>>[number];
+type WesbotReservation = Awaited<ReturnType<typeof listReservations>>["items"][number];
+type WesbotReceipt = Awaited<ReturnType<typeof listReceipts>>["items"][number];
 
 export type WesbotReply = {
   message: string;
@@ -370,10 +370,11 @@ async function buildGroundedAnswer(input: {
     sourceReferences = answer.sourceReferences;
   } else if (intent === "RESERVATION_STATUS" || intent === "CANCELLATION_ELIGIBILITY" || intent === "PAYMENT_STATUS" || intent === "PICKUP_INFORMATION") {
     const referenceCode = extractReservationReference(input.message) ?? undefined;
-    const reservations = await listReservations(input.studentId, "STUDENT", {
+    const reservationPage = await listReservations(input.studentId, "STUDENT", {
       referenceCode,
       limit: referenceCode ? 1 : 3
     });
+    const reservations = reservationPage.items;
     if (intent === "CANCELLATION_ELIGIBILITY") draft = cancellationAnswer(reservations, input.message);
     else if (intent === "PAYMENT_STATUS") draft = paymentAnswer(reservations, input.message);
     else if (intent === "PICKUP_INFORMATION") draft = pickupAnswer(reservations, input.message);
@@ -381,10 +382,11 @@ async function buildGroundedAnswer(input: {
     sourceReferences = ["account:reservations"];
   } else if (intent === "RECEIPT_STATUS") {
     const receiptCode = extractReceiptCode(input.message) ?? undefined;
-    const receipts = await listReceipts(input.studentId, "STUDENT", {
+    const receiptPage = await listReceipts(input.studentId, "STUDENT", {
       receiptCode,
       limit: receiptCode ? 1 : 3
     });
+    const receipts = receiptPage.items;
     draft = receiptAnswer(receipts, input.message);
     sourceReferences = ["account:receipts"];
   } else {

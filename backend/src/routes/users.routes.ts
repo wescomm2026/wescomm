@@ -16,6 +16,12 @@ const updateRoleSchema = z.object({
 });
 
 const userIdSchema = z.string().uuid();
+const userListQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(50).optional(),
+  cursor: z.string().trim().min(1).max(512).optional(),
+  query: z.string().trim().max(120).optional(),
+  role: z.enum(APP_ROLES).optional()
+});
 const roleUpdateLimiter = createRateLimiter({
   namespace: "admin-role-update",
   windowMs: 15 * 60 * 1000,
@@ -26,9 +32,9 @@ const roleUpdateLimiter = createRateLimiter({
 
 usersRoutes.get(
   "/",
-  asyncHandler(async (_request, response) => {
-    const users = await listUsers();
-    response.json({ users });
+  asyncHandler(async (request, response) => {
+    const page = await listUsers(userListQuerySchema.parse(request.query));
+    response.json(page);
   })
 );
 

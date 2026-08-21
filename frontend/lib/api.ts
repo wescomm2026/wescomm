@@ -200,6 +200,20 @@ export type BackendReceipt = {
   } | null;
 };
 
+export type BackendCursorPage<T> = {
+  items: T[];
+  nextCursor: string | null;
+};
+
+export type BackendCollectionOptions = {
+  limit?: number;
+  cursor?: string;
+  status?: string;
+  query?: string;
+  dateFrom?: string;
+  dateTo?: string;
+};
+
 export type BackendPublicReceiptVerification = {
   receiptCode: string;
   totalAmount: string | number;
@@ -336,7 +350,7 @@ export async function onlineFetch(input: RequestInfo | URL, init?: RequestInit) 
   }
 
   try {
-    return await fetch(input, { ...init, cache: "no-store" });
+    return await fetch(input, { ...init, cache: init?.cache ?? "no-store" });
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") throw error;
     throw new BackendApiError(
@@ -595,9 +609,31 @@ export async function updateMyProfileFromApi(token: string, payload: UpdateMyPro
   return data.profile;
 }
 
-export async function getProductsFromApi() {
-  const data = await apiFetch<{ products: BackendProduct[] }>("/products");
-  return data.products.map(mapBackendProduct);
+const PRODUCT_CACHE_TTL_MS = 30_000;
+const FAQ_CACHE_TTL_MS = 60_000;
+type MappedProducts = ReturnType<typeof mapBackendProduct>[];
+
+let cachedProducts: { value: MappedProducts; expiresAt: number } | null = null;
+let pendingProducts: Promise<MappedProducts> | null = null;
+let cachedFaqs: { value: BackendFaq[]; expiresAt: number } | null = null;
+let pendingFaqs: Promise<BackendFaq[]> | null = null;
+
+export async function getProductsFromApi(options: { fresh?: boolean } = {}) {
+  if (!options.fresh && cachedProducts && cachedProducts.expiresAt > Date.now()) {
+    return cachedProducts.value;
+  }
+  if (pendingProducts) return pendingProducts;
+
+  pendingProducts = apiFetch<{ products: BackendProduct[] }>("/products", { cache: "default" })
+    .then((data) => {
+      const value = data.products.map(mapBackendProduct);
+      cachedProducts = { value, expiresAt: Date.now() + PRODUCT_CACHE_TTL_MS };
+      return value;
+    })
+    .finally(() => {
+      pendingProducts = null;
+    });
+  return pendingProducts;
 }
 
 export async function getWishlistFromApi(token: string) {
@@ -620,9 +656,19 @@ export async function removeWishlistItemFromApi(token: string, productId: string
   });
 }
 
-export async function getFaqsFromApi() {
-  const data = await apiFetch<{ faqs: BackendFaq[] }>("/faqs");
-  return data.faqs;
+export async function getFaqsFromApi(options: { fresh?: boolean } = {}) {
+  if (!options.fresh && cachedFaqs && cachedFaqs.expiresAt > Date.now()) return cachedFaqs.value;
+  if (pendingFaqs) return pendingFaqs;
+
+  pendingFaqs = apiFetch<{ faqs: BackendFaq[] }>("/faqs", { cache: "default" })
+    .then((data) => {
+      cachedFaqs = { value: data.faqs, expiresAt: Date.now() + FAQ_CACHE_TTL_MS };
+      return data.faqs;
+    })
+    .finally(() => {
+      pendingFaqs = null;
+    });
+  return pendingFaqs;
 }
 
 export async function getManageFaqsFromApi(token: string) {
@@ -701,9 +747,35 @@ export async function getPaymentFromApi(token: string, paymentId: string) {
   return data.payment;
 }
 
+export async function getReservationPageFromApi(token: string, options: BackendCollectionOptions = {}) {
+  const params = new URLSearchParams();
+  if (options.limit) params.set("limit", String(options.limit));
+  if (options.cursor) params.set("cursor", options.cursor);
+  if (options.status) params.set("status", options.status);
+  if (options.query?.trim()) params.set("query", options.query.trim());
+  if (options.dateFrom) params.set("dateFrom", options.dateFrom);
+  if (options.dateTo) params.set("dateTo", options.dateTo);
+  const query = params.toString();
+  const data = await authApiFetch<BackendCursorPage<BackendReservation> & { reservations?: BackendReservation[] }>(
+    `/reservations${query ? `?${query}` : ""}`,
+    token
+  );
+  return {
+    items: Array.isArray(data.items) ? data.items : data.reservations ?? [],
+    nextCursor: data.nextCursor ?? null
+  };
+}
+
 export async function getReservationsFromApi(token: string) {
-  const data = await authApiFetch<{ reservations: BackendReservation[] }>("/reservations", token);
-  return data.reservations;
+  return (await getReservationPageFromApi(token)).items;
+}
+
+export async function getReservationFromApi(token: string, reservationId: string) {
+  const data = await authApiFetch<{ reservation: BackendReservation }>(
+    `/reservations/${encodeURIComponent(reservationId)}`,
+    token
+  );
+  return data.reservation;
 }
 
 export async function cancelMyReservationFromApi(token: string, reservationId: string) {
@@ -787,9 +859,32 @@ export async function overturnStudentOffenseFromApi(token: string, offenseId: st
   return data.offense;
 }
 
+export async function getReceiptPageFromApi(token: string, options: BackendCollectionOptions = {}) {
+  const params = new URLSearchParams();
+  if (options.limit) params.set("limit", String(options.limit));
+  if (options.cursor) params.set("cursor", options.cursor);
+  if (options.status) params.set("status", options.status);
+  if (options.query?.trim()) params.set("query", options.query.trim());
+  if (options.dateFrom) params.set("dateFrom", options.dateFrom);
+  if (options.dateTo) params.set("dateTo", options.dateTo);
+  const query = params.toString();
+  const data = await authApiFetch<BackendCursorPage<BackendReceipt> & { receipts?: BackendReceipt[] }>(
+    `/receipts${query ? `?${query}` : ""}`,
+    token
+  );
+  return {
+    items: Array.isArray(data.items) ? data.items : data.receipts ?? [],
+    nextCursor: data.nextCursor ?? null
+  };
+}
+
 export async function getReceiptsFromApi(token: string) {
-  const data = await authApiFetch<{ receipts: BackendReceipt[] }>("/receipts", token);
-  return data.receipts;
+  return (await getReceiptPageFromApi(token)).items;
+}
+
+export async function getReceiptFromApi(token: string, receiptId: string) {
+  const data = await authApiFetch<{ receipt: BackendReceipt }>(`/receipts/${encodeURIComponent(receiptId)}`, token);
+  return data.receipt;
 }
 
 export async function verifyReceiptFromApi(receiptCode: string) {
@@ -987,9 +1082,29 @@ export async function searchStaffWorkspaceFromApi(token: string, query: string, 
   return data.results;
 }
 
+export async function getAdminUsersPageFromApi(
+  token: string,
+  options: BackendCollectionOptions & { role?: BackendAppRole } = {}
+) {
+  const params = new URLSearchParams();
+  if (options.limit) params.set("limit", String(options.limit));
+  if (options.cursor) params.set("cursor", options.cursor);
+  if (options.query?.trim()) params.set("query", options.query.trim());
+  if (options.role) params.set("role", options.role);
+  const query = params.toString();
+  const data = await authApiFetch<BackendCursorPage<BackendAdminUser> & {
+    users?: BackendAdminUser[];
+    roleCounts?: { students: number; staff: number; admins: number };
+  }>(`/admin/users${query ? `?${query}` : ""}`, token);
+  return {
+    items: Array.isArray(data.items) ? data.items : data.users ?? [],
+    nextCursor: data.nextCursor ?? null,
+    roleCounts: data.roleCounts ?? { students: 0, staff: 0, admins: 0 }
+  };
+}
+
 export async function getAdminUsersFromApi(token: string) {
-  const data = await authApiFetch<{ users: BackendAdminUser[] }>("/admin/users", token);
-  return data.users;
+  return (await getAdminUsersPageFromApi(token)).items;
 }
 
 export async function getStaffUsersFromApi(token: string) {
@@ -1007,13 +1122,21 @@ export async function updateAdminUserRoleFromApi(token: string, userId: string, 
 
 export async function getAdminAuditLogsFromApi(
   token: string,
-  filters: { action?: string; entityType?: string; limit?: number } = {}
+  filters: { action?: string; entityType?: string; query?: string; cursor?: string; limit?: number } = {}
 ) {
   const params = new URLSearchParams();
   if (filters.action) params.set("action", filters.action);
   if (filters.entityType) params.set("entityType", filters.entityType);
+  if (filters.query?.trim()) params.set("query", filters.query.trim());
+  if (filters.cursor) params.set("cursor", filters.cursor);
   if (filters.limit) params.set("limit", String(filters.limit));
   const query = params.toString();
-  const data = await authApiFetch<{ auditLogs: BackendAuditLog[] }>(`/admin/audit-logs${query ? `?${query}` : ""}`, token);
-  return data.auditLogs;
+  const data = await authApiFetch<BackendCursorPage<BackendAuditLog> & { auditLogs?: BackendAuditLog[] }>(
+    `/admin/audit-logs${query ? `?${query}` : ""}`,
+    token
+  );
+  return {
+    items: Array.isArray(data.items) ? data.items : data.auditLogs ?? [],
+    nextCursor: data.nextCursor ?? null
+  };
 }

@@ -22,6 +22,7 @@ const forwardedResponseHeaders = [
   "ratelimit-remaining",
   "ratelimit-reset",
   "retry-after",
+  "server-timing",
   "set-cookie",
   "x-request-id"
 ];

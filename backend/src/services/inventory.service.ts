@@ -7,6 +7,7 @@ import { createBackInStockNotificationsInTransaction } from "./wishlist-notifica
 import { firstRow, type ProductStatus } from "../types/app.js";
 import { HttpError } from "../utils/http-error.js";
 import { lockProductForUpdate } from "../utils/product-transaction.js";
+import { createPage, decodeCursor, normalizePageLimit } from "../utils/cursor-pagination.js";
 
 type RawCategory = {
   id: string;
@@ -91,6 +92,40 @@ const inventorySelect = `
   variants:product_variants(id,option_name,option_value,stock)
 `;
 
+const inventoryRecordSelect = Prisma.validator<Prisma.ProductSelect>()({
+  id: true,
+  categoryId: true,
+  name: true,
+  description: true,
+  imageUrl: true,
+  price: true,
+  oldPrice: true,
+  status: true,
+  stock: true,
+  lowStockThreshold: true,
+  isActive: true,
+  createdAt: true,
+  updatedAt: true,
+  category: {
+    select: { id: true, name: true, slug: true, iconUrl: true }
+  },
+  variants: {
+    select: { id: true, optionName: true, optionValue: true, stock: true },
+    orderBy: [{ optionName: "asc" }, { optionValue: "asc" }]
+  }
+});
+
+type InventoryRecord = Prisma.ProductGetPayload<{ select: typeof inventoryRecordSelect }>;
+
+export type InventoryListOptions = {
+  limit?: number;
+  cursor?: string;
+  query?: string;
+  categoryId?: string;
+  productId?: string;
+  status?: ProductStatus;
+};
+
 function mapCategory(row: RawCategory) {
   return {
     id: row.id,
@@ -127,6 +162,26 @@ function mapInventoryProduct(row: RawInventoryProduct) {
       optionValue: variant.option_value,
       stock: variant.stock
     }))
+  };
+}
+
+function mapInventoryRecord(row: InventoryRecord) {
+  return {
+    id: row.id,
+    categoryId: row.categoryId,
+    name: row.name,
+    description: row.description,
+    imageUrl: row.imageUrl,
+    price: row.price,
+    oldPrice: row.oldPrice,
+    status: row.status,
+    stock: row.stock,
+    lowStockThreshold: row.lowStockThreshold,
+    isActive: row.isActive,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    category: row.category,
+    variants: row.variants
   };
 }
 
@@ -326,15 +381,31 @@ export async function listCategories() {
   return ((data ?? []) as RawCategory[]).map(mapCategory);
 }
 
-export async function listInventory() {
-  const { data, error } = await supabaseAdmin
-    .from("products")
-    .select(inventorySelect)
-    .eq("is_active", true)
-    .order("name", { ascending: true });
+export async function listInventory(input: InventoryListOptions = {}) {
+  const limit = normalizePageLimit(input.limit);
+  const cursorId = decodeCursor(input.cursor);
+  const query = input.query?.trim();
+  const rows = await prisma.product.findMany({
+    where: {
+      isActive: true,
+      ...(input.productId ? { id: input.productId } : {}),
+      ...(input.categoryId ? { categoryId: input.categoryId } : {}),
+      ...(input.status ? { status: input.status } : {}),
+      ...(query ? {
+        OR: [
+          { name: { contains: query, mode: "insensitive" } },
+          { description: { contains: query, mode: "insensitive" } },
+          { category: { name: { contains: query, mode: "insensitive" } } }
+        ]
+      } : {})
+    },
+    select: inventoryRecordSelect,
+    orderBy: [{ name: "asc" }, { id: "asc" }],
+    ...(cursorId ? { cursor: { id: cursorId }, skip: 1 } : {}),
+    take: limit + 1
+  });
 
-  if (error) throw HttpError.fromSupabase(error);
-  return ((data ?? []) as unknown as RawInventoryProduct[]).map(mapInventoryProduct);
+  return createPage(rows.map(mapInventoryRecord), limit);
 }
 
 export async function getInventoryProduct(productId: string) {

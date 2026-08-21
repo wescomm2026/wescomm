@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import Image from "next/image";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Ban, Bot, Check, Edit3, Eye, Filter, Headphones, LoaderCircle, Plus, RefreshCw, Search, Send, Trash2, Upload, X } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import { FaqManagementExperience } from "@/components/faq/FaqManagementExperience";
@@ -15,8 +15,8 @@ import {
   acceptConversationFromApi,
   getConversationMessagesFromApi,
   getConversationsFromApi,
-  getReceiptsFromApi,
-  getReservationsFromApi,
+  getReceiptPageFromApi,
+  getReservationPageFromApi,
   getStaffUsersFromApi,
   markReceiptVerifiedFromApi,
   returnConversationToBotFromApi,
@@ -39,7 +39,7 @@ import {
   clearStaffSession,
   createStaffProduct,
   getStaffCategories,
-  getStaffProducts,
+  getStaffProductsPage,
   getStoredStaffSession,
   restockStaffProduct,
   updateStaffProduct,
@@ -119,6 +119,14 @@ function stockStatusFromQuery(value: string | null) {
   return "All";
 }
 
+function stockStatusForApi(value: string): StaffProduct["status"] | undefined {
+  if (value === "Available") return "IN_STOCK";
+  if (value === "Needs Restock") return "RESTOCK_SOON";
+  if (value === "Out of Stock") return "OUT_OF_STOCK";
+  if (value === "On Sale") return "ON_SALE";
+  return undefined;
+}
+
 function mapStaffProduct(product: StaffProduct): Product {
   return {
     id: product.id,
@@ -145,6 +153,18 @@ function formatReservationStatus(status: BackendReservationStatus) {
   };
 
   return labels[status];
+}
+
+function backendReservationStatusFilter(status: string) {
+  const statuses: Record<string, BackendReservationStatus> = {
+    Pending: "PENDING",
+    Confirmed: "CONFIRMED",
+    "Ready for Pick-up": "READY_FOR_PICKUP",
+    Completed: "COMPLETED",
+    Cancelled: "CANCELLED",
+    "No-show": "NO_SHOW"
+  };
+  return statuses[status];
 }
 
 function formatStaffPickup(startValue: string | null, endValue: string | null) {
@@ -215,6 +235,15 @@ function formatStaffReceiptStatus(status: BackendReceiptStatus) {
   if (status === "VERIFIED") return "Verified";
   if (status === "VOIDED") return "Voided";
   return "Pending";
+}
+
+function backendReceiptStatusFilter(status: string) {
+  const statuses: Record<string, BackendReceiptStatus> = {
+    Pending: "PENDING",
+    Verified: "VERIFIED",
+    Voided: "VOIDED"
+  };
+  return statuses[status];
 }
 
 function formatStaffReceiptDate(value: string) {
@@ -559,6 +588,9 @@ export function StaffInventoryExperience() {
   const [staffEmail, setStaffEmail] = useState("");
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("All");
+  const deferredInventorySearch = useDeferredValue(search);
+  const [nextProductCursor, setNextProductCursor] = useState<string | null>(null);
+  const [loadingMoreProducts, setLoadingMoreProducts] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -574,26 +606,47 @@ export function StaffInventoryExperience() {
   const [addImagePreview, setAddImagePreview] = useState("");
   const [editImageFile, setEditImageFile] = useState<File | null>(null);
   const [editImagePreview, setEditImagePreview] = useState("");
+  const inventoryFilterReadyRef = useRef(false);
+  const inventoryRequestRef = useRef(0);
   const { user, ready, openAuth, logout } = useStudentAuth();
 
-  const loadProducts = async (authToken = token) => {
+  const loadProducts = async (authToken = token, options: {
+    cursor?: string | null;
+    append?: boolean;
+    query?: string;
+    status?: string;
+    productId?: string;
+  } = {}) => {
     if (!authToken) {
       setLoading(false);
       return;
     }
 
-    setLoading(true);
+    const requestId = ++inventoryRequestRef.current;
+    const append = Boolean(options.append && options.cursor);
+    if (append) setLoadingMoreProducts(true);
+    else setLoading(true);
     setError("");
 
     try {
-      const [productRows, categoryRows] = await Promise.all([
-        getStaffProducts(authToken),
-        getStaffCategories(authToken)
+      const [productPage, categoryRows] = await Promise.all([
+        getStaffProductsPage(authToken, {
+          limit: 25,
+          cursor: options.cursor,
+          query: options.query ?? deferredInventorySearch,
+          productId: options.productId,
+          status: stockStatusForApi(options.status ?? status)
+        }),
+        append ? Promise.resolve(null) : getStaffCategories(authToken)
       ]);
-      const mappedProducts = productRows.map(mapStaffProduct);
-      setProducts(mappedProducts);
-      setCategories(categoryRows);
-      const productId = new URL(window.location.href).searchParams.get("productId");
+      if (requestId !== inventoryRequestRef.current) return;
+      const mappedProducts = productPage.products.map(mapStaffProduct);
+      setProducts((current) => append
+        ? [...current, ...mappedProducts.filter((product) => !current.some((item) => item.id === product.id))]
+        : mappedProducts);
+      setNextProductCursor(productPage.nextCursor);
+      if (categoryRows) setCategories(categoryRows);
+      const productId = options.productId ?? new URL(window.location.href).searchParams.get("productId");
       const targetedProduct = mappedProducts.find((product) => product.id === productId);
       if (targetedProduct) setSearch(targetedProduct.name);
     } catch (loadError) {
@@ -606,7 +659,10 @@ export function StaffInventoryExperience() {
         openAuth();
       }
     } finally {
-      setLoading(false);
+      if (requestId === inventoryRequestRef.current) {
+        setLoading(false);
+        setLoadingMoreProducts(false);
+      }
     }
   };
 
@@ -622,9 +678,27 @@ export function StaffInventoryExperience() {
 
     setToken(authToken);
     setStaffEmail(email);
-    void loadProducts(authToken);
+    void loadProducts(authToken, {
+      query: params.get("query") ?? "",
+      status: stockStatusFromQuery(params.get("status")),
+      productId: params.get("productId") ?? undefined
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, user?.accessToken, user?.email]);
+
+  useEffect(() => {
+    if (!token) return;
+    if (!inventoryFilterReadyRef.current) {
+      inventoryFilterReadyRef.current = true;
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      void loadProducts(token, { query: deferredInventorySearch, status });
+    }, 200);
+    return () => window.clearTimeout(timeout);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deferredInventorySearch, status, token]);
 
   const filtered = products.filter((product) =>
     `${product.name} ${product.category}`.toLowerCase().includes(search.toLowerCase()) &&
@@ -825,6 +899,23 @@ export function StaffInventoryExperience() {
           )}
         </div>
       </section>
+      {nextProductCursor ? (
+        <div className="flex justify-center">
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={loadingMoreProducts || loading || submitting}
+            onClick={() => void loadProducts(token, {
+              cursor: nextProductCursor,
+              append: true,
+              query: deferredInventorySearch,
+              status
+            })}
+          >
+            {loadingMoreProducts ? "Loading more..." : "Load more products"}
+          </Button>
+        </div>
+      ) : null}
       {adding ? (
         <div className="fixed inset-0 z-[10000] grid place-items-center bg-[#101820]/50 p-4">
           <form key={selectedTemplateId || "blank-product-form"} className="relative my-auto max-h-[calc(100vh-2rem)] w-full max-w-lg overflow-y-auto rounded-lg bg-white p-5 shadow-2xl" onSubmit={async (event) => {
@@ -1078,9 +1169,15 @@ export function StaffReservationsExperience() {
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [submittingId, setSubmittingId] = useState("");
+  const deferredSearch = useDeferredValue(search);
 
-  const loadReservations = useCallback(async ({ background = false }: { background?: boolean } = {}) => {
+  const loadReservations = useCallback(async ({
+    background = false,
+    cursor
+  }: { background?: boolean; cursor?: string } = {}) => {
     const session = getStoredStaffSession();
     if (!session.token) {
       setRows([]);
@@ -1088,15 +1185,26 @@ export function StaffReservationsExperience() {
       return;
     }
 
-    if (!background) {
+    if (cursor) setLoadingMore(true);
+    else if (!background) {
       setLoading(true);
       setError("");
     }
 
     try {
-      const reservations = await getReservationsFromApi(session.token);
-      const mappedReservations = reservations.map(mapStaffReservation);
-      setRows(mappedReservations);
+      const page = await getReservationPageFromApi(session.token, {
+        limit: 25,
+        cursor,
+        status: backendReservationStatusFilter(status),
+        query: deferredSearch
+      });
+      const mappedReservations = page.items.map(mapStaffReservation);
+      setRows((current) => {
+        if (!cursor && !background) return mappedReservations;
+        const source = cursor ? [...current, ...mappedReservations] : [...mappedReservations, ...current];
+        return source.filter((row, index) => source.findIndex((candidate) => candidate.id === row.id) === index);
+      });
+      setNextCursor(page.nextCursor);
       const reservationId = new URL(window.location.href).searchParams.get("reservationId");
       const reservationQuery = new URL(window.location.href).searchParams.get("query");
       const targetedReservation = mappedReservations.find((reservation) => reservation.id === reservationId);
@@ -1107,9 +1215,10 @@ export function StaffReservationsExperience() {
         setError(reservationError instanceof Error ? reservationError.message : "Unable to load reservations.");
       }
     } finally {
+      if (cursor) setLoadingMore(false);
       if (!background) setLoading(false);
     }
-  }, []);
+  }, [deferredSearch, status]);
 
   useEffect(() => {
     void loadReservations();
@@ -1131,10 +1240,7 @@ export function StaffReservationsExperience() {
     };
   }, [loadReservations]);
 
-  const filtered = rows.filter((row) =>
-    `${row.reference} ${row.student} ${row.item}`.toLowerCase().includes(search.toLowerCase()) &&
-    (status === "All" || row.status === status)
-  );
+  const filtered = rows;
 
   const updateStatus = async (row: StaffReservationRow, nextStatus: BackendReservationStatus) => {
     const session = getStoredStaffSession();
@@ -1231,6 +1337,18 @@ export function StaffReservationsExperience() {
           <div className="rounded-lg border border-[#dce5dd] bg-white p-6 text-sm font-semibold text-[#68746d] shadow-sm">No matching reservations found.</div>
         )}
       </div>
+      {nextCursor ? (
+        <div className="flex justify-center">
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={loadingMore}
+            onClick={() => void loadReservations({ cursor: nextCursor })}
+          >
+            {loadingMore ? "Loading more..." : "Load more reservations"}
+          </Button>
+        </div>
+      ) : null}
       {notice ? <Notice text={notice} onClose={() => setNotice("")} /> : null}
     </div>
   );
@@ -1243,12 +1361,18 @@ export function StaffReceiptsExperience() {
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [submittingId, setSubmittingId] = useState("");
   const [selectedReceipt, setSelectedReceipt] = useState<StaffReceiptRow | null>(null);
   const [receiptAction, setReceiptAction] = useState<{ type: "verify" | "void"; row: StaffReceiptRow } | null>(null);
   const [voidReason, setVoidReason] = useState("");
+  const deferredSearch = useDeferredValue(search);
 
-  const loadReceipts = useCallback(async ({ background = false }: { background?: boolean } = {}) => {
+  const loadReceipts = useCallback(async ({
+    background = false,
+    cursor
+  }: { background?: boolean; cursor?: string } = {}) => {
     const session = getStoredStaffSession();
     if (!session.token) {
       setRows([]);
@@ -1256,15 +1380,26 @@ export function StaffReceiptsExperience() {
       return;
     }
 
-    if (!background) {
+    if (cursor) setLoadingMore(true);
+    else if (!background) {
       setLoading(true);
       setError("");
     }
 
     try {
-      const receipts = await getReceiptsFromApi(session.token);
-      const mappedReceipts = receipts.map(mapStaffReceipt);
-      setRows(mappedReceipts);
+      const page = await getReceiptPageFromApi(session.token, {
+        limit: 25,
+        cursor,
+        status: backendReceiptStatusFilter(status),
+        query: deferredSearch
+      });
+      const mappedReceipts = page.items.map(mapStaffReceipt);
+      setRows((current) => {
+        if (!cursor && !background) return mappedReceipts;
+        const source = cursor ? [...current, ...mappedReceipts] : [...mappedReceipts, ...current];
+        return source.filter((row, index) => source.findIndex((candidate) => candidate.id === row.id) === index);
+      });
+      setNextCursor(page.nextCursor);
       const receiptId = new URL(window.location.href).searchParams.get("receiptId");
       const targetedReceipt = mappedReceipts.find((receipt) => receipt.id === receiptId);
       if (targetedReceipt) {
@@ -1276,9 +1411,10 @@ export function StaffReceiptsExperience() {
         setError(receiptError instanceof Error ? receiptError.message : "Unable to load receipts.");
       }
     } finally {
+      if (cursor) setLoadingMore(false);
       if (!background) setLoading(false);
     }
-  }, []);
+  }, [deferredSearch, status]);
 
   useEffect(() => {
     void loadReceipts();
@@ -1300,10 +1436,7 @@ export function StaffReceiptsExperience() {
     };
   }, [loadReceipts]);
 
-  const filtered = rows.filter((row) =>
-    `${row.code} ${row.reference} ${row.student} ${row.items}`.toLowerCase().includes(search.toLowerCase()) &&
-    (status === "All" || row.status === status)
-  );
+  const filtered = rows;
 
   const applyReceiptUpdate = (receipt: BackendReceipt) => {
     const mappedReceipt = mapStaffReceipt(receipt);
@@ -1436,6 +1569,18 @@ export function StaffReceiptsExperience() {
           No matching receipts found.
         </div>
       )}
+      {nextCursor ? (
+        <div className="flex justify-center">
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={loadingMore}
+            onClick={() => void loadReceipts({ cursor: nextCursor })}
+          >
+            {loadingMore ? "Loading more..." : "Load more receipts"}
+          </Button>
+        </div>
+      ) : null}
       {notice ? <Notice text={notice} onClose={() => setNotice("")} /> : null}
       <StaffReceiptPreviewModal
         row={selectedReceipt}

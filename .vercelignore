@@ -1,0 +1,8 @@
+# Local QA and presentation artifacts are not part of the production runtime.
+WESCOMM_LIVE_WEBSITE_TESTING_2026-08-18/
+WESCOMM_UML_PRESENTATION_READY_2026-08-09/
+WESCOMM_WHOLE_SYSTEM_PRESENTATION_READY_2026-08-09/
+system-design-diagrams/
+
+# Untracked local media preview; production code does not reference it.
+frontend/public/assets/WesComm_Logo_Animation_Preview(1) (1).gif

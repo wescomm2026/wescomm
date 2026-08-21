@@ -1,3 +1,5 @@
+import { Prisma } from "@prisma/client";
+import { getCache } from "@vercel/functions";
 import { prisma } from "../lib/prisma.js";
 import { withTransientPrismaReadRetry } from "../utils/prisma-retry.js";
 
@@ -13,7 +15,12 @@ function subDays(value: Date, days: number) {
 }
 
 function dayKey(value: Date) {
-  return value.toISOString().slice(0, 10);
+  return new Intl.DateTimeFormat("en-CA", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    timeZone: "Asia/Manila"
+  }).format(value);
 }
 
 function formatTrendLabel(value: Date) {
@@ -36,30 +43,45 @@ function reservationStatusLabel(status: string) {
   return labels[status] ?? status;
 }
 
-export async function getReportSummary() {
+async function buildReportSummary() {
   const today = new Date();
   const trendStart = subDays(today, 6);
 
+  type ProductMetricsRow = {
+    totalProducts: number;
+    lowStockItems: number;
+    outOfStockItems: number;
+    inventoryValue: Prisma.Decimal | string | number | null;
+  };
+  type SalesTrendRow = {
+    key: string;
+    sales: Prisma.Decimal | string | number;
+    receipts: number;
+  };
+  type CategorySalesRow = {
+    category: string;
+    amount: Prisma.Decimal | string | number;
+  };
+
   const [
-    products,
+    productMetricRows,
     reservationGroups,
     receiptAggregate,
     pendingReceiptCount,
     userGroups,
     activeConversations,
-    recentReceipts
+    salesTrendRows,
+    categorySalesRows
   ] = await withTransientPrismaReadRetry(() => prisma.$transaction([
-    prisma.product.findMany({
-      where: { isActive: true },
-      select: {
-        id: true,
-        name: true,
-        price: true,
-        stock: true,
-        lowStockThreshold: true,
-        category: { select: { name: true } }
-      }
-    }),
+    prisma.$queryRaw<ProductMetricsRow[]>`
+      SELECT
+        COUNT(*)::integer AS "totalProducts",
+        COUNT(*) FILTER (WHERE "stock" <= "low_stock_threshold")::integer AS "lowStockItems",
+        COUNT(*) FILTER (WHERE "stock" <= 0)::integer AS "outOfStockItems",
+        COALESCE(SUM("price" * "stock"), 0) AS "inventoryValue"
+      FROM "products"
+      WHERE "is_active" = TRUE
+    `,
     prisma.reservation.groupBy({
       by: ["status"],
       _count: { _all: true }
@@ -75,36 +97,43 @@ export async function getReportSummary() {
       _count: { _all: true }
     }),
     prisma.conversation.count({ where: { status: "OPEN" } }),
-    prisma.receipt.findMany({
-      where: {
-        status: { not: "VOIDED" },
-        issuedAt: { gte: trendStart }
-      },
-      select: {
-        totalAmount: true,
-        issuedAt: true,
-        reservation: {
-          select: {
-            items: {
-              select: {
-                subtotal: true,
-                product: {
-                  select: {
-                    category: { select: { name: true } }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    })
+    prisma.$queryRaw<SalesTrendRow[]>`
+      SELECT
+        TO_CHAR("issued_at" AT TIME ZONE 'Asia/Manila', 'YYYY-MM-DD') AS "key",
+        COALESCE(SUM("total_amount"), 0) AS "sales",
+        COUNT(*)::integer AS "receipts"
+      FROM "receipts"
+      WHERE "status" <> 'VOIDED'::"receipt_status"
+        AND "issued_at" >= ${trendStart}
+      GROUP BY TO_CHAR("issued_at" AT TIME ZONE 'Asia/Manila', 'YYYY-MM-DD')
+      ORDER BY "key" ASC
+    `,
+    prisma.$queryRaw<CategorySalesRow[]>`
+      SELECT
+        "categories"."name" AS "category",
+        COALESCE(SUM("reservation_items"."subtotal"), 0) AS "amount"
+      FROM "receipts"
+      INNER JOIN "reservations"
+        ON "reservations"."id" = "receipts"."reservation_id"
+      INNER JOIN "reservation_items"
+        ON "reservation_items"."reservation_id" = "reservations"."id"
+      INNER JOIN "products"
+        ON "products"."id" = "reservation_items"."product_id"
+      INNER JOIN "categories"
+        ON "categories"."id" = "products"."category_id"
+      WHERE "receipts"."status" <> 'VOIDED'::"receipt_status"
+        AND "receipts"."issued_at" >= ${trendStart}
+      GROUP BY "categories"."name"
+      ORDER BY "amount" DESC
+      LIMIT 6
+    `
   ]));
 
-  const totalProducts = products.length;
-  const lowStockItems = products.filter((product) => product.stock <= product.lowStockThreshold).length;
-  const outOfStockItems = products.filter((product) => product.stock <= 0).length;
-  const inventoryValue = products.reduce((sum, product) => sum + toNumber(product.price) * product.stock, 0);
+  const productMetrics = productMetricRows[0];
+  const totalProducts = productMetrics?.totalProducts ?? 0;
+  const lowStockItems = productMetrics?.lowStockItems ?? 0;
+  const outOfStockItems = productMetrics?.outOfStockItems ?? 0;
+  const inventoryValue = toNumber(productMetrics?.inventoryValue);
   const totalReservations = reservationGroups.reduce((sum, group) => sum + group._count._all, 0);
   const pendingReservations = reservationGroups.find((group) => group.status === "PENDING")?._count._all ?? 0;
   const activeUsers = userGroups.reduce((sum, group) => sum + group._count._all, 0);
@@ -130,19 +159,12 @@ export async function getReportSummary() {
   });
 
   const trendByDay = new Map(trendDays.map((day) => [day.key, day]));
-  const categorySales = new Map<string, number>();
-
-  recentReceipts.forEach((receipt) => {
-    const trend = trendByDay.get(dayKey(receipt.issuedAt));
+  salesTrendRows.forEach((row) => {
+    const trend = trendByDay.get(row.key);
     if (trend) {
-      trend.sales += toNumber(receipt.totalAmount);
-      trend.receipts += 1;
+      trend.sales = toNumber(row.sales);
+      trend.receipts = row.receipts;
     }
-
-    receipt.reservation?.items.forEach((item) => {
-      const category = item.product.category.name;
-      categorySales.set(category, (categorySales.get(category) ?? 0) + toNumber(item.subtotal));
-    });
   });
 
   return {
@@ -163,10 +185,7 @@ export async function getReportSummary() {
     totalReceipts,
     activeConversations,
     salesTrend: trendDays,
-    categorySales: Array.from(categorySales.entries())
-      .map(([category, amount]) => ({ category, amount }))
-      .sort((left, right) => right.amount - left.amount)
-      .slice(0, 6),
+    categorySales: categorySalesRows.map((row) => ({ category: row.category, amount: toNumber(row.amount) })),
     reservationStatusDistribution,
     inventoryInsights: [
       {
@@ -186,4 +205,54 @@ export async function getReportSummary() {
       }
     ]
   };
+}
+
+const REPORT_CACHE_TTL_MS = 15_000;
+const REPORT_CACHE_TTL_SECONDS = REPORT_CACHE_TTL_MS / 1_000;
+const REPORT_CACHE_KEY = "summary:v2";
+type ReportSummary = Awaited<ReturnType<typeof buildReportSummary>>;
+
+let cachedReport: { value: ReportSummary; expiresAt: number } | null = null;
+let pendingReport: Promise<ReportSummary> | null = null;
+const reportRuntimeCache = getCache({ namespace: "wescomm-reports" });
+
+function isReportSummary(value: unknown): value is ReportSummary {
+  return Boolean(
+    value
+    && typeof value === "object"
+    && typeof (value as Partial<ReportSummary>).totalSales === "number"
+    && Array.isArray((value as Partial<ReportSummary>).salesTrend)
+  );
+}
+
+export async function invalidateReportSummaryCache() {
+  cachedReport = null;
+  await reportRuntimeCache.delete(REPORT_CACHE_KEY).catch(() => undefined);
+}
+
+export async function getReportSummary() {
+  if (cachedReport && cachedReport.expiresAt > Date.now()) return cachedReport.value;
+  if (pendingReport) return pendingReport;
+
+  pendingReport = (async () => {
+    const regionalValue = await reportRuntimeCache.get(REPORT_CACHE_KEY).catch(() => null);
+    if (isReportSummary(regionalValue)) {
+      cachedReport = { value: regionalValue, expiresAt: Date.now() + REPORT_CACHE_TTL_MS };
+      return regionalValue;
+    }
+
+    const value = await buildReportSummary();
+    cachedReport = { value, expiresAt: Date.now() + REPORT_CACHE_TTL_MS };
+    await reportRuntimeCache.set(REPORT_CACHE_KEY, value, {
+      ttl: REPORT_CACHE_TTL_SECONDS,
+      tags: ["reports"],
+      name: "WESCOMM report summary"
+    }).catch(() => undefined);
+    return value;
+  })()
+    .finally(() => {
+      pendingReport = null;
+    });
+
+  return pendingReport;
 }

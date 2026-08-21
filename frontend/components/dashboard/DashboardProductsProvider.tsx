@@ -13,17 +13,6 @@ type DashboardProductsContextValue = {
 };
 
 const DashboardProductsContext = createContext<DashboardProductsContextValue | null>(null);
-let pendingProductsRequest: Promise<DashboardProducts> | null = null;
-
-function loadDashboardProducts() {
-  if (!pendingProductsRequest) {
-    pendingProductsRequest = getProductsFromApi().finally(() => {
-      pendingProductsRequest = null;
-    });
-  }
-
-  return pendingProductsRequest;
-}
 
 export function DashboardProductsProvider({ children }: { children: ReactNode }) {
   const [products, setProducts] = useState<DashboardProducts>([]);
@@ -41,7 +30,7 @@ export function DashboardProductsProvider({ children }: { children: ReactNode })
         return;
       }
 
-      void loadDashboardProducts()
+      void getProductsFromApi({ fresh: background })
         .then((nextProducts) => {
           if (cancelled) return;
           setProducts(nextProducts);

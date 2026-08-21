@@ -12,13 +12,23 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import {
   cancelMyReservationFromApi,
   createGcashCheckoutFromApi,
-  getReservationsFromApi,
+  getReservationFromApi,
+  getReservationPageFromApi,
   type BackendPaymentMethod,
   type BackendPaymentStatus,
   type BackendPaymentSummary,
   type BackendReservation,
   type BackendReservationStatus
 } from "@/lib/api";
+import {
+  mergeCursorPage,
+  readServerState,
+  reservationCacheKey,
+  type CursorPage,
+  upsertCursorItem,
+  useServerState,
+  writeServerState
+} from "@/lib/server-state";
 import {
   getPaymentIdempotencyKey,
   openTrustedPaymongoCheckout,
@@ -771,57 +781,65 @@ function ReservationDetails({
 }
 
 export function StudentReservationsExperience() {
-  const [savedReservations, setSavedReservations] = useState<StoredReservation[]>([]);
-  const [reservationsOwnerId, setReservationsOwnerId] = useState("");
   const [activeFilter, setActiveFilter] = useState<ReservationFilter>("All");
   const [ready, setReady] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
   const [selectedReservationId, setSelectedReservationId] = useState<string | null>(null);
   const requestSequenceRef = useRef(0);
   const reservationTriggerRef = useRef<HTMLButtonElement | null>(null);
   const { user, ready: authReady, openAuth } = useStudentAuth();
   const accountId = user?.id ?? "";
+  const cacheKey = reservationCacheKey(accountId);
+  const reservationPage = useServerState<CursorPage<BackendReservation>>(cacheKey);
 
-  const loadReservations = useCallback(async ({ background = false }: { background?: boolean } = {}) => {
+  const loadReservations = useCallback(async ({
+    background = false,
+    cursor
+  }: { background?: boolean; cursor?: string } = {}) => {
     if (!authReady) return;
     const requestSequence = ++requestSequenceRef.current;
 
-    if (!background) {
+    if (cursor) setLoadingMore(true);
+    else if (!background) {
       setReady(false);
       setError("");
     }
 
     if (user?.accessToken && accountId) {
       try {
-        const rows = await getReservationsFromApi(user.accessToken);
+        const page = await getReservationPageFromApi(user.accessToken, { limit: 20, cursor });
         if (requestSequence !== requestSequenceRef.current) return;
-        setSavedReservations(mapBackendReservations(rows));
-        setReservationsOwnerId(accountId);
+        writeServerState<CursorPage<BackendReservation>>(cacheKey, (current) =>
+          mergeCursorPage(current, page, cursor ? "append" : background ? "prepend" : "replace")
+        );
       } catch (reservationError) {
         if (requestSequence === requestSequenceRef.current && !background) {
           setError(reservationError instanceof Error ? reservationError.message : "Unable to load reservations.");
-          setSavedReservations([]);
         }
       } finally {
+        if (requestSequence === requestSequenceRef.current && cursor) setLoadingMore(false);
         if (requestSequence === requestSequenceRef.current && !background) setReady(true);
       }
       return;
     }
 
-    setSavedReservations([]);
-    setReservationsOwnerId(accountId);
     if (!background) setReady(true);
-  }, [accountId, authReady, user?.accessToken]);
+  }, [accountId, authReady, cacheKey, user?.accessToken]);
 
   useEffect(() => {
-    setSavedReservations([]);
-    setReservationsOwnerId(accountId);
     setSelectedReservationId(null);
-    void loadReservations();
+    const cached = readServerState<CursorPage<BackendReservation>>(cacheKey);
+    if (cached) {
+      setReady(true);
+      if (Date.now() - cached.updatedAt >= 60_000) void loadReservations({ background: true });
+    } else {
+      void loadReservations();
+    }
     return () => {
       requestSequenceRef.current += 1;
     };
-  }, [accountId, loadReservations]);
+  }, [accountId, cacheKey, loadReservations]);
 
   useEffect(() => {
     if (!authReady || !user?.accessToken) return;
@@ -830,7 +848,7 @@ export function StudentReservationsExperience() {
       if (document.visibilityState === "visible") void loadReservations({ background: true });
     };
 
-    const interval = window.setInterval(refreshInBackground, 12000);
+    const interval = window.setInterval(refreshInBackground, 60000);
     window.addEventListener("focus", refreshInBackground);
     document.addEventListener("visibilitychange", refreshInBackground);
 
@@ -841,10 +859,7 @@ export function StudentReservationsExperience() {
     };
   }, [accountId, authReady, loadReservations, user?.accessToken]);
 
-  const reservations = useMemo(
-    () => reservationsOwnerId === accountId ? savedReservations : [],
-    [accountId, reservationsOwnerId, savedReservations]
-  );
+  const reservations = useMemo(() => mapBackendReservations(reservationPage?.items ?? []), [reservationPage]);
 
   const filteredReservations = useMemo(
     () => activeFilter === "All"
@@ -860,17 +875,20 @@ export function StudentReservationsExperience() {
   const openReservationDetails = useCallback((reservationId: string, trigger: HTMLButtonElement) => {
     reservationTriggerRef.current = trigger;
     setSelectedReservationId(reservationId);
-  }, []);
+    if (user?.accessToken) {
+      void getReservationFromApi(user.accessToken, reservationId)
+        .then((reservation) => upsertCursorItem(cacheKey, reservation))
+        .catch(() => undefined);
+    }
+  }, [cacheKey, user?.accessToken]);
 
   const closeReservationDetails = useCallback(() => setSelectedReservationId(null), []);
 
   const handleReservationCancelled = useCallback((updatedReservation: BackendReservation) => {
     const mappedReservation = mapBackendReservations([updatedReservation])[0];
     if (!mappedReservation) return;
-    setSavedReservations((currentReservations) => currentReservations.map((reservation) => (
-      reservation.id === mappedReservation.id ? mappedReservation : reservation
-    )));
-  }, []);
+    upsertCursorItem(cacheKey, updatedReservation);
+  }, [cacheKey]);
 
   return (
     <>
@@ -966,6 +984,18 @@ export function StudentReservationsExperience() {
                 </Button>
               </div>
             )}
+            {reservationPage?.nextCursor ? (
+              <div className="flex justify-center pt-2">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={loadingMore}
+                  onClick={() => void loadReservations({ cursor: reservationPage.nextCursor ?? undefined })}
+                >
+                  {loadingMore ? "Loading more..." : "Load more reservations"}
+                </Button>
+              </div>
+            ) : null}
           </section>
         </>
       ) : (

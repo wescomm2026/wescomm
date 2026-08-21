@@ -5,6 +5,7 @@ import type { AppRole } from "../types/app.js";
 import { HttpError } from "../utils/http-error.js";
 import { decryptSensitiveText } from "../utils/field-encryption.js";
 import { withTransientPrismaReadRetry } from "../utils/prisma-retry.js";
+import { createPage, decodeCursor, normalizePageLimit } from "../utils/cursor-pagination.js";
 
 const ADMIN_ROLE_LOCK_NAMESPACE = 1_464_161_091;
 const ADMIN_ROLE_LOCK_KEY = 1;
@@ -49,24 +50,57 @@ function mapUser(row: {
   };
 }
 
-export async function listUsers() {
-  const users = await withTransientPrismaReadRetry(() => prisma.profile.findMany({
-    orderBy: { createdAt: "desc" },
-    select: {
-      id: true,
-      fullName: true,
-      email: true,
-      studentNumber: true,
-      phone: true,
-      department: true,
-      role: true,
-      avatarUrl: true,
-      createdAt: true,
-      updatedAt: true
-    }
-  }));
+export async function listUsers(options: {
+  query?: string;
+  role?: AppRole;
+  cursor?: string;
+  limit?: number;
+} = {}) {
+  const limit = normalizePageLimit(options.limit);
+  const cursorId = decodeCursor(options.cursor);
+  const where: Prisma.ProfileWhereInput = {};
+  if (options.role) where.role = options.role as PrismaAppRole;
+  if (options.query?.trim()) {
+    const query = options.query.trim();
+    where.OR = [
+      { fullName: { contains: query, mode: "insensitive" } },
+      { email: { contains: query, mode: "insensitive" } },
+      { studentNumber: { contains: query, mode: "insensitive" } },
+      { department: { contains: query, mode: "insensitive" } }
+    ];
+  }
 
-  return users.map(mapUser);
+  const [users, roleGroups] = await withTransientPrismaReadRetry(() => prisma.$transaction([
+    prisma.profile.findMany({
+      where,
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      ...(cursorId ? { cursor: { id: cursorId }, skip: 1 } : {}),
+      take: limit + 1,
+      select: {
+        id: true,
+        fullName: true,
+        email: true,
+        studentNumber: true,
+        phone: true,
+        department: true,
+        role: true,
+        avatarUrl: true,
+        createdAt: true,
+        updatedAt: true
+      }
+    }),
+    prisma.profile.groupBy({ by: ["role"], _count: { _all: true } })
+  ]));
+
+  const roleCounts = Object.fromEntries(roleGroups.map((group) => [group.role, group._count._all]));
+  return {
+    ...createPage(users.map(mapUser), limit),
+    roleCounts: {
+      students: roleCounts.STUDENT ?? 0,
+      staff: roleCounts.STAFF ?? 0,
+      admins: roleCounts.ADMIN ?? 0
+    }
+  };
 }
 
 export async function listStaffVisibleUsers() {
@@ -107,7 +141,8 @@ export async function updateUserRoleWithDependencies(
     // commits. The lock is released automatically on commit or rollback and is
     // safe with transaction-pooled PostgreSQL connections.
     await transaction.$queryRaw`
-      SELECT pg_advisory_xact_lock(
+      SELECT 1::integer AS "locked"
+      FROM pg_advisory_xact_lock(
         CAST(${ADMIN_ROLE_LOCK_NAMESPACE} AS integer),
         CAST(${ADMIN_ROLE_LOCK_KEY} AS integer)
       )

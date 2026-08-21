@@ -14,6 +14,7 @@ import {
 import { type AppRole, type Profile, type RawProfile, mapProfile } from "../types/app.js";
 import { isEmailAllowedForDomains, normalizeAllowedEmailDomains } from "../utils/auth-email-policy.js";
 import { HttpError } from "../utils/http-error.js";
+import { recordRequestTiming } from "./request-timing.js";
 
 export type AuthContext = {
   id: string;
@@ -60,6 +61,7 @@ async function loadProfileById(id: string) {
 }
 
 export async function requireAuth(request: AuthenticatedRequest, response: Response, next: NextFunction) {
+  const authStartedAt = performance.now();
   try {
     response.setHeader("Cache-Control", "no-store");
     response.setHeader("Pragma", "no-cache");
@@ -186,5 +188,7 @@ export async function requireAuth(request: AuthenticatedRequest, response: Respo
     return next();
   } catch (error) {
     return next(error);
+  } finally {
+    recordRequestTiming(response, "auth", performance.now() - authStartedAt);
   }
 }

@@ -201,6 +201,8 @@ model Profile {
   wishlistItems         WishlistItem[]
   auditLogs             AuditLog[]                  @relation("AuditActor")
 
+  @@index([createdAt(sort: Desc), id(sort: Desc)])
+  @@index([role, createdAt(sort: Desc), id(sort: Desc)])
   @@map("profiles")
 }
 
@@ -254,6 +256,7 @@ model Product {
   wishlistItems     WishlistItem[]
 
   @@index([isActive, status])
+  @@index([isActive, name, id])
   @@map("products")
 }
 
@@ -311,8 +314,8 @@ model Reservation {
   idempotencyRequest ReservationIdempotencyKey?
   onlinePayment      OnlinePayment?
 
-  @@index([studentId, createdAt(sort: Desc)])
-  @@index([status, createdAt(sort: Desc)])
+  @@index([studentId, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([status, createdAt(sort: Desc), id(sort: Desc)])
   @@map("reservations")
 }
 
@@ -502,8 +505,8 @@ model Receipt {
   reservation      Reservation?  @relation(fields: [reservationId], references: [id], onDelete: SetNull)
   issuedBy         Profile?      @relation("IssuedReceipts", fields: [issuedById], references: [id], onDelete: SetNull)
 
-  @@index([studentId, issuedAt(sort: Desc)])
-  @@index([status, issuedAt(sort: Desc)])
+  @@index([studentId, issuedAt(sort: Desc), id(sort: Desc)])
+  @@index([status, issuedAt(sort: Desc), id(sort: Desc)])
   @@index([reservationId])
   @@map("receipts")
 }
@@ -531,16 +534,34 @@ model AuditLog {
   action     String
   entityType String   @map("entity_type")
   entityId   String?  @map("entity_id")
+  dedupeKey  String?  @unique @map("dedupe_key")
   summary    String
   metadata   Json     @default("{}")
   createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   actor      Profile? @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
 
-  @@index([createdAt(sort: Desc)])
+  @@index([createdAt(sort: Desc), id(sort: Desc)])
   @@index([actorId])
   @@index([action])
   @@index([entityType, entityId])
   @@map("audit_logs")
+}
+
+model OutboxEvent {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  type         String
+  entityId     String?   @map("entity_id") @db.Uuid
+  payload      Json
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  availableAt  DateTime  @default(now()) @map("available_at") @db.Timestamptz(6)
+  lockedAt     DateTime? @map("locked_at") @db.Timestamptz(6)
+  processedAt  DateTime? @map("processed_at") @db.Timestamptz(6)
+  attemptCount Int       @default(0) @map("attempt_count")
+  lastError    String?   @map("last_error")
+
+  @@index([processedAt, availableAt, createdAt])
+  @@index([type, entityId])
+  @@map("outbox_events")
 }
 
 model WishlistItem {
