@@ -11,8 +11,8 @@
       "buildCommand": "npm run build && npm prune --omit=dev --ignore-scripts",
       "entrypoint": "app.cjs",
       "functions": {
-        "app.cjs": {
-          "includeFiles": "{.vercel-bundle/**,node_modules/**,prisma/schema.prisma}"
+        "**": {
+          "includeFiles": "node_modules/**"
         }
       }
     }
