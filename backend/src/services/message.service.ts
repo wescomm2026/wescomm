@@ -76,7 +76,7 @@ const messageSelect = `
   sender:profiles!conversation_messages_sender_id_fkey(id,full_name,email,student_number)
 `;
 
-const conversationSelect = `
+const conversationBaseSelect = `
   id,
   student_id,
   assigned_staff_id,
@@ -96,7 +96,11 @@ const conversationSelect = `
   created_at,
   updated_at,
   student:profiles!conversations_student_id_fkey(id,full_name,email,student_number),
-  assignedStaff:profiles!conversations_assigned_staff_id_fkey(id,full_name,email,student_number),
+  assignedStaff:profiles!conversations_assigned_staff_id_fkey(id,full_name,email,student_number)
+`;
+
+const conversationListSelect = `
+  ${conversationBaseSelect},
   messages:conversation_messages(${messageSelect})
 `;
 
@@ -176,13 +180,34 @@ function mapConversation(row: RawConversation, viewerId?: string) {
 async function requireConversation(conversationId: string, viewerId?: string) {
   const { data, error } = await supabaseAdmin
     .from("conversations")
-    .select(conversationSelect)
+    .select(conversationBaseSelect)
     .eq("id", conversationId)
     .maybeSingle();
 
   if (error) throw HttpError.fromSupabase(error);
   if (!data) throw new HttpError(404, "Conversation not found.");
   return mapConversation(data as unknown as RawConversation, viewerId);
+}
+
+async function loadRecentConversationMessages(conversationId: string, limit = 50) {
+  const { data, error } = await supabaseAdmin
+    .from("conversation_messages")
+    .select(messageSelect)
+    .eq("conversation_id", conversationId)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (error) throw HttpError.fromSupabase(error);
+  return ((data ?? []) as unknown as RawConversationMessage[])
+    .map(mapMessage)
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+}
+
+function withMessages<T extends Awaited<ReturnType<typeof requireConversation>>>(
+  conversation: T,
+  messages: Awaited<ReturnType<typeof loadRecentConversationMessages>>
+) {
+  return { ...conversation, messages };
 }
 
 function assertConversationAccess(conversation: Awaited<ReturnType<typeof requireConversation>>, userId: string, role: AppRole) {
@@ -220,7 +245,8 @@ async function notifyStaffQueue(conversation: Awaited<ReturnType<typeof requireC
   await createNotificationsForRoles(["STAFF", "ADMIN"], {
     type: "MESSAGE",
     title: "Student waiting for Staff",
-    message: `${conversation.student?.fullName || conversation.student?.email || "A student"} requested human support for ${conversation.subject}.`
+    message: `${conversation.student?.fullName || conversation.student?.email || "A student"} requested human support for ${conversation.subject}.`,
+    actionUrl: `/staff/messages?conversationId=${encodeURIComponent(conversation.id)}`
   });
 }
 
@@ -261,7 +287,7 @@ async function moveConversationToStaffQueue(input: {
       updated_at: now
     })
     .eq("id", input.conversation.id)
-    .select(conversationSelect)
+    .select(conversationBaseSelect)
     .single();
 
   if (error) throw HttpError.fromSupabase(error);
@@ -278,7 +304,12 @@ async function moveConversationToStaffQueue(input: {
   return updated;
 }
 
-async function createBotReply(conversationId: string, studentId: string, userMessage: string) {
+async function createBotReply(
+  conversationId: string,
+  studentId: string,
+  userMessage: string,
+  replyToMessageId?: string
+) {
   const conversation = await requireConversation(conversationId, studentId);
   if (!env.WESBOT_ENABLED || conversation.mode !== "BOT_ACTIVE" || conversation.status === "RESOLVED") return null;
 
@@ -311,6 +342,7 @@ async function createBotReply(conversationId: string, studentId: string, userMes
     intent: reply.intent,
     metadata: {
       automated: true,
+      ...(replyToMessageId ? { replyToMessageId } : {}),
       sources: reply.sourceReferences,
       staffRecommended: reply.staffRecommended,
       usedAi: reply.usedAi
@@ -331,7 +363,10 @@ async function createBotReply(conversationId: string, studentId: string, userMes
   if (updateError) throw HttpError.fromSupabase(updateError);
 
   if (reply.handoffRequested) {
-    const refreshed = await requireConversation(conversationId, studentId);
+    const refreshed = withMessages(
+      await requireConversation(conversationId, studentId),
+      await loadRecentConversationMessages(conversationId)
+    );
     await moveConversationToStaffQueue({
       conversation: refreshed,
       reason: "Student explicitly requested a real Staff member.",
@@ -342,14 +377,86 @@ async function createBotReply(conversationId: string, studentId: string, userMes
   return botMessage;
 }
 
-export async function listConversations(userId: string, role: AppRole) {
-  let query = supabaseAdmin.from("conversations").select(conversationSelect).order("updated_at", { ascending: false });
+export async function createBotReplyForMessage(input: {
+  conversationId: string;
+  messageId: string;
+  studentId: string;
+}) {
+  const conversation = await requireConversation(input.conversationId, input.studentId);
+  assertConversationAccess(conversation, input.studentId, "STUDENT");
+
+  const { data: existingData, error: existingError } = await supabaseAdmin
+    .from("conversation_messages")
+    .select(messageSelect)
+    .eq("conversation_id", input.conversationId)
+    .eq("sender_type", "BOT")
+    .contains("metadata", { replyToMessageId: input.messageId })
+    .limit(1)
+    .maybeSingle();
+  if (existingError) throw HttpError.fromSupabase(existingError);
+  if (existingData) return mapMessage(existingData as unknown as RawConversationMessage);
+
+  const { data: sourceData, error: sourceError } = await supabaseAdmin
+    .from("conversation_messages")
+    .select(messageSelect)
+    .eq("id", input.messageId)
+    .eq("conversation_id", input.conversationId)
+    .eq("sender_id", input.studentId)
+    .eq("sender_type", "STUDENT")
+    .maybeSingle();
+  if (sourceError) throw HttpError.fromSupabase(sourceError);
+  if (!sourceData) throw new HttpError(404, "Student message not found.");
+  const sourceMessage = mapMessage(sourceData as unknown as RawConversationMessage);
+  return createBotReply(input.conversationId, input.studentId, sourceMessage.message, input.messageId);
+}
+
+export async function listConversations(userId: string, role: AppRole, limit = 50) {
+  let query = supabaseAdmin
+    .from("conversations")
+    .select(conversationListSelect)
+    .order("updated_at", { ascending: false })
+    .order("created_at", { referencedTable: "conversation_messages", ascending: false })
+    .limit(1, { referencedTable: "conversation_messages" })
+    .limit(Math.min(Math.max(limit, 1), 50));
   if (role === "STUDENT") query = query.eq("student_id", userId);
 
   const { data, error } = await query;
   if (error) throw HttpError.fromSupabase(error);
   const conversations = ((data ?? []) as unknown as RawConversation[]).map((conversation) => mapConversation(conversation, userId));
   return role === "STUDENT" ? conversations.filter((conversation) => conversation.studentId === userId) : conversations;
+}
+
+export async function listConversationMessages(input: {
+  conversationId: string;
+  userId: string;
+  role: AppRole;
+  limit?: number;
+  before?: string;
+  after?: string;
+}) {
+  const conversation = await requireConversation(input.conversationId, input.userId);
+  assertConversationAccess(conversation, input.userId, input.role);
+  const limit = Math.min(Math.max(input.limit ?? 50, 1), 100);
+  let query = supabaseAdmin
+    .from("conversation_messages")
+    .select(messageSelect)
+    .eq("conversation_id", input.conversationId)
+    .order("created_at", { ascending: input.after ? true : false })
+    .limit(limit + 1);
+
+  if (input.before) query = query.lt("created_at", input.before);
+  if (input.after) query = query.gt("created_at", input.after);
+
+  const { data, error } = await query;
+  if (error) throw HttpError.fromSupabase(error);
+  const rows = (data ?? []) as unknown as RawConversationMessage[];
+  const hasMore = rows.length > limit;
+  const messages = rows.slice(0, limit).map(mapMessage).sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+  return {
+    messages,
+    nextCursor: !input.after && hasMore ? messages[0]?.createdAt ?? null : null,
+    typingUsers: getTypingUsers(input.conversationId, input.userId)
+  };
 }
 
 export async function createConversation(input: { studentId: string; subject: string; message: string }) {
@@ -370,21 +477,23 @@ export async function createConversation(input: { studentId: string; subject: st
   if (conversationError) throw HttpError.fromSupabase(conversationError);
 
   const conversation = conversationData as { id: string };
-  await insertConversationMessage({
+  const message = await insertConversationMessage({
     conversationId: conversation.id,
     senderId: input.studentId,
     senderType: "STUDENT",
     message: input.message
   });
 
-  if (env.WESBOT_ENABLED) {
-    await createBotReply(conversation.id, input.studentId, input.message);
-  } else {
+  if (!env.WESBOT_ENABLED) {
     const created = await requireConversation(conversation.id, input.studentId);
     await notifyStaffQueue(created);
   }
 
-  return requireConversation(conversation.id, input.studentId);
+  return {
+    conversation: withMessages(await requireConversation(conversation.id, input.studentId), [message]),
+    message,
+    botReplyPending: env.WESBOT_ENABLED
+  };
 }
 
 export async function createMessage(input: {
@@ -446,14 +555,16 @@ export async function createMessage(input: {
   if (updateError) throw HttpError.fromSupabase(updateError);
 
   let botMessage = null;
+  let botReplyPending = false;
   if (isStudent) {
     if (conversation.mode === "BOT_ACTIVE" && env.WESBOT_ENABLED) {
-      botMessage = await createBotReply(input.conversationId, input.senderId, input.message);
+      botReplyPending = true;
     } else {
       await createNotificationsForRoles(["STAFF", "ADMIN"], {
         type: "MESSAGE",
         title: conversation.mode === "WAITING_FOR_STAFF" ? "Student replied while waiting" : "Student replied to Staff",
-        message: `${conversation.student?.fullName || conversation.student?.email || "A student"} sent a support reply.`
+        message: `${conversation.student?.fullName || conversation.student?.email || "A student"} sent a support reply.`,
+        actionUrl: `/staff/messages?conversationId=${encodeURIComponent(conversation.id)}`
       });
     }
   } else {
@@ -461,7 +572,8 @@ export async function createMessage(input: {
       userId: conversation.studentId,
       type: "MESSAGE",
       title: "Staff replied",
-      message: `Commissary Staff replied to ${conversation.subject}.`
+      message: `Commissary Staff replied to ${conversation.subject}.`,
+      actionUrl: `/student/support?conversationId=${encodeURIComponent(conversation.id)}`
     });
     await safelyRecordAuditLog({
       actorId: input.senderId,
@@ -476,7 +588,11 @@ export async function createMessage(input: {
   return {
     message,
     botMessage,
-    conversation: await requireConversation(input.conversationId, input.senderId)
+    botReplyPending,
+    conversation: withMessages(
+      await requireConversation(input.conversationId, input.senderId),
+      [message, ...(botMessage ? [botMessage] : [])]
+    )
   };
 }
 
@@ -519,7 +635,7 @@ export async function acceptConversation(input: { conversationId: string; staffI
     .eq("status", "OPEN")
     .eq("mode", "WAITING_FOR_STAFF");
   query = conversation.assignedStaffId ? query.eq("assigned_staff_id", input.staffId) : query.is("assigned_staff_id", null);
-  const { data, error } = await query.select(conversationSelect).maybeSingle();
+  const { data, error } = await query.select(conversationBaseSelect).maybeSingle();
   if (error) throw HttpError.fromSupabase(error);
   if (!data) throw new HttpError(409, "Another Staff member accepted this conversation first.", "CONVERSATION_ALREADY_ASSIGNED");
 
@@ -607,7 +723,7 @@ export async function updateConversationStatus(input: {
       updated_at: now
     })
     .eq("id", input.conversationId)
-    .select(conversationSelect)
+    .select(conversationBaseSelect)
     .single();
   if (error) throw HttpError.fromSupabase(error);
 

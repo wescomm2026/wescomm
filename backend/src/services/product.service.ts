@@ -7,6 +7,8 @@ export type ProductFilters = {
   category?: string;
   status?: ProductStatus;
   sort?: string;
+  candidateTerms?: string[];
+  limit?: number;
 };
 
 type RawCategory = {
@@ -70,12 +72,26 @@ function mapProduct(product: RawProduct) {
 }
 
 export async function listProducts(filters: ProductFilters) {
-  const { data, error } = await supabaseAdmin
+  let databaseQuery = supabaseAdmin
     .from("products")
     .select(
       "id,name,description,image_url,price,old_price,status,stock,is_active,created_at,category:categories(id,name,slug,icon_url),variants:product_variants(option_name,option_value,stock)"
     )
     .eq("is_active", true);
+
+  const candidateTerms = (filters.candidateTerms ?? [])
+    .map((term) => term.toLowerCase().replace(/[^a-z0-9-]/g, ""))
+    .filter((term) => term.length >= 2)
+    .slice(0, 6);
+  if (candidateTerms.length) {
+    databaseQuery = databaseQuery.or(candidateTerms.flatMap((term) => [
+      `name.ilike.%${term}%`,
+      `description.ilike.%${term}%`
+    ]).join(","));
+  }
+  if (filters.limit) databaseQuery = databaseQuery.limit(Math.min(Math.max(filters.limit, 1), 50));
+
+  const { data, error } = await databaseQuery;
 
   if (error) throw HttpError.fromSupabase(error);
 

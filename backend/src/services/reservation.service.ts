@@ -219,7 +219,7 @@ function dispatchReservationPushNotifications(notifications: ReservationPushNoti
 async function createReservationCreatedNotifications(input: {
   studentId: string;
   referenceCode: string;
-  lowStockAlerts: Array<{ productName: string; newStock: number }>;
+  lowStockAlerts: Array<{ productId: string; productName: string; newStock: number }>;
 }) {
   try {
     const staffAndAdmins = await prisma.profile.findMany({
@@ -232,20 +232,23 @@ async function createReservationCreatedNotifications(input: {
         userId: input.studentId,
         type: "RESERVATION",
         title: "Reservation submitted",
-        message: `${input.referenceCode} was submitted and is waiting for staff confirmation.`
+        message: `${input.referenceCode} was submitted and is waiting for staff confirmation.`,
+        actionUrl: "/student/reservations"
       },
       ...staffAndAdmins.map((profile) => ({
         userId: profile.id,
         type: "RESERVATION" as const,
         title: "New student reservation",
-        message: `${input.referenceCode} needs review and confirmation.`
+        message: `${input.referenceCode} needs review and confirmation.`,
+        actionUrl: `/staff/reservations?query=${encodeURIComponent(input.referenceCode)}`
       })),
       ...input.lowStockAlerts.flatMap((alert) =>
         staffAndAdmins.map((profile) => ({
           userId: profile.id,
           type: "LOW_STOCK" as const,
           title: `Low stock: ${alert.productName}`,
-          message: `${alert.productName} dropped to ${alert.newStock} pcs after reservation ${input.referenceCode}.`
+          message: `${alert.productName} dropped to ${alert.newStock} pcs after reservation ${input.referenceCode}.`,
+          actionUrl: `/staff/inventory?productId=${encodeURIComponent(alert.productId)}`
         }))
       )
     ];
@@ -423,9 +426,15 @@ const reservationSelect = `
   )
 `;
 
-export async function listReservations(userId: string, role: AppRole) {
+export async function listReservations(
+  userId: string,
+  role: AppRole,
+  options: { referenceCode?: string; limit?: number } = {}
+) {
   let query = supabaseAdmin.from("reservations").select(reservationSelect).order("created_at", { ascending: false });
   if (role === "STUDENT") query = query.eq("student_id", userId);
+  if (options.referenceCode) query = query.eq("reference_code", options.referenceCode);
+  if (options.limit) query = query.limit(Math.min(Math.max(options.limit, 1), 50));
 
   const { data, error } = await query;
   if (error) throw HttpError.fromSupabase(error);
@@ -606,7 +615,7 @@ export async function createReservation(input: {
           select: { id: true }
         });
 
-        const lowStockAlerts: Array<{ productName: string; newStock: number }> = [];
+        const lowStockAlerts: Array<{ productId: string; productName: string; newStock: number }> = [];
 
         for (const [productId, quantity] of requestedQuantityByProduct.entries()) {
           const product = products.find((entry) => entry.id === productId)!;
@@ -644,7 +653,7 @@ export async function createReservation(input: {
           });
 
           if (newStock <= product.lowStockThreshold && product.stock > product.lowStockThreshold) {
-            lowStockAlerts.push({ productName: product.name, newStock });
+            lowStockAlerts.push({ productId: product.id, productName: product.name, newStock });
           }
         }
 

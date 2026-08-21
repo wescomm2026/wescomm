@@ -53,6 +53,18 @@ const groundedAnswerTool = tool({
   execute: async (_input, { context }) => context
 });
 
+const PRODUCT_QUERY_STOP_WORDS = new Set([
+  "available", "availability", "check", "item", "product", "price", "stock", "piece", "pieces",
+  "please", "preferred", "size", "pangalan", "ito", "ang", "ba", "po", "ako", "can", "you", "the",
+  "what", "much", "magkano", "meron", "may", "gusto", "need"
+]);
+
+function productCandidateTerms(message: string) {
+  return tokenizeWesbotText(message)
+    .filter((token) => token.length >= 3 && !PRODUCT_QUERY_STOP_WORDS.has(token))
+    .slice(0, 6);
+}
+
 function createWesbotAgent(grounded: GroundedAnswer, studentId: string) {
   return new ToolLoopAgent({
     model: env.WESBOT_MODEL,
@@ -349,19 +361,30 @@ async function buildGroundedAnswer(input: {
   let sourceReferences: string[];
 
   if (intent === "PRODUCT_INQUIRY") {
-    const products = await listProducts({});
+    const candidateTerms = productCandidateTerms(input.message);
+    const products = candidateTerms.length
+      ? await listProducts({ candidateTerms, limit: 25 })
+      : [];
     const answer = productAnswer(products, input.message);
     draft = answer.draft;
     sourceReferences = answer.sourceReferences;
   } else if (intent === "RESERVATION_STATUS" || intent === "CANCELLATION_ELIGIBILITY" || intent === "PAYMENT_STATUS" || intent === "PICKUP_INFORMATION") {
-    const reservations = await listReservations(input.studentId, "STUDENT");
+    const referenceCode = extractReservationReference(input.message) ?? undefined;
+    const reservations = await listReservations(input.studentId, "STUDENT", {
+      referenceCode,
+      limit: referenceCode ? 1 : 3
+    });
     if (intent === "CANCELLATION_ELIGIBILITY") draft = cancellationAnswer(reservations, input.message);
     else if (intent === "PAYMENT_STATUS") draft = paymentAnswer(reservations, input.message);
     else if (intent === "PICKUP_INFORMATION") draft = pickupAnswer(reservations, input.message);
     else draft = reservationStatusAnswer(reservations, input.message);
     sourceReferences = ["account:reservations"];
   } else if (intent === "RECEIPT_STATUS") {
-    const receipts = await listReceipts(input.studentId, "STUDENT");
+    const receiptCode = extractReceiptCode(input.message) ?? undefined;
+    const receipts = await listReceipts(input.studentId, "STUDENT", {
+      receiptCode,
+      limit: receiptCode ? 1 : 3
+    });
     draft = receiptAnswer(receipts, input.message);
     sourceReferences = ["account:receipts"];
   } else {

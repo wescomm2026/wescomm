@@ -448,6 +448,43 @@ export type BackendReportSummary = {
   }>;
 };
 
+export type BackendDashboardProduct = {
+  id: string;
+  categoryId: string;
+  name: string;
+  description?: string | null;
+  imageUrl?: string | null;
+  price: string | number;
+  oldPrice?: string | number | null;
+  status: "IN_STOCK" | "RESTOCK_SOON" | "OUT_OF_STOCK" | "ON_SALE";
+  stock: number;
+  lowStockThreshold: number;
+  isActive: boolean;
+  category?: BackendCategory | null;
+};
+
+export type BackendStaffDashboard = {
+  metrics: {
+    totalProducts: number;
+    itemsToRestock: number;
+    pendingReservations: number;
+    activeReservations: number;
+    receiptsToVerify: number;
+    openConversations: number;
+  };
+  products: BackendDashboardProduct[];
+  reservations: BackendReservation[];
+  receipts: BackendReceipt[];
+};
+
+export type BackendGlobalSearchResult = {
+  id: string;
+  type: "PRODUCT" | "RESERVATION" | "RECEIPT" | "CONVERSATION";
+  title: string;
+  subtitle: string;
+  section: "inventory" | "reservations" | "receipt-verification" | "messages";
+};
+
 export type BackendAuditLog = {
   id: string;
   actorId: string | null;
@@ -775,9 +812,20 @@ export async function voidReceiptFromApi(token: string, receiptId: string, reaso
   return data.receipt;
 }
 
-export async function getNotificationsFromApi(token: string) {
-  const data = await authApiFetch<{ notifications: BackendNotification[] }>("/notifications", token);
-  return data.notifications;
+export async function getNotificationsFromApi(token: string, options: { limit?: number; before?: string } = {}) {
+  const params = new URLSearchParams();
+  if (options.limit) params.set("limit", String(options.limit));
+  if (options.before) params.set("before", options.before);
+  const query = params.toString();
+  return authApiFetch<{ notifications: BackendNotification[]; nextCursor: string | null }>(
+    `/notifications${query ? `?${query}` : ""}`,
+    token
+  );
+}
+
+export async function getUnreadNotificationCountFromApi(token: string) {
+  const data = await authApiFetch<{ unreadCount: number }>("/notifications/unread-count", token);
+  return data.unreadCount;
 }
 
 export async function getPushPublicConfigFromApi() {
@@ -813,34 +861,64 @@ export async function markNotificationReadFromApi(token: string, notificationId:
 }
 
 export async function markAllNotificationsReadFromApi(token: string) {
-  const data = await authApiFetch<{ notifications: BackendNotification[] }>("/notifications/read-all", token, {
+  const data = await authApiFetch<{ updatedCount: number }>("/notifications/read-all", token, {
     method: "PATCH"
   });
-  return data.notifications;
+  return data.updatedCount;
 }
 
 export async function getConversationsFromApi(token: string) {
-  const data = await authApiFetch<{ conversations: BackendConversation[] }>("/conversations", token);
+  const data = await authApiFetch<{ conversations: BackendConversation[] }>("/conversations?limit=50", token);
   return data.conversations;
 }
 
+export async function getConversationMessagesFromApi(
+  token: string,
+  conversationId: string,
+  options: { limit?: number; before?: string; after?: string } = {}
+) {
+  const params = new URLSearchParams();
+  if (options.limit) params.set("limit", String(options.limit));
+  if (options.before) params.set("before", options.before);
+  if (options.after) params.set("after", options.after);
+  const query = params.toString();
+  return authApiFetch<{
+    messages: BackendConversationMessage[];
+    nextCursor: string | null;
+    typingUsers: BackendTypingUser[];
+  }>(`/conversations/${conversationId}/messages${query ? `?${query}` : ""}`, token);
+}
+
 export async function createConversationFromApi(token: string, payload: { subject: string; message: string }) {
-  const data = await authApiFetch<{ conversation: BackendConversation }>("/conversations", token, {
+  return authApiFetch<{
+    conversation: BackendConversation;
+    message: BackendConversationMessage;
+    botReplyPending: boolean;
+  }>("/conversations", token, {
     method: "POST",
     body: JSON.stringify(payload)
   });
-  return data.conversation;
 }
 
 export async function sendConversationMessageFromApi(token: string, conversationId: string, message: string) {
   return authApiFetch<{
     message: BackendConversationMessage;
     botMessage: BackendConversationMessage | null;
+    botReplyPending: boolean;
     conversation: BackendConversation;
   }>(`/conversations/${conversationId}/messages`, token, {
     method: "POST",
     body: JSON.stringify({ message })
   });
+}
+
+export async function requestConversationBotReplyFromApi(token: string, conversationId: string, messageId: string) {
+  const data = await authApiFetch<{ botMessage: BackendConversationMessage | null }>(
+    `/conversations/${conversationId}/messages/${messageId}/bot-reply`,
+    token,
+    { method: "POST" }
+  );
+  return data.botMessage;
 }
 
 export async function requestConversationHandoffFromApi(token: string, conversationId: string, reason?: string) {
@@ -893,6 +971,20 @@ export async function getAdminReportSummaryFromApi(token: string) {
 export async function getStaffReportSummaryFromApi(token: string) {
   const data = await authApiFetch<{ summary: BackendReportSummary }>("/staff/reports/summary", token);
   return data.summary;
+}
+
+export async function getStaffDashboardSummaryFromApi(token: string) {
+  const data = await authApiFetch<{ dashboard: BackendStaffDashboard }>("/staff/dashboard/summary", token);
+  return data.dashboard;
+}
+
+export async function searchStaffWorkspaceFromApi(token: string, query: string, role: "STAFF" | "ADMIN") {
+  const routeBase = role === "ADMIN" ? "/admin" : "/staff";
+  const data = await authApiFetch<{ results: BackendGlobalSearchResult[] }>(
+    `${routeBase}/search?query=${encodeURIComponent(query)}`,
+    token
+  );
+  return data.results;
 }
 
 export async function getAdminUsersFromApi(token: string) {

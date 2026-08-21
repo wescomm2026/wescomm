@@ -133,7 +133,7 @@ function useAdminSummary() {
       if (document.visibilityState === "visible") void loadSummary({ background: true });
     };
 
-    const interval = window.setInterval(refresh, 20000);
+    const interval = window.setInterval(refresh, 60000);
     window.addEventListener("focus", refresh);
     document.addEventListener("visibilitychange", refresh);
 
@@ -634,7 +634,7 @@ export function AdminAuditLogsExperience() {
       if (document.visibilityState === "visible") void loadLogs({ background: true });
     };
 
-    const interval = window.setInterval(refresh, 20000);
+    const interval = window.setInterval(refresh, 60000);
     window.addEventListener("focus", refresh);
     document.addEventListener("visibilitychange", refresh);
 

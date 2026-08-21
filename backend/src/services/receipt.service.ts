@@ -252,9 +252,15 @@ async function getReceiptByIdOrThrow(receiptId: string) {
   return mapReceipt(data as unknown as RawReceipt);
 }
 
-export async function listReceipts(userId: string, role: AppRole) {
+export async function listReceipts(
+  userId: string,
+  role: AppRole,
+  options: { receiptCode?: string; limit?: number } = {}
+) {
   let query = supabaseAdmin.from("receipts").select(receiptSelect).order("issued_at", { ascending: false });
   if (role === "STUDENT") query = query.eq("student_id", userId);
+  if (options.receiptCode) query = query.eq("receipt_code", options.receiptCode);
+  if (options.limit) query = query.limit(Math.min(Math.max(options.limit, 1), 50));
 
   const { data, error } = await query;
   if (error) throw HttpError.fromSupabase(error);
@@ -373,12 +379,14 @@ export async function createReceiptForReservation(reservationId: string, issuedB
       userId: reservation.student_id,
       type: "RECEIPT",
       title: "Digital receipt generated",
-      message: `${receipt.receiptCode} was created for ${reservation.reference_code} and is waiting for verification.`
+      message: `${receipt.receiptCode} was created for ${reservation.reference_code} and is waiting for verification.`,
+      actionUrl: "/student/receipts"
     }),
     createNotificationsForRoles(["STAFF", "ADMIN"], {
       type: "RECEIPT",
       title: "Receipt needs verification",
-      message: `${receipt.receiptCode} was generated for ${reservation.reference_code}.`
+      message: `${receipt.receiptCode} was generated for ${reservation.reference_code}.`,
+      actionUrl: `/staff/receipt-verification?receiptId=${encodeURIComponent(receipt.id)}`
     })
   ]);
 

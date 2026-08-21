@@ -6,7 +6,9 @@ import { requireRole } from "../middleware/require-role.js";
 import {
   acceptConversation,
   createConversation,
+  createBotReplyForMessage,
   createMessage,
+  listConversationMessages,
   listConversations,
   requestStaffHandoff,
   returnConversationToBot,
@@ -72,8 +74,27 @@ messagesRoutes.use(requireAuth);
 messagesRoutes.get(
   "/",
   asyncHandler(async (request: AuthenticatedRequest, response) => {
-    const conversations = await listConversations(request.auth!.id, request.auth!.role);
+    const query = z.object({ limit: z.coerce.number().int().min(1).max(50).optional() }).parse(request.query);
+    const conversations = await listConversations(request.auth!.id, request.auth!.role, query.limit);
     response.json({ conversations });
+  })
+);
+
+messagesRoutes.get(
+  "/:conversationId/messages",
+  asyncHandler(async (request: AuthenticatedRequest, response) => {
+    const query = z.object({
+      limit: z.coerce.number().int().min(1).max(100).optional(),
+      before: z.string().datetime({ offset: true }).optional(),
+      after: z.string().datetime({ offset: true }).optional()
+    }).refine((value) => !(value.before && value.after), "Use either before or after, not both.").parse(request.query);
+    const result = await listConversationMessages({
+      conversationId: conversationIdSchema.parse(request.params.conversationId),
+      userId: request.auth!.id,
+      role: request.auth!.role,
+      ...query
+    });
+    response.json(result);
   })
 );
 
@@ -83,12 +104,12 @@ messagesRoutes.post(
   conversationCreateLimiter,
   asyncHandler(async (request: AuthenticatedRequest, response) => {
     const input = conversationSchema.parse(request.body);
-    const conversation = await createConversation({
+    const result = await createConversation({
       studentId: request.auth!.id,
       subject: input.subject,
       message: input.message
     });
-    response.status(201).json({ conversation });
+    response.status(201).json(result);
   })
 );
 
@@ -180,5 +201,19 @@ messagesRoutes.post(
       message: input.message
     });
     response.status(201).json(result);
+  })
+);
+
+messagesRoutes.post(
+  "/:conversationId/messages/:messageId/bot-reply",
+  requireRole("STUDENT"),
+  messageCreateLimiter,
+  asyncHandler(async (request: AuthenticatedRequest, response) => {
+    const botMessage = await createBotReplyForMessage({
+      conversationId: conversationIdSchema.parse(request.params.conversationId),
+      messageId: z.string().uuid().parse(request.params.messageId),
+      studentId: request.auth!.id
+    });
+    response.status(201).json({ botMessage });
   })
 );

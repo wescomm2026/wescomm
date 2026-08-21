@@ -186,7 +186,8 @@ export function WelcomeGateOverlay({
         preload={shouldLoadAnimation ? "auto" : "none"}
         src={shouldLoadAnimation ? "/assets/wescomm-logo-intro.mp4" : undefined}
         onLoadedMetadata={handleVideoMetadata}
-        onTimeUpdate={handleVideoTimeUpdate}
+         onTimeUpdate={handleVideoTimeUpdate}
+         onClick={handleSkip}
         onEnded={(event) => holdLastVisibleFrame(event.currentTarget)}
         onError={() => {
           setMediaFailed(true);
@@ -196,7 +197,8 @@ export function WelcomeGateOverlay({
           width: "100%",
           height: "100%",
           objectFit: "contain",
-          background: LOADING_BACKGROUND
+          background: LOADING_BACKGROUND,
+          cursor: phase === "exiting" ? "default" : "pointer"
         }}
         aria-hidden="true"
       />

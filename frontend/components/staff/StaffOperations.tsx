@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import {
   acceptConversationFromApi,
+  getConversationMessagesFromApi,
   getConversationsFromApi,
   getReceiptsFromApi,
   getReservationsFromApi,
@@ -22,6 +23,7 @@ import {
   sendConversationMessageFromApi,
   type BackendAdminUser,
   type BackendConversation,
+  type BackendConversationMessage,
   type BackendConversationStatus,
   type BackendReceipt,
   type BackendReceiptStatus,
@@ -284,6 +286,14 @@ function formatConversationDay(value: string) {
 
 function conversationPreview(conversation: BackendConversation) {
   return conversation.messages.at(-1)?.message ?? "No messages yet";
+}
+
+function mergeStaffMessages(
+  current: BackendConversationMessage[],
+  incoming: BackendConversationMessage[]
+) {
+  return Array.from(new Map([...current, ...incoming].map((message) => [message.id, message])).values())
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
 }
 
 function StaffConversationAvatar({
@@ -580,8 +590,12 @@ export function StaffInventoryExperience() {
         getStaffProducts(authToken),
         getStaffCategories(authToken)
       ]);
-      setProducts(productRows.map(mapStaffProduct));
+      const mappedProducts = productRows.map(mapStaffProduct);
+      setProducts(mappedProducts);
       setCategories(categoryRows);
+      const productId = new URL(window.location.href).searchParams.get("productId");
+      const targetedProduct = mappedProducts.find((product) => product.id === productId);
+      if (targetedProduct) setSearch(targetedProduct.name);
     } catch (loadError) {
       const message = loadError instanceof Error ? loadError.message : "Unable to load staff inventory.";
       setError(message);
@@ -1081,7 +1095,13 @@ export function StaffReservationsExperience() {
 
     try {
       const reservations = await getReservationsFromApi(session.token);
-      setRows(reservations.map(mapStaffReservation));
+      const mappedReservations = reservations.map(mapStaffReservation);
+      setRows(mappedReservations);
+      const reservationId = new URL(window.location.href).searchParams.get("reservationId");
+      const reservationQuery = new URL(window.location.href).searchParams.get("query");
+      const targetedReservation = mappedReservations.find((reservation) => reservation.id === reservationId);
+      if (targetedReservation) setSearch(targetedReservation.reference);
+      else if (reservationQuery) setSearch(reservationQuery);
     } catch (reservationError) {
       if (!background) {
         setError(reservationError instanceof Error ? reservationError.message : "Unable to load reservations.");
@@ -1100,7 +1120,7 @@ export function StaffReservationsExperience() {
       if (document.visibilityState === "visible") void loadReservations({ background: true });
     };
 
-    const interval = window.setInterval(refreshInBackground, 12000);
+    const interval = window.setInterval(refreshInBackground, 60000);
     window.addEventListener("focus", refreshInBackground);
     document.addEventListener("visibilitychange", refreshInBackground);
 
@@ -1243,7 +1263,14 @@ export function StaffReceiptsExperience() {
 
     try {
       const receipts = await getReceiptsFromApi(session.token);
-      setRows(receipts.map(mapStaffReceipt));
+      const mappedReceipts = receipts.map(mapStaffReceipt);
+      setRows(mappedReceipts);
+      const receiptId = new URL(window.location.href).searchParams.get("receiptId");
+      const targetedReceipt = mappedReceipts.find((receipt) => receipt.id === receiptId);
+      if (targetedReceipt) {
+        setSearch(targetedReceipt.code);
+        setSelectedReceipt(targetedReceipt);
+      }
     } catch (receiptError) {
       if (!background) {
         setError(receiptError instanceof Error ? receiptError.message : "Unable to load receipts.");
@@ -1262,7 +1289,7 @@ export function StaffReceiptsExperience() {
       if (document.visibilityState === "visible") void loadReceipts({ background: true });
     };
 
-    const interval = window.setInterval(refreshInBackground, 15000);
+    const interval = window.setInterval(refreshInBackground, 60000);
     window.addEventListener("focus", refreshInBackground);
     document.addEventListener("visibilitychange", refreshInBackground);
 
@@ -1452,6 +1479,8 @@ export function StaffMessagesExperience() {
   const replyComposerRef = useRef<HTMLTextAreaElement | null>(null);
   const typingStopTimerRef = useRef<number | null>(null);
   const lastTypingSignalRef = useRef(0);
+  const loadedThreadIdsRef = useRef(new Set<string>());
+  const latestMessageAtRef = useRef("");
   const selected = useMemo(
     () => conversations.find((conversation) => conversation.id === selectedId) ?? conversations[0] ?? null,
     [conversations, selectedId]
@@ -1486,16 +1515,43 @@ export function StaffMessagesExperience() {
 
     try {
       const rows = await getConversationsFromApi(session.token);
-      setConversations(rows);
-      setSelectedId((current) =>
-        rows.some((conversation) => conversation.id === current) ? current : rows[0]?.id || ""
-      );
+      setConversations((current) => rows.map((row) => {
+        const existing = current.find((conversation) => conversation.id === row.id);
+        if (!existing || !loadedThreadIdsRef.current.has(row.id)) return row;
+        return { ...row, messages: mergeStaffMessages(existing.messages, row.messages) };
+      }));
+      const conversationId = new URL(window.location.href).searchParams.get("conversationId");
+      setSelectedId((current) => conversationId && rows.some((conversation) => conversation.id === conversationId)
+        ? conversationId
+        : rows.some((conversation) => conversation.id === current) ? current : rows[0]?.id || "");
+      if (conversationId && rows.some((conversation) => conversation.id === conversationId)) setThreadOpen(true);
     } catch (messageError) {
       if (!background) {
         setError(messageError instanceof Error ? messageError.message : "Unable to load student messages.");
       }
     } finally {
       if (!background) setLoading(false);
+    }
+  }, []);
+
+  const loadThreadMessages = useCallback(async (conversationId: string, after?: string) => {
+    const session = getStoredStaffSession();
+    if (!session.token) return;
+    try {
+      const result = await getConversationMessagesFromApi(session.token, conversationId, {
+        limit: 50,
+        after: after || undefined
+      });
+      setConversations((current) => current.map((conversation) => conversation.id === conversationId
+        ? {
+            ...conversation,
+            messages: after ? mergeStaffMessages(conversation.messages, result.messages) : result.messages,
+            typingUsers: result.typingUsers
+          }
+        : conversation));
+      loadedThreadIdsRef.current.add(conversationId);
+    } catch (messageError) {
+      if (!after) setError(messageError instanceof Error ? messageError.message : "Unable to load this conversation.");
     }
   }, []);
 
@@ -1508,7 +1564,7 @@ export function StaffMessagesExperience() {
       if (document.visibilityState === "visible") void loadConversations({ background: true });
     };
 
-    const interval = window.setInterval(refreshInBackground, threadOpen ? 2500 : 7000);
+    const interval = window.setInterval(refreshInBackground, 60000);
     window.addEventListener("focus", refreshInBackground);
     document.addEventListener("visibilitychange", refreshInBackground);
 
@@ -1517,7 +1573,34 @@ export function StaffMessagesExperience() {
       window.removeEventListener("focus", refreshInBackground);
       document.removeEventListener("visibilitychange", refreshInBackground);
     };
-  }, [loadConversations, threadOpen]);
+  }, [loadConversations]);
+
+  useEffect(() => {
+    latestMessageAtRef.current = selected?.messages.at(-1)?.createdAt ?? "";
+  }, [selected?.messages]);
+
+  useEffect(() => {
+    if (!selected?.id || !threadOpen) return;
+    const conversationId = selected.id;
+    void loadThreadMessages(
+      conversationId,
+      loadedThreadIdsRef.current.has(conversationId) ? latestMessageAtRef.current : undefined
+    );
+
+    const refreshThread = () => {
+      if (document.visibilityState === "visible") {
+        void loadThreadMessages(conversationId, latestMessageAtRef.current || undefined);
+      }
+    };
+    const interval = window.setInterval(refreshThread, 8000);
+    window.addEventListener("focus", refreshThread);
+    window.addEventListener("online", refreshThread);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", refreshThread);
+      window.removeEventListener("online", refreshThread);
+    };
+  }, [loadThreadMessages, selected?.id, threadOpen]);
 
   useEffect(() => {
     if (!threadOpen) return;
@@ -1588,9 +1671,15 @@ export function StaffMessagesExperience() {
     try {
       const result = await sendConversationMessageFromApi(session.token, selected.id, message);
       sendTypingSignal(selected.id, false);
-      setConversations((current) =>
-        current.map((conversation) => conversation.id === selected.id ? result.conversation : conversation)
-      );
+      setConversations((current) => current.map((conversation) => conversation.id === selected.id
+        ? {
+            ...result.conversation,
+            messages: mergeStaffMessages(
+              conversation.messages,
+              [result.message, ...(result.botMessage ? [result.botMessage] : [])]
+            )
+          }
+        : conversation));
       setReply("");
       if (replyComposerRef.current) replyComposerRef.current.style.height = "auto";
       setNotice("Reply sent to student.");
@@ -1610,7 +1699,10 @@ export function StaffMessagesExperience() {
 
     try {
       const updatedConversation = await acceptConversationFromApi(session.token, conversation.id);
-      setConversations((current) => current.map((item) => item.id === conversation.id ? updatedConversation : item));
+      setConversations((current) => current.map((item) => item.id === conversation.id
+        ? { ...updatedConversation, messages: item.messages }
+        : item));
+      void loadThreadMessages(conversation.id, latestMessageAtRef.current || undefined);
       setNotice(`You are now handling ${conversation.student?.fullName || "this student"}'s concern.`);
     } catch (messageError) {
       setError(messageError instanceof Error ? messageError.message : "Unable to accept conversation.");
@@ -1628,7 +1720,10 @@ export function StaffMessagesExperience() {
 
     try {
       const updatedConversation = await returnConversationToBotFromApi(session.token, conversation.id);
-      setConversations((current) => current.map((item) => item.id === conversation.id ? updatedConversation : item));
+      setConversations((current) => current.map((item) => item.id === conversation.id
+        ? { ...updatedConversation, messages: item.messages }
+        : item));
+      void loadThreadMessages(conversation.id, latestMessageAtRef.current || undefined);
       setReply("");
       setNotice("Conversation returned to WesBot.");
     } catch (messageError) {
@@ -1650,7 +1745,9 @@ export function StaffMessagesExperience() {
 
     try {
       const updatedConversation = await updateConversationStatusFromApi(session.token, conversation.id, nextStatus);
-      setConversations((current) => current.map((item) => item.id === conversation.id ? updatedConversation : item));
+      setConversations((current) => current.map((item) => item.id === conversation.id
+        ? { ...updatedConversation, messages: item.messages }
+        : item));
       setNotice(`${conversation.subject} marked as ${nextStatus === "RESOLVED" ? "resolved" : "open"}.`);
     } catch (messageError) {
       setError(messageError instanceof Error ? messageError.message : "Unable to update conversation.");
@@ -2035,7 +2132,7 @@ export function StaffUsersExperience() {
       if (document.visibilityState === "visible") void loadUsers({ background: true });
     };
 
-    const interval = window.setInterval(refresh, 20000);
+    const interval = window.setInterval(refresh, 60000);
     window.addEventListener("focus", refresh);
     document.addEventListener("visibilitychange", refresh);
 

@@ -48,7 +48,7 @@ export async function getReportSummary() {
     userGroups,
     activeConversations,
     recentReceipts
-  ] = await withTransientPrismaReadRetry(() => Promise.all([
+  ] = await withTransientPrismaReadRetry(() => prisma.$transaction([
     prisma.product.findMany({
       where: { isActive: true },
       select: {

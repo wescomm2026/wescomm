@@ -8,11 +8,14 @@ import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import {
   createConversationFromApi,
+  getConversationMessagesFromApi,
   getConversationsFromApi,
+  requestConversationBotReplyFromApi,
   requestConversationHandoffFromApi,
   sendConversationMessageFromApi,
   updateConversationTypingFromApi,
-  type BackendConversation
+  type BackendConversation,
+  type BackendConversationMessage
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
@@ -24,6 +27,14 @@ const quickQuestions = [
   { label: "Pickup schedule", message: "Kailan ko puwedeng i-pick up ang reservation ko? Reservation code: " },
   { label: "Cancellation", message: "Puwede ko pa bang i-cancel ang reservation ko? Reservation code: " }
 ];
+
+function mergeSupportMessages(
+  current: BackendConversationMessage[],
+  incoming: BackendConversationMessage[]
+) {
+  return Array.from(new Map([...current, ...incoming].map((message) => [message.id, message])).values())
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+}
 
 function formatSupportTime(value: string) {
   const date = new Date(value);
@@ -124,11 +135,14 @@ export function StudentSupportExperience() {
   const [threadOpen, setThreadOpen] = useState(true);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [botReplyPending, setBotReplyPending] = useState(false);
   const [error, setError] = useState("");
   const messagesLogRef = useRef<HTMLDivElement | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const typingStopTimerRef = useRef<number | null>(null);
   const lastTypingSignalRef = useRef(0);
+  const loadedThreadIdsRef = useRef(new Set<string>());
+  const latestMessageAtRef = useRef("");
 
   const selectedConversation = useMemo(() => {
     if (startingNew) return null;
@@ -153,10 +167,15 @@ export function StudentSupportExperience() {
       const scopedRows = user.role === "STUDENT"
         ? rows.filter((conversation) => conversation.studentId === user.id)
         : rows;
-      setConversations(scopedRows);
-      setSelectedId((current) =>
-        scopedRows.some((conversation) => conversation.id === current) ? current : scopedRows[0]?.id || ""
-      );
+      setConversations((current) => scopedRows.map((row) => {
+        const existing = current.find((conversation) => conversation.id === row.id);
+        if (!existing || !loadedThreadIdsRef.current.has(row.id)) return row;
+        return { ...row, messages: mergeSupportMessages(existing.messages, row.messages) };
+      }));
+      const conversationId = new URL(window.location.href).searchParams.get("conversationId");
+      setSelectedId((current) => conversationId && scopedRows.some((conversation) => conversation.id === conversationId)
+        ? conversationId
+        : scopedRows.some((conversation) => conversation.id === current) ? current : scopedRows[0]?.id || "");
       if (!background && !scopedRows.length) setStartingNew(true);
       if (!background) setThreadOpen(true);
     } catch (supportError) {
@@ -167,6 +186,27 @@ export function StudentSupportExperience() {
       if (!background) setLoading(false);
     }
   }, [user?.accessToken, user?.id, user?.role]);
+
+  const loadThreadMessages = useCallback(async (conversationId: string, after?: string) => {
+    if (!user?.accessToken) return;
+    try {
+      const result = await getConversationMessagesFromApi(user.accessToken, conversationId, {
+        limit: 50,
+        after: after || undefined
+      });
+      setConversations((current) => current.map((conversation) => {
+        if (conversation.id !== conversationId) return conversation;
+        return {
+          ...conversation,
+          messages: after ? mergeSupportMessages(conversation.messages, result.messages) : result.messages,
+          typingUsers: result.typingUsers
+        };
+      }));
+      loadedThreadIdsRef.current.add(conversationId);
+    } catch (supportError) {
+      if (!after) setError(supportError instanceof Error ? supportError.message : "Unable to load this conversation.");
+    }
+  }, [user?.accessToken]);
 
   useEffect(() => {
     if (!ready) return;
@@ -180,7 +220,7 @@ export function StudentSupportExperience() {
       if (document.visibilityState === "visible") void loadConversations({ background: true });
     };
 
-    const interval = window.setInterval(refreshInBackground, threadOpen ? 2500 : 7000);
+    const interval = window.setInterval(refreshInBackground, 60000);
     window.addEventListener("focus", refreshInBackground);
     document.addEventListener("visibilitychange", refreshInBackground);
 
@@ -189,7 +229,34 @@ export function StudentSupportExperience() {
       window.removeEventListener("focus", refreshInBackground);
       document.removeEventListener("visibilitychange", refreshInBackground);
     };
-  }, [loadConversations, ready, threadOpen, user?.accessToken]);
+  }, [loadConversations, ready, user?.accessToken]);
+
+  useEffect(() => {
+    latestMessageAtRef.current = selectedConversation?.messages.at(-1)?.createdAt ?? "";
+  }, [selectedConversation?.messages]);
+
+  useEffect(() => {
+    if (!ready || !user?.accessToken || !selectedConversation?.id || !threadOpen) return;
+    const conversationId = selectedConversation.id;
+    void loadThreadMessages(
+      conversationId,
+      loadedThreadIdsRef.current.has(conversationId) ? latestMessageAtRef.current : undefined
+    );
+
+    const refreshThread = () => {
+      if (document.visibilityState === "visible") {
+        void loadThreadMessages(conversationId, latestMessageAtRef.current || undefined);
+      }
+    };
+    const interval = window.setInterval(refreshThread, 8000);
+    window.addEventListener("focus", refreshThread);
+    window.addEventListener("online", refreshThread);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", refreshThread);
+      window.removeEventListener("online", refreshThread);
+    };
+  }, [loadThreadMessages, ready, selectedConversation?.id, threadOpen, user?.accessToken]);
 
   useEffect(() => {
     setThreadOpen(true);
@@ -198,6 +265,7 @@ export function StudentSupportExperience() {
     setConversations([]);
     setComposer("");
     setPendingMessage("");
+    loadedThreadIdsRef.current.clear();
   }, [user?.id]);
 
   useEffect(() => {
@@ -284,9 +352,28 @@ export function StudentSupportExperience() {
     }, 2500);
   };
 
+  const requestBotReply = useCallback(async (conversationId: string, messageId: string) => {
+    if (!user?.accessToken) return;
+    setBotReplyPending(true);
+    try {
+      const botMessage = await requestConversationBotReplyFromApi(user.accessToken, conversationId, messageId);
+      if (!botMessage) return;
+      setConversations((current) => current.map((conversation) => conversation.id === conversationId
+        ? { ...conversation, messages: mergeSupportMessages(conversation.messages, [botMessage]) }
+        : conversation));
+    } catch (replyError) {
+      setError(replyError instanceof Error
+        ? `Your message was sent, but WesBot could not reply: ${replyError.message}`
+        : "Your message was sent, but WesBot could not reply.");
+      void loadThreadMessages(conversationId, latestMessageAtRef.current || undefined);
+    } finally {
+      setBotReplyPending(false);
+    }
+  }, [loadThreadMessages, user?.accessToken]);
+
   const sendMessage = async () => {
     const message = composer.trim();
-    if (!user?.accessToken || !message || submitting) return;
+    if (!user?.accessToken || !message || submitting || botReplyPending) return;
 
     const conversationAtSend = selectedConversation;
     setSubmitting(true);
@@ -296,19 +383,29 @@ export function StudentSupportExperience() {
 
     try {
       if (!conversationAtSend) {
-        const conversation = await createConversationFromApi(user.accessToken, {
+        const result = await createConversationFromApi(user.accessToken, {
           subject: createConversationSubject(message),
           message
         });
+        const conversation = result.conversation;
+        loadedThreadIdsRef.current.add(conversation.id);
         setConversations((current) => [conversation, ...current.filter((item) => item.id !== conversation.id)]);
         setSelectedId(conversation.id);
         setStartingNew(false);
+        if (result.botReplyPending) void requestBotReply(conversation.id, result.message.id);
       } else {
         const result = await sendConversationMessageFromApi(user.accessToken, conversationAtSend.id, message);
         sendTypingSignal(conversationAtSend.id, false);
-        setConversations((current) =>
-          current.map((conversation) => conversation.id === conversationAtSend.id ? result.conversation : conversation)
-        );
+        setConversations((current) => current.map((conversation) => conversation.id === conversationAtSend.id
+          ? {
+              ...result.conversation,
+              messages: mergeSupportMessages(
+                conversation.messages,
+                [result.message, ...(result.botMessage ? [result.botMessage] : [])]
+              )
+            }
+          : conversation));
+        if (result.botReplyPending) void requestBotReply(conversationAtSend.id, result.message.id);
       }
     } catch (supportError) {
       setComposer(message);
@@ -331,7 +428,10 @@ export function StudentSupportExperience() {
         selectedConversation.id,
         "Student requested a real staff member from the chat."
       );
-      setConversations((current) => current.map((item) => item.id === conversation.id ? conversation : item));
+      setConversations((current) => current.map((item) => item.id === conversation.id
+        ? { ...conversation, messages: item.messages }
+        : item));
+      void loadThreadMessages(conversation.id, latestMessageAtRef.current || undefined);
     } catch (supportError) {
       setError(supportError instanceof Error ? supportError.message : "Unable to connect you with staff.");
     } finally {
@@ -611,7 +711,7 @@ export function StudentSupportExperience() {
               </div>
             ) : null}
 
-            {submitting && pendingMessage && botWillReply ? (
+            {(submitting && pendingMessage && botWillReply) || botReplyPending ? (
               <div className="flex items-end gap-2">
                 <ChatAvatar kind="BOT" size="sm" />
                 <div className="flex items-center gap-1 rounded-[20px] rounded-bl-md bg-white px-4 py-3 shadow-sm ring-1 ring-[#dfe8e0]" aria-label="WesBot is checking WESCOMM records">
@@ -639,7 +739,7 @@ export function StudentSupportExperience() {
                 <button
                   type="button"
                   onClick={() => void requestStaff()}
-                  disabled={submitting}
+                  disabled={submitting || botReplyPending}
                   aria-label="Talk to a real staff member"
                   className="inline-flex min-h-8 shrink-0 items-center gap-1.5 rounded-full border border-[#bcd5bf] bg-white px-3 font-extrabold text-primary transition hover:bg-[#e7f2e8] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-50"
                 >
@@ -680,7 +780,7 @@ export function StudentSupportExperience() {
                 placeholder={selectedConversation?.status === "RESOLVED" ? "Send a message to reopen this chat..." : selectedConversation?.mode === "STAFF_ACTIVE" ? "Message commissary staff..." : "Message WesBot..."}
                 className="max-h-32 min-h-10 min-w-0 flex-1 resize-none bg-transparent px-3 py-2 text-sm leading-6 text-[#17211b] outline-none placeholder:text-[#8a948e]"
               />
-              <Button type="submit" className="size-10 shrink-0 rounded-full p-0" disabled={submitting || !composer.trim()} aria-label="Send message">
+              <Button type="submit" className="size-10 shrink-0 rounded-full p-0" disabled={submitting || botReplyPending || !composer.trim()} aria-label="Send message">
                 <Send className="size-[18px]" />
               </Button>
             </form>

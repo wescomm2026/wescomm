@@ -179,6 +179,7 @@ function mapInventoryTransactionError(error: unknown) {
 }
 
 async function notifyLowStockIfNeeded(input: {
+  productId: string;
   productName: string;
   previousStock: number;
   newStock: number;
@@ -194,7 +195,8 @@ async function notifyLowStockIfNeeded(input: {
   await createNotificationsForRoles(["STAFF", "ADMIN"], {
     type: "LOW_STOCK",
     title: `Low stock: ${input.productName}`,
-    message: `${input.productName} is now at ${input.newStock} pcs. Minimum stock is ${input.lowStockThreshold} pcs.`
+    message: `${input.productName} is now at ${input.newStock} pcs. Minimum stock is ${input.lowStockThreshold} pcs.`,
+    actionUrl: `/staff/inventory?productId=${encodeURIComponent(input.productId)}`
   });
 }
 
@@ -402,6 +404,7 @@ export async function createProduct(input: ProductCreateInput, performedById: st
   });
 
   await notifyLowStockIfNeeded({
+    productId: product.id,
     productName: product.name,
     previousStock: Number.POSITIVE_INFINITY,
     newStock: stock,
@@ -554,6 +557,7 @@ export async function updateProduct(productId: string, input: ProductUpdateInput
 
   const updatedProduct = await requireInventoryProduct(productId);
   await notifyLowStockIfNeeded({
+    productId: updatedProduct.id,
     productName: updatedProduct.name,
     previousStock: transactionResult.current.stock,
     newStock: updatedProduct.stock,
@@ -715,6 +719,7 @@ export async function restockProduct(input: {
 
   const updatedProduct = await requireInventoryProduct(input.productId);
   await notifyLowStockIfNeeded({
+    productId: updatedProduct.id,
     productName: updatedProduct.name,
     previousStock: transactionResult.product.stock,
     newStock: updatedProduct.stock,
