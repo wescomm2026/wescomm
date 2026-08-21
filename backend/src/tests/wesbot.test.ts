@@ -95,10 +95,31 @@ test("WesBot replies are gated to bot-active conversations", () => {
   assert.match(wesbotService, /const repeatCount = input\.repeatCount \+ 1/);
 });
 
-test("Staff must accept a handoff before replying and cannot overwrite another handler", () => {
+test("Staff takeover is atomic and only the current handler can reply", () => {
   const service = readFileSync(path.resolve(process.cwd(), "src/services/message.service.ts"), "utf8");
   assert.match(service, /CONVERSATION_ACCEPT_REQUIRED/);
   assert.match(service, /conversation\.assignedStaffId !== input\.senderId/);
-  assert.match(service, /Another Staff member accepted this conversation first/);
+  assert.match(service, /export async function takeOverConversation/);
+  assert.match(service, /\.eq\("updated_at", conversation\.updatedAt\)/);
+  assert.match(service, /CONVERSATION_OWNERSHIP_CHANGED/);
+  assert.match(service, /SUPPORT_CONVERSATION_OWNERSHIP_TRANSFERRED/);
+  assert.match(service, /insert_owned_staff_message/);
   assert.match(service, /input\.performedByRole !== "ADMIN" && conversation\.assignedStaffId !== input\.performedById/);
+});
+
+test("WesBot and Staff reply writes recheck ownership under a database row lock", () => {
+  const service = readFileSync(path.resolve(process.cwd(), "src/services/message.service.ts"), "utf8");
+  const migration = readFileSync(
+    new URL("../../prisma/migrations/20260823000000_add_support_takeover_bot_guard/migration.sql", import.meta.url),
+    "utf8"
+  );
+
+  assert.match(service, /insert_active_wesbot_reply/);
+  assert.match(service, /if \(!botMessageData\) return null/);
+  assert.match(migration, /CREATE OR REPLACE FUNCTION "insert_active_wesbot_reply"/);
+  assert.match(migration, /CREATE OR REPLACE FUNCTION "insert_owned_staff_message"/);
+  assert.match(migration, /FOR UPDATE/);
+  assert.match(migration, /"assigned_staff_id" IS DISTINCT FROM "p_staff_id"/);
+  assert.match(migration, /REVOKE ALL ON FUNCTION "insert_owned_staff_message"[\s\S]*FROM authenticated/);
+  assert.match(migration, /GRANT EXECUTE ON FUNCTION "insert_active_wesbot_reply"[\s\S]*TO service_role/);
 });

@@ -13,6 +13,7 @@ import {
   requestStaffHandoff,
   returnConversationToBot,
   setConversationTyping,
+  takeOverConversation,
   updateConversationStatus
 } from "../services/message.service.js";
 import { CONVERSATION_STATUSES } from "../types/app.js";
@@ -152,6 +153,19 @@ messagesRoutes.post(
   conversationStatusLimiter,
   asyncHandler(async (request: AuthenticatedRequest, response) => {
     const conversation = await measureRequestPhase(response, "message_command", () => acceptConversation({
+      conversationId: conversationIdSchema.parse(request.params.conversationId),
+      staffId: request.auth!.id
+    }));
+    response.json({ conversation });
+  })
+);
+
+messagesRoutes.post(
+  "/:conversationId/takeover",
+  requireRole("STAFF", "ADMIN"),
+  conversationStatusLimiter,
+  asyncHandler(async (request: AuthenticatedRequest, response) => {
+    const conversation = await measureRequestPhase(response, "message_command", () => takeOverConversation({
       conversationId: conversationIdSchema.parse(request.params.conversationId),
       staffId: request.auth!.id
     }));

@@ -4,13 +4,14 @@ import { dismissWelcomeGate } from "./helpers";
 
 const studentId = "00000000-0000-4000-8000-000000000001";
 const conversationId = "00000000-0000-4000-8000-000000000002";
+const staffId = "00000000-0000-4000-8000-000000000006";
 const createdAt = "2026-08-14T15:00:00.000Z";
 
 function conversation(mode: BackendConversation["mode"]): BackendConversation {
   return {
     id: conversationId,
     studentId,
-    assignedStaffId: null,
+    assignedStaffId: mode === "STAFF_ACTIVE" ? staffId : null,
     subject: "Available ba ang WESCOMM PE shirt?",
     status: "OPEN",
     mode,
@@ -18,7 +19,7 @@ function conversation(mode: BackendConversation["mode"]): BackendConversation {
     priority: mode === "WAITING_FOR_STAFF" ? 1 : 0,
     escalationReason: mode === "WAITING_FOR_STAFF" ? "Student requested a real staff member from the chat." : null,
     escalatedAt: mode === "WAITING_FOR_STAFF" ? "2026-08-14T15:02:00.000Z" : null,
-    acceptedAt: null,
+    acceptedAt: mode === "STAFF_ACTIVE" ? "2026-08-14T15:03:00.000Z" : null,
     resolvedAt: null,
     botSummary: null,
     lastIntent: "PRODUCT_AVAILABILITY",
@@ -30,7 +31,11 @@ function conversation(mode: BackendConversation["mode"]): BackendConversation {
       fullName: "QA Student",
       email: "student@wesleyan.edu.ph"
     },
-    assignedStaff: null,
+    assignedStaff: mode === "STAFF_ACTIVE" ? {
+      id: staffId,
+      fullName: "Maria Santos",
+      email: "maria.santos@wesleyan.edu.ph"
+    } : null,
     typingUsers: [],
     messages: [
       {
@@ -106,6 +111,10 @@ test("WesBot opens as one messenger thread and hands the same chat to staff", as
       await json(route, { conversation: conversations[0] });
       return;
     }
+    if (path === `/api/backend/conversations/${conversationId}/messages` && request.method() === "GET") {
+      await json(route, { messages: conversations[0]?.messages ?? [], nextCursor: null, typingUsers: [] });
+      return;
+    }
     if (path === `/api/backend/conversations/${conversationId}/typing` && request.method() === "PATCH") {
       await json(route, { typingUsers: [] });
       return;
@@ -123,6 +132,14 @@ test("WesBot opens as one messenger thread and hands the same chat to staff", as
     }
     if (path === "/api/backend/notifications") {
       await json(route, { notifications: [] });
+      return;
+    }
+    if (path === "/api/backend/notifications/unread-count") {
+      await json(route, { unreadCount: 0 });
+      return;
+    }
+    if (path === "/api/backend/realtime/events") {
+      await route.fulfill({ status: 200, contentType: "text/event-stream", body: "" });
       return;
     }
     if (path === "/api/backend/push/public-key") {
@@ -161,6 +178,25 @@ test("WesBot opens as one messenger thread and hands the same chat to staff", as
   await expect(page.getByText("Waiting for commissary staff. You can keep adding details here.")).toBeVisible();
   await expect(page.getByLabel("Message WesBot or commissary staff")).toBeVisible();
   await expect(page.getByRole("log")).toHaveCount(1);
+
+  conversations = [conversation("STAFF_ACTIVE")];
+  await page.getByTestId("conversation-header").getByRole("button", { name: "Refresh conversations" }).click();
+  await expect(page.getByText("Handled by: Maria Santos. WesBot replies are paused.", { exact: true })).toBeVisible();
+
+  if (testInfo.project.name === "desktop-chromium") {
+    for (const viewport of [
+      { width: 1440, height: 900 },
+      { width: 768, height: 1024 },
+      { width: 390, height: 844 },
+      { width: 390, height: 430 }
+    ]) {
+      await page.setViewportSize(viewport);
+      const composerBox = await page.getByLabel("Message WesBot or commissary staff").boundingBox();
+      expect(composerBox).not.toBeNull();
+      expect((composerBox?.y ?? 0) + (composerBox?.height ?? 0)).toBeLessThanOrEqual(viewport.height);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+    }
+  }
 
   if (testInfo.project.name === "mobile-chromium") {
     await page.getByRole("button", { name: "Open chat history" }).click();

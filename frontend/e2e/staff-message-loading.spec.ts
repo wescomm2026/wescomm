@@ -91,8 +91,23 @@ test("staff send and resolve actions show immediate progress instead of appearin
       return;
     }
 
+    if (path === "/api/backend/notifications/unread-count" && request.method() === "GET") {
+      await json(route, { unreadCount: 0 });
+      return;
+    }
+
+    if (path === "/api/backend/realtime/events" && request.method() === "GET") {
+      await route.fulfill({ status: 200, contentType: "text/event-stream", body: "" });
+      return;
+    }
+
     if (path === "/api/backend/conversations" && request.method() === "GET") {
       await json(route, { conversations: [conversation] });
+      return;
+    }
+
+    if (path === `/api/backend/conversations/${conversationId}/messages` && request.method() === "GET") {
+      await json(route, { messages: conversation.messages, nextCursor: null, typingUsers: [] });
       return;
     }
 

@@ -13,7 +13,6 @@ import { AssetIcon } from "@/components/ui/AssetIcon";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import {
-  acceptConversationFromApi,
   getConversationMessagesFromApi,
   getConversationsFromApi,
   getReceiptPageFromApi,
@@ -22,6 +21,7 @@ import {
   markReceiptVerifiedFromApi,
   returnConversationToBotFromApi,
   sendConversationMessageFromApi,
+  takeOverConversationFromApi,
   type BackendAdminUser,
   type BackendConversation,
   type BackendConversationMessage,
@@ -1632,7 +1632,7 @@ export function StaffMessagesExperience() {
   const [loading, setLoading] = useState(true);
   const [pendingAction, setPendingAction] = useState<{
     conversationId: string;
-    type: "accept" | "return-to-bot" | "resolve" | "reopen" | "send";
+    type: "takeover" | "return-to-bot" | "resolve" | "reopen" | "send";
   } | null>(null);
   const messagesLogRef = useRef<HTMLDivElement | null>(null);
   const replyComposerRef = useRef<HTMLTextAreaElement | null>(null);
@@ -1641,17 +1641,32 @@ export function StaffMessagesExperience() {
   const loadedThreadIdsRef = useRef(new Set<string>());
   const latestMessageAtRef = useRef("");
   const typingExpiryTimersRef = useRef(new Map<string, number>());
+  const stickToBottomRef = useRef(true);
   const selected = useMemo(
     () => conversations.find((conversation) => conversation.id === selectedId) ?? conversations[0] ?? null,
     [conversations, selectedId]
   );
   const submitting = pendingAction !== null;
   const activeAction = selected && pendingAction?.conversationId === selected.id ? pendingAction.type : null;
-  const canReply = selected?.status !== "RESOLVED" && selected?.mode === "STAFF_ACTIVE" && selected.assignedStaffId === user?.id;
+  const ownsConversation = Boolean(selected && selected.mode === "STAFF_ACTIVE" && selected.assignedStaffId === user?.id);
+  const canReply = selected?.status !== "RESOLVED" && ownsConversation;
+  const canTakeOver = Boolean(selected && selected.status !== "RESOLVED" && !ownsConversation);
+  const handlerName = selected?.assignedStaff?.fullName || "another staff member";
+  const composerStatus = activeAction === "send"
+    ? "Sending reply to the student..."
+    : selected?.status === "RESOLVED"
+      ? "This conversation is resolved. Reopen it before replying."
+      : selected?.mode === "BOT_ACTIVE"
+        ? "WesBot is replying. Take over this conversation to pause WesBot and reply as Staff."
+        : selected?.mode === "WAITING_FOR_STAFF"
+          ? "No Staff handler yet. Take over this conversation to reply."
+          : !ownsConversation
+            ? `Handled by: ${handlerName}. Take over ownership before replying.`
+            : `You are the current handler${user?.fullName ? `: ${user.fullName}` : ""}.`;
   const pendingActionLabel = activeAction === "send"
     ? "Sending reply to student"
-    : activeAction === "accept"
-      ? "Accepting conversation"
+    : activeAction === "takeover"
+      ? "Taking over conversation"
       : activeAction === "return-to-bot"
         ? "Returning conversation to WesBot"
         : activeAction === "resolve"
@@ -1822,7 +1837,9 @@ export function StaffMessagesExperience() {
   useEffect(() => {
     if (!threadOpen) return;
     const messagesLog = messagesLogRef.current;
-    if (messagesLog) messagesLog.scrollTop = messagesLog.scrollHeight;
+    if (messagesLog && (stickToBottomRef.current || pendingReply)) {
+      messagesLog.scrollTop = messagesLog.scrollHeight;
+    }
   }, [pendingReply, threadOpen, selected?.messages.length, selected?.typingUsers?.length]);
 
   const filtered = useMemo(() => conversations.filter((conversation) =>
@@ -1833,6 +1850,7 @@ export function StaffMessagesExperience() {
   ), [conversations, search, status]);
 
   const openConversation = (conversationId: string) => {
+    stickToBottomRef.current = true;
     setSelectedId(conversationId);
     setThreadOpen(true);
   };
@@ -1844,6 +1862,20 @@ export function StaffMessagesExperience() {
     }
     setThreadOpen(false);
     setReply("");
+  };
+
+  const handleMessageScroll = () => {
+    const messagesLog = messagesLogRef.current;
+    if (!messagesLog) return;
+    stickToBottomRef.current = messagesLog.scrollHeight - messagesLog.scrollTop - messagesLog.clientHeight < 120;
+  };
+
+  const focusLatestMessage = () => {
+    stickToBottomRef.current = true;
+    window.requestAnimationFrame(() => {
+      const messagesLog = messagesLogRef.current;
+      if (messagesLog) messagesLog.scrollTop = messagesLog.scrollHeight;
+    });
   };
 
   const sendTypingSignal = useCallback((conversationId: string, isTyping: boolean) => {
@@ -1908,21 +1940,27 @@ export function StaffMessagesExperience() {
     }
   };
 
-  const acceptConversation = async (conversation: BackendConversation) => {
+  const takeOverConversation = async (conversation: BackendConversation) => {
     const session = getStoredStaffSession();
     if (!session.token || submitting) return;
-    setPendingAction({ conversationId: conversation.id, type: "accept" });
+    if (
+      conversation.mode === "STAFF_ACTIVE"
+      && conversation.assignedStaffId !== user?.id
+      && !window.confirm(`Take over this conversation from ${conversation.assignedStaff?.fullName || "the current Staff handler"}? Their reply box will be locked immediately.`)
+    ) return;
+    setPendingAction({ conversationId: conversation.id, type: "takeover" });
     setError("");
 
     try {
-      const updatedConversation = await acceptConversationFromApi(session.token, conversation.id);
+      const updatedConversation = await takeOverConversationFromApi(session.token, conversation.id);
       setConversations((current) => current.map((item) => item.id === conversation.id
         ? { ...updatedConversation, messages: item.messages }
         : item));
       void loadThreadMessages(conversation.id, latestMessageAtRef.current || undefined);
+      focusLatestMessage();
       setNotice(`You are now handling ${conversation.student?.fullName || "this student"}'s concern.`);
     } catch (messageError) {
-      setError(messageError instanceof Error ? messageError.message : "Unable to accept conversation.");
+      setError(messageError instanceof Error ? messageError.message : "Unable to take over conversation.");
       void loadConversations({ background: true });
     } finally {
       setPendingAction(null);
@@ -1975,21 +2013,24 @@ export function StaffMessagesExperience() {
 
   return (
     <div className="space-y-5">
-      <PageHeading
-        eyebrow="Student messaging"
-        title="Message center"
-        detail="Monitor WesBot, accept human handoffs, reply from one workspace, and resolve completed conversations."
-        action={(
-          <Button variant="secondary" onClick={() => void loadConversations()} disabled={loading || submitting} aria-busy={loading}>
-            <RefreshCw className={`size-4 ${loading ? "motion-safe:animate-spin" : ""}`} aria-hidden="true" />
-            {loading ? "Refreshing..." : "Refresh"}
-          </Button>
-        )}
-      />
+      <div className="hidden lg:block">
+        <PageHeading
+          eyebrow="Student messaging"
+          title="Message center"
+          detail="Monitor WesBot, take over any active thread, and keep every Staff reply under one clear handler."
+          action={(
+            <Button variant="secondary" onClick={() => void loadConversations()} disabled={loading || submitting} aria-busy={loading}>
+              <RefreshCw className={`size-4 ${loading ? "motion-safe:animate-spin" : ""}`} aria-hidden="true" />
+              {loading ? "Refreshing..." : "Refresh"}
+            </Button>
+          )}
+        />
+      </div>
+      <h1 className="sr-only lg:hidden">Message center</h1>
       {error ? <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p> : null}
       <section
         aria-label="WESCOMM staff messenger"
-        className="grid h-[calc(100svh-11.375rem)] min-h-[520px] grid-cols-[minmax(0,1fr)] overflow-hidden rounded-2xl border border-[#dce5dd] bg-white shadow-[0_16px_48px_rgba(16,24,32,0.08)] sm:h-[calc(100svh-15.5rem)] sm:min-h-[620px] lg:grid-cols-[320px_minmax(0,1fr)]"
+        className="grid h-[calc(100dvh-7.375rem)] min-h-0 grid-cols-[minmax(0,1fr)] overflow-hidden rounded-2xl border border-[#dce5dd] bg-white shadow-[0_16px_48px_rgba(16,24,32,0.08)] lg:h-[calc(100dvh-15.5rem)] lg:grid-cols-[320px_minmax(0,1fr)]"
       >
         <aside className={cn(
           "h-full min-h-0 min-w-0 flex-col border-[#e5ebe6] bg-[#fbfcfb] lg:flex lg:border-r",
@@ -2063,7 +2104,9 @@ export function StaffMessagesExperience() {
                     "size-1.5 rounded-full",
                     conversation.mode === "BOT_ACTIVE" ? "bg-emerald-500" : conversation.mode === "WAITING_FOR_STAFF" ? "bg-amber-500" : conversation.mode === "STAFF_ACTIVE" ? "bg-sky-500" : "bg-slate-400"
                   )} />
-                  {formatConversationStatus(conversation)}
+                  {conversation.mode === "STAFF_ACTIVE"
+                    ? `Handled by ${conversation.assignedStaffId === user?.id ? "you" : conversation.assignedStaff?.fullName || "Staff"}`
+                    : formatConversationStatus(conversation)}
                 </span>
               </span>
             </button>
@@ -2112,12 +2155,12 @@ export function StaffMessagesExperience() {
             </header>
             {pendingActionLabel ? <p className="sr-only" role="status" aria-live="polite">{pendingActionLabel}</p> : null}
 
-            <div className="flex min-h-[52px] shrink-0 items-center gap-2 overflow-x-auto border-b border-[#e5ebe6] bg-[#fbfcfb] px-3 py-2 sm:px-5">
+            <div className="flex min-h-[52px] shrink-0 flex-wrap items-center gap-2 border-b border-[#e5ebe6] bg-[#fbfcfb] px-3 py-2 sm:px-5">
               <span className="shrink-0 md:hidden"><StatusBadge status={formatConversationStatus(selected)} /></span>
-              {selected.mode === "WAITING_FOR_STAFF" ? (
-                <Button className="h-9 shrink-0 rounded-full px-3" disabled={submitting} aria-busy={activeAction === "accept"} onClick={() => void acceptConversation(selected)}>
-                  {activeAction === "accept" ? <LoaderCircle className="size-4 motion-safe:animate-spin" aria-hidden="true" /> : <Headphones className="size-4" aria-hidden="true" />}
-                  {activeAction === "accept" ? "Accepting..." : "Accept chat"}
+              {canTakeOver ? (
+                <Button className="min-h-10 shrink-0 rounded-full px-3" disabled={submitting} aria-busy={activeAction === "takeover"} onClick={() => void takeOverConversation(selected)}>
+                  {activeAction === "takeover" ? <LoaderCircle className="size-4 motion-safe:animate-spin" aria-hidden="true" /> : <Headphones className="size-4" aria-hidden="true" />}
+                  {activeAction === "takeover" ? "Taking over..." : "Take Over"}
                 </Button>
               ) : null}
               {selected.mode === "STAFF_ACTIVE" && selected.assignedStaffId === user?.id ? (
@@ -2128,8 +2171,8 @@ export function StaffMessagesExperience() {
               ) : null}
               <Button
                 variant={selected.status === "RESOLVED" ? "secondary" : "ghost"}
-                className="h-9 shrink-0 rounded-full border border-[#d7e1d8] px-3"
-                disabled={submitting}
+                className="min-h-10 shrink-0 rounded-full border border-[#d7e1d8] px-3"
+                disabled={submitting || (selected.status !== "RESOLVED" && !ownsConversation)}
                 aria-busy={activeAction === "resolve" || activeAction === "reopen"}
                 onClick={() => void updateStatus(selected, selected.status === "RESOLVED" ? "OPEN" : "RESOLVED")}
               >
@@ -2150,17 +2193,22 @@ export function StaffMessagesExperience() {
               </div>
             ) : null}
             {selected.mode === "STAFF_ACTIVE" && selected.assignedStaffId !== user?.id ? (
-              <div className="border-b border-sky-200 bg-sky-50 px-5 py-3 text-sm font-semibold text-sky-900">
-                This conversation is being handled by {selected.assignedStaff?.fullName || "another staff member"}. Replies are locked to prevent duplicate responses.
+              <div className="border-b border-sky-200 bg-sky-50 px-3 py-3 text-sm font-semibold text-sky-900 sm:px-5">
+                <span className="font-extrabold">Handled by: {handlerName}.</span> Your reply box is locked until ownership is transferred with Take Over.
+              </div>
+            ) : null}
+            {ownsConversation ? (
+              <div className="border-b border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-900 sm:px-5">
+                Handled by: You{user?.fullName ? ` (${user.fullName})` : ""}. Other Staff cannot reply unless they take over.
               </div>
             ) : null}
             {selected.mode === "BOT_ACTIVE" ? (
-              <div className="flex items-start gap-2 border-b border-[#cfe0d0] bg-[#f3f9f3] px-5 py-3 text-sm text-[#445149]">
+              <div className="flex items-start gap-2 border-b border-[#cfe0d0] bg-[#f3f9f3] px-3 py-3 text-sm text-[#445149] sm:px-5">
                 <Bot className="mt-0.5 size-5 shrink-0 text-primary" />
-                <p><span className="font-extrabold text-[#17211b]">WesBot is handling this thread.</span> Staff can monitor it; it enters the queue when the student requests staff or the bot escalates.</p>
+                <p><span className="font-extrabold text-[#17211b]">Handled by: WesBot.</span> Staff can take over now; the bot is paused as soon as ownership changes.</p>
               </div>
             ) : null}
-            <div ref={messagesLogRef} role="log" aria-live="polite" aria-relevant="additions" className="min-h-0 min-w-0 flex-1 space-y-3 overflow-x-hidden overflow-y-auto overscroll-contain bg-[#f4f7f4] px-3 py-4 scroll-smooth sm:px-5 sm:py-5">
+            <div ref={messagesLogRef} onScroll={handleMessageScroll} role="log" aria-live="polite" aria-relevant="additions" className="min-h-0 min-w-0 flex-1 space-y-3 overflow-x-hidden overflow-y-auto overscroll-contain bg-[#f4f7f4] px-3 py-4 scroll-smooth sm:px-5 sm:py-5">
               {selected.messages.map((message, index, messages) => {
                 const mine = message.senderType === "STAFF" && message.senderId === user?.id;
                 const day = formatConversationDay(message.createdAt);
@@ -2201,7 +2249,7 @@ export function StaffMessagesExperience() {
                               ? "rounded-bl-md bg-white text-[#17211b] ring-1 ring-sky-200"
                               : "rounded-bl-md bg-white text-[#17211b] ring-1 ring-[#dce5dd]"
                       )}>
-                        <p className="whitespace-pre-wrap break-words leading-6">{message.message}</p>
+                        <p className="whitespace-pre-wrap break-words leading-6 [overflow-wrap:anywhere]">{message.message}</p>
                       </div>
                       <p className="mt-1 px-1 text-[10px] font-semibold text-[#7b867f]">{mine ? "You" : senderName} · {formatConversationTime(message.createdAt)}</p>
                     </div>
@@ -2213,7 +2261,7 @@ export function StaffMessagesExperience() {
                 <div className="flex justify-end">
                   <div className="flex max-w-[82%] flex-col items-end sm:max-w-[72%]">
                     <div className="rounded-[20px] rounded-br-md bg-primary px-4 py-2.5 text-sm text-white opacity-80 shadow-sm">
-                      <p className="whitespace-pre-wrap break-words leading-6">{pendingReply}</p>
+                      <p className="whitespace-pre-wrap break-words leading-6 [overflow-wrap:anywhere]">{pendingReply}</p>
                     </div>
                     <p className="mt-1 px-1 text-[10px] font-semibold text-[#718078]">Sending...</p>
                   </div>
@@ -2228,11 +2276,11 @@ export function StaffMessagesExperience() {
                 </div>
               ) : null}
             </div>
-            <div className="shrink-0 border-t border-[#e5ebe6] bg-white px-3 py-2.5 sm:px-4 sm:py-3">
-              {selected.mode === "WAITING_FOR_STAFF" ? <p className="mb-2 rounded-xl bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800 ring-1 ring-inset ring-amber-200">Accept this conversation before replying.</p> : null}
-              {selected.mode === "BOT_ACTIVE" ? <p className="mb-2 rounded-xl bg-[#eef7ef] px-3 py-2 text-xs font-bold text-primary ring-1 ring-inset ring-[#cfe0d0]">WesBot is currently replying. Accept a handoff before sending a staff response.</p> : null}
-              {selected.mode === "STAFF_ACTIVE" && selected.assignedStaffId !== user?.id ? <p className="mb-2 rounded-xl bg-sky-50 px-3 py-2 text-xs font-bold text-sky-800 ring-1 ring-inset ring-sky-200">Another staff member owns this conversation.</p> : null}
-              {selected.status === "RESOLVED" ? <p className="mb-2 rounded-xl bg-slate-50 px-3 py-2 text-xs font-bold text-slate-700 ring-1 ring-inset ring-slate-200">Reopen this conversation before replying.</p> : null}
+            <div className="shrink-0 border-t border-[#e5ebe6] bg-white px-3 pt-2.5 pb-[calc(.625rem+env(safe-area-inset-bottom))] sm:px-4 sm:py-3">
+              <p id="staff-composer-status" role="status" className={cn(
+                "mb-2 rounded-xl px-3 py-2 text-xs font-bold ring-1 ring-inset",
+                canReply ? "bg-emerald-50 text-emerald-900 ring-emerald-200" : "bg-slate-50 text-slate-700 ring-slate-200"
+              )}>{composerStatus}</p>
             <form
               className="flex min-w-0 items-end gap-1.5 rounded-[24px] border border-[#d7e1d8] bg-[#f6f8f6] p-1.5 transition focus-within:border-primary focus-within:bg-white focus-within:ring-2 focus-within:ring-primary/15"
               aria-busy={activeAction === "send"}
@@ -2252,6 +2300,7 @@ export function StaffMessagesExperience() {
                   event.currentTarget.style.height = `${Math.min(event.currentTarget.scrollHeight, 128)}px`;
                 }}
                 onBlur={() => selected ? sendTypingSignal(selected.id, false) : undefined}
+                onFocus={focusLatestMessage}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" && !event.shiftKey) {
                     event.preventDefault();
@@ -2264,21 +2313,22 @@ export function StaffMessagesExperience() {
                   activeAction === "send"
                     ? "Sending reply..."
                     : selected.mode === "WAITING_FOR_STAFF"
-                    ? "Accept this conversation before replying..."
+                    ? "Take over this conversation before replying..."
                     : selected.mode === "BOT_ACTIVE"
-                      ? "WesBot is handling this conversation..."
+                      ? "Take over from WesBot before replying..."
                       : selected.status === "RESOLVED"
                         ? "Reopen this conversation before replying..."
                         : selected.assignedStaffId !== user?.id
-                          ? "Another staff member is handling this conversation..."
+                          ? `Handled by ${handlerName}. Take over to reply...`
                           : "Write a reply..."
                 }
                 disabled={!canReply || submitting}
-                className="max-h-32 min-h-10 min-w-0 flex-1 resize-none bg-transparent px-3 py-2 text-sm leading-6 text-[#17211b] outline-none placeholder:text-[#8a948e] disabled:cursor-wait"
+                aria-describedby="staff-composer-status"
+                className="max-h-32 min-h-11 min-w-0 flex-1 resize-none bg-transparent px-3 py-2 text-base leading-6 text-[#17211b] outline-none placeholder:text-[#8a948e] disabled:cursor-not-allowed disabled:text-[#69746e] sm:text-sm"
               />
               <Button
                 type="submit"
-                className="size-10 shrink-0 rounded-full p-0"
+                className="size-11 shrink-0 rounded-full p-0"
                 disabled={submitting || !canReply || !reply.trim()}
                 aria-busy={activeAction === "send"}
                 aria-label={activeAction === "send" ? "Sending reply" : "Send reply"}

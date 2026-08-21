@@ -1057,6 +1057,13 @@ export async function acceptConversationFromApi(token: string, conversationId: s
   return data.conversation;
 }
 
+export async function takeOverConversationFromApi(token: string, conversationId: string) {
+  const data = await authApiFetch<{ conversation: BackendConversation }>(`/conversations/${conversationId}/takeover`, token, {
+    method: "POST"
+  });
+  return data.conversation;
+}
+
 export async function returnConversationToBotFromApi(token: string, conversationId: string) {
   const data = await authApiFetch<{ conversation: BackendConversation }>(`/conversations/${conversationId}/return-to-bot`, token, {
     method: "POST"

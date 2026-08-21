@@ -146,6 +146,7 @@ export function StudentSupportExperience() {
   const loadedThreadIdsRef = useRef(new Set<string>());
   const latestMessageAtRef = useRef("");
   const typingExpiryTimersRef = useRef(new Map<string, number>());
+  const stickToBottomRef = useRef(true);
 
   const selectedConversation = useMemo(() => {
     if (startingNew) return null;
@@ -326,7 +327,9 @@ export function StudentSupportExperience() {
     if (!threadOpen) return;
     const messageLog = messagesLogRef.current;
     if (!messageLog) return;
-    messageLog.scrollTop = selectedConversation?.id || pendingMessage ? messageLog.scrollHeight : 0;
+    if (stickToBottomRef.current || pendingMessage) {
+      messageLog.scrollTop = selectedConversation?.id || pendingMessage ? messageLog.scrollHeight : 0;
+    }
   }, [pendingMessage, selectedConversation?.id, selectedConversation?.messages.length, threadOpen]);
 
   useEffect(() => {
@@ -348,6 +351,7 @@ export function StudentSupportExperience() {
   }, [user?.accessToken]);
 
   const openConversation = (conversationId: string) => {
+    stickToBottomRef.current = true;
     setSelectedId(conversationId);
     setStartingNew(false);
     setComposer("");
@@ -365,6 +369,20 @@ export function StudentSupportExperience() {
     setError("");
     setThreadOpen(true);
     window.setTimeout(() => composerRef.current?.focus(), 0);
+  };
+
+  const handleMessageScroll = () => {
+    const messageLog = messagesLogRef.current;
+    if (!messageLog) return;
+    stickToBottomRef.current = messageLog.scrollHeight - messageLog.scrollTop - messageLog.clientHeight < 120;
+  };
+
+  const focusLatestMessage = () => {
+    stickToBottomRef.current = true;
+    window.requestAnimationFrame(() => {
+      const messageLog = messagesLogRef.current;
+      if (messageLog) messageLog.scrollTop = messageLog.scrollHeight;
+    });
   };
 
   const showConversationList = () => {
@@ -555,7 +573,7 @@ export function StudentSupportExperience() {
 
       <section
         aria-label="WESCOMM support messenger"
-        className="grid h-[calc(100svh-11.375rem)] min-h-[480px] grid-cols-[minmax(0,1fr)] overflow-hidden rounded-2xl border border-[#dce5dd] bg-white shadow-[0_16px_48px_rgba(16,24,32,0.08)] sm:h-[calc(100svh-15.5rem)] sm:min-h-[620px] lg:grid-cols-[310px_minmax(0,1fr)]"
+        className="grid h-[calc(100dvh-11.375rem)] min-h-0 grid-cols-[minmax(0,1fr)] overflow-hidden rounded-2xl border border-[#dce5dd] bg-white shadow-[0_16px_48px_rgba(16,24,32,0.08)] sm:h-[calc(100dvh-15.5rem)] lg:grid-cols-[310px_minmax(0,1fr)]"
       >
         <aside className={cn(
           "h-full min-h-0 min-w-0 flex-col border-[#e5ebe6] bg-[#fbfcfb] lg:flex lg:border-r",
@@ -606,7 +624,9 @@ export function StudentSupportExperience() {
                       "size-1.5 rounded-full",
                       conversation.mode === "BOT_ACTIVE" ? "bg-emerald-500" : conversation.mode === "WAITING_FOR_STAFF" ? "bg-amber-500" : conversation.mode === "STAFF_ACTIVE" ? "bg-sky-500" : "bg-slate-400"
                     )} />
-                    {supportStatus(conversation)}
+                    {conversation.mode === "STAFF_ACTIVE"
+                      ? `Handled by ${conversation.assignedStaff?.fullName || "Commissary Staff"}`
+                      : supportStatus(conversation)}
                   </span>
                 </span>
               </button>
@@ -668,7 +688,7 @@ export function StudentSupportExperience() {
             </button>
           </header>
 
-          <div ref={messagesLogRef} role="log" aria-live="polite" aria-relevant="additions" className="min-h-0 min-w-0 flex-1 space-y-3 overflow-x-hidden overflow-y-auto overscroll-contain bg-[#f4f7f4] px-3 py-4 scroll-smooth sm:px-5 sm:py-5">
+          <div ref={messagesLogRef} onScroll={handleMessageScroll} role="log" aria-live="polite" aria-relevant="additions" className="min-h-0 min-w-0 flex-1 space-y-3 overflow-x-hidden overflow-y-auto overscroll-contain bg-[#f4f7f4] px-3 py-4 scroll-smooth sm:px-5 sm:py-5">
             {showWelcome ? (
               <>
                 <div className="pb-2 pt-1 text-center">
@@ -692,7 +712,7 @@ export function StudentSupportExperience() {
                     If you want a real person, type <strong>staff</strong> anytime. I&apos;ll keep this same chat and connect it to the commissary team.
                   </div>
                 </div>
-                <div className="flex w-full min-w-0 max-w-full gap-2 overflow-x-auto pb-1 pl-10 pt-2 sm:flex-wrap sm:overflow-visible">
+                <div className="flex w-full min-w-0 max-w-full flex-wrap gap-2 pb-1 pt-2 sm:pl-10">
                   {quickQuestions.map((question) => (
                     <button
                       key={question.label}
@@ -745,7 +765,7 @@ export function StudentSupportExperience() {
                             ? "rounded-bl-md bg-white text-[#17211b] ring-1 ring-[#dfe8e0]"
                             : "rounded-bl-md bg-white text-[#17211b] ring-1 ring-sky-200"
                       )}>
-                        <p className="whitespace-pre-wrap break-words leading-6">{message.message}</p>
+                        <p className="whitespace-pre-wrap break-words leading-6 [overflow-wrap:anywhere]">{message.message}</p>
                       </div>
                       <p className={cn("mt-1 px-1 text-[10px] font-semibold", mine ? "text-[#718078]" : "text-[#7b867f]")}>
                         {mine ? "You" : botMessage ? "WesBot" : "Staff"} · {formatSupportTime(message.createdAt)}
@@ -760,7 +780,7 @@ export function StudentSupportExperience() {
               <div className="flex justify-end">
                 <div className="flex max-w-[82%] flex-col items-end sm:max-w-[72%]">
                   <div className="rounded-[20px] rounded-br-md bg-primary px-4 py-2.5 text-sm text-white opacity-80 shadow-sm">
-                    <p className="whitespace-pre-wrap break-words leading-6">{pendingMessage}</p>
+                    <p className="whitespace-pre-wrap break-words leading-6 [overflow-wrap:anywhere]">{pendingMessage}</p>
                   </div>
                   <p className="mt-1 px-1 text-[10px] font-semibold text-[#718078]">Sending...</p>
                 </div>
@@ -788,7 +808,7 @@ export function StudentSupportExperience() {
             ) : null}
           </div>
 
-          <div className="shrink-0 border-t border-[#e5ebe6] bg-white px-3 py-2.5 sm:px-4 sm:py-3">
+          <div className="shrink-0 border-t border-[#e5ebe6] bg-white px-3 pt-2.5 pb-[calc(.625rem+env(safe-area-inset-bottom))] sm:px-4 sm:py-3">
             {selectedConversation?.mode === "BOT_ACTIVE" ? (
               <div className="mb-2 flex items-center justify-between gap-2 rounded-xl bg-[#eef7ef] px-3 py-2 text-xs text-[#526058]">
                 <span className="flex items-center gap-2"><span className="size-2 rounded-full bg-emerald-500" />WesBot is replying</span>
@@ -809,7 +829,7 @@ export function StudentSupportExperience() {
               <p className="mb-2 rounded-xl bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800 ring-1 ring-inset ring-amber-200">Waiting for commissary staff. You can keep adding details here.</p>
             ) : null}
             {selectedConversation?.mode === "STAFF_ACTIVE" ? (
-              <p className="mb-2 rounded-xl bg-sky-50 px-3 py-2 text-xs font-bold text-sky-800 ring-1 ring-inset ring-sky-200">You&apos;re now chatting with a real staff member in the same conversation.</p>
+              <p className="mb-2 rounded-xl bg-sky-50 px-3 py-2 text-xs font-bold text-sky-800 ring-1 ring-inset ring-sky-200">Handled by: {selectedConversation.assignedStaff?.fullName || "Commissary Staff"}. WesBot replies are paused.</p>
             ) : null}
             <form
               className="flex min-w-0 items-end gap-1.5 rounded-[24px] border border-[#d7e1d8] bg-[#f6f8f6] p-1.5 transition focus-within:border-primary focus-within:bg-white focus-within:ring-2 focus-within:ring-primary/15"
@@ -825,6 +845,7 @@ export function StudentSupportExperience() {
                 value={composer}
                 onChange={(event) => handleComposerChange(event.target.value)}
                 onBlur={() => selectedConversation ? sendTypingSignal(selectedConversation.id, false) : undefined}
+                onFocus={focusLatestMessage}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" && !event.shiftKey) {
                     event.preventDefault();
@@ -834,9 +855,9 @@ export function StudentSupportExperience() {
                 maxLength={2000}
                 rows={1}
                 placeholder={selectedConversation?.status === "RESOLVED" ? "Send a message to reopen this chat..." : selectedConversation?.mode === "STAFF_ACTIVE" ? "Message commissary staff..." : "Message WesBot..."}
-                className="max-h-32 min-h-10 min-w-0 flex-1 resize-none bg-transparent px-3 py-2 text-sm leading-6 text-[#17211b] outline-none placeholder:text-[#8a948e]"
+                className="max-h-32 min-h-11 min-w-0 flex-1 resize-none bg-transparent px-3 py-2 text-base leading-6 text-[#17211b] outline-none placeholder:text-[#8a948e] sm:text-sm"
               />
-              <Button type="submit" className="size-10 shrink-0 rounded-full p-0" disabled={submitting || botReplyPending || !composer.trim()} aria-label="Send message">
+              <Button type="submit" className="size-11 shrink-0 rounded-full p-0" disabled={submitting || botReplyPending || !composer.trim()} aria-label="Send message">
                 <Send className="size-[18px]" />
               </Button>
             </form>

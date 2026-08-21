@@ -318,32 +318,34 @@ async function createBotReply(
     } as const;
   }
 
-  const botMessage = await insertConversationMessage({
-    conversationId,
-    senderType: "BOT",
-    message: reply.message,
-    intent: reply.intent,
-    metadata: {
-      automated: true,
-      ...(replyToMessageId ? { replyToMessageId } : {}),
-      sources: reply.sourceReferences,
-      staffRecommended: reply.staffRecommended,
-      usedAi: reply.usedAi
-    }
-  });
-
   const nextCount = reply.concernKey === conversation.lastConcernKey ? conversation.botReplyCount + 1 : 1;
-  const { error: updateError } = await supabaseAdmin
-    .from("conversations")
-    .update({
-      category: reply.category,
-      last_intent: reply.intent,
-      last_concern_key: reply.concernKey,
-      bot_reply_count: nextCount,
-      updated_at: botMessage.createdAt
+  const metadata = {
+    automated: true,
+    ...(replyToMessageId ? { replyToMessageId } : {}),
+    sources: reply.sourceReferences,
+    staffRecommended: reply.staffRecommended,
+    usedAi: reply.usedAi
+  };
+  const { data: botMessageData, error: botMessageError } = await supabaseAdmin
+    .rpc("insert_active_wesbot_reply", {
+      p_conversation_id: conversationId,
+      p_message: encryptSensitiveText(reply.message.trim(), "conversation.message"),
+      p_intent: reply.intent,
+      p_metadata: metadata,
+      p_category: reply.category,
+      p_last_intent: reply.intent,
+      p_last_concern_key: reply.concernKey,
+      p_bot_reply_count: nextCount,
+      p_reply_to_message_id: replyToMessageId ?? null
     })
-    .eq("id", conversationId);
-  if (updateError) throw HttpError.fromSupabase(updateError);
+    .maybeSingle();
+  if (botMessageError) throw HttpError.fromSupabase(botMessageError);
+
+  // Staff may have taken ownership while the grounded/AI lookup was running.
+  // The database function locks and rechecks the conversation before writing,
+  // so a missing row means WesBot correctly yielded to the Staff handler.
+  if (!botMessageData) return null;
+  const botMessage = mapMessage(botMessageData as unknown as RawConversationMessage);
 
   if (reply.handoffRequested) {
     const refreshed = withMessages(
@@ -506,17 +508,18 @@ export async function createMessage(input: {
   const now = new Date().toISOString();
 
   if (conversation.status === "RESOLVED") {
-    const mode: ConversationMode = isStudent
-      ? (env.WESBOT_ENABLED ? "BOT_ACTIVE" : "WAITING_FOR_STAFF")
-      : "STAFF_ACTIVE";
+    if (!isStudent) {
+      throw new HttpError(409, "Reopen and take ownership of this conversation before replying.", "CONVERSATION_REOPEN_REQUIRED");
+    }
+    const mode: ConversationMode = env.WESBOT_ENABLED ? "BOT_ACTIVE" : "WAITING_FOR_STAFF";
     const { error } = await supabaseAdmin
       .from("conversations")
       .update({
         status: "OPEN",
         mode,
-        assigned_staff_id: isStudent ? null : input.senderId,
+        assigned_staff_id: null,
         resolved_at: null,
-        accepted_at: isStudent ? null : now,
+        accepted_at: null,
         updated_at: now
       })
       .eq("id", input.conversationId);
@@ -528,27 +531,46 @@ export async function createMessage(input: {
     throw new HttpError(
       409,
       conversation.mode === "WAITING_FOR_STAFF"
-        ? "Accept this conversation before replying."
-        : "This conversation is not assigned to you.",
+        ? "Take over this conversation before replying."
+        : `Only ${conversation.assignedStaff?.fullName || "the current handler"} can reply. Take over the conversation first.`,
       conversation.mode === "WAITING_FOR_STAFF" ? "CONVERSATION_ACCEPT_REQUIRED" : "CONVERSATION_ALREADY_ASSIGNED"
     );
   }
 
-  const message = await insertConversationMessage({
-    conversationId: input.conversationId,
-    senderId: input.senderId,
-    senderType: isStudent ? "STUDENT" : "STAFF",
-    message: input.message
-  });
-
-  const updates: Record<string, unknown> = { status: "OPEN", updated_at: message.createdAt };
-  if (!isStudent) {
-    updates.mode = "STAFF_ACTIVE";
-    updates.assigned_staff_id = input.senderId;
-    updates.accepted_at = conversation.acceptedAt ?? now;
+  let message;
+  if (isStudent) {
+    message = await insertConversationMessage({
+      conversationId: input.conversationId,
+      senderId: input.senderId,
+      senderType: "STUDENT",
+      message: input.message
+    });
+    const { error: updateError } = await supabaseAdmin
+      .from("conversations")
+      .update({ status: "OPEN", updated_at: message.createdAt })
+      .eq("id", input.conversationId);
+    if (updateError) throw HttpError.fromSupabase(updateError);
+  } else {
+    const { data: staffMessageData, error: staffMessageError } = await supabaseAdmin
+      .rpc("insert_owned_staff_message", {
+        p_conversation_id: input.conversationId,
+        p_staff_id: input.senderId,
+        p_message: encryptSensitiveText(input.message.trim(), "conversation.message")
+      })
+      .maybeSingle();
+    if (staffMessageError) throw HttpError.fromSupabase(staffMessageError);
+    if (!staffMessageData) {
+      const current = await requireConversation(input.conversationId, input.senderId);
+      throw new HttpError(
+        409,
+        current.status === "RESOLVED"
+          ? "This conversation was resolved before your reply was sent."
+          : `Only ${current.assignedStaff?.fullName || "the current handler"} can reply. Take over the conversation first.`,
+        current.status === "RESOLVED" ? "CONVERSATION_REOPEN_REQUIRED" : "CONVERSATION_OWNERSHIP_CHANGED"
+      );
+    }
+    message = mapMessage(staffMessageData as unknown as RawConversationMessage);
   }
-  const { error: updateError } = await supabaseAdmin.from("conversations").update(updates).eq("id", input.conversationId);
-  if (updateError) throw HttpError.fromSupabase(updateError);
 
   let botMessage = null;
   let botReplyPending = false;
@@ -624,16 +646,10 @@ export async function requestStaffHandoff(input: { conversationId: string; stude
   return requireConversation(updated.id, input.studentId);
 }
 
-export async function acceptConversation(input: { conversationId: string; staffId: string }) {
+export async function takeOverConversation(input: { conversationId: string; staffId: string }) {
   const conversation = await requireConversation(input.conversationId, input.staffId);
-  if (conversation.status === "RESOLVED") throw new HttpError(409, "Reopen this conversation before accepting it.");
+  if (conversation.status === "RESOLVED") throw new HttpError(409, "Reopen this conversation before taking it over.");
   if (conversation.mode === "STAFF_ACTIVE" && conversation.assignedStaffId === input.staffId) return conversation;
-  if (conversation.mode === "STAFF_ACTIVE" && conversation.assignedStaffId !== input.staffId) {
-    throw new HttpError(409, "Another Staff member is already handling this conversation.", "CONVERSATION_ALREADY_ASSIGNED");
-  }
-  if (conversation.mode !== "WAITING_FOR_STAFF") {
-    throw new HttpError(409, "This conversation is not waiting for Staff.", "CONVERSATION_NOT_WAITING");
-  }
 
   const now = new Date().toISOString();
   let query = supabaseAdmin
@@ -641,39 +657,75 @@ export async function acceptConversation(input: { conversationId: string; staffI
     .update({ mode: "STAFF_ACTIVE", assigned_staff_id: input.staffId, accepted_at: now, updated_at: now })
     .eq("id", input.conversationId)
     .eq("status", "OPEN")
-    .eq("mode", "WAITING_FOR_STAFF");
-  query = conversation.assignedStaffId ? query.eq("assigned_staff_id", input.staffId) : query.is("assigned_staff_id", null);
+    .eq("mode", conversation.mode)
+    .eq("updated_at", conversation.updatedAt);
+  query = conversation.assignedStaffId
+    ? query.eq("assigned_staff_id", conversation.assignedStaffId)
+    : query.is("assigned_staff_id", null);
   const { data, error } = await query.select(conversationBaseSelect).maybeSingle();
   if (error) throw HttpError.fromSupabase(error);
-  if (!data) throw new HttpError(409, "Another Staff member accepted this conversation first.", "CONVERSATION_ALREADY_ASSIGNED");
+  if (!data) {
+    const current = await requireConversation(input.conversationId, input.staffId);
+    if (current.mode === "STAFF_ACTIVE" && current.assignedStaffId === input.staffId) return current;
+    throw new HttpError(
+      409,
+      `Conversation ownership changed${current.assignedStaff?.fullName ? ` to ${current.assignedStaff.fullName}` : ""}. Refresh and try again.`,
+      "CONVERSATION_OWNERSHIP_CHANGED"
+    );
+  }
 
   const accepted = mapConversation(data as unknown as RawConversation, input.staffId);
+  const handlerName = accepted.assignedStaff?.fullName || "Commissary Staff";
+  const previousHandlerName = conversation.assignedStaff?.fullName || "the previous Staff handler";
+  const transferred = conversation.mode === "STAFF_ACTIVE" && Boolean(conversation.assignedStaffId);
+  const tookOverBot = conversation.mode === "BOT_ACTIVE";
   await insertConversationMessage({
     conversationId: input.conversationId,
     senderType: "SYSTEM",
-    message: `You are now connected to ${accepted.assignedStaff?.fullName || "Commissary Staff"}. WesBot automatic replies are off.`
+    message: transferred
+      ? `${handlerName} took over this conversation from ${previousHandlerName}. Only the current handler can send Staff replies.`
+      : tookOverBot
+        ? `${handlerName} took over this conversation from WesBot. WesBot automatic replies are off.`
+        : `You are now connected to ${handlerName}. WesBot automatic replies are off.`
   });
   await createNotification({
     userId: accepted.studentId,
     type: "MESSAGE",
-    title: "Staff joined your support conversation",
-    message: `${accepted.assignedStaff?.fullName || "Commissary Staff"} is now handling ${accepted.subject}.`
+    title: transferred ? "Your support handler changed" : "Staff joined your support conversation",
+    message: `${handlerName} is now handling ${accepted.subject}.`
   });
   await safelyRecordAuditLog({
     actorId: input.staffId,
-    action: "SUPPORT_CONVERSATION_ACCEPTED",
+    action: transferred
+      ? "SUPPORT_CONVERSATION_OWNERSHIP_TRANSFERRED"
+      : tookOverBot
+        ? "SUPPORT_WESBOT_CONVERSATION_TAKEN_OVER"
+        : "SUPPORT_CONVERSATION_ACCEPTED",
     entityType: "conversation",
     entityId: input.conversationId,
-    summary: "Accepted a WesBot handoff.",
-    metadata: { studentId: accepted.studentId }
+    summary: transferred
+      ? `Took over a support conversation from ${previousHandlerName}.`
+      : tookOverBot
+        ? "Took over an active WesBot conversation."
+        : "Accepted a WesBot handoff.",
+    metadata: {
+      studentId: accepted.studentId,
+      previousMode: conversation.mode,
+      previousAssignedStaffId: conversation.assignedStaffId,
+      nextAssignedStaffId: input.staffId
+    }
   });
   await publishConversationUpdate({
     conversationId: input.conversationId,
     studentId: accepted.studentId,
-    action: "staff-accepted"
+    action: transferred ? "staff-ownership-transferred" : tookOverBot ? "staff-took-over-wesbot" : "staff-accepted"
   });
   return requireConversation(input.conversationId, input.staffId);
 }
+
+// Preserve the existing endpoint for older clients while routing all Staff
+// ownership changes through the same atomic takeover command.
+export const acceptConversation = takeOverConversation;
 
 export async function returnConversationToBot(input: { conversationId: string; performedById: string; performedByRole: AppRole }) {
   if (!env.WESBOT_ENABLED) throw new HttpError(503, "WesBot is currently unavailable.", "WESBOT_DISABLED");
@@ -728,22 +780,41 @@ export async function updateConversationStatus(input: {
   performedById: string;
 }) {
   const conversation = await requireConversation(input.conversationId, input.performedById);
+  if (conversation.status === input.status) return conversation;
+  if (
+    input.status === "RESOLVED"
+    && (conversation.mode !== "STAFF_ACTIVE" || conversation.assignedStaffId !== input.performedById)
+  ) {
+    throw new HttpError(
+      409,
+      `Only ${conversation.assignedStaff?.fullName || "the current handler"} can resolve this conversation. Take it over first.`,
+      "CONVERSATION_TAKEOVER_REQUIRED"
+    );
+  }
+
   const now = new Date().toISOString();
   const mode: ConversationMode = input.status === "RESOLVED" ? "RESOLVED" : "STAFF_ACTIVE";
-  const { data, error } = await supabaseAdmin
+  const nextAssignedStaffId = input.status === "OPEN" ? input.performedById : conversation.assignedStaffId;
+  let query = supabaseAdmin
     .from("conversations")
     .update({
       status: input.status,
       mode,
-      assigned_staff_id: conversation.assignedStaffId ?? input.performedById,
+      assigned_staff_id: nextAssignedStaffId,
       resolved_at: input.status === "RESOLVED" ? now : null,
-      accepted_at: input.status === "OPEN" ? (conversation.acceptedAt ?? now) : conversation.acceptedAt,
+      accepted_at: input.status === "OPEN" ? now : conversation.acceptedAt,
       updated_at: now
     })
     .eq("id", input.conversationId)
-    .select(conversationBaseSelect)
-    .single();
+    .eq("status", conversation.status)
+    .eq("mode", conversation.mode)
+    .eq("updated_at", conversation.updatedAt);
+  query = conversation.assignedStaffId
+    ? query.eq("assigned_staff_id", conversation.assignedStaffId)
+    : query.is("assigned_staff_id", null);
+  const { data, error } = await query.select(conversationBaseSelect).maybeSingle();
   if (error) throw HttpError.fromSupabase(error);
+  if (!data) throw new HttpError(409, "Conversation status or ownership changed. Refresh and try again.", "CONVERSATION_OWNERSHIP_CHANGED");
 
   const updatedConversation = mapConversation(data as unknown as RawConversation);
   if (input.status === "RESOLVED") {
@@ -767,7 +838,29 @@ export async function updateConversationStatus(input: {
         nextStatus: input.status,
         previousMode: conversation.mode,
         nextMode: mode,
+        previousAssignedStaffId: conversation.assignedStaffId,
+        nextAssignedStaffId,
         studentId: conversation.studentId
+      }
+    });
+  }
+  if (input.status === "OPEN" && conversation.assignedStaffId !== input.performedById) {
+    const handlerName = updatedConversation.assignedStaff?.fullName || "Commissary Staff";
+    await insertConversationMessage({
+      conversationId: input.conversationId,
+      senderType: "SYSTEM",
+      message: `${handlerName} reopened this conversation and is now the current handler.`
+    });
+    await safelyRecordAuditLog({
+      actorId: input.performedById,
+      action: "SUPPORT_CONVERSATION_OWNERSHIP_TRANSFERRED",
+      entityType: "conversation",
+      entityId: input.conversationId,
+      summary: "Reopened and took ownership of a resolved support conversation.",
+      metadata: {
+        studentId: conversation.studentId,
+        previousAssignedStaffId: conversation.assignedStaffId,
+        nextAssignedStaffId: input.performedById
       }
     });
   }
@@ -794,7 +887,7 @@ export async function setConversationTyping(input: {
     && input.role !== "STUDENT"
     && (conversation.mode !== "STAFF_ACTIVE" || conversation.assignedStaffId !== input.userId)
   ) {
-    throw new HttpError(409, "Accept this conversation before sending a typing indicator.", "CONVERSATION_ACCEPT_REQUIRED");
+    throw new HttpError(409, "Take over this conversation before sending a typing indicator.", "CONVERSATION_ACCEPT_REQUIRED");
   }
 
   const updatedAt = new Date().toISOString();
