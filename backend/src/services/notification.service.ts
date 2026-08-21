@@ -2,6 +2,7 @@ import { supabaseAdmin } from "../lib/supabase.js";
 import type { AppRole, NotificationType } from "../types/app.js";
 import { sendPushToUser } from "./push.service.js";
 import { HttpError } from "../utils/http-error.js";
+import { publishRealtimeEventsBestEffort, REALTIME_TOPICS } from "./realtime-event.service.js";
 
 type RawNotification = {
   id: string;
@@ -76,6 +77,13 @@ export async function createNotification(input: NotificationInput) {
 
   if (error) throw HttpError.fromSupabase(error);
   const notification = mapNotification(data as RawNotification);
+  await publishRealtimeEventsBestEffort([{
+    topic: REALTIME_TOPICS.notifications,
+    dedupeKey: `notification:${notification.id}:realtime`,
+    entityId: notification.id,
+    audienceUserIds: [notification.userId],
+    payload: { action: "created", notificationId: notification.id }
+  }]);
   dispatchPushNotifications([notification]);
   return notification;
 }
@@ -109,6 +117,13 @@ export async function createNotificationsForRoles(
     (profileRows ?? []).map((profile) => [profile.id as string, profile.role as AppRole])
   );
   const notifications = ((data ?? []) as RawNotification[]).map(mapNotification);
+  await publishRealtimeEventsBestEffort(notifications.map((notification) => ({
+    topic: REALTIME_TOPICS.notifications,
+    dedupeKey: `notification:${notification.id}:realtime`,
+    entityId: notification.id,
+    audienceUserIds: [notification.userId],
+    payload: { action: "created", notificationId: notification.id }
+  })));
   dispatchPushNotifications(notifications, roleByUserId);
   return notifications;
 }

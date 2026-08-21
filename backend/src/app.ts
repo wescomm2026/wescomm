@@ -41,7 +41,7 @@ app.use(cors({
   },
   credentials: true,
   methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Authorization", "Content-Type", "Idempotency-Key", "X-Request-Id"],
+  allowedHeaders: ["Authorization", "Content-Type", "Idempotency-Key", "Last-Event-ID", "X-Request-Id"],
   exposedHeaders: ["X-Request-Id", "Server-Timing", "RateLimit-Limit", "RateLimit-Remaining", "RateLimit-Reset", "Retry-After"],
   maxAge: 600
 }));

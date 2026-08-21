@@ -6,6 +6,7 @@ import { createRateLimiter, userRateLimitKey } from "../middleware/rate-limit.js
 import { listInventory, restockProduct } from "../services/inventory.service.js";
 import { PRODUCT_STATUSES } from "../types/app.js";
 import { asyncHandler } from "../utils/async-handler.js";
+import { publishRealtimeEventsBestEffort, REALTIME_TOPICS } from "../services/realtime-event.service.js";
 
 export const inventoryRoutes = Router();
 
@@ -61,6 +62,17 @@ inventoryRoutes.post(
       notes: input.notes,
       performedById: request.auth!.id
     });
+    await publishRealtimeEventsBestEffort([{
+      topic: REALTIME_TOPICS.inventory,
+      entityId: product.id,
+      audienceRoles: ["STAFF", "ADMIN"],
+      payload: { action: "restocked" }
+    }, {
+      topic: REALTIME_TOPICS.dashboard,
+      entityId: product.id,
+      audienceRoles: ["STAFF", "ADMIN"],
+      payload: { action: "inventory-restocked" }
+    }]);
     response.json({ product });
   })
 );

@@ -28,6 +28,7 @@ import {
   type NoShowPolicyOutcome
 } from "./restriction.service.js";
 import { OUTBOX_EVENT_TYPES } from "./outbox.service.js";
+import { publishRealtimeEvents, REALTIME_TOPICS } from "./realtime-event.service.js";
 import {
   createBackInStockNotificationsInTransaction
 } from "./wishlist-notification.service.js";
@@ -789,6 +790,28 @@ export async function createReservation(input: {
           select: { id: true }
         });
 
+        await publishRealtimeEvents(tx, [
+          {
+            topic: REALTIME_TOPICS.reservations,
+            entityId: reservation.id,
+            audienceUserIds: [input.studentId],
+            audienceRoles: ["STAFF", "ADMIN"],
+            payload: { action: "created", status: reservation.status }
+          },
+          {
+            topic: REALTIME_TOPICS.inventory,
+            entityId: reservation.id,
+            audienceRoles: ["STAFF", "ADMIN"],
+            payload: { action: "reservation-hold" }
+          },
+          {
+            topic: REALTIME_TOPICS.dashboard,
+            entityId: reservation.id,
+            audienceRoles: ["STAFF", "ADMIN"],
+            payload: { action: "reservation-created" }
+          }
+        ]);
+
         const commandReservation = {
           id: reservation.id,
           studentId: reservation.studentId,
@@ -1190,6 +1213,43 @@ export async function updateReservationStatus(
             },
             select: { id: true }
           });
+
+          await publishRealtimeEvents(tx, [
+            {
+              topic: REALTIME_TOPICS.reservations,
+              entityId: existingReservation.id,
+              audienceUserIds: [existingReservation.studentId],
+              audienceRoles: ["STAFF", "ADMIN"],
+              payload: {
+                action: "status-changed",
+                previousStatus: existingReservation.status,
+                nextStatus: status
+              }
+            },
+            {
+              topic: REALTIME_TOPICS.dashboard,
+              entityId: existingReservation.id,
+              audienceRoles: ["STAFF", "ADMIN"],
+              payload: { action: "reservation-status-changed", nextStatus: status }
+            },
+            ...((status === "CANCELLED" || status === "NO_SHOW")
+              ? [{
+                  topic: REALTIME_TOPICS.inventory,
+                  entityId: existingReservation.id,
+                  audienceRoles: ["STAFF" as const, "ADMIN" as const],
+                  payload: { action: "reservation-stock-released" }
+                }]
+              : []),
+            ...(status === "NO_SHOW"
+              ? [{
+                  topic: REALTIME_TOPICS.restrictions,
+                  entityId: existingReservation.studentId,
+                  audienceUserIds: [existingReservation.studentId],
+                  audienceRoles: ["STAFF" as const, "ADMIN" as const],
+                  payload: { action: "no-show-recorded" }
+                }]
+              : [])
+          ]);
         }
 
         return {

@@ -17,6 +17,7 @@ import {
   runPaymongoMaintenance
 } from "../services/paymongo-reconciliation.service.js";
 import { runOutboxBatch } from "../services/outbox.service.js";
+import { deleteExpiredRealtimeEvents } from "../services/realtime-event.service.js";
 
 const paymentIdSchema = z.string().uuid();
 const checkoutSchema = z.object({
@@ -85,11 +86,12 @@ paymentsRoutes.post(
   maintenanceLimiter,
   asyncHandler(async (request, response) => {
     const { limit } = maintenanceSchema.parse(request.body ?? {});
-    const [paymentMaintenance, outbox] = await Promise.all([
+    const [paymentMaintenance, outbox, deletedRealtimeEvents] = await Promise.all([
       runPaymongoMaintenance({ actorId: null, limit }),
-      runOutboxBatch({ limit })
+      runOutboxBatch({ limit }),
+      deleteExpiredRealtimeEvents()
     ]);
-    response.json({ maintenance: paymentMaintenance, outbox });
+    response.json({ maintenance: paymentMaintenance, outbox, deletedRealtimeEvents });
   })
 );
 

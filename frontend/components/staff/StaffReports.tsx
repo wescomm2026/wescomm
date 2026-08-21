@@ -19,6 +19,7 @@ import {
 } from "recharts";
 import { ArrowRight, ChevronDown, Download, RefreshCw } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
+import { useRealtimeRefresh } from "@/components/realtime/RealtimeProvider";
 import { SiteFooterLinks } from "@/components/layout/SiteFooterLinks";
 import { AssetIcon } from "@/components/ui/AssetIcon";
 import { Button } from "@/components/ui/button";
@@ -114,6 +115,10 @@ function useStaffReportsSummary() {
       if (!background) setLoading(false);
     }
   }, [ready, user]);
+
+  useRealtimeRefresh(["reports"], () => {
+    void loadSummary({ background: true });
+  });
 
   useEffect(() => {
     void loadSummary();

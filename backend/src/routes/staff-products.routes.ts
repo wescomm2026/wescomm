@@ -18,6 +18,7 @@ import {
 import { PRODUCT_STATUSES } from "../types/app.js";
 import { asyncHandler } from "../utils/async-handler.js";
 import { HttpError } from "../utils/http-error.js";
+import { publishRealtimeEventsBestEffort, REALTIME_TOPICS } from "../services/realtime-event.service.js";
 
 export const staffProductsRoutes = Router();
 
@@ -115,6 +116,20 @@ const inventoryWriteLimiter = createRateLimiter({
   message: "Inventory update limit reached. Please wait before making more changes."
 });
 
+async function publishInventoryChange(productId: string, action: string) {
+  await publishRealtimeEventsBestEffort([{
+    topic: REALTIME_TOPICS.inventory,
+    entityId: productId,
+    audienceRoles: ["STAFF", "ADMIN"],
+    payload: { action }
+  }, {
+    topic: REALTIME_TOPICS.dashboard,
+    entityId: productId,
+    audienceRoles: ["STAFF", "ADMIN"],
+    payload: { action: `inventory-${action}` }
+  }]);
+}
+
 staffProductsRoutes.use(requireAuth, requireRole("STAFF", "ADMIN"));
 
 staffProductsRoutes.get(
@@ -148,6 +163,7 @@ staffProductsRoutes.post(
   asyncHandler(async (request: AuthenticatedRequest, response) => {
     const input = createProductSchema.parse(request.body);
     const product = await createProduct(input, request.auth!.id);
+    await publishInventoryChange(product.id, "created");
     response.status(201).json({ product });
   })
 );
@@ -158,6 +174,7 @@ staffProductsRoutes.patch(
   asyncHandler(async (request: AuthenticatedRequest, response) => {
     const input = updateProductSchema.parse(request.body);
     const product = await updateProduct(productIdSchema.parse(request.params.id), input, request.auth!.id);
+    await publishInventoryChange(product.id, "updated");
     response.json({ product });
   })
 );
@@ -167,6 +184,7 @@ staffProductsRoutes.delete(
   inventoryWriteLimiter,
   asyncHandler(async (request: AuthenticatedRequest, response) => {
     const product = await archiveProduct(productIdSchema.parse(request.params.id), request.auth!.id);
+    await publishInventoryChange(product.id, "archived");
     response.json({ product });
   })
 );
@@ -183,6 +201,7 @@ staffProductsRoutes.post(
       notes: input.notes,
       performedById: request.auth!.id
     });
+    await publishInventoryChange(product.id, "restocked");
     response.json({ product });
   })
 );
@@ -193,6 +212,7 @@ staffProductsRoutes.post(
   asyncHandler(async (request: AuthenticatedRequest, response) => {
     const input = variantSchema.parse(request.body);
     const product = await createProductVariant(productIdSchema.parse(request.params.id), input, request.auth!.id);
+    await publishInventoryChange(product.id, "variant-created");
     response.status(201).json({ product });
   })
 );
@@ -208,6 +228,7 @@ staffProductsRoutes.patch(
       input,
       request.auth!.id
     );
+    await publishInventoryChange(product.id, "variant-updated");
     response.json({ product });
   })
 );
@@ -221,6 +242,7 @@ staffProductsRoutes.delete(
       variantIdSchema.parse(request.params.variantId),
       request.auth!.id
     );
+    await publishInventoryChange(product.id, "variant-deleted");
     response.json({ product });
   })
 );

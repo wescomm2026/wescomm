@@ -18,6 +18,7 @@ import {
 } from "recharts";
 import { ArrowRight, Download, RefreshCw, Search } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
+import { useRealtimeRefresh } from "@/components/realtime/RealtimeProvider";
 import { AssetIcon } from "@/components/ui/AssetIcon";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
@@ -121,6 +122,10 @@ function useAdminSummary() {
       }
     }
   }, [ready, user?.accessToken]);
+
+  useRealtimeRefresh(["dashboard", "reports", "inventory", "reservations", "receipts", "conversations", "users"], () => {
+    void loadSummary({ background: true });
+  });
 
   useEffect(() => {
     void loadSummary();
@@ -511,6 +516,10 @@ export function AdminUsersExperience() {
     }
   }, [deferredSearch, ready, role, user?.accessToken, user?.role]);
 
+  useRealtimeRefresh(["users"], () => {
+    void loadUsers({ background: true });
+  });
+
   useEffect(() => {
     void loadUsers();
   }, [loadUsers]);
@@ -667,6 +676,10 @@ export function AdminAuditLogsExperience() {
       if (!background) setLoading(false);
     }
   }, [action, deferredSearch, entityType, ready, user?.accessToken, user?.role]);
+
+  useRealtimeRefresh(["users"], () => {
+    void loadLogs({ background: true });
+  });
 
   useEffect(() => {
     void loadLogs();

@@ -319,7 +319,18 @@ export type BackendNoShowCandidate = {
 export type BackendRestrictionOverview = {
   policy: BackendRestrictionPolicy;
   students: BackendRestrictionStudent[];
-  noShowCandidates: BackendNoShowCandidate[];
+  nextCursor: string | null;
+  summary: {
+    totalStudents: number;
+    restrictedStudents: number;
+    warningStudents: number;
+  };
+};
+
+export type BackendNoShowPage = {
+  items: BackendNoShowCandidate[];
+  nextCursor: string | null;
+  totalCandidates: number;
 };
 
 export type BackendPushPublicConfig = {
@@ -822,14 +833,29 @@ export async function getMyRestrictionSummaryFromApi(token: string) {
 
 export async function getRestrictionOverviewFromApi(
   token: string,
-  filters: { query?: string; status?: "ALL" | "RESTRICTED" | "CLEAR" } = {}
+  filters: { query?: string; status?: "ALL" | "RESTRICTED" | "CLEAR"; cursor?: string; limit?: number } = {}
 ) {
   const params = new URLSearchParams();
   if (filters.query?.trim()) params.set("query", filters.query.trim());
   if (filters.status) params.set("status", filters.status);
+  if (filters.cursor) params.set("cursor", filters.cursor);
+  if (filters.limit) params.set("limit", String(filters.limit));
   const suffix = params.size ? `?${params.toString()}` : "";
   const data = await authApiFetch<{ overview: BackendRestrictionOverview }>(`/staff/restrictions${suffix}`, token);
   return data.overview;
+}
+
+export async function getNoShowCandidatesFromApi(
+  token: string,
+  filters: { query?: string; cursor?: string; limit?: number } = {}
+) {
+  const params = new URLSearchParams();
+  if (filters.query?.trim()) params.set("query", filters.query.trim());
+  if (filters.cursor) params.set("cursor", filters.cursor);
+  if (filters.limit) params.set("limit", String(filters.limit));
+  const suffix = params.size ? `?${params.toString()}` : "";
+  const data = await authApiFetch<{ page: BackendNoShowPage }>(`/staff/restrictions/no-shows${suffix}`, token);
+  return data.page;
 }
 
 export async function createStudentRestrictionFromApi(

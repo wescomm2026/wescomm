@@ -14,6 +14,7 @@ import {
 } from "react";
 import { Clock3, ShieldAlert } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
+import { useRealtimeRefresh } from "@/components/realtime/RealtimeProvider";
 import { getMyRestrictionSummaryFromApi, type BackendRestrictionSummary } from "@/lib/api";
 
 type StudentRestrictionContextValue = {
@@ -74,6 +75,10 @@ export function StudentRestrictionProvider({ children }: { children: ReactNode }
       if (requestSequence === requestSequenceRef.current) setLoading(false);
     }
   }, [accountId, user?.accessToken, user?.role]);
+
+  useRealtimeRefresh(["restrictions"], () => {
+    void refresh();
+  });
 
   useEffect(() => {
     if (!ready) return;

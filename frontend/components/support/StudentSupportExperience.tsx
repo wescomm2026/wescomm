@@ -4,6 +4,7 @@ import Image from "next/image";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Headphones, MessageCircleMore, Plus, RefreshCw, Send } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
+import { useRealtimeRefresh } from "@/components/realtime/RealtimeProvider";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import {
@@ -15,7 +16,8 @@ import {
   sendConversationMessageFromApi,
   updateConversationTypingFromApi,
   type BackendConversation,
-  type BackendConversationMessage
+  type BackendConversationMessage,
+  type BackendTypingUser
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
@@ -143,6 +145,7 @@ export function StudentSupportExperience() {
   const lastTypingSignalRef = useRef(0);
   const loadedThreadIdsRef = useRef(new Set<string>());
   const latestMessageAtRef = useRef("");
+  const typingExpiryTimersRef = useRef(new Map<string, number>());
 
   const selectedConversation = useMemo(() => {
     if (startingNew) return null;
@@ -208,6 +211,57 @@ export function StudentSupportExperience() {
     }
   }, [user?.accessToken]);
 
+  useRealtimeRefresh(["conversations", "typing"], (update) => {
+    if (update.topic === "conversations") {
+      void loadConversations({ background: true });
+      if (threadOpen && selectedConversation?.id && update.entityId === selectedConversation.id) {
+        void loadThreadMessages(selectedConversation.id, latestMessageAtRef.current || undefined);
+      }
+      return;
+    }
+
+    const payload = update.payload as Partial<BackendTypingUser> & {
+      conversationId?: string;
+      isTyping?: boolean;
+    };
+    if (!payload.conversationId || !payload.userId || payload.userId === user?.id) return;
+    const conversationId = payload.conversationId;
+    const userId = payload.userId;
+    const timerKey = `${conversationId}:${userId}`;
+    const existingTimer = typingExpiryTimersRef.current.get(timerKey);
+    if (existingTimer) window.clearTimeout(existingTimer);
+
+    setConversations((current) => current.map((conversation) => {
+      if (conversation.id !== conversationId) return conversation;
+      const withoutSender = (conversation.typingUsers ?? []).filter((typingUser) => typingUser.userId !== userId);
+      if (!payload.isTyping || !payload.fullName || !payload.email || !payload.role || !payload.updatedAt) {
+        return { ...conversation, typingUsers: withoutSender };
+      }
+      return {
+        ...conversation,
+        typingUsers: [...withoutSender, {
+          userId,
+          fullName: payload.fullName,
+          email: payload.email,
+          role: payload.role,
+          updatedAt: payload.updatedAt
+        }]
+      };
+    }));
+
+    if (payload.isTyping) {
+      const timer = window.setTimeout(() => {
+        setConversations((current) => current.map((conversation) => conversation.id === conversationId
+          ? { ...conversation, typingUsers: (conversation.typingUsers ?? []).filter((typingUser) => typingUser.userId !== userId) }
+          : conversation));
+        typingExpiryTimersRef.current.delete(timerKey);
+      }, 7_000);
+      typingExpiryTimersRef.current.set(timerKey, timer);
+    } else {
+      typingExpiryTimersRef.current.delete(timerKey);
+    }
+  });
+
   useEffect(() => {
     if (!ready) return;
     void loadConversations();
@@ -248,7 +302,7 @@ export function StudentSupportExperience() {
         void loadThreadMessages(conversationId, latestMessageAtRef.current || undefined);
       }
     };
-    const interval = window.setInterval(refreshThread, 8000);
+    const interval = window.setInterval(refreshThread, 60000);
     window.addEventListener("focus", refreshThread);
     window.addEventListener("online", refreshThread);
     return () => {
@@ -284,6 +338,8 @@ export function StudentSupportExperience() {
 
   useEffect(() => () => {
     if (typingStopTimerRef.current) window.clearTimeout(typingStopTimerRef.current);
+    typingExpiryTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+    typingExpiryTimersRef.current.clear();
   }, []);
 
   const sendTypingSignal = useCallback((conversationId: string, isTyping: boolean) => {

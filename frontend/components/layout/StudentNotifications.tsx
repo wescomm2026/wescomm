@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Bell, Check, X } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
+import { useRealtimeRefresh } from "@/components/realtime/RealtimeProvider";
 import {
   getNotificationsFromApi,
   getUnreadNotificationCountFromApi,
@@ -101,6 +102,11 @@ export function StudentNotifications({ onRequireAuth }: { onRequireAuth?: () => 
       // Keep the last known badge count; opening the panel still offers an explicit retry.
     }
   }, [accountId, user?.accessToken]);
+
+  useRealtimeRefresh(["notifications"], () => {
+    void loadUnreadCount();
+    if (open) void loadNotifications();
+  });
 
   useEffect(() => {
     setOpen(false);

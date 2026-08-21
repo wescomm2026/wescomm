@@ -11,6 +11,7 @@ import {
   runRestrictionReadTransaction,
   runRestrictionWriteTransaction
 } from "../utils/restriction-transaction.js";
+import { createPage, decodeCursor, normalizePageLimit } from "../utils/cursor-pagination.js";
 import { safelyRecordAuditLog } from "./audit-log.service.js";
 import { createNotification } from "./notification.service.js";
 
@@ -320,11 +321,17 @@ export async function getStudentRestrictionSummary(studentId: string) {
   });
 }
 
-export async function listRestrictionOverview(filters: { query?: string; status?: "ALL" | "RESTRICTED" | "CLEAR" } = {}) {
+export async function listRestrictionOverview(filters: {
+  query?: string;
+  status?: "ALL" | "RESTRICTED" | "CLEAR";
+  cursor?: string;
+  limit?: number;
+} = {}) {
   return runRestrictionReadTransaction(prisma, async (tx) => {
     const now = new Date();
+    const limit = normalizePageLimit(filters.limit);
+    const cursorId = decodeCursor(filters.cursor);
     await expireRestrictions(tx, undefined, now);
-    const cutoff = new Date(now.getTime() - RESERVATION_RESTRICTION_POLICY.noShowGraceHours * 60 * 60 * 1000);
     const activeRestrictionWhere: Prisma.AccountRestrictionWhereInput = {
       status: "ACTIVE",
       OR: [{ endsAt: null }, { endsAt: { gt: now } }]
@@ -349,7 +356,8 @@ export async function listRestrictionOverview(filters: { query?: string; status?
           : {})
       },
       orderBy: [{ fullName: "asc" }, { email: "asc" }],
-      take: 200,
+      ...(cursorId ? { cursor: { id: cursorId }, skip: 1 } : {}),
+      take: limit + 1,
       select: {
         id: true,
         fullName: true,
@@ -375,7 +383,43 @@ export async function listRestrictionOverview(filters: { query?: string; status?
       }
     });
 
-    const studentIds = students.map((student) => student.id);
+    const [totalStudents, restrictedStudents, warningRows] = await Promise.all([
+      tx.profile.count({ where: { role: "STUDENT" } }),
+      tx.profile.count({
+        where: {
+          role: "STUDENT",
+          restrictions: { some: activeRestrictionWhere }
+        }
+      }),
+      tx.$queryRaw<Array<{ count: bigint }>>`
+        SELECT COUNT(*) AS "count"
+        FROM "profiles" profile
+        WHERE profile."role" = 'STUDENT'
+          AND NOT EXISTS (
+            SELECT 1
+            FROM "account_restrictions" restriction
+            WHERE restriction."student_id" = profile."id"
+              AND restriction."status" = 'ACTIVE'
+              AND (restriction."ends_at" IS NULL OR restriction."ends_at" > ${now})
+          )
+          AND EXISTS (
+            SELECT 1
+            FROM "student_offenses" offense
+            WHERE offense."student_id" = profile."id"
+              AND offense."type" = 'NO_SHOW'
+              AND offense."status" = 'ACTIVE'
+              AND offense."occurred_at" > COALESCE((
+                SELECT MAX(reservation."updated_at")
+                FROM "reservations" reservation
+                WHERE reservation."student_id" = profile."id"
+                  AND reservation."status" = 'COMPLETED'
+              ), '-infinity'::timestamptz)
+          )
+      `
+    ]);
+
+    const studentPage = createPage(students, limit);
+    const studentIds = studentPage.items.map((student) => student.id);
     const activeNoShowOffenses = studentIds.length > 0
       ? await tx.studentOffense.findMany({
           where: {
@@ -400,7 +444,7 @@ export async function listRestrictionOverview(filters: { query?: string; status?
       );
     }
 
-    const mappedStudents = students.map((student) => {
+    const mappedStudents = studentPage.items.map((student) => {
       return {
         id: student.id,
         fullName: student.fullName,
@@ -413,13 +457,52 @@ export async function listRestrictionOverview(filters: { query?: string; status?
       };
     });
 
-    const candidates = await tx.reservation.findMany({
+    return {
+      policy: RESERVATION_RESTRICTION_POLICY,
+      students: mappedStudents,
+      nextCursor: studentPage.nextCursor,
+      summary: {
+        totalStudents,
+        restrictedStudents,
+        warningStudents: Number(warningRows[0]?.count ?? 0n)
+      }
+    };
+  });
+}
+
+export async function listNoShowCandidates(filters: {
+  query?: string;
+  cursor?: string;
+  limit?: number;
+} = {}) {
+  return runRestrictionReadTransaction(prisma, async (tx) => {
+    const now = new Date();
+    const cutoff = new Date(now.getTime() - RESERVATION_RESTRICTION_POLICY.noShowGraceHours * 60 * 60 * 1000);
+    const limit = normalizePageLimit(filters.limit);
+    const cursorId = decodeCursor(filters.cursor);
+    const where: Prisma.ReservationWhereInput = {
+      status: "READY_FOR_PICKUP",
+      pickupEnd: { not: null, lte: cutoff },
+      ...(filters.query?.trim()
+        ? {
+            OR: [
+              { referenceCode: { contains: filters.query.trim(), mode: "insensitive" } },
+              { student: { fullName: { contains: filters.query.trim(), mode: "insensitive" } } },
+              { student: { email: { contains: filters.query.trim(), mode: "insensitive" } } },
+              { student: { studentNumber: { contains: filters.query.trim(), mode: "insensitive" } } },
+              { items: { some: { product: { name: { contains: filters.query.trim(), mode: "insensitive" } } } } }
+            ]
+          }
+        : {})
+    };
+    const [candidates, totalCandidates] = await Promise.all([
+      tx.reservation.findMany({
       where: {
-        status: "READY_FOR_PICKUP",
-        pickupEnd: { not: null, lte: cutoff }
+        ...where
       },
-      orderBy: { pickupEnd: "asc" },
-      take: 100,
+      orderBy: [{ pickupEnd: "asc" }, { id: "asc" }],
+      ...(cursorId ? { cursor: { id: cursorId }, skip: 1 } : {}),
+      take: limit + 1,
       select: {
         id: true,
         referenceCode: true,
@@ -428,12 +511,14 @@ export async function listRestrictionOverview(filters: { query?: string; status?
         student: { select: { fullName: true, email: true, studentNumber: true } },
         items: { select: { quantity: true, product: { select: { name: true } } } }
       }
-    });
+      }),
+      tx.reservation.count({ where })
+    ]);
+
+    const page = createPage(candidates, limit);
 
     return {
-      policy: RESERVATION_RESTRICTION_POLICY,
-      students: mappedStudents,
-      noShowCandidates: candidates.map((reservation) => ({
+      items: page.items.map((reservation) => ({
         id: reservation.id,
         referenceCode: reservation.referenceCode,
         studentId: reservation.studentId,
@@ -443,7 +528,9 @@ export async function listRestrictionOverview(filters: { query?: string; status?
           ? new Date(reservation.pickupEnd.getTime() + RESERVATION_RESTRICTION_POLICY.noShowGraceHours * 60 * 60 * 1000).toISOString()
           : null,
         items: reservation.items.map((item) => ({ name: item.product.name, quantity: item.quantity }))
-      }))
+      })),
+      nextCursor: page.nextCursor,
+      totalCandidates
     };
   });
 }

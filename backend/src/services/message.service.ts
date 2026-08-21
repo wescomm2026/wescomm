@@ -12,19 +12,11 @@ import { decryptSensitiveText, encryptSensitiveText } from "../utils/field-encry
 import { HttpError } from "../utils/http-error.js";
 import { safelyRecordAuditLog } from "./audit-log.service.js";
 import { createNotification, createNotificationsForRoles } from "./notification.service.js";
+import {
+  publishRealtimeEventsBestEffort,
+  REALTIME_TOPICS
+} from "./realtime-event.service.js";
 import { buildWesbotHandoffSummary, resolveWesbotReply } from "./wesbot.service.js";
-
-const TYPING_TTL_MS = 6000;
-
-type TypingUser = {
-  userId: string;
-  fullName: string;
-  email: string;
-  role: AppRole;
-  updatedAt: string;
-};
-
-const typingState = new Map<string, Map<string, TypingUser>>();
 
 type ConversationMessageSenderType = "STUDENT" | "BOT" | "STAFF" | "SYSTEM";
 
@@ -122,34 +114,6 @@ function mapMessage(row: RawConversationMessage) {
   };
 }
 
-function pruneTypingState(conversationId?: string) {
-  const now = Date.now();
-  const conversationIds = conversationId ? [conversationId] : Array.from(typingState.keys());
-
-  conversationIds.forEach((id) => {
-    const users = typingState.get(id);
-    if (!users) return;
-
-    users.forEach((typingUser, userId) => {
-      if (now - new Date(typingUser.updatedAt).getTime() > TYPING_TTL_MS) users.delete(userId);
-    });
-
-    if (!users.size) typingState.delete(id);
-  });
-}
-
-function getTypingUsers(conversationId: string, viewerId?: string) {
-  pruneTypingState(conversationId);
-  return Array.from(typingState.get(conversationId)?.values() ?? []).filter((typingUser) => typingUser.userId !== viewerId);
-}
-
-function clearTypingUser(conversationId: string, userId: string) {
-  const users = typingState.get(conversationId);
-  if (!users) return;
-  users.delete(userId);
-  if (!users.size) typingState.delete(conversationId);
-}
-
 function mapConversation(row: RawConversation, viewerId?: string) {
   return {
     id: row.id,
@@ -173,7 +137,7 @@ function mapConversation(row: RawConversation, viewerId?: string) {
     student: mapProfileSummary(row.student),
     assignedStaff: mapProfileSummary(row.assignedStaff),
     messages: (row.messages ?? []).map(mapMessage).sort((left, right) => left.createdAt.localeCompare(right.createdAt)),
-    typingUsers: getTypingUsers(row.id, viewerId)
+    typingUsers: []
   };
 }
 
@@ -248,6 +212,25 @@ async function notifyStaffQueue(conversation: Awaited<ReturnType<typeof requireC
     message: `${conversation.student?.fullName || conversation.student?.email || "A student"} requested human support for ${conversation.subject}.`,
     actionUrl: `/staff/messages?conversationId=${encodeURIComponent(conversation.id)}`
   });
+}
+
+async function publishConversationUpdate(input: {
+  conversationId: string;
+  studentId: string;
+  action: string;
+  messageId?: string;
+}) {
+  await publishRealtimeEventsBestEffort([{
+    topic: REALTIME_TOPICS.conversations,
+    entityId: input.conversationId,
+    audienceUserIds: [input.studentId],
+    audienceRoles: ["STAFF", "ADMIN"],
+    payload: {
+      action: input.action,
+      conversationId: input.conversationId,
+      ...(input.messageId ? { messageId: input.messageId } : {})
+    }
+  }]);
 }
 
 function handoffSummary(conversation: Awaited<ReturnType<typeof requireConversation>>, reason: string) {
@@ -374,6 +357,13 @@ async function createBotReply(
     });
   }
 
+  await publishConversationUpdate({
+    conversationId,
+    studentId,
+    action: "message-created",
+    messageId: botMessage.id
+  });
+
   return botMessage;
 }
 
@@ -455,7 +445,7 @@ export async function listConversationMessages(input: {
   return {
     messages,
     nextCursor: !input.after && hasMore ? messages[0]?.createdAt ?? null : null,
-    typingUsers: getTypingUsers(input.conversationId, input.userId)
+    typingUsers: []
   };
 }
 
@@ -489,8 +479,16 @@ export async function createConversation(input: { studentId: string; subject: st
     await notifyStaffQueue(created);
   }
 
+  const createdConversation = withMessages(await requireConversation(conversation.id, input.studentId), [message]);
+  await publishConversationUpdate({
+    conversationId: conversation.id,
+    studentId: input.studentId,
+    action: "conversation-created",
+    messageId: message.id
+  });
+
   return {
-    conversation: withMessages(await requireConversation(conversation.id, input.studentId), [message]),
+    conversation: createdConversation,
     message,
     botReplyPending: env.WESBOT_ENABLED
   };
@@ -504,8 +502,6 @@ export async function createMessage(input: {
 }) {
   let conversation = await requireConversation(input.conversationId, input.senderId);
   assertConversationAccess(conversation, input.senderId, input.senderRole);
-  clearTypingUser(input.conversationId, input.senderId);
-
   const isStudent = input.senderRole === "STUDENT";
   const now = new Date().toISOString();
 
@@ -585,6 +581,13 @@ export async function createMessage(input: {
     });
   }
 
+  await publishConversationUpdate({
+    conversationId: input.conversationId,
+    studentId: conversation.studentId,
+    action: "message-created",
+    messageId: message.id
+  });
+
   return {
     message,
     botMessage,
@@ -613,6 +616,11 @@ export async function requestStaffHandoff(input: { conversationId: string; stude
       message: "Your conversation is now in the Commissary Staff queue. WesBot automatic replies are paused."
     });
   }
+  await publishConversationUpdate({
+    conversationId: input.conversationId,
+    studentId: conversation.studentId,
+    action: "handoff-requested"
+  });
   return requireConversation(updated.id, input.studentId);
 }
 
@@ -659,6 +667,11 @@ export async function acceptConversation(input: { conversationId: string; staffI
     summary: "Accepted a WesBot handoff.",
     metadata: { studentId: accepted.studentId }
   });
+  await publishConversationUpdate({
+    conversationId: input.conversationId,
+    studentId: accepted.studentId,
+    action: "staff-accepted"
+  });
   return requireConversation(input.conversationId, input.staffId);
 }
 
@@ -700,6 +713,11 @@ export async function returnConversationToBot(input: { conversationId: string; p
     entityId: input.conversationId,
     summary: "Returned a Staff conversation to WesBot.",
     metadata: { studentId: conversation.studentId }
+  });
+  await publishConversationUpdate({
+    conversationId: input.conversationId,
+    studentId: conversation.studentId,
+    action: "returned-to-bot"
   });
   return requireConversation(input.conversationId, input.performedById);
 }
@@ -753,6 +771,11 @@ export async function updateConversationStatus(input: {
       }
     });
   }
+  await publishConversationUpdate({
+    conversationId: input.conversationId,
+    studentId: conversation.studentId,
+    action: "status-changed"
+  });
   return updatedConversation;
 }
 
@@ -774,19 +797,22 @@ export async function setConversationTyping(input: {
     throw new HttpError(409, "Accept this conversation before sending a typing indicator.", "CONVERSATION_ACCEPT_REQUIRED");
   }
 
-  if (!input.isTyping) {
-    clearTypingUser(input.conversationId, input.userId);
-    return getTypingUsers(input.conversationId, input.userId);
-  }
-
-  const users = typingState.get(input.conversationId) ?? new Map<string, TypingUser>();
-  users.set(input.userId, {
-    userId: input.userId,
-    fullName: input.profile.fullName || input.profile.email,
-    email: input.profile.email,
-    role: input.role,
-    updatedAt: new Date().toISOString()
-  });
-  typingState.set(input.conversationId, users);
-  return getTypingUsers(input.conversationId, input.userId);
+  const updatedAt = new Date().toISOString();
+  await publishRealtimeEventsBestEffort([{
+    topic: REALTIME_TOPICS.typing,
+    entityId: input.conversationId,
+    audienceUserIds: input.role === "STUDENT" ? [] : [conversation.studentId],
+    audienceRoles: input.role === "STUDENT" ? ["STAFF", "ADMIN"] : [],
+    ttlMs: 15_000,
+    payload: {
+      conversationId: input.conversationId,
+      userId: input.userId,
+      fullName: input.profile.fullName || input.profile.email,
+      email: input.profile.email,
+      role: input.role,
+      isTyping: input.isTyping,
+      updatedAt
+    }
+  }]);
+  return [];
 }

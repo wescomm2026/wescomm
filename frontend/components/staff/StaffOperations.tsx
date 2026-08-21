@@ -5,6 +5,7 @@ import Image from "next/image";
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Ban, Bot, Check, Edit3, Eye, Filter, Headphones, LoaderCircle, Plus, RefreshCw, Search, Send, Trash2, Upload, X } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
+import { useRealtimeRefresh } from "@/components/realtime/RealtimeProvider";
 import { FaqManagementExperience } from "@/components/faq/FaqManagementExperience";
 import { WebPushSettings } from "@/components/notifications/WebPushSettings";
 import { ActionLoadingOverlay } from "@/components/ui/ActionLoadingOverlay";
@@ -25,6 +26,7 @@ import {
   type BackendConversation,
   type BackendConversationMessage,
   type BackendConversationStatus,
+  type BackendTypingUser,
   type BackendReceipt,
   type BackendReceiptStatus,
   updateConversationTypingFromApi,
@@ -666,6 +668,10 @@ export function StaffInventoryExperience() {
     }
   };
 
+  useRealtimeRefresh(["inventory"], () => {
+    if (token) void loadProducts(token, { query: deferredInventorySearch, status });
+  });
+
   useEffect(() => {
     const params = new URL(window.location.href).searchParams;
     setSearch(params.get("query") ?? "");
@@ -1220,6 +1226,10 @@ export function StaffReservationsExperience() {
     }
   }, [deferredSearch, status]);
 
+  useRealtimeRefresh(["reservations"], () => {
+    void loadReservations({ background: true });
+  });
+
   useEffect(() => {
     void loadReservations();
   }, [loadReservations]);
@@ -1415,6 +1425,10 @@ export function StaffReceiptsExperience() {
       if (!background) setLoading(false);
     }
   }, [deferredSearch, status]);
+
+  useRealtimeRefresh(["receipts"], () => {
+    void loadReceipts({ background: true });
+  });
 
   useEffect(() => {
     void loadReceipts();
@@ -1626,6 +1640,7 @@ export function StaffMessagesExperience() {
   const lastTypingSignalRef = useRef(0);
   const loadedThreadIdsRef = useRef(new Set<string>());
   const latestMessageAtRef = useRef("");
+  const typingExpiryTimersRef = useRef(new Map<string, number>());
   const selected = useMemo(
     () => conversations.find((conversation) => conversation.id === selectedId) ?? conversations[0] ?? null,
     [conversations, selectedId]
@@ -1700,6 +1715,57 @@ export function StaffMessagesExperience() {
     }
   }, []);
 
+  useRealtimeRefresh(["conversations", "typing"], (update) => {
+    if (update.topic === "conversations") {
+      void loadConversations({ background: true });
+      if (threadOpen && selected?.id && update.entityId === selected.id) {
+        void loadThreadMessages(selected.id, latestMessageAtRef.current || undefined);
+      }
+      return;
+    }
+
+    const payload = update.payload as Partial<BackendTypingUser> & {
+      conversationId?: string;
+      isTyping?: boolean;
+    };
+    if (!payload.conversationId || !payload.userId || payload.userId === user?.id) return;
+    const conversationId = payload.conversationId;
+    const userId = payload.userId;
+    const timerKey = `${conversationId}:${userId}`;
+    const existingTimer = typingExpiryTimersRef.current.get(timerKey);
+    if (existingTimer) window.clearTimeout(existingTimer);
+
+    setConversations((current) => current.map((conversation) => {
+      if (conversation.id !== conversationId) return conversation;
+      const withoutSender = (conversation.typingUsers ?? []).filter((typingUser) => typingUser.userId !== userId);
+      if (!payload.isTyping || !payload.fullName || !payload.email || !payload.role || !payload.updatedAt) {
+        return { ...conversation, typingUsers: withoutSender };
+      }
+      return {
+        ...conversation,
+        typingUsers: [...withoutSender, {
+          userId,
+          fullName: payload.fullName,
+          email: payload.email,
+          role: payload.role,
+          updatedAt: payload.updatedAt
+        }]
+      };
+    }));
+
+    if (payload.isTyping) {
+      const timer = window.setTimeout(() => {
+        setConversations((current) => current.map((conversation) => conversation.id === conversationId
+          ? { ...conversation, typingUsers: (conversation.typingUsers ?? []).filter((typingUser) => typingUser.userId !== userId) }
+          : conversation));
+        typingExpiryTimersRef.current.delete(timerKey);
+      }, 7_000);
+      typingExpiryTimersRef.current.set(timerKey, timer);
+    } else {
+      typingExpiryTimersRef.current.delete(timerKey);
+    }
+  });
+
   useEffect(() => {
     void loadConversations();
   }, [loadConversations]);
@@ -1737,7 +1803,7 @@ export function StaffMessagesExperience() {
         void loadThreadMessages(conversationId, latestMessageAtRef.current || undefined);
       }
     };
-    const interval = window.setInterval(refreshThread, 8000);
+    const interval = window.setInterval(refreshThread, 60000);
     window.addEventListener("focus", refreshThread);
     window.addEventListener("online", refreshThread);
     return () => {
@@ -1746,6 +1812,12 @@ export function StaffMessagesExperience() {
       window.removeEventListener("online", refreshThread);
     };
   }, [loadThreadMessages, selected?.id, threadOpen]);
+
+  useEffect(() => () => {
+    if (typingStopTimerRef.current) window.clearTimeout(typingStopTimerRef.current);
+    typingExpiryTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+    typingExpiryTimersRef.current.clear();
+  }, []);
 
   useEffect(() => {
     if (!threadOpen) return;

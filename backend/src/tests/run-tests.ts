@@ -76,6 +76,7 @@ await import("./supabase-fetch.test.js");
 await import("./prisma-retry.test.js");
 await import("./cursor-pagination.test.js");
 await import("./outbox.test.js");
+await import("./realtime-pagination-architecture.test.js");
 await import("./restriction-transaction.test.js");
 await import("./user-role-concurrency.test.js");
 await import("./reservation-safety.test.js");

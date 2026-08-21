@@ -7,6 +7,7 @@ import { createPortal } from "react-dom";
 import { Bell, Check, ChevronDown, LogOut, Menu, Search, Settings, X } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
+import { useRealtimeRefresh } from "@/components/realtime/RealtimeProvider";
 import { AssetIcon } from "@/components/ui/AssetIcon";
 import {
   getNotificationsFromApi,
@@ -239,6 +240,11 @@ export function StaffShell({
       // Preserve the last known badge count until the next focus/reconnect refresh.
     }
   }, [accountId, role, user?.accessToken, user?.role]);
+
+  useRealtimeRefresh(["notifications"], () => {
+    void loadUnreadCount();
+    if (notificationsOpen) void loadNotifications();
+  });
 
   useEffect(() => {
     const closeMenus = (event: MouseEvent) => {

@@ -200,9 +200,11 @@ model Profile {
   authSessions          AuthSession[]
   wishlistItems         WishlistItem[]
   auditLogs             AuditLog[]                  @relation("AuditActor")
+  realtimeEvents        RealtimeEvent[]             @relation("RealtimeAudienceUser")
 
   @@index([createdAt(sort: Desc), id(sort: Desc)])
   @@index([role, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([role, fullName, email, id])
   @@map("profiles")
 }
 
@@ -316,6 +318,7 @@ model Reservation {
 
   @@index([studentId, createdAt(sort: Desc), id(sort: Desc)])
   @@index([status, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([status, pickupEnd, id])
   @@map("reservations")
 }
 
@@ -562,6 +565,24 @@ model OutboxEvent {
   @@index([processedAt, availableAt, createdAt])
   @@index([type, entityId])
   @@map("outbox_events")
+}
+
+model RealtimeEvent {
+  id             BigInt    @id @default(autoincrement())
+  topic          String    @db.VarChar(80)
+  dedupeKey      String?   @unique @map("dedupe_key")
+  audienceUserId String?   @map("audience_user_id") @db.Uuid
+  audienceRole   AppRole?  @map("audience_role")
+  entityId       String?   @map("entity_id") @db.Uuid
+  payload        Json      @default("{}")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  expiresAt      DateTime  @map("expires_at") @db.Timestamptz(6)
+  audienceUser   Profile?  @relation("RealtimeAudienceUser", fields: [audienceUserId], references: [id], onDelete: Cascade)
+
+  @@index([audienceUserId, id])
+  @@index([audienceRole, id])
+  @@index([expiresAt])
+  @@map("realtime_events")
 }
 
 model WishlistItem {

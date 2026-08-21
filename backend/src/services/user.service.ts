@@ -6,6 +6,7 @@ import { HttpError } from "../utils/http-error.js";
 import { decryptSensitiveText } from "../utils/field-encryption.js";
 import { withTransientPrismaReadRetry } from "../utils/prisma-retry.js";
 import { createPage, decodeCursor, normalizePageLimit } from "../utils/cursor-pagination.js";
+import { publishRealtimeEventsBestEffort, REALTIME_TOPICS } from "./realtime-event.service.js";
 
 const ADMIN_ROLE_LOCK_NAMESPACE = 1_464_161_091;
 const ADMIN_ROLE_LOCK_KEY = 1;
@@ -227,5 +228,13 @@ const userRoleUpdateDependencies: UserRoleUpdateDependencies = {
 };
 
 export async function updateUserRole(userId: string, role: AppRole, performedById: string) {
-  return updateUserRoleWithDependencies(userId, role, performedById, userRoleUpdateDependencies);
+  const user = await updateUserRoleWithDependencies(userId, role, performedById, userRoleUpdateDependencies);
+  await publishRealtimeEventsBestEffort([{
+    topic: REALTIME_TOPICS.users,
+    entityId: userId,
+    audienceUserIds: [userId],
+    audienceRoles: ["ADMIN"],
+    payload: { action: "role-changed", role: user.role }
+  }]);
+  return user;
 }

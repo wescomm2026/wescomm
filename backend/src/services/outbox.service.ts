@@ -7,6 +7,7 @@ import { waitUntil } from "@vercel/functions";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
 import { sendPushToUser } from "./push.service.js";
+import { publishRealtimeEvents, REALTIME_TOPICS } from "./realtime-event.service.js";
 
 export const OUTBOX_EVENT_TYPES = {
   reservationCreated: "RESERVATION_CREATED",
@@ -119,6 +120,14 @@ async function createNotificationAndPush(delivery: NotificationDelivery) {
     if (!existing) throw error;
     notificationId = existing.id;
   }
+
+  await publishRealtimeEvents(prisma, [{
+    topic: REALTIME_TOPICS.notifications,
+    dedupeKey: `${delivery.dedupeKey}:realtime`,
+    entityId: notificationId,
+    audienceUserIds: [delivery.userId],
+    payload: { action: "created", notificationId }
+  }]);
 
   await sendPushToUser(delivery.userId, {
     id: notificationId,

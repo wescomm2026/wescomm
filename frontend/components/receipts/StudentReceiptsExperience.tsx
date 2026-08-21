@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObjec
 import { createPortal } from "react-dom";
 import { Download, Eye, ShieldCheck, X } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
+import { useRealtimeRefresh } from "@/components/realtime/RealtimeProvider";
 import { AssetIcon } from "@/components/ui/AssetIcon";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
@@ -815,6 +816,10 @@ export function StudentReceiptsExperience() {
       if (requestSequence === requestSequenceRef.current && !background) setLoading(false);
     }
   }, [accountId, authReady, cacheKey, user?.accessToken]);
+
+  useRealtimeRefresh(["receipts"], () => {
+    void loadReceipts({ background: true });
+  });
 
   useEffect(() => {
     setSelectedReceiptId(null);

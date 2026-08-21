@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } fro
 import { createPortal } from "react-dom";
 import { ArrowLeft, CalendarDays, ChevronRight, Clock3, X, XCircle } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
+import { useRealtimeRefresh } from "@/components/realtime/RealtimeProvider";
 import { AssetIcon } from "@/components/ui/AssetIcon";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
@@ -826,6 +827,10 @@ export function StudentReservationsExperience() {
 
     if (!background) setReady(true);
   }, [accountId, authReady, cacheKey, user?.accessToken]);
+
+  useRealtimeRefresh(["reservations"], () => {
+    void loadReservations({ background: true });
+  });
 
   useEffect(() => {
     setSelectedReservationId(null);

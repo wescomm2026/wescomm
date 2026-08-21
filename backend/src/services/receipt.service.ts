@@ -11,6 +11,7 @@ import { prisma } from "../lib/prisma.js";
 import { safelyRecordAuditLog } from "./audit-log.service.js";
 import { createNotification, createNotificationsForRoles } from "./notification.service.js";
 import { OUTBOX_EVENT_TYPES } from "./outbox.service.js";
+import { publishRealtimeEvents, REALTIME_TOPICS } from "./realtime-event.service.js";
 import {
   type AppRole,
   type PaymentMethod,
@@ -618,6 +619,28 @@ async function updateReceiptStatusInTransaction(input: {
       },
       select: { id: true }
     });
+
+    await publishRealtimeEvents(tx, [
+      {
+        topic: REALTIME_TOPICS.receipts,
+        entityId: receipt.id,
+        audienceUserIds: [receipt.studentId],
+        audienceRoles: ["STAFF", "ADMIN"],
+        payload: { action: "status-changed", previousStatus: current.status, nextStatus: input.nextStatus }
+      },
+      {
+        topic: REALTIME_TOPICS.dashboard,
+        entityId: receipt.id,
+        audienceRoles: ["STAFF", "ADMIN"],
+        payload: { action: "receipt-status-changed", nextStatus: input.nextStatus }
+      },
+      {
+        topic: REALTIME_TOPICS.reports,
+        entityId: receipt.id,
+        audienceRoles: ["STAFF", "ADMIN"],
+        payload: { action: "receipt-status-changed", nextStatus: input.nextStatus }
+      }
+    ]);
 
     return mapPrismaReceipt(receipt);
   }, {

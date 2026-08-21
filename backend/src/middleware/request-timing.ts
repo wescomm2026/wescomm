@@ -41,7 +41,11 @@ export function requestTimingMiddleware(request: Request, response: Response, ne
       {}
     );
     const entry = {
-      event: durationMs >= 1_000 ? "slow_http_request" : "http_request",
+      event: response.locals.longLivedRequest
+        ? "realtime_stream"
+        : durationMs >= 1_000
+          ? "slow_http_request"
+          : "http_request",
       requestId,
       method: request.method,
       route,
@@ -50,7 +54,7 @@ export function requestTimingMiddleware(request: Request, response: Response, ne
       timings
     };
     const serialized = JSON.stringify(entry);
-    if (durationMs >= 1_000) console.warn(serialized);
+    if (durationMs >= 1_000 && !response.locals.longLivedRequest) console.warn(serialized);
     else console.info(serialized);
   });
   next();

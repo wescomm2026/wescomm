@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { ArrowRight, ChevronDown, Megaphone, RefreshCw } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
+import { useRealtimeRefresh } from "@/components/realtime/RealtimeProvider";
 import { SiteFooterLinks } from "@/components/layout/SiteFooterLinks";
 import { AssetIcon } from "@/components/ui/AssetIcon";
 import { Button } from "@/components/ui/button";
@@ -156,6 +157,10 @@ function useStaffDashboardData() {
       }
     }
   }, [ready, user]);
+
+  useRealtimeRefresh(["dashboard", "inventory", "reservations", "receipts", "conversations"], () => {
+    void loadDashboard({ background: true });
+  });
 
   useEffect(() => {
     void loadDashboard();
