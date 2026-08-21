@@ -8,7 +8,7 @@ function source(relativePath: string) {
 }
 
 test("PayMongo receives the raw request body before JSON and CSRF middleware", () => {
-  const app = source("src/app.mts");
+  const app = source("src/app.ts");
   const webhookIndex = app.indexOf('"/api/webhooks/paymongo"');
   const jsonIndex = app.indexOf('app.use(express.json({ limit: "6mb" }))');
   const csrfIndex = app.indexOf("app.use(requireTrustedCookieOrigin)");

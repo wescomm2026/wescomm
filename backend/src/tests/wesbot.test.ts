@@ -76,7 +76,7 @@ test("optional AI polish cannot change or omit grounded facts", () => {
 
 test("WesBot migration preserves old conversations in staff-managed states and enforces sender identity", () => {
   const migration = readFileSync(
-    new URL("../../prisma/migrations/20260814000000_add_wesbot_support/migration.sql", import.meta.url),
+    path.resolve(__dirname, "../../prisma/migrations/20260814000000_add_wesbot_support/migration.sql"),
     "utf8"
   );
   assert.match(migration, /WHEN "assigned_staff_id" IS NOT NULL THEN 'STAFF_ACTIVE'/);

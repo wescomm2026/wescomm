@@ -126,6 +126,4 @@ app.use((error: unknown, _request: express.Request, response: express.Response, 
   return response.status(500).json({ error: "Internal server error.", requestId });
 });
 
-// Keep this entrypoint as .mts so Vercel's Express runtime preserves ESM
-// semantics after moving the service entry to the function bundle root.
 export default app;

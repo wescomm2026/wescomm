@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import path from "node:path";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
 
-const configModuleUrl = new URL("../config/env.js", import.meta.url).href;
+const configModuleUrl = pathToFileURL(path.resolve(__dirname, "../config/env.js")).href;
 const encryptionKey = Buffer.alloc(32, 7).toString("base64");
 
 const safeProductionEnvironment = {
