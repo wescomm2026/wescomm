@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   Bar,
@@ -18,13 +18,14 @@ import {
 } from "recharts";
 import { ArrowRight, Download, RefreshCw, Search } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
+import { useRealtimeRefresh } from "@/components/realtime/RealtimeProvider";
 import { AssetIcon } from "@/components/ui/AssetIcon";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import {
   getAdminAuditLogsFromApi,
   getAdminReportSummaryFromApi,
-  getAdminUsersFromApi,
+  getAdminUsersPageFromApi,
   updateAdminUserRoleFromApi,
   type BackendAuditLog,
   type BackendAdminUser,
@@ -122,6 +123,10 @@ function useAdminSummary() {
     }
   }, [ready, user?.accessToken]);
 
+  useRealtimeRefresh(["dashboard", "reports", "inventory", "reservations", "receipts", "conversations", "users"], () => {
+    void loadSummary({ background: true });
+  });
+
   useEffect(() => {
     void loadSummary();
   }, [loadSummary]);
@@ -133,7 +138,7 @@ function useAdminSummary() {
       if (document.visibilityState === "visible") void loadSummary({ background: true });
     };
 
-    const interval = window.setInterval(refresh, 20000);
+    const interval = window.setInterval(refresh, 60000);
     window.addEventListener("focus", refresh);
     document.addEventListener("visibilitychange", refresh);
 
@@ -464,45 +469,62 @@ export function AdminUsersExperience() {
   const [search, setSearch] = useState("");
   const [role, setRole] = useState("All");
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [roleCounts, setRoleCounts] = useState({ students: 0, staff: 0, admins: 0 });
   const [submittingId, setSubmittingId] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const deferredSearch = useDeferredValue(search);
   const accessState = <AdminAccessState ready={ready} user={user} openAuth={openAuth} />;
 
-  const loadUsers = useCallback(async ({ background = false }: { background?: boolean } = {}) => {
+  const loadUsers = useCallback(async ({
+    background = false,
+    cursor
+  }: { background?: boolean; cursor?: string } = {}) => {
     if (!ready) return;
     if (!user?.accessToken || user.role !== "ADMIN") {
       setLoading(false);
       return;
     }
 
-    if (!background) {
+    if (cursor) setLoadingMore(true);
+    else if (!background) {
       setLoading(true);
       setError("");
     }
 
     try {
-      const rows = await getAdminUsersFromApi(user.accessToken);
-      setUsers(rows);
+      const page = await getAdminUsersPageFromApi(user.accessToken, {
+        limit: 25,
+        cursor,
+        query: deferredSearch,
+        role: role === "All" ? undefined : role as BackendAppRole
+      });
+      setUsers((current) => {
+        if (!cursor && !background) return page.items;
+        const source = cursor ? [...current, ...page.items] : [...page.items, ...current];
+        return source.filter((row, index) => source.findIndex((candidate) => candidate.id === row.id) === index);
+      });
+      setNextCursor(page.nextCursor);
+      setRoleCounts(page.roleCounts);
     } catch (usersError) {
       if (!background) setError(usersError instanceof Error ? usersError.message : "Unable to load users.");
     } finally {
+      if (cursor) setLoadingMore(false);
       if (!background) setLoading(false);
     }
-  }, [ready, user?.accessToken, user?.role]);
+  }, [deferredSearch, ready, role, user?.accessToken, user?.role]);
+
+  useRealtimeRefresh(["users"], () => {
+    void loadUsers({ background: true });
+  });
 
   useEffect(() => {
     void loadUsers();
   }, [loadUsers]);
 
-  const filteredUsers = useMemo(
-    () =>
-      users.filter((row) => {
-        const text = `${row.fullName} ${row.email} ${row.studentNumber ?? ""} ${row.department ?? ""}`.toLowerCase();
-        return text.includes(search.toLowerCase()) && (role === "All" || row.role === role);
-      }),
-    [role, search, users]
-  );
+  const filteredUsers = users;
 
   const updateRole = async (row: BackendAdminUser, nextRole: BackendAppRole) => {
     if (!user?.accessToken || row.role === nextRole) return;
@@ -511,7 +533,17 @@ export function AdminUsersExperience() {
 
     try {
       const updatedUser = await updateAdminUserRoleFromApi(user.accessToken, row.id, nextRole);
-      setUsers((current) => current.map((item) => item.id === updatedUser.id ? updatedUser : item));
+      setUsers((current) => current
+        .map((item) => item.id === updatedUser.id ? updatedUser : item)
+        .filter((item) => role === "All" || item.role === role));
+      setRoleCounts((current) => {
+        const keyForRole = (value: BackendAppRole) => value === "STUDENT" ? "students" : value === "STAFF" ? "staff" : "admins";
+        return {
+          ...current,
+          [keyForRole(row.role)]: Math.max(0, current[keyForRole(row.role)] - 1),
+          [keyForRole(updatedUser.role)]: current[keyForRole(updatedUser.role)] + 1
+        };
+      });
       setNotice(`${updatedUser.email} role updated to ${updatedUser.role}.`);
     } catch (roleError) {
       setError(roleError instanceof Error ? roleError.message : "Unable to update user role.");
@@ -531,9 +563,9 @@ export function AdminUsersExperience() {
         action={<Button variant="secondary" onClick={() => void loadUsers()} disabled={loading}><RefreshCw className="size-4" /> Refresh</Button>}
       />
       <section className="grid gap-4 sm:grid-cols-3">
-        <AdminStatCard title="Students" value={String(users.filter((row) => row.role === "STUDENT").length)} detail="Student portal accounts" iconSrc="/assets/my-profile.svg" />
-        <AdminStatCard title="Staff" value={String(users.filter((row) => row.role === "STAFF").length)} detail="Operations accounts" iconSrc="/assets/settings.svg" />
-        <AdminStatCard title="Admins" value={String(users.filter((row) => row.role === "ADMIN").length)} detail="Decision makers" iconSrc="/assets/verified.svg" />
+        <AdminStatCard title="Students" value={String(roleCounts.students)} detail="Student portal accounts" iconSrc="/assets/my-profile.svg" />
+        <AdminStatCard title="Staff" value={String(roleCounts.staff)} detail="Operations accounts" iconSrc="/assets/settings.svg" />
+        <AdminStatCard title="Admins" value={String(roleCounts.admins)} detail="Decision makers" iconSrc="/assets/verified.svg" />
       </section>
 
       <div className="flex flex-col gap-3 rounded-lg border border-[#dce5dd] bg-white p-3 sm:flex-row">
@@ -583,6 +615,13 @@ export function AdminUsersExperience() {
           <div className="p-6 text-sm font-semibold text-[#68746d]">No matching users found.</div>
         )}
       </section>
+      {nextCursor ? (
+        <div className="flex justify-center">
+          <Button variant="secondary" disabled={loadingMore} onClick={() => void loadUsers({ cursor: nextCursor })}>
+            {loadingMore ? "Loading more..." : "Load more users"}
+          </Button>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -594,34 +633,53 @@ export function AdminAuditLogsExperience() {
   const [action, setAction] = useState("All");
   const [entityType, setEntityType] = useState("All");
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const deferredSearch = useDeferredValue(search);
   const accessState = <AdminAccessState ready={ready} user={user} openAuth={openAuth} />;
 
-  const loadLogs = useCallback(async ({ background = false }: { background?: boolean } = {}) => {
+  const loadLogs = useCallback(async ({
+    background = false,
+    cursor
+  }: { background?: boolean; cursor?: string } = {}) => {
     if (!ready) return;
     if (!user?.accessToken || user.role !== "ADMIN") {
       setLoading(false);
       return;
     }
 
-    if (!background) {
+    if (cursor) setLoadingMore(true);
+    else if (!background) {
       setLoading(true);
       setError("");
     }
 
     try {
-      const rows = await getAdminAuditLogsFromApi(user.accessToken, {
+      const page = await getAdminAuditLogsFromApi(user.accessToken, {
         action: action === "All" ? undefined : action,
         entityType: entityType === "All" ? undefined : entityType,
-        limit: 150
+        query: deferredSearch,
+        cursor,
+        limit: 25
       });
-      setLogs(rows);
+      setLogs((current) => {
+        if (!cursor && !background) return page.items;
+        const source = cursor ? [...current, ...page.items] : [...page.items, ...current];
+        return source.filter((log, index) => source.findIndex((candidate) => candidate.id === log.id) === index);
+      });
+      setNextCursor(page.nextCursor);
     } catch (auditError) {
       if (!background) setError(auditError instanceof Error ? auditError.message : "Unable to load audit logs.");
     } finally {
+      if (cursor) setLoadingMore(false);
       if (!background) setLoading(false);
     }
-  }, [action, entityType, ready, user?.accessToken, user?.role]);
+  }, [action, deferredSearch, entityType, ready, user?.accessToken, user?.role]);
+
+  useRealtimeRefresh(["users"], () => {
+    void loadLogs({ background: true });
+  });
 
   useEffect(() => {
     void loadLogs();
@@ -634,7 +692,7 @@ export function AdminAuditLogsExperience() {
       if (document.visibilityState === "visible") void loadLogs({ background: true });
     };
 
-    const interval = window.setInterval(refresh, 20000);
+    const interval = window.setInterval(refresh, 60000);
     window.addEventListener("focus", refresh);
     document.addEventListener("visibilitychange", refresh);
 
@@ -647,15 +705,7 @@ export function AdminAuditLogsExperience() {
 
   const actionOptions = useMemo(() => Array.from(new Set(logs.map((log) => log.action))).sort(), [logs]);
   const entityOptions = useMemo(() => Array.from(new Set(logs.map((log) => log.entityType))).sort(), [logs]);
-  const filteredLogs = useMemo(
-    () =>
-      logs.filter((log) => {
-        const actor = `${log.actor?.fullName ?? ""} ${log.actor?.email ?? ""}`;
-        const text = `${log.summary} ${log.action} ${log.entityType} ${log.entityId ?? ""} ${actor}`.toLowerCase();
-        return text.includes(search.toLowerCase());
-      }),
-    [logs, search]
-  );
+  const filteredLogs = logs;
 
   if (!ready || !user || user.role !== "ADMIN") return accessState;
 
@@ -731,6 +781,13 @@ export function AdminAuditLogsExperience() {
           <div className="p-6 text-sm font-semibold text-[#68746d]">No audit logs found.</div>
         )}
       </section>
+      {nextCursor ? (
+        <div className="flex justify-center">
+          <Button variant="secondary" disabled={loadingMore} onClick={() => void loadLogs({ cursor: nextCursor })}>
+            {loadingMore ? "Loading more..." : "Load more audit events"}
+          </Button>
+        </div>
+      ) : null}
     </div>
   );
 }

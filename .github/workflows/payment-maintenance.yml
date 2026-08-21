@@ -1,4 +1,4 @@
-name: PayMongo payment maintenance
+name: WESCOMM durable maintenance
 
 on:
   schedule:
@@ -22,7 +22,7 @@ jobs:
       MAINTENANCE_URL: ${{ secrets.WESCOMM_PAYMENT_MAINTENANCE_URL }}
       MAINTENANCE_TOKEN: ${{ secrets.WESCOMM_PAYMENT_MAINTENANCE_SECRET }}
     steps:
-      - name: Reconcile and expire bounded payment attempts
+      - name: Reconcile payments and process durable events
         shell: bash
         run: |
           set -euo pipefail

@@ -2,6 +2,7 @@ import { supabaseAdmin } from "../lib/supabase.js";
 import type { AppRole, NotificationType } from "../types/app.js";
 import { sendPushToUser } from "./push.service.js";
 import { HttpError } from "../utils/http-error.js";
+import { publishRealtimeEventsBestEffort, REALTIME_TOPICS } from "./realtime-event.service.js";
 
 type RawNotification = {
   id: string;
@@ -76,6 +77,13 @@ export async function createNotification(input: NotificationInput) {
 
   if (error) throw HttpError.fromSupabase(error);
   const notification = mapNotification(data as RawNotification);
+  await publishRealtimeEventsBestEffort([{
+    topic: REALTIME_TOPICS.notifications,
+    dedupeKey: `notification:${notification.id}:realtime`,
+    entityId: notification.id,
+    audienceUserIds: [notification.userId],
+    payload: { action: "created", notificationId: notification.id }
+  }]);
   dispatchPushNotifications([notification]);
   return notification;
 }
@@ -109,19 +117,54 @@ export async function createNotificationsForRoles(
     (profileRows ?? []).map((profile) => [profile.id as string, profile.role as AppRole])
   );
   const notifications = ((data ?? []) as RawNotification[]).map(mapNotification);
+  await publishRealtimeEventsBestEffort(notifications.map((notification) => ({
+    topic: REALTIME_TOPICS.notifications,
+    dedupeKey: `notification:${notification.id}:realtime`,
+    entityId: notification.id,
+    audienceUserIds: [notification.userId],
+    payload: { action: "created", notificationId: notification.id }
+  })));
   dispatchPushNotifications(notifications, roleByUserId);
   return notifications;
 }
 
-export async function listNotifications(userId: string) {
-  const { data, error } = await supabaseAdmin
+const notificationColumns = "id,user_id,title,message,type,action_url,read_at,created_at";
+
+export async function listNotifications(
+  userId: string,
+  options: { limit?: number; before?: string } = {}
+) {
+  const limit = Math.min(Math.max(options.limit ?? 20, 1), 50);
+  let query = supabaseAdmin
     .from("notifications")
-    .select("*")
+    .select(notificationColumns)
     .eq("user_id", userId)
-    .order("created_at", { ascending: false });
+    .order("created_at", { ascending: false })
+    .limit(limit + 1);
+
+  if (options.before) query = query.lt("created_at", options.before);
+
+  const { data, error } = await query;
 
   if (error) throw HttpError.fromSupabase(error);
-  return ((data ?? []) as RawNotification[]).map(mapNotification);
+  const rows = (data ?? []) as RawNotification[];
+  const hasMore = rows.length > limit;
+  const notifications = rows.slice(0, limit).map(mapNotification);
+  return {
+    notifications,
+    nextCursor: hasMore ? notifications.at(-1)?.createdAt ?? null : null
+  };
+}
+
+export async function getUnreadNotificationCount(userId: string) {
+  const { count, error } = await supabaseAdmin
+    .from("notifications")
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", userId)
+    .is("read_at", null);
+
+  if (error) throw HttpError.fromSupabase(error);
+  return count ?? 0;
 }
 
 export async function markNotificationRead(notificationId: string, userId: string) {
@@ -144,8 +187,8 @@ export async function markAllNotificationsRead(userId: string) {
     .update({ read_at: readAt })
     .eq("user_id", userId)
     .is("read_at", null)
-    .select("*");
+    .select("id");
 
   if (error) throw HttpError.fromSupabase(error);
-  return ((data ?? []) as RawNotification[]).map(mapNotification);
+  return (data ?? []).length;
 }

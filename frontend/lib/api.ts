@@ -86,6 +86,8 @@ export type BackendNotificationType =
   | "SYSTEM"
   | "BACK_IN_STOCK";
 export type BackendConversationStatus = "OPEN" | "RESOLVED";
+export type BackendConversationMode = "BOT_ACTIVE" | "WAITING_FOR_STAFF" | "STAFF_ACTIVE" | "RESOLVED";
+export type BackendConversationMessageSenderType = "STUDENT" | "BOT" | "STAFF" | "SYSTEM";
 
 export type BackendProfileSummary = {
   id: string;
@@ -198,6 +200,20 @@ export type BackendReceipt = {
   } | null;
 };
 
+export type BackendCursorPage<T> = {
+  items: T[];
+  nextCursor: string | null;
+};
+
+export type BackendCollectionOptions = {
+  limit?: number;
+  cursor?: string;
+  status?: string;
+  query?: string;
+  dateFrom?: string;
+  dateTo?: string;
+};
+
 export type BackendPublicReceiptVerification = {
   receiptCode: string;
   totalAmount: string | number;
@@ -211,13 +227,8 @@ export type BackendPublicReceiptVerification = {
   reservation: {
     referenceCode: string;
     status: BackendReservationStatus;
-    items: Array<{
-      name: string;
-      variantSummary: string | null;
-      quantity: number;
-      unitPrice: string | number;
-      subtotal: string | number;
-    }>;
+    itemCount: number;
+    totalQuantity: number;
   } | null;
 };
 
@@ -308,7 +319,18 @@ export type BackendNoShowCandidate = {
 export type BackendRestrictionOverview = {
   policy: BackendRestrictionPolicy;
   students: BackendRestrictionStudent[];
-  noShowCandidates: BackendNoShowCandidate[];
+  nextCursor: string | null;
+  summary: {
+    totalStudents: number;
+    restrictedStudents: number;
+    warningStudents: number;
+  };
+};
+
+export type BackendNoShowPage = {
+  items: BackendNoShowCandidate[];
+  nextCursor: string | null;
+  totalCandidates: number;
 };
 
 export type BackendPushPublicConfig = {
@@ -339,7 +361,7 @@ export async function onlineFetch(input: RequestInfo | URL, init?: RequestInit) 
   }
 
   try {
-    return await fetch(input, { ...init, cache: "no-store" });
+    return await fetch(input, { ...init, cache: init?.cache ?? "no-store" });
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") throw error;
     throw new BackendApiError(
@@ -355,8 +377,11 @@ export async function onlineFetch(input: RequestInfo | URL, init?: RequestInit) 
 export type BackendConversationMessage = {
   id: string;
   conversationId: string;
-  senderId: string;
+  senderId: string | null;
+  senderType: BackendConversationMessageSenderType;
   message: string;
+  intent?: string | null;
+  metadata?: Record<string, unknown>;
   createdAt: string;
   sender?: BackendProfileSummary | null;
 };
@@ -375,6 +400,16 @@ export type BackendConversation = {
   assignedStaffId: string | null;
   subject: string;
   status: BackendConversationStatus;
+  mode: BackendConversationMode;
+  category?: string | null;
+  priority?: number;
+  escalationReason?: string | null;
+  escalatedAt?: string | null;
+  acceptedAt?: string | null;
+  resolvedAt?: string | null;
+  botSummary?: string | null;
+  lastIntent?: string | null;
+  botReplyCount?: number;
   createdAt: string;
   updatedAt: string;
   student?: BackendProfileSummary | null;
@@ -436,6 +471,43 @@ export type BackendReportSummary = {
     impact: string;
     recommendation: string;
   }>;
+};
+
+export type BackendDashboardProduct = {
+  id: string;
+  categoryId: string;
+  name: string;
+  description?: string | null;
+  imageUrl?: string | null;
+  price: string | number;
+  oldPrice?: string | number | null;
+  status: "IN_STOCK" | "RESTOCK_SOON" | "OUT_OF_STOCK" | "ON_SALE";
+  stock: number;
+  lowStockThreshold: number;
+  isActive: boolean;
+  category?: BackendCategory | null;
+};
+
+export type BackendStaffDashboard = {
+  metrics: {
+    totalProducts: number;
+    itemsToRestock: number;
+    pendingReservations: number;
+    activeReservations: number;
+    receiptsToVerify: number;
+    openConversations: number;
+  };
+  products: BackendDashboardProduct[];
+  reservations: BackendReservation[];
+  receipts: BackendReceipt[];
+};
+
+export type BackendGlobalSearchResult = {
+  id: string;
+  type: "PRODUCT" | "RESERVATION" | "RECEIPT" | "CONVERSATION";
+  title: string;
+  subtitle: string;
+  section: "inventory" | "reservations" | "receipt-verification" | "messages";
 };
 
 export type BackendAuditLog = {
@@ -548,9 +620,31 @@ export async function updateMyProfileFromApi(token: string, payload: UpdateMyPro
   return data.profile;
 }
 
-export async function getProductsFromApi() {
-  const data = await apiFetch<{ products: BackendProduct[] }>("/products");
-  return data.products.map(mapBackendProduct);
+const PRODUCT_CACHE_TTL_MS = 30_000;
+const FAQ_CACHE_TTL_MS = 60_000;
+type MappedProducts = ReturnType<typeof mapBackendProduct>[];
+
+let cachedProducts: { value: MappedProducts; expiresAt: number } | null = null;
+let pendingProducts: Promise<MappedProducts> | null = null;
+let cachedFaqs: { value: BackendFaq[]; expiresAt: number } | null = null;
+let pendingFaqs: Promise<BackendFaq[]> | null = null;
+
+export async function getProductsFromApi(options: { fresh?: boolean } = {}) {
+  if (!options.fresh && cachedProducts && cachedProducts.expiresAt > Date.now()) {
+    return cachedProducts.value;
+  }
+  if (pendingProducts) return pendingProducts;
+
+  pendingProducts = apiFetch<{ products: BackendProduct[] }>("/products", { cache: "default" })
+    .then((data) => {
+      const value = data.products.map(mapBackendProduct);
+      cachedProducts = { value, expiresAt: Date.now() + PRODUCT_CACHE_TTL_MS };
+      return value;
+    })
+    .finally(() => {
+      pendingProducts = null;
+    });
+  return pendingProducts;
 }
 
 export async function getWishlistFromApi(token: string) {
@@ -573,9 +667,19 @@ export async function removeWishlistItemFromApi(token: string, productId: string
   });
 }
 
-export async function getFaqsFromApi() {
-  const data = await apiFetch<{ faqs: BackendFaq[] }>("/faqs");
-  return data.faqs;
+export async function getFaqsFromApi(options: { fresh?: boolean } = {}) {
+  if (!options.fresh && cachedFaqs && cachedFaqs.expiresAt > Date.now()) return cachedFaqs.value;
+  if (pendingFaqs) return pendingFaqs;
+
+  pendingFaqs = apiFetch<{ faqs: BackendFaq[] }>("/faqs", { cache: "default" })
+    .then((data) => {
+      cachedFaqs = { value: data.faqs, expiresAt: Date.now() + FAQ_CACHE_TTL_MS };
+      return data.faqs;
+    })
+    .finally(() => {
+      pendingFaqs = null;
+    });
+  return pendingFaqs;
 }
 
 export async function getManageFaqsFromApi(token: string) {
@@ -654,9 +758,45 @@ export async function getPaymentFromApi(token: string, paymentId: string) {
   return data.payment;
 }
 
+export async function getReservationPageFromApi(token: string, options: BackendCollectionOptions = {}) {
+  const params = new URLSearchParams();
+  if (options.limit) params.set("limit", String(options.limit));
+  if (options.cursor) params.set("cursor", options.cursor);
+  if (options.status) params.set("status", options.status);
+  if (options.query?.trim()) params.set("query", options.query.trim());
+  if (options.dateFrom) params.set("dateFrom", options.dateFrom);
+  if (options.dateTo) params.set("dateTo", options.dateTo);
+  const query = params.toString();
+  const data = await authApiFetch<BackendCursorPage<BackendReservation> & { reservations?: BackendReservation[] }>(
+    `/reservations${query ? `?${query}` : ""}`,
+    token
+  );
+  return {
+    items: Array.isArray(data.items) ? data.items : data.reservations ?? [],
+    nextCursor: data.nextCursor ?? null
+  };
+}
+
 export async function getReservationsFromApi(token: string) {
-  const data = await authApiFetch<{ reservations: BackendReservation[] }>("/reservations", token);
-  return data.reservations;
+  return (await getReservationPageFromApi(token)).items;
+}
+
+export async function getReservationFromApi(token: string, reservationId: string) {
+  const data = await authApiFetch<{ reservation: BackendReservation }>(
+    `/reservations/${encodeURIComponent(reservationId)}`,
+    token
+  );
+  return data.reservation;
+}
+
+export async function cancelMyReservationFromApi(token: string, reservationId: string) {
+  const data = await authApiFetch<{
+    reservation: BackendReservation;
+    receipt: BackendReceipt | null;
+  }>(`/reservations/${encodeURIComponent(reservationId)}/cancel`, token, {
+    method: "POST"
+  });
+  return data.reservation;
 }
 
 export async function updateReservationStatusFromApi(
@@ -693,14 +833,29 @@ export async function getMyRestrictionSummaryFromApi(token: string) {
 
 export async function getRestrictionOverviewFromApi(
   token: string,
-  filters: { query?: string; status?: "ALL" | "RESTRICTED" | "CLEAR" } = {}
+  filters: { query?: string; status?: "ALL" | "RESTRICTED" | "CLEAR"; cursor?: string; limit?: number } = {}
 ) {
   const params = new URLSearchParams();
   if (filters.query?.trim()) params.set("query", filters.query.trim());
   if (filters.status) params.set("status", filters.status);
+  if (filters.cursor) params.set("cursor", filters.cursor);
+  if (filters.limit) params.set("limit", String(filters.limit));
   const suffix = params.size ? `?${params.toString()}` : "";
   const data = await authApiFetch<{ overview: BackendRestrictionOverview }>(`/staff/restrictions${suffix}`, token);
   return data.overview;
+}
+
+export async function getNoShowCandidatesFromApi(
+  token: string,
+  filters: { query?: string; cursor?: string; limit?: number } = {}
+) {
+  const params = new URLSearchParams();
+  if (filters.query?.trim()) params.set("query", filters.query.trim());
+  if (filters.cursor) params.set("cursor", filters.cursor);
+  if (filters.limit) params.set("limit", String(filters.limit));
+  const suffix = params.size ? `?${params.toString()}` : "";
+  const data = await authApiFetch<{ page: BackendNoShowPage }>(`/staff/restrictions/no-shows${suffix}`, token);
+  return data.page;
 }
 
 export async function createStudentRestrictionFromApi(
@@ -730,9 +885,32 @@ export async function overturnStudentOffenseFromApi(token: string, offenseId: st
   return data.offense;
 }
 
+export async function getReceiptPageFromApi(token: string, options: BackendCollectionOptions = {}) {
+  const params = new URLSearchParams();
+  if (options.limit) params.set("limit", String(options.limit));
+  if (options.cursor) params.set("cursor", options.cursor);
+  if (options.status) params.set("status", options.status);
+  if (options.query?.trim()) params.set("query", options.query.trim());
+  if (options.dateFrom) params.set("dateFrom", options.dateFrom);
+  if (options.dateTo) params.set("dateTo", options.dateTo);
+  const query = params.toString();
+  const data = await authApiFetch<BackendCursorPage<BackendReceipt> & { receipts?: BackendReceipt[] }>(
+    `/receipts${query ? `?${query}` : ""}`,
+    token
+  );
+  return {
+    items: Array.isArray(data.items) ? data.items : data.receipts ?? [],
+    nextCursor: data.nextCursor ?? null
+  };
+}
+
 export async function getReceiptsFromApi(token: string) {
-  const data = await authApiFetch<{ receipts: BackendReceipt[] }>("/receipts", token);
-  return data.receipts;
+  return (await getReceiptPageFromApi(token)).items;
+}
+
+export async function getReceiptFromApi(token: string, receiptId: string) {
+  const data = await authApiFetch<{ receipt: BackendReceipt }>(`/receipts/${encodeURIComponent(receiptId)}`, token);
+  return data.receipt;
 }
 
 export async function verifyReceiptFromApi(receiptCode: string) {
@@ -755,9 +933,20 @@ export async function voidReceiptFromApi(token: string, receiptId: string, reaso
   return data.receipt;
 }
 
-export async function getNotificationsFromApi(token: string) {
-  const data = await authApiFetch<{ notifications: BackendNotification[] }>("/notifications", token);
-  return data.notifications;
+export async function getNotificationsFromApi(token: string, options: { limit?: number; before?: string } = {}) {
+  const params = new URLSearchParams();
+  if (options.limit) params.set("limit", String(options.limit));
+  if (options.before) params.set("before", options.before);
+  const query = params.toString();
+  return authApiFetch<{ notifications: BackendNotification[]; nextCursor: string | null }>(
+    `/notifications${query ? `?${query}` : ""}`,
+    token
+  );
+}
+
+export async function getUnreadNotificationCountFromApi(token: string) {
+  const data = await authApiFetch<{ unreadCount: number }>("/notifications/unread-count", token);
+  return data.unreadCount;
 }
 
 export async function getPushPublicConfigFromApi() {
@@ -793,31 +982,93 @@ export async function markNotificationReadFromApi(token: string, notificationId:
 }
 
 export async function markAllNotificationsReadFromApi(token: string) {
-  const data = await authApiFetch<{ notifications: BackendNotification[] }>("/notifications/read-all", token, {
+  const data = await authApiFetch<{ updatedCount: number }>("/notifications/read-all", token, {
     method: "PATCH"
   });
-  return data.notifications;
+  return data.updatedCount;
 }
 
 export async function getConversationsFromApi(token: string) {
-  const data = await authApiFetch<{ conversations: BackendConversation[] }>("/conversations", token);
+  const data = await authApiFetch<{ conversations: BackendConversation[] }>("/conversations?limit=50", token);
   return data.conversations;
 }
 
+export async function getConversationMessagesFromApi(
+  token: string,
+  conversationId: string,
+  options: { limit?: number; before?: string; after?: string } = {}
+) {
+  const params = new URLSearchParams();
+  if (options.limit) params.set("limit", String(options.limit));
+  if (options.before) params.set("before", options.before);
+  if (options.after) params.set("after", options.after);
+  const query = params.toString();
+  return authApiFetch<{
+    messages: BackendConversationMessage[];
+    nextCursor: string | null;
+    typingUsers: BackendTypingUser[];
+  }>(`/conversations/${conversationId}/messages${query ? `?${query}` : ""}`, token);
+}
+
 export async function createConversationFromApi(token: string, payload: { subject: string; message: string }) {
-  const data = await authApiFetch<{ conversation: BackendConversation }>("/conversations", token, {
+  return authApiFetch<{
+    conversation: BackendConversation;
+    message: BackendConversationMessage;
+    botReplyPending: boolean;
+  }>("/conversations", token, {
     method: "POST",
     body: JSON.stringify(payload)
+  });
+}
+
+export async function sendConversationMessageFromApi(token: string, conversationId: string, message: string) {
+  return authApiFetch<{
+    message: BackendConversationMessage;
+    botMessage: BackendConversationMessage | null;
+    botReplyPending: boolean;
+    conversation: BackendConversation;
+  }>(`/conversations/${conversationId}/messages`, token, {
+    method: "POST",
+    body: JSON.stringify({ message })
+  });
+}
+
+export async function requestConversationBotReplyFromApi(token: string, conversationId: string, messageId: string) {
+  const data = await authApiFetch<{ botMessage: BackendConversationMessage | null }>(
+    `/conversations/${conversationId}/messages/${messageId}/bot-reply`,
+    token,
+    { method: "POST" }
+  );
+  return data.botMessage;
+}
+
+export async function requestConversationHandoffFromApi(token: string, conversationId: string, reason?: string) {
+  const data = await authApiFetch<{ conversation: BackendConversation }>(`/conversations/${conversationId}/handoff`, token, {
+    method: "POST",
+    body: JSON.stringify(reason ? { reason } : {})
   });
   return data.conversation;
 }
 
-export async function sendConversationMessageFromApi(token: string, conversationId: string, message: string) {
-  const data = await authApiFetch<{ message: BackendConversationMessage }>(`/conversations/${conversationId}/messages`, token, {
-    method: "POST",
-    body: JSON.stringify({ message })
+export async function acceptConversationFromApi(token: string, conversationId: string) {
+  const data = await authApiFetch<{ conversation: BackendConversation }>(`/conversations/${conversationId}/accept`, token, {
+    method: "POST"
   });
-  return data.message;
+  return data.conversation;
+}
+
+export async function takeOverConversationFromApi(token: string, conversationId: string) {
+  const data = await authApiFetch<{ conversation: BackendConversation }>(`/conversations/${conversationId}/takeover`, token, {
+    method: "POST"
+  });
+  return data.conversation;
+}
+
+export async function returnConversationToBotFromApi(token: string, conversationId: string) {
+  const data = await authApiFetch<{ conversation: BackendConversation }>(`/conversations/${conversationId}/return-to-bot`, token, {
+    method: "POST"
+  });
+  return data.conversation;
 }
 
 export async function updateConversationTypingFromApi(token: string, conversationId: string, isTyping: boolean) {
@@ -850,9 +1101,43 @@ export async function getStaffReportSummaryFromApi(token: string) {
   return data.summary;
 }
 
+export async function getStaffDashboardSummaryFromApi(token: string) {
+  const data = await authApiFetch<{ dashboard: BackendStaffDashboard }>("/staff/dashboard/summary", token);
+  return data.dashboard;
+}
+
+export async function searchStaffWorkspaceFromApi(token: string, query: string, role: "STAFF" | "ADMIN") {
+  const routeBase = role === "ADMIN" ? "/admin" : "/staff";
+  const data = await authApiFetch<{ results: BackendGlobalSearchResult[] }>(
+    `${routeBase}/search?query=${encodeURIComponent(query)}`,
+    token
+  );
+  return data.results;
+}
+
+export async function getAdminUsersPageFromApi(
+  token: string,
+  options: BackendCollectionOptions & { role?: BackendAppRole } = {}
+) {
+  const params = new URLSearchParams();
+  if (options.limit) params.set("limit", String(options.limit));
+  if (options.cursor) params.set("cursor", options.cursor);
+  if (options.query?.trim()) params.set("query", options.query.trim());
+  if (options.role) params.set("role", options.role);
+  const query = params.toString();
+  const data = await authApiFetch<BackendCursorPage<BackendAdminUser> & {
+    users?: BackendAdminUser[];
+    roleCounts?: { students: number; staff: number; admins: number };
+  }>(`/admin/users${query ? `?${query}` : ""}`, token);
+  return {
+    items: Array.isArray(data.items) ? data.items : data.users ?? [],
+    nextCursor: data.nextCursor ?? null,
+    roleCounts: data.roleCounts ?? { students: 0, staff: 0, admins: 0 }
+  };
+}
+
 export async function getAdminUsersFromApi(token: string) {
-  const data = await authApiFetch<{ users: BackendAdminUser[] }>("/admin/users", token);
-  return data.users;
+  return (await getAdminUsersPageFromApi(token)).items;
 }
 
 export async function getStaffUsersFromApi(token: string) {
@@ -870,13 +1155,21 @@ export async function updateAdminUserRoleFromApi(token: string, userId: string, 
 
 export async function getAdminAuditLogsFromApi(
   token: string,
-  filters: { action?: string; entityType?: string; limit?: number } = {}
+  filters: { action?: string; entityType?: string; query?: string; cursor?: string; limit?: number } = {}
 ) {
   const params = new URLSearchParams();
   if (filters.action) params.set("action", filters.action);
   if (filters.entityType) params.set("entityType", filters.entityType);
+  if (filters.query?.trim()) params.set("query", filters.query.trim());
+  if (filters.cursor) params.set("cursor", filters.cursor);
   if (filters.limit) params.set("limit", String(filters.limit));
   const query = params.toString();
-  const data = await authApiFetch<{ auditLogs: BackendAuditLog[] }>(`/admin/audit-logs${query ? `?${query}` : ""}`, token);
-  return data.auditLogs;
+  const data = await authApiFetch<BackendCursorPage<BackendAuditLog> & { auditLogs?: BackendAuditLog[] }>(
+    `/admin/audit-logs${query ? `?${query}` : ""}`,
+    token
+  );
+  return {
+    items: Array.isArray(data.items) ? data.items : data.auditLogs ?? [],
+    nextCursor: data.nextCursor ?? null
+  };
 }

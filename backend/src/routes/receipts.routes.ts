@@ -3,9 +3,11 @@ import { z } from "zod";
 import { requireAuth, type AuthenticatedRequest } from "../middleware/auth.js";
 import { createRateLimiter, ipRateLimitKey, userRateLimitKey } from "../middleware/rate-limit.js";
 import { requireRole } from "../middleware/require-role.js";
-import { createReceipt, listReceipts, markReceiptVerified, verifyReceipt, voidReceipt } from "../services/receipt.service.js";
+import { createReceipt, getReceipt, listReceipts, markReceiptVerified, verifyReceipt, voidReceipt } from "../services/receipt.service.js";
 import { asyncHandler } from "../utils/async-handler.js";
 import { HttpError } from "../utils/http-error.js";
+import { measureRequestPhase } from "../middleware/request-timing.js";
+import { scheduleOutboxProcessing } from "../services/outbox.service.js";
 
 export const receiptsRoutes = Router();
 
@@ -19,8 +21,27 @@ const voidReceiptSchema = z.object({
   reason: z.string().trim().max(300).optional()
 });
 
-const receiptCodeSchema = z.string().trim().min(5).max(64).regex(/^[A-Za-z0-9-]+$/, "Invalid receipt code.");
+const receiptCodeSchema = z
+  .string()
+  .trim()
+  .min(5)
+  .max(64)
+  .regex(/^[A-Za-z0-9-]+$/, "Invalid receipt code.")
+  .transform((value) => value.toUpperCase());
 const receiptIdSchema = z.string().uuid();
+const receiptListQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(50).optional(),
+  cursor: z.string().trim().min(1).max(512).optional(),
+  status: z.enum(["PENDING", "VERIFIED", "VOIDED"]).optional(),
+  query: z.string().trim().max(120).optional(),
+  receiptCode: z.string().trim().max(80).optional(),
+  dateFrom: z.coerce.date().optional(),
+  dateTo: z.coerce.date().optional()
+}).superRefine((input, context) => {
+  if (input.dateFrom && input.dateTo && input.dateTo < input.dateFrom) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "dateTo must not be before dateFrom.", path: ["dateTo"] });
+  }
+});
 const publicVerificationLimiter = createRateLimiter({
   namespace: "public-receipt-verification",
   windowMs: 15 * 60 * 1000,
@@ -51,8 +72,22 @@ receiptsRoutes.get(
   "/",
   requireAuth,
   asyncHandler(async (request: AuthenticatedRequest, response) => {
-    const receipts = await listReceipts(request.auth!.id, request.auth!.role);
-    response.json({ receipts });
+    const filters = receiptListQuerySchema.parse(request.query);
+    const page = await measureRequestPhase(response, "receipt_query", () =>
+      listReceipts(request.auth!.id, request.auth!.role, filters)
+    );
+    response.json(page);
+  })
+);
+
+receiptsRoutes.get(
+  "/:id",
+  requireAuth,
+  asyncHandler(async (request: AuthenticatedRequest, response) => {
+    const receipt = await measureRequestPhase(response, "receipt_detail", () =>
+      getReceipt(request.auth!.id, request.auth!.role, receiptIdSchema.parse(request.params.id))
+    );
+    response.json({ receipt });
   })
 );
 
@@ -78,6 +113,7 @@ receiptsRoutes.patch(
   receiptWriteLimiter,
   asyncHandler(async (request: AuthenticatedRequest, response) => {
     const receipt = await markReceiptVerified(receiptIdSchema.parse(request.params.id), request.auth!.id);
+    scheduleOutboxProcessing();
     response.json({ receipt });
   })
 );
@@ -90,6 +126,7 @@ receiptsRoutes.patch(
   asyncHandler(async (request: AuthenticatedRequest, response) => {
     const input = voidReceiptSchema.parse(request.body);
     const receipt = await voidReceipt(receiptIdSchema.parse(request.params.id), request.auth!.id, input.reason);
+    scheduleOutboxProcessing();
     response.json({ receipt });
   })
 );

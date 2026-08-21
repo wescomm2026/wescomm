@@ -1,5 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "regions": ["icn1"],
   "services": {
     "frontend": {
       "root": "frontend",
@@ -7,7 +8,7 @@
     },
     "backend": {
       "root": "backend",
-      "framework": "express"
+      "entrypoint": "Dockerfile.vercel"
     }
   },
   "rewrites": [

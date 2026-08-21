@@ -4,7 +4,9 @@ import { requireAuth, type AuthenticatedRequest } from "../middleware/auth.js";
 import { requireRole } from "../middleware/require-role.js";
 import { createRateLimiter, userRateLimitKey } from "../middleware/rate-limit.js";
 import { listInventory, restockProduct } from "../services/inventory.service.js";
+import { PRODUCT_STATUSES } from "../types/app.js";
 import { asyncHandler } from "../utils/async-handler.js";
+import { publishRealtimeEventsBestEffort, REALTIME_TOPICS } from "../services/realtime-event.service.js";
 
 export const inventoryRoutes = Router();
 
@@ -23,6 +25,14 @@ const restockSchema = z.object({
 });
 
 const productIdSchema = z.string().uuid();
+const inventoryListQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(50).optional(),
+  cursor: z.string().trim().min(1).max(512).optional(),
+  query: z.string().trim().max(120).optional(),
+  categoryId: z.string().uuid().optional(),
+  productId: z.string().uuid().optional(),
+  status: z.enum(PRODUCT_STATUSES).optional()
+});
 const inventoryWriteLimiter = createRateLimiter({
   namespace: "legacy-inventory-write",
   windowMs: 10 * 60 * 1000,
@@ -34,9 +44,9 @@ inventoryRoutes.use(requireAuth, requireRole("STAFF", "ADMIN"));
 
 inventoryRoutes.get(
   "/",
-  asyncHandler(async (_request, response) => {
-    const inventory = await listInventory();
-    response.json({ inventory });
+  asyncHandler(async (request, response) => {
+    const page = await listInventory(inventoryListQuerySchema.parse(request.query));
+    response.json({ inventory: page.items, nextCursor: page.nextCursor });
   })
 );
 
@@ -52,6 +62,17 @@ inventoryRoutes.post(
       notes: input.notes,
       performedById: request.auth!.id
     });
+    await publishRealtimeEventsBestEffort([{
+      topic: REALTIME_TOPICS.inventory,
+      entityId: product.id,
+      audienceRoles: ["STAFF", "ADMIN"],
+      payload: { action: "restocked" }
+    }, {
+      topic: REALTIME_TOPICS.dashboard,
+      entityId: product.id,
+      audienceRoles: ["STAFF", "ADMIN"],
+      payload: { action: "inventory-restocked" }
+    }]);
     response.json({ product });
   })
 );

@@ -44,7 +44,9 @@ const requiredColumns = verifyAppliedMigration
       online_payments: "id reservation_id status amount_centavos currency livemode provider_checkout_session_id provider_payment_intent_id provider_payment_id checkout_url checkout_expires_at last_reconciled_at fee_centavos net_amount_centavos refunded_amount_centavos paid_at expired_at cancelled_at refunded_at created_at updated_at",
       online_payment_attempts: "id online_payment_id attempt_number status provider_idempotency_key request_hash request_payload provider_checkout_session_id provider_payment_intent_id provider_payment_id checkout_url livemode checkout_expires_at last_reconciled_at expire_requested_at expired_at provider_created_at paid_at fee_centavos net_amount_centavos last_provider_error_code created_at updated_at",
       paymongo_webhook_events: "id provider_event_id dedupe_key event_type livemode resource_id payload_hash status reason_code online_payment_id received_at processed_at",
-      audit_logs: "id actor_id action entity_type entity_id summary metadata created_at",
+      audit_logs: "id actor_id action entity_type entity_id dedupe_key summary metadata created_at",
+      outbox_events: "id type entity_id payload created_at available_at locked_at processed_at attempt_count last_error",
+      realtime_events: "id topic dedupe_key audience_user_id audience_role entity_id payload created_at expires_at",
     }
   : baselineRequiredColumns;
 
@@ -296,7 +298,9 @@ try {
               'online_payments',
               'online_payment_attempts',
               'paymongo_webhook_events',
-              'audit_logs'
+              'audit_logs',
+              'outbox_events',
+              'realtime_events'
             )
             AND payment_table.relkind IN ('r', 'p')
             AND payment_table.relrowsecurity
@@ -309,7 +313,10 @@ try {
             AND tablename IN (
               'online_payments',
               'online_payment_attempts',
-              'paymongo_webhook_events'
+              'paymongo_webhook_events',
+              'audit_logs',
+              'outbox_events',
+              'realtime_events'
             )
         ) AS payment_policies,
         (
@@ -494,11 +501,11 @@ try {
     } else if (verifyAppliedMigration && authBoundary.wishlist_policies !== 0) {
       console.error("public.wishlist_items must not expose direct browser database policies.");
       process.exitCode = 1;
-    } else if (verifyAppliedMigration && authBoundary.payment_rls_tables !== 4) {
-      console.error("RLS must be enabled, but not forced, on all server-only payment and audit tables.");
+    } else if (verifyAppliedMigration && authBoundary.payment_rls_tables !== 6) {
+      console.error("RLS must be enabled, but not forced, on all server-only payment, audit, outbox, and realtime tables.");
       process.exitCode = 1;
     } else if (verifyAppliedMigration && authBoundary.payment_policies !== 0) {
-      console.error("Payment tables must not expose direct browser database policies.");
+      console.error("Server-only payment, audit, outbox, and realtime tables must not expose direct browser database policies.");
       process.exitCode = 1;
     } else if (verifyAppliedMigration && authBoundary.payment_identity_triggers !== 1) {
       console.error("The online payment attempt identity-protection trigger is missing or disabled.");

@@ -20,6 +20,7 @@ import { ActionLoadingOverlay } from "@/components/ui/ActionLoadingOverlay";
 import { AssetIcon } from "@/components/ui/AssetIcon";
 import { Button } from "@/components/ui/button";
 import { BackendApiError, createGcashCheckoutFromApi, createReservationFromApi, type BackendReservation } from "@/lib/api";
+import { reservationCacheKey, upsertCursorItem } from "@/lib/server-state";
 import {
   getPaymentIdempotencyKey,
   openTrustedPaymongoCheckout,
@@ -250,6 +251,7 @@ export function StudentCheckoutModal({
     try {
       const reservation = await createReservationFromApi(user.accessToken, payload, requestIdentity.key);
 
+      upsertCursorItem(reservationCacheKey(user.id), reservation, true);
       clearReservationRequestIdentity(user.id, requestIdentity);
       pendingRequestRef.current = null;
       window.dispatchEvent(new Event("wescomm:products-refresh"));

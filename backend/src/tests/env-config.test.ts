@@ -104,6 +104,53 @@ test("disabled PayMongo configuration does not require provider secrets", () => 
   assert.equal(result.status, 0, result.stderr);
 });
 
+test("database-grounded WesBot works without an AI Gateway credential", () => {
+  const result = loadConfig({
+    WESBOT_ENABLED: "true",
+    WESBOT_AI_ENABLED: "false",
+    AI_GATEWAY_API_KEY: "",
+    VERCEL_OIDC_TOKEN: ""
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test("optional WesBot AI polish fails closed without Gateway authentication", () => {
+  const botDisabled = loadConfig({
+    WESBOT_ENABLED: "false",
+    WESBOT_AI_ENABLED: "true",
+    AI_GATEWAY_API_KEY: "wesbot-test-gateway-key"
+  });
+  assert.notEqual(botDisabled.status, 0);
+  assert.match(`${botDisabled.stdout}\n${botDisabled.stderr}`, /requires WESBOT_ENABLED/);
+
+  const missingGateway = loadConfig({
+    WESBOT_ENABLED: "true",
+    WESBOT_AI_ENABLED: "true",
+    AI_GATEWAY_API_KEY: "",
+    VERCEL_OIDC_TOKEN: ""
+  });
+  assert.notEqual(missingGateway.status, 0);
+  assert.match(`${missingGateway.stdout}\n${missingGateway.stderr}`, /requires Vercel OIDC or an AI Gateway API key/);
+
+  const invalidModel = loadConfig({
+    WESBOT_ENABLED: "true",
+    WESBOT_AI_ENABLED: "true",
+    WESBOT_MODEL: "invalid-model",
+    AI_GATEWAY_API_KEY: "wesbot-test-gateway-key"
+  });
+  assert.notEqual(invalidModel.status, 0);
+  assert.match(`${invalidModel.stdout}\n${invalidModel.stderr}`, /provider\/model format/);
+
+  const authenticated = loadConfig({
+    WESBOT_ENABLED: "true",
+    WESBOT_AI_ENABLED: "true",
+    WESBOT_MODEL: "openai/gpt-5.6-luna",
+    AI_GATEWAY_API_KEY: "wesbot-test-gateway-key"
+  });
+  assert.equal(authenticated.status, 0, authenticated.stderr);
+});
+
 test("disabled checkout still validates webhook mode and any configured signing secret", () => {
   const weakSecret = loadConfig({
     PAYMONGO_ENABLED: "false",

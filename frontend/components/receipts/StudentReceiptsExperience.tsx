@@ -1,14 +1,25 @@
 "use client";
 
 import Image from "next/image";
-import { useCallback, useEffect, useRef, useState, type MutableRefObject } from "react";
+import Link from "next/link";
+import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import { createPortal } from "react-dom";
 import { Download, Eye, ShieldCheck, X } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
+import { useRealtimeRefresh } from "@/components/realtime/RealtimeProvider";
 import { AssetIcon } from "@/components/ui/AssetIcon";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
-import { getReceiptsFromApi, type BackendPaymentMethod, type BackendReceipt, type BackendReceiptStatus } from "@/lib/api";
+import { getReceiptFromApi, getReceiptPageFromApi, type BackendPaymentMethod, type BackendReceipt, type BackendReceiptStatus } from "@/lib/api";
+import {
+  mergeCursorPage,
+  readServerState,
+  receiptCacheKey,
+  type CursorPage,
+  upsertCursorItem,
+  useServerState,
+  writeServerState
+} from "@/lib/server-state";
 
 type Receipt = {
   id: string;
@@ -755,66 +766,74 @@ function ReceiptModal({
 
 export function StudentReceiptsExperience() {
   const { user, ready: authReady, openAuth } = useStudentAuth();
-  const [receipts, setReceipts] = useState<Receipt[]>([]);
-  const [receiptsOwnerId, setReceiptsOwnerId] = useState("");
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
   const [selectedReceiptId, setSelectedReceiptId] = useState<string | null>(null);
   const receiptTriggerRef = useRef<HTMLButtonElement | null>(null);
   const requestSequenceRef = useRef(0);
   const accountId = user?.id ?? "";
-  const visibleReceipts = receiptsOwnerId === accountId ? receipts : [];
+  const cacheKey = receiptCacheKey(accountId);
+  const receiptPage = useServerState<CursorPage<BackendReceipt>>(cacheKey);
+  const visibleReceipts = useMemo(() => (receiptPage?.items ?? []).map(mapBackendReceipt), [receiptPage]);
   const selectedReceipt = selectedReceiptId
     ? visibleReceipts.find((receipt) => receipt.id === selectedReceiptId) ?? null
     : null;
   const closeReceipt = useCallback(() => setSelectedReceiptId(null), []);
 
-  const loadReceipts = useCallback(async ({ background = false }: { background?: boolean } = {}) => {
+  const loadReceipts = useCallback(async ({
+    background = false,
+    cursor
+  }: { background?: boolean; cursor?: string } = {}) => {
     if (!authReady) return;
     const requestSequence = ++requestSequenceRef.current;
 
     if (!user?.accessToken || !accountId) {
-      setReceipts([]);
-      setReceiptsOwnerId(accountId);
       setSelectedReceiptId(null);
       setLoading(false);
       return;
     }
 
-    if (!background) {
+    if (cursor) setLoadingMore(true);
+    else if (!background) {
       setLoading(true);
       setError("");
     }
 
     try {
-      const rows = await getReceiptsFromApi(user.accessToken);
+      const page = await getReceiptPageFromApi(user.accessToken, { limit: 20, cursor });
       if (requestSequence !== requestSequenceRef.current) return;
-      const nextReceipts = rows.map(mapBackendReceipt);
-      setReceipts(nextReceipts);
-      setReceiptsOwnerId(accountId);
-      setSelectedReceiptId((currentId) => (
-        currentId && nextReceipts.some((receipt) => receipt.id === currentId) ? currentId : null
-      ));
+      writeServerState<CursorPage<BackendReceipt>>(cacheKey, (current) =>
+        mergeCursorPage(current, page, cursor ? "append" : background ? "prepend" : "replace")
+      );
     } catch (receiptError) {
       if (requestSequence === requestSequenceRef.current && !background) {
-        setReceipts([]);
         setSelectedReceiptId(null);
         setError(receiptError instanceof Error ? receiptError.message : "Unable to load receipts.");
       }
     } finally {
+      if (requestSequence === requestSequenceRef.current && cursor) setLoadingMore(false);
       if (requestSequence === requestSequenceRef.current && !background) setLoading(false);
     }
-  }, [accountId, authReady, user?.accessToken]);
+  }, [accountId, authReady, cacheKey, user?.accessToken]);
+
+  useRealtimeRefresh(["receipts"], () => {
+    void loadReceipts({ background: true });
+  });
 
   useEffect(() => {
-    setReceipts([]);
-    setReceiptsOwnerId(accountId);
     setSelectedReceiptId(null);
-    void loadReceipts();
+    const cached = readServerState<CursorPage<BackendReceipt>>(cacheKey);
+    if (cached) {
+      setLoading(false);
+      if (Date.now() - cached.updatedAt >= 60_000) void loadReceipts({ background: true });
+    } else {
+      void loadReceipts();
+    }
     return () => {
       requestSequenceRef.current += 1;
     };
-  }, [accountId, loadReceipts]);
+  }, [accountId, cacheKey, loadReceipts]);
 
   useEffect(() => {
     if (!authReady || !user?.accessToken) return;
@@ -823,7 +842,7 @@ export function StudentReceiptsExperience() {
       if (document.visibilityState === "visible") void loadReceipts({ background: true });
     };
 
-    const interval = window.setInterval(refreshInBackground, 15000);
+    const interval = window.setInterval(refreshInBackground, 60000);
     window.addEventListener("focus", refreshInBackground);
     document.addEventListener("visibilitychange", refreshInBackground);
 
@@ -863,7 +882,15 @@ export function StudentReceiptsExperience() {
           <p className="mt-2 max-w-xl text-sm leading-6 text-[#68746d]">
             Use your Wesleyan account to access official receipt copies, verification references, and downloads.
           </p>
-          <Button className="mt-5 h-11" onClick={openAuth}>Log in with Wesleyan account</Button>
+          <div className="mt-5 flex flex-wrap gap-3">
+            <Link
+              href="/verify-receipt"
+              className="inline-flex h-11 items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground shadow-[0_8px_18px_rgba(0,91,43,0.22)] transition-colors hover:bg-[#004320] focus:outline-none focus:ring-2 focus:ring-primary/30"
+            >
+              Search Receipt Code
+            </Link>
+            <Button className="h-11" variant="secondary" onClick={openAuth}>Log in with Wesleyan account</Button>
+          </div>
         </section>
       ) : (
         <>
@@ -872,6 +899,7 @@ export function StudentReceiptsExperience() {
           ) : null}
 
           {visibleReceipts.length ? (
+            <>
             <div className="grid gap-6 lg:grid-cols-2 xl:grid-cols-3">
               {visibleReceipts.map((receipt) => (
                 <article key={receipt.id} className="overflow-hidden rounded-lg border border-[#dce5dd] bg-[#edf2ed] p-3 shadow-sm">
@@ -889,6 +917,11 @@ export function StudentReceiptsExperience() {
                         // before the dialog takes focus on the next animation frame.
                         event.currentTarget.blur();
                         setSelectedReceiptId(receipt.id);
+                        if (user?.accessToken) {
+                          void getReceiptFromApi(user.accessToken, receipt.id)
+                            .then((detail) => upsertCursorItem(cacheKey, detail))
+                            .catch(() => undefined);
+                        }
                       }}
                     >
                       <Eye className="size-4" />
@@ -906,6 +939,19 @@ export function StudentReceiptsExperience() {
                 </article>
               ))}
             </div>
+            {receiptPage?.nextCursor ? (
+              <div className="mt-5 flex justify-center">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={loadingMore}
+                  onClick={() => void loadReceipts({ cursor: receiptPage.nextCursor ?? undefined })}
+                >
+                  {loadingMore ? "Loading more..." : "Load more receipts"}
+                </Button>
+              </div>
+            ) : null}
+            </>
           ) : (
             <section className="rounded-lg border border-[#dce5dd] bg-white p-6 shadow-sm">
               <p className="font-extrabold text-[#17211b]">No receipts yet</p>

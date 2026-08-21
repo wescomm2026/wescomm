@@ -447,8 +447,8 @@ export function StudentAuthModal({ open, onClose }: { open: boolean; onClose: ()
               <form onSubmit={handleVerifyOtp} className="space-y-3 rounded-md border border-[#dce6dc] bg-[#fbfdfb] p-3">
                 <label className="block">
                   <span className="text-xs font-bold text-[#25322b]">{EMAIL_OTP_LENGTH}-digit verification code</span>
-                  <div className="mt-1 flex h-12 items-center gap-2 rounded-md border border-[#cbd8cb] bg-white px-3 transition focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/15">
-                    <KeyRound className="size-5 shrink-0 text-primary" />
+                  <div className="relative mt-1 flex h-12 items-center rounded-md border border-[#cbd8cb] bg-white transition focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/15">
+                    <KeyRound className="pointer-events-none absolute left-3 size-5 text-primary" aria-hidden="true" />
                     <input
                       type="text"
                       name="one-time-code"
@@ -470,7 +470,7 @@ export function StudentAuthModal({ open, onClose }: { open: boolean; onClose: ()
                       aria-describedby="student-auth-code-help"
                       aria-invalid={Boolean(error)}
                       aria-errormessage={error ? "student-auth-error" : undefined}
-                      className="h-full min-w-0 flex-1 bg-transparent text-center text-xl font-extrabold tracking-[0.22em] text-[#101820] outline-none disabled:opacity-60"
+                      className="h-full w-full bg-transparent px-10 text-center text-xl font-extrabold tracking-[0.22em] text-[#101820] outline-none disabled:opacity-60"
                       placeholder="000000"
                     />
                   </div>

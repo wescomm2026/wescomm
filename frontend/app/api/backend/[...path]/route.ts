@@ -22,6 +22,7 @@ const forwardedResponseHeaders = [
   "ratelimit-remaining",
   "ratelimit-reset",
   "retry-after",
+  "server-timing",
   "set-cookie",
   "x-request-id"
 ];
@@ -98,7 +99,7 @@ async function proxy(request: NextRequest, context: { params: { path: string[] }
   });
 
   const responseHasNoBody = request.method === "HEAD" || [204, 205, 304].includes(backendResponse.status);
-  return new NextResponse(responseHasNoBody ? null : await backendResponse.arrayBuffer(), {
+  return new NextResponse(responseHasNoBody ? null : backendResponse.body, {
     status: backendResponse.status,
     headers: responseHeaders
   });

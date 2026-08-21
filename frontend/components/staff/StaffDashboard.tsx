@@ -4,59 +4,34 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { ArrowRight, ChevronDown, Megaphone, RefreshCw } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
+import { useRealtimeRefresh } from "@/components/realtime/RealtimeProvider";
+import { SiteFooterLinks } from "@/components/layout/SiteFooterLinks";
 import { AssetIcon } from "@/components/ui/AssetIcon";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import {
-  getConversationsFromApi,
-  getReceiptsFromApi,
-  getReservationsFromApi,
-  getStaffReportSummaryFromApi,
-  type BackendConversation,
-  type BackendReceipt,
-  type BackendReportSummary,
+  getStaffDashboardSummaryFromApi,
+  type BackendDashboardProduct,
   type BackendReservation,
-  type BackendReservationStatus
+  type BackendReservationStatus,
+  type BackendStaffDashboard
 } from "@/lib/api";
-import { getStaffProducts, getStoredStaffSession, type StaffProduct } from "@/lib/staff-api";
+import { getStoredStaffSession } from "@/lib/staff-api";
 import { markWelcomeContentReady } from "@/lib/welcome-readiness";
 
-const emptySummary: BackendReportSummary = {
-  totalSales: 0,
-  totalReservations: 0,
-  pendingReservations: 0,
-  lowStockItems: 0,
-  outOfStockItems: 0,
-  totalProducts: 0,
-  inventoryValue: 0,
-  activeUsers: 0,
-  roleCounts: { students: 0, staff: 0, admins: 0 },
-  receiptsToVerify: 0,
-  totalReceipts: 0,
-  activeConversations: 0,
-  salesTrend: [],
-  categorySales: [],
-  reservationStatusDistribution: [],
-  inventoryInsights: []
-};
-
-type DashboardData = {
-  products: StaffProduct[];
-  reservations: BackendReservation[];
-  receipts: BackendReceipt[];
-  conversations: BackendConversation[];
-  summary: BackendReportSummary;
-};
-
-const emptyDashboardData: DashboardData = {
+const emptyDashboardData: BackendStaffDashboard = {
   products: [],
   reservations: [],
   receipts: [],
-  conversations: [],
-  summary: emptySummary
+  metrics: {
+    totalProducts: 0,
+    itemsToRestock: 0,
+    pendingReservations: 0,
+    activeReservations: 0,
+    receiptsToVerify: 0,
+    openConversations: 0
+  }
 };
-
-const activeReservationStatuses: BackendReservationStatus[] = ["PENDING", "CONFIRMED", "READY_FOR_PICKUP"];
 
 function toNumber(value: string | number | null | undefined) {
   const numericValue = Number(value ?? 0);
@@ -102,14 +77,14 @@ function formatDateTime(value: string | null | undefined) {
   });
 }
 
-function stockStatus(product: StaffProduct) {
+function stockStatus(product: BackendDashboardProduct) {
   if (product.status === "OUT_OF_STOCK" || product.stock <= 0) return "Out of Stock";
   if (product.status === "ON_SALE") return "On Sale";
   if (product.status === "RESTOCK_SOON" || product.stock <= product.lowStockThreshold) return "Needs Restock";
   return "Available";
 }
 
-function stockPriority(product: StaffProduct) {
+function stockPriority(product: BackendDashboardProduct) {
   const status = stockStatus(product);
   if (status === "Out of Stock") return 0;
   if (status === "Needs Restock") return 1;
@@ -117,7 +92,7 @@ function stockPriority(product: StaffProduct) {
   return 3;
 }
 
-function categoryName(product: StaffProduct) {
+function categoryName(product: BackendDashboardProduct) {
   return product.category?.name || "Uncategorized";
 }
 
@@ -140,7 +115,7 @@ function studentName(reservation: BackendReservation) {
 
 function useStaffDashboardData() {
   const { user, ready, openAuth } = useStudentAuth();
-  const [data, setData] = useState<DashboardData>(emptyDashboardData);
+  const [data, setData] = useState<BackendStaffDashboard>(emptyDashboardData);
   const [loading, setLoading] = useState(true);
   const [initialLoadComplete, setInitialLoadComplete] = useState(false);
   const [error, setError] = useState("");
@@ -169,15 +144,7 @@ function useStaffDashboardData() {
     }
 
     try {
-      const [products, reservations, receipts, conversations, summary] = await Promise.all([
-        getStaffProducts(token),
-        getReservationsFromApi(token),
-        getReceiptsFromApi(token),
-        getConversationsFromApi(token),
-        getStaffReportSummaryFromApi(token)
-      ]);
-
-      setData({ products, reservations, receipts, conversations, summary });
+      setData(await getStaffDashboardSummaryFromApi(token));
     } catch (dashboardError) {
       if (!background) {
         setError(dashboardError instanceof Error ? dashboardError.message : "Unable to load staff dashboard.");
@@ -191,6 +158,10 @@ function useStaffDashboardData() {
     }
   }, [ready, user]);
 
+  useRealtimeRefresh(["dashboard", "inventory", "reservations", "receipts", "conversations"], () => {
+    void loadDashboard({ background: true });
+  });
+
   useEffect(() => {
     void loadDashboard();
   }, [loadDashboard]);
@@ -202,14 +173,14 @@ function useStaffDashboardData() {
       if (document.visibilityState === "visible") void loadDashboard({ background: true });
     };
 
-    const interval = window.setInterval(refresh, 20000);
+    const interval = window.setInterval(refresh, 60000);
     window.addEventListener("focus", refresh);
-    document.addEventListener("visibilitychange", refresh);
+    window.addEventListener("online", refresh);
 
     return () => {
       window.clearInterval(interval);
       window.removeEventListener("focus", refresh);
-      document.removeEventListener("visibilitychange", refresh);
+      window.removeEventListener("online", refresh);
     };
   }, [hasCredential, loadDashboard]);
 
@@ -383,30 +354,10 @@ export function StaffDashboard() {
     [data.products]
   );
 
-  const activeReservations = useMemo(
-    () =>
-      data.reservations
-        .filter((reservation) => activeReservationStatuses.includes(reservation.status))
-        .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime()),
-    [data.reservations]
-  );
-
-  const pendingReservations = useMemo(
-    () => data.reservations.filter((reservation) => reservation.status === "PENDING"),
-    [data.reservations]
-  );
-
-  const receiptsToVerify = useMemo(
-    () =>
-      data.receipts
-        .filter((receipt) => receipt.status === "PENDING")
-        .sort((left, right) => new Date(right.issuedAt).getTime() - new Date(left.issuedAt).getTime()),
-    [data.receipts]
-  );
-
-  const openMessages = data.conversations.filter((conversation) => conversation.status === "OPEN");
-  const totalProducts = data.summary.totalProducts || data.products.length;
-  const itemsToRestock = data.summary.lowStockItems || restockProducts.length;
+  const activeReservations = data.reservations;
+  const receiptsToVerify = data.receipts;
+  const totalProducts = data.metrics.totalProducts;
+  const itemsToRestock = data.metrics.itemsToRestock;
   const staffName = user?.fullName?.split(" ")[0] || getStoredStaffSession().email || "Staff";
 
   const operationalNotices = useMemo(() => {
@@ -420,26 +371,26 @@ export function StaffDashboard() {
       });
     }
 
-    if (pendingReservations.length) {
+    if (data.metrics.pendingReservations) {
       notices.push({
         title: "Reservation queue active",
-        detail: `${formatNumber(pendingReservations.length)} reservation${pendingReservations.length === 1 ? "" : "s"} awaiting staff review.`,
+        detail: `${formatNumber(data.metrics.pendingReservations)} reservation${data.metrics.pendingReservations === 1 ? "" : "s"} awaiting staff review.`,
         tone: "green"
       });
     }
 
-    if (receiptsToVerify.length) {
+    if (data.metrics.receiptsToVerify) {
       notices.push({
         title: "Receipt verification queue",
-        detail: `${formatNumber(receiptsToVerify.length)} receipt${receiptsToVerify.length === 1 ? "" : "s"} waiting for verification.`,
+        detail: `${formatNumber(data.metrics.receiptsToVerify)} receipt${data.metrics.receiptsToVerify === 1 ? "" : "s"} waiting for verification.`,
         tone: "green"
       });
     }
 
-    if (openMessages.length) {
+    if (data.metrics.openConversations) {
       notices.push({
         title: "Student support messages",
-        detail: `${formatNumber(openMessages.length)} open conversation${openMessages.length === 1 ? "" : "s"} need a reply or follow-up.`,
+        detail: `${formatNumber(data.metrics.openConversations)} open conversation${data.metrics.openConversations === 1 ? "" : "s"} need a reply or follow-up.`,
         tone: "green"
       });
     }
@@ -447,7 +398,7 @@ export function StaffDashboard() {
     return notices.length
       ? notices.slice(0, 2)
       : [{ title: "Operations are clear", detail: "No urgent stock, reservation, receipt, or message alerts right now.", tone: "green" as const }];
-  }, [itemsToRestock, openMessages.length, pendingReservations.length, receiptsToVerify.length]);
+  }, [data.metrics.openConversations, data.metrics.pendingReservations, data.metrics.receiptsToVerify, itemsToRestock]);
 
   if (!ready || !hasCredential || user?.role === "STUDENT") return accessState;
 
@@ -504,8 +455,8 @@ export function StaffDashboard() {
       <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <DashboardStat title="Total Products" value={formatNumber(totalProducts)} detail="Active products in inventory" href="/staff/inventory" action="View Inventory" iconSrc="/assets/all-items.svg" />
         <DashboardStat title="Items to Restock" value={formatNumber(itemsToRestock)} detail="Reached the restock alert count" href="/staff/inventory?status=needs-restock" action="Review Restock List" iconSrc="/assets/low-stock.svg" warning={itemsToRestock > 0} />
-        <DashboardStat title="Pending Reservations" value={formatNumber(pendingReservations.length || data.summary.pendingReservations)} detail="Awaiting staff review" href="/staff/reservations" action="View Reservations" iconSrc="/assets/pending.svg" />
-        <DashboardStat title="Receipts to Verify" value={formatNumber(receiptsToVerify.length || data.summary.receiptsToVerify)} detail="Pending verification" href="/staff/receipt-verification" action="Verify Receipts" iconSrc="/assets/scan-receipt.svg" />
+        <DashboardStat title="Pending Reservations" value={formatNumber(data.metrics.pendingReservations)} detail="Awaiting staff review" href="/staff/reservations" action="View Reservations" iconSrc="/assets/pending.svg" />
+        <DashboardStat title="Receipts to Verify" value={formatNumber(data.metrics.receiptsToVerify)} detail="Pending verification" href="/staff/receipt-verification" action="Verify Receipts" iconSrc="/assets/scan-receipt.svg" />
       </section>
 
       <section className="overflow-hidden rounded-lg border border-[#dce5dd] bg-white shadow-sm">
@@ -526,7 +477,11 @@ export function StaffDashboard() {
               <tbody className="divide-y divide-[#e8ede9]">
                 {inventoryRows.map((row) => (
                   <tr key={row.id}>
-                    <td className="px-4 py-3 font-semibold">{row.name}</td>
+                    <td className="px-4 py-3 font-semibold">
+                      <Link href={`/staff/inventory?productId=${encodeURIComponent(row.id)}`} className="text-primary hover:underline">
+                        {row.name}
+                      </Link>
+                    </td>
                     <td className="px-4 py-3 text-[#58645d]">{categoryName(row)}</td>
                     <td className="px-4 py-3">{formatNumber(row.stock)}</td>
                     <td className="px-4 py-3">{formatNumber(row.lowStockThreshold)}</td>
@@ -549,14 +504,14 @@ export function StaffDashboard() {
             {restockProducts.length ? (
               <div className="divide-y divide-[#e8ede9]">
                 {restockProducts.slice(0, 5).map((row) => (
-                  <div key={row.id} className="grid grid-cols-[1fr_auto_auto] items-center gap-3 px-4 py-3 text-sm">
+                  <Link href={`/staff/inventory?productId=${encodeURIComponent(row.id)}`} key={row.id} className="grid grid-cols-[1fr_auto_auto] items-center gap-3 px-4 py-3 text-sm hover:bg-[#f4f8f4]">
                     <p className="min-w-0 truncate font-semibold">{row.name}</p>
                     <p className="text-right text-xs font-bold text-red-600">
                       {formatNumber(row.stock)} pcs left
                       <span className="block text-[#8a6a20]">Alert at {formatNumber(row.lowStockThreshold)}</span>
                     </p>
                     <StatusBadge status={stockStatus(row)} />
-                  </div>
+                  </Link>
                 ))}
               </div>
             ) : (
@@ -569,18 +524,18 @@ export function StaffDashboard() {
         </details>
 
         <details className="group overflow-hidden rounded-lg border border-[#dce5dd] bg-white shadow-sm">
-          <CollapsibleHeader title="Reservation Queue" summary={`${formatNumber(activeReservations.length)} active reservation${activeReservations.length === 1 ? "" : "s"}`} iconSrc="/assets/reservations.svg" />
+          <CollapsibleHeader title="Reservation Queue" summary={`${formatNumber(data.metrics.activeReservations)} active reservation${data.metrics.activeReservations === 1 ? "" : "s"}`} iconSrc="/assets/reservations.svg" />
           <div className="border-t border-[#e5ebe6]">
             {activeReservations.length ? (
               <div className="divide-y divide-[#e8ede9]">
                 {activeReservations.slice(0, 5).map((row) => (
-                  <div key={row.id} className="grid grid-cols-[1fr_auto] gap-2 px-4 py-3 text-sm">
+                  <Link href={`/staff/reservations?reservationId=${encodeURIComponent(row.id)}`} key={row.id} className="grid grid-cols-[1fr_auto] gap-2 px-4 py-3 text-sm hover:bg-[#f4f8f4]">
                     <div className="min-w-0">
                       <p className="truncate font-semibold">{row.referenceCode}</p>
                       <p className="mt-1 truncate text-xs text-[#4f5b54]">{studentName(row)} - {formatDate(row.pickupStart ?? row.createdAt)}</p>
                     </div>
                     <StatusBadge status={reservationStatusLabel(row.status)} />
-                  </div>
+                  </Link>
                 ))}
               </div>
             ) : (
@@ -593,19 +548,19 @@ export function StaffDashboard() {
         </details>
 
         <details className="group overflow-hidden rounded-lg border border-[#dce5dd] bg-white shadow-sm">
-          <CollapsibleHeader title="Receipt Verification" summary={`${formatNumber(receiptsToVerify.length)} receipt${receiptsToVerify.length === 1 ? "" : "s"} waiting`} iconSrc="/assets/receipts.svg" />
+          <CollapsibleHeader title="Receipt Verification" summary={`${formatNumber(data.metrics.receiptsToVerify)} receipt${data.metrics.receiptsToVerify === 1 ? "" : "s"} waiting`} iconSrc="/assets/receipts.svg" />
           <div className="border-t border-[#e5ebe6]">
             {receiptsToVerify.length ? (
               <div className="divide-y divide-[#e8ede9]">
                 {receiptsToVerify.slice(0, 5).map((row) => (
-                  <div key={row.id} className="grid grid-cols-[auto_1fr_auto] items-center gap-3 px-4 py-3">
+                  <Link href={`/staff/receipt-verification?receiptId=${encodeURIComponent(row.id)}`} key={row.id} className="grid grid-cols-[auto_1fr_auto] items-center gap-3 px-4 py-3 hover:bg-[#f4f8f4]">
                     <AssetIcon src="/assets/digital-receipts.svg" className="size-8" />
                     <div className="min-w-0">
                       <p className="truncate text-sm font-semibold">Receipt #{row.receiptCode}</p>
                       <p className="truncate text-xs text-[#69746e]">{formatDateTime(row.issuedAt)}</p>
                     </div>
                     <p className="text-sm font-extrabold text-primary">{formatCurrency(row.totalAmount)}</p>
-                  </div>
+                  </Link>
                 ))}
               </div>
             ) : (
@@ -618,21 +573,16 @@ export function StaffDashboard() {
         </details>
       </div>
 
-      <footer className="flex flex-col gap-4 border-t border-[#e2e8e3] py-6 text-xs text-[#68736c] md:flex-row md:items-center md:justify-between">
-        <div className="flex items-center gap-3">
+      <footer className="flex flex-col items-center gap-4 border-t border-[#e2e8e3] py-6 text-center text-xs text-[#68736c] md:flex-row md:justify-between md:text-left">
+        <div className="flex items-center justify-center gap-3 md:justify-start">
           <AssetIcon src="/assets/wescomm-logo.png" className="h-10 w-24" />
           <div>
             <p className="font-extrabold text-[#26322b]">Wesleyan University-Philippines</p>
             <p>Integrated Commissary Management System</p>
           </div>
         </div>
-        <div className="flex flex-wrap gap-5">
-          <span>Privacy Policy</span>
-          <span>Terms of Service</span>
-          <span>Data Privacy Notice</span>
-          <span>Contact Us</span>
-        </div>
-        <p>(c) 2026 Wesleyan University-Philippines</p>
+        <SiteFooterLinks />
+        <p className="md:text-right">© 2026 Wesleyan University-Philippines</p>
       </footer>
     </div>
   );

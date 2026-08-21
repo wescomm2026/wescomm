@@ -166,6 +166,9 @@ test("View Receipt isolates the transaction selected by its unique receipt id", 
   await page.goto("/student/receipts");
   await dismissWelcomeGate(page);
 
+  const receiptNavigation = page.getByRole("link", { name: "Receipts", exact: true });
+  await expect(receiptNavigation).toHaveAttribute("href", "/student/receipts");
+
   await expect(page.getByRole("article")).toHaveCount(2);
   const selectedReceiptButton = page.getByRole("button", { name: `View receipt ${SECOND_RECEIPT_CODE}` });
   await selectedReceiptButton.click();

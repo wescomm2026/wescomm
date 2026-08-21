@@ -3,6 +3,7 @@ import { StudentAuthProvider } from "@/components/auth/StudentAuthProvider";
 import { StudentCartProvider } from "@/components/cart/StudentCartProvider";
 import { PwaLifecycle } from "@/components/pwa/PwaLifecycle";
 import { StudentRestrictionProvider } from "@/components/restrictions/StudentRestrictionProvider";
+import { RealtimeProvider } from "@/components/realtime/RealtimeProvider";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -30,6 +31,7 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
+  viewportFit: "cover",
   themeColor: "#006633"
 };
 
@@ -55,9 +57,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           enableRuntimeCaching={enableRuntimeCaching}
         />
         <StudentAuthProvider>
-          <StudentRestrictionProvider>
-            <StudentCartProvider>{children}</StudentCartProvider>
-          </StudentRestrictionProvider>
+          <RealtimeProvider>
+            <StudentRestrictionProvider>
+              <StudentCartProvider>{children}</StudentCartProvider>
+            </StudentRestrictionProvider>
+          </RealtimeProvider>
         </StudentAuthProvider>
       </body>
     </html>

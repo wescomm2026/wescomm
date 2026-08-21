@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import { ArrowRight } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -49,6 +50,7 @@ export function WelcomeGateOverlay({
   const [minimumElapsed, setMinimumElapsed] = useState(minimumDurationMs <= 0);
   const [animationComplete, setAnimationComplete] = useState(false);
   const [mediaFailed, setMediaFailed] = useState(false);
+  const [shouldLoadAnimation, setShouldLoadAnimation] = useState(false);
   const animationCompleteRef = useRef(false);
   const finishedRef = useRef(false);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -77,6 +79,15 @@ export function WelcomeGateOverlay({
   }, []);
 
   useEffect(() => {
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      finish();
+      return;
+    }
+
+    setShouldLoadAnimation(true);
+  }, [finish]);
+
+  useEffect(() => {
     if (minimumDurationMs <= 0) return undefined;
     const timeout = window.setTimeout(() => setMinimumElapsed(true), minimumDurationMs);
     return () => window.clearTimeout(timeout);
@@ -93,12 +104,6 @@ export function WelcomeGateOverlay({
     );
     return () => window.clearTimeout(timeout);
   }, [holdLastVisibleFrame, maximumDurationMs]);
-
-  useEffect(() => {
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      holdLastVisibleFrame();
-    }
-  }, [holdLastVisibleFrame]);
 
   useEffect(() => {
     const fallbackMs = phase === "entering" ? ENTER_FALLBACK_MS : phase === "exiting" ? EXIT_FALLBACK_MS : null;
@@ -130,14 +135,19 @@ export function WelcomeGateOverlay({
     holdLastVisibleFrame(video);
   };
 
+  const handleSkip = () => {
+    videoRef.current?.pause();
+    beginExit();
+  };
+
   return (
     <div
       className="welcome-gate-overlay fixed inset-0 z-[12000] grid place-items-center overflow-hidden"
       data-phase={phase}
       data-animation-complete={animationComplete ? "true" : "false"}
-      role="status"
-      aria-live="polite"
-      aria-atomic="true"
+      role="dialog"
+      aria-modal="true"
+      aria-label="WESCOMM welcome animation"
       onAnimationEnd={handleOverlayAnimationEnd}
       style={{
         position: "fixed",
@@ -150,6 +160,22 @@ export function WelcomeGateOverlay({
         background: LOADING_BACKGROUND
       }}
     >
+      {shouldLoadAnimation ? (
+        <button
+          type="button"
+          onClick={handleSkip}
+          disabled={phase === "exiting"}
+          aria-label="Skip welcome animation and continue"
+          className="absolute z-10 inline-flex min-h-11 items-center gap-2 rounded-full border border-[#cddbcf] bg-white/90 px-4 py-2 text-sm font-bold text-[#075c32] shadow-[0_8px_24px_rgba(0,68,36,0.12)] backdrop-blur-sm transition hover:border-[#96b99e] hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#08743f] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-0"
+          style={{
+            bottom: "max(1rem, env(safe-area-inset-bottom))",
+            right: "max(1rem, env(safe-area-inset-right))",
+          }}
+        >
+          Skip
+          <ArrowRight className="size-4" aria-hidden="true" />
+        </button>
+      ) : null}
       <video
         ref={videoRef}
         className={`welcome-gate-video${mediaFailed ? " welcome-gate-video-failed" : ""}`}
@@ -157,9 +183,11 @@ export function WelcomeGateOverlay({
         autoPlay
         muted
         playsInline
-        preload="auto"
+        preload={shouldLoadAnimation ? "auto" : "none"}
+        src={shouldLoadAnimation ? "/assets/wescomm-logo-intro.mp4" : undefined}
         onLoadedMetadata={handleVideoMetadata}
-        onTimeUpdate={handleVideoTimeUpdate}
+         onTimeUpdate={handleVideoTimeUpdate}
+         onClick={handleSkip}
         onEnded={(event) => holdLastVisibleFrame(event.currentTarget)}
         onError={() => {
           setMediaFailed(true);
@@ -169,16 +197,11 @@ export function WelcomeGateOverlay({
           width: "100%",
           height: "100%",
           objectFit: "contain",
-          background: LOADING_BACKGROUND
+          background: LOADING_BACKGROUND,
+          cursor: phase === "exiting" ? "default" : "pointer"
         }}
         aria-hidden="true"
-      >
-        <source
-          src="/assets/wescomm-logo-intro.mp4"
-          type="video/mp4"
-          media="(prefers-reduced-motion: no-preference)"
-        />
-      </video>
+      />
       {mediaFailed ? (
         <Image
           src="/assets/wescomm-logo.png"
@@ -189,7 +212,9 @@ export function WelcomeGateOverlay({
           aria-hidden="true"
         />
       ) : null}
-      <span className="sr-only">{getLoadingLabel(user)}</span>
+      <span className="sr-only" role="status" aria-live="polite">
+        {getLoadingLabel(user)}
+      </span>
     </div>
   );
 }

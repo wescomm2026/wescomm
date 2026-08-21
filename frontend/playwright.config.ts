@@ -49,7 +49,8 @@ export default defineConfig({
             ...process.env,
             PORT: String(backendPort),
             FRONTEND_ORIGIN: baseURL,
-            FRONTEND_ORIGINS: baseURL
+            FRONTEND_ORIGINS: baseURL,
+            PAYMONGO_RETURN_ORIGIN: baseURL
           },
           url: backendHealthURL,
           reuseExistingServer: !process.env.CI,

@@ -11,7 +11,9 @@ test("reservation workflow allows only the documented forward transitions", () =
   assert.doesNotThrow(() => assertReservationTransition("PENDING", "CONFIRMED"));
   assert.doesNotThrow(() => assertReservationTransition("PENDING", "CANCELLED"));
   assert.doesNotThrow(() => assertReservationTransition("CONFIRMED", "READY_FOR_PICKUP"));
+  assert.doesNotThrow(() => assertReservationTransition("CONFIRMED", "CANCELLED"));
   assert.doesNotThrow(() => assertReservationTransition("READY_FOR_PICKUP", "COMPLETED"));
+  assert.doesNotThrow(() => assertReservationTransition("READY_FOR_PICKUP", "CANCELLED"));
   assert.doesNotThrow(() => assertReservationTransition("READY_FOR_PICKUP", "NO_SHOW"));
   assert.doesNotThrow(() => assertReservationTransition("COMPLETED", "COMPLETED"));
 });

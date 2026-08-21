@@ -51,6 +51,20 @@ export type StaffProductImageUpload = {
   url: string;
 };
 
+export type StaffProductPage = {
+  products: StaffProduct[];
+  nextCursor: string | null;
+};
+
+export type StaffProductListOptions = {
+  limit?: number;
+  cursor?: string | null;
+  query?: string;
+  categoryId?: string;
+  productId?: string;
+  status?: StaffProduct["status"];
+};
+
 const MAX_PRODUCT_IMAGE_BYTES = 2 * 1024 * 1024;
 
 function fileToBase64(file: File) {
@@ -125,9 +139,22 @@ async function staffFetch<T>(path: string, token: string, init?: RequestInit) {
   return payload as T;
 }
 
+export async function getStaffProductsPage(token: string, options: StaffProductListOptions = {}) {
+  const params = new URLSearchParams();
+  if (options.limit) params.set("limit", String(options.limit));
+  if (options.cursor) params.set("cursor", options.cursor);
+  if (options.query?.trim()) params.set("query", options.query.trim());
+  if (options.categoryId) params.set("categoryId", options.categoryId);
+  if (options.productId) params.set("productId", options.productId);
+  if (options.status) params.set("status", options.status);
+  const suffix = params.size ? `?${params.toString()}` : "";
+  const data = await staffFetch<{ products: StaffProduct[]; nextCursor?: string | null }>(`/staff/products${suffix}`, token);
+  return { products: data.products, nextCursor: data.nextCursor ?? null } satisfies StaffProductPage;
+}
+
 export async function getStaffProducts(token: string) {
-  const data = await staffFetch<{ products: StaffProduct[] }>("/staff/products", token);
-  return data.products;
+  const page = await getStaffProductsPage(token);
+  return page.products;
 }
 
 export async function getStaffCategories(token: string) {

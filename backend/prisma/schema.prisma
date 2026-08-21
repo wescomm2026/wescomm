@@ -149,6 +149,24 @@ enum ConversationStatus {
   @@map("conversation_status")
 }
 
+enum ConversationMode {
+  BOT_ACTIVE
+  WAITING_FOR_STAFF
+  STAFF_ACTIVE
+  RESOLVED
+
+  @@map("conversation_mode")
+}
+
+enum ConversationMessageSenderType {
+  STUDENT
+  BOT
+  STAFF
+  SYSTEM
+
+  @@map("conversation_message_sender_type")
+}
+
 model Profile {
   id                    String                      @id @db.Uuid
   fullName              String                      @default("") @map("full_name")
@@ -182,7 +200,11 @@ model Profile {
   authSessions          AuthSession[]
   wishlistItems         WishlistItem[]
   auditLogs             AuditLog[]                  @relation("AuditActor")
+  realtimeEvents        RealtimeEvent[]             @relation("RealtimeAudienceUser")
 
+  @@index([createdAt(sort: Desc), id(sort: Desc)])
+  @@index([role, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([role, fullName, email, id])
   @@map("profiles")
 }
 
@@ -235,6 +257,8 @@ model Product {
   reservationItems  ReservationItem[]
   wishlistItems     WishlistItem[]
 
+  @@index([isActive, status])
+  @@index([isActive, name, id])
   @@map("products")
 }
 
@@ -268,6 +292,8 @@ model InventoryMovement {
   variant       ProductVariant?       @relation(fields: [variantId], references: [id], onDelete: SetNull)
   performedBy   Profile?              @relation("InventoryPerformedBy", fields: [performedById], references: [id], onDelete: SetNull)
 
+  @@index([productId, createdAt(sort: Desc)])
+  @@index([variantId, createdAt(sort: Desc)])
   @@map("inventory_movements")
 }
 
@@ -290,6 +316,9 @@ model Reservation {
   idempotencyRequest ReservationIdempotencyKey?
   onlinePayment      OnlinePayment?
 
+  @@index([studentId, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([status, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([status, pickupEnd, id])
   @@map("reservations")
 }
 
@@ -455,6 +484,8 @@ model ReservationItem {
   reservation    Reservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
   product        Product     @relation(fields: [productId], references: [id], onDelete: Restrict)
 
+  @@index([reservationId])
+  @@index([productId])
   @@map("reservation_items")
 }
 
@@ -477,6 +508,9 @@ model Receipt {
   reservation      Reservation?  @relation(fields: [reservationId], references: [id], onDelete: SetNull)
   issuedBy         Profile?      @relation("IssuedReceipts", fields: [issuedById], references: [id], onDelete: SetNull)
 
+  @@index([studentId, issuedAt(sort: Desc), id(sort: Desc)])
+  @@index([status, issuedAt(sort: Desc), id(sort: Desc)])
+  @@index([reservationId])
   @@map("receipts")
 }
 
@@ -493,6 +527,7 @@ model Notification {
   user      Profile          @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, createdAt(sort: Desc)])
+  @@index([userId, readAt, createdAt(sort: Desc)])
   @@map("notifications")
 }
 
@@ -502,16 +537,52 @@ model AuditLog {
   action     String
   entityType String   @map("entity_type")
   entityId   String?  @map("entity_id")
+  dedupeKey  String?  @unique @map("dedupe_key")
   summary    String
   metadata   Json     @default("{}")
   createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   actor      Profile? @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
 
-  @@index([createdAt(sort: Desc)])
+  @@index([createdAt(sort: Desc), id(sort: Desc)])
   @@index([actorId])
   @@index([action])
   @@index([entityType, entityId])
   @@map("audit_logs")
+}
+
+model OutboxEvent {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  type         String
+  entityId     String?   @map("entity_id") @db.Uuid
+  payload      Json
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  availableAt  DateTime  @default(now()) @map("available_at") @db.Timestamptz(6)
+  lockedAt     DateTime? @map("locked_at") @db.Timestamptz(6)
+  processedAt  DateTime? @map("processed_at") @db.Timestamptz(6)
+  attemptCount Int       @default(0) @map("attempt_count")
+  lastError    String?   @map("last_error")
+
+  @@index([processedAt, availableAt, createdAt])
+  @@index([type, entityId])
+  @@map("outbox_events")
+}
+
+model RealtimeEvent {
+  id             BigInt    @id @default(autoincrement())
+  topic          String    @db.VarChar(80)
+  dedupeKey      String?   @unique @map("dedupe_key")
+  audienceUserId String?   @map("audience_user_id") @db.Uuid
+  audienceRole   AppRole?  @map("audience_role")
+  entityId       String?   @map("entity_id") @db.Uuid
+  payload        Json      @default("{}")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  expiresAt      DateTime  @map("expires_at") @db.Timestamptz(6)
+  audienceUser   Profile?  @relation("RealtimeAudienceUser", fields: [audienceUserId], references: [id], onDelete: Cascade)
+
+  @@index([audienceUserId, id])
+  @@index([audienceRole, id])
+  @@index([expiresAt])
+  @@map("realtime_events")
 }
 
 model WishlistItem {
@@ -545,29 +616,46 @@ model PushSubscription {
 }
 
 model Conversation {
-  id              String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  studentId       String                @map("student_id") @db.Uuid
-  assignedStaffId String?               @map("assigned_staff_id") @db.Uuid
-  subject         String
-  status          ConversationStatus    @default(OPEN)
-  createdAt       DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt       DateTime              @default(now()) @map("updated_at") @db.Timestamptz(6)
-  student         Profile               @relation("StudentConversations", fields: [studentId], references: [id], onDelete: Cascade)
-  assignedStaff   Profile?              @relation("AssignedStaffConversations", fields: [assignedStaffId], references: [id], onDelete: SetNull)
-  messages        ConversationMessage[]
+  id               String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  studentId        String                @map("student_id") @db.Uuid
+  assignedStaffId  String?               @map("assigned_staff_id") @db.Uuid
+  subject          String
+  status           ConversationStatus    @default(OPEN)
+  mode             ConversationMode      @default(BOT_ACTIVE)
+  category         String?
+  priority         Int                   @default(0)
+  escalationReason String?               @map("escalation_reason")
+  escalatedAt      DateTime?             @map("escalated_at") @db.Timestamptz(6)
+  acceptedAt       DateTime?             @map("accepted_at") @db.Timestamptz(6)
+  resolvedAt       DateTime?             @map("resolved_at") @db.Timestamptz(6)
+  botSummary       String?               @map("bot_summary")
+  lastIntent       String?               @map("last_intent")
+  lastConcernKey   String?               @map("last_concern_key")
+  botReplyCount    Int                   @default(0) @map("bot_reply_count")
+  createdAt        DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime              @default(now()) @map("updated_at") @db.Timestamptz(6)
+  student          Profile               @relation("StudentConversations", fields: [studentId], references: [id], onDelete: Cascade)
+  assignedStaff    Profile?              @relation("AssignedStaffConversations", fields: [assignedStaffId], references: [id], onDelete: SetNull)
+  messages         ConversationMessage[]
 
+  @@index([mode, priority, updatedAt(sort: Desc)])
+  @@index([studentId, updatedAt(sort: Desc)])
   @@map("conversations")
 }
 
 model ConversationMessage {
-  id             String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  conversationId String       @map("conversation_id") @db.Uuid
-  senderId       String       @map("sender_id") @db.Uuid
+  id             String                        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  conversationId String                        @map("conversation_id") @db.Uuid
+  senderId       String?                       @map("sender_id") @db.Uuid
+  senderType     ConversationMessageSenderType @default(STUDENT) @map("sender_type")
   message        String
-  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
-  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  sender         Profile      @relation("MessageSender", fields: [senderId], references: [id], onDelete: Cascade)
+  intent         String?
+  metadata       Json                          @default("{}")
+  createdAt      DateTime                      @default(now()) @map("created_at") @db.Timestamptz(6)
+  conversation   Conversation                  @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender         Profile?                      @relation("MessageSender", fields: [senderId], references: [id], onDelete: SetNull)
 
+  @@index([conversationId, createdAt])
   @@map("conversation_messages")
 }
 

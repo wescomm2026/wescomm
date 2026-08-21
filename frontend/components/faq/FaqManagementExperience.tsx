@@ -99,7 +99,7 @@ export function FaqManagementExperience() {
       if (document.visibilityState === "visible" && !editing) void loadFaqs({ background: true });
     };
 
-    const interval = window.setInterval(refreshInBackground, 20000);
+    const interval = window.setInterval(refreshInBackground, 120000);
     window.addEventListener("focus", refreshInBackground);
     document.addEventListener("visibilitychange", refreshInBackground);
 

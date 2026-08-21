@@ -5,8 +5,10 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Bell, Check, X } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
+import { useRealtimeRefresh } from "@/components/realtime/RealtimeProvider";
 import {
   getNotificationsFromApi,
+  getUnreadNotificationCountFromApi,
   markAllNotificationsReadFromApi,
   markNotificationReadFromApi,
   type BackendNotification,
@@ -20,7 +22,7 @@ function notificationIcon(type: BackendNotificationType) {
   if (type === "PAYMENT") return "/assets/payment.svg";
   if (type === "LOW_STOCK") return "/assets/restock-soon.svg";
   if (type === "BACK_IN_STOCK") return "/assets/restock-soon.svg";
-  if (type === "MESSAGE") return "/assets/support.svg";
+  if (type === "MESSAGE") return "/assets/chat-with-wesbot.svg";
   return "/assets/notifications.svg";
 }
 
@@ -63,6 +65,7 @@ export function StudentNotifications({ onRequireAuth }: { onRequireAuth?: () => 
   const [open, setOpen] = useState(false);
   const [notifications, setNotifications] = useState<BackendNotification[]>([]);
   const [notificationOwnerId, setNotificationOwnerId] = useState("");
+  const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const containerRef = useRef<HTMLDivElement>(null);
@@ -70,7 +73,6 @@ export function StudentNotifications({ onRequireAuth }: { onRequireAuth?: () => 
   const requestSequenceRef = useRef(0);
   const accountId = user?.id ?? "";
   const visibleNotifications = notificationOwnerId === accountId ? notifications : [];
-  const unreadCount = visibleNotifications.filter((notification) => !notification.readAt).length;
 
   const loadNotifications = useCallback(async () => {
     if (!user?.accessToken || !accountId) return;
@@ -79,9 +81,9 @@ export function StudentNotifications({ onRequireAuth }: { onRequireAuth?: () => 
     setError("");
 
     try {
-      const rows = await getNotificationsFromApi(user.accessToken);
+      const result = await getNotificationsFromApi(user.accessToken, { limit: 20 });
       if (requestSequence !== requestSequenceRef.current) return;
-      setNotifications(rows);
+      setNotifications(result.notifications);
       setNotificationOwnerId(accountId);
     } catch (notificationError) {
       if (requestSequence !== requestSequenceRef.current) return;
@@ -91,9 +93,25 @@ export function StudentNotifications({ onRequireAuth }: { onRequireAuth?: () => 
     }
   }, [accountId, user?.accessToken]);
 
+  const loadUnreadCount = useCallback(async () => {
+    if (!user?.accessToken || !accountId) return;
+    try {
+      const count = await getUnreadNotificationCountFromApi(user.accessToken);
+      setUnreadCount(count);
+    } catch {
+      // Keep the last known badge count; opening the panel still offers an explicit retry.
+    }
+  }, [accountId, user?.accessToken]);
+
+  useRealtimeRefresh(["notifications"], () => {
+    void loadUnreadCount();
+    if (open) void loadNotifications();
+  });
+
   useEffect(() => {
     setOpen(false);
     setNotifications([]);
+    setUnreadCount(0);
     setNotificationOwnerId(accountId);
     if (!user?.accessToken || !accountId) {
       setNotifications([]);
@@ -102,13 +120,20 @@ export function StudentNotifications({ onRequireAuth }: { onRequireAuth?: () => 
       return;
     }
 
-    void loadNotifications();
-    const timer = window.setInterval(() => void loadNotifications(), 15000);
+    void loadUnreadCount();
+    const refreshWhenActive = () => {
+      if (document.visibilityState === "visible") void loadUnreadCount();
+    };
+    const timer = window.setInterval(refreshWhenActive, 60000);
+    window.addEventListener("focus", refreshWhenActive);
+    window.addEventListener("online", refreshWhenActive);
     return () => {
       requestSequenceRef.current += 1;
       window.clearInterval(timer);
+      window.removeEventListener("focus", refreshWhenActive);
+      window.removeEventListener("online", refreshWhenActive);
     };
-  }, [accountId, loadNotifications, user?.accessToken]);
+  }, [accountId, loadUnreadCount, user?.accessToken]);
 
   useEffect(() => {
     if (!open) return;
@@ -145,12 +170,15 @@ export function StudentNotifications({ onRequireAuth }: { onRequireAuth?: () => 
     setNotifications((current) =>
       current.map((notification) => ({ ...notification, readAt: notification.readAt ?? new Date().toISOString() }))
     );
+    setUnreadCount(0);
 
     try {
       await markAllNotificationsReadFromApi(user.accessToken);
-      void loadNotifications();
+      void loadUnreadCount();
     } catch (notificationError) {
       setError(notificationError instanceof Error ? notificationError.message : "Unable to update notifications.");
+      void loadNotifications();
+      void loadUnreadCount();
     }
   };
 
@@ -159,11 +187,13 @@ export function StudentNotifications({ onRequireAuth }: { onRequireAuth?: () => 
     setNotifications((current) =>
       current.map((item) => item.id === notification.id ? { ...item, readAt: new Date().toISOString() } : item)
     );
+    setUnreadCount((current) => Math.max(0, current - 1));
 
     try {
       await markNotificationReadFromApi(user.accessToken, notification.id);
     } catch {
       void loadNotifications();
+      void loadUnreadCount();
     }
   };
 

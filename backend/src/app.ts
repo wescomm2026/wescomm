@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import { ZodError } from "zod";
 import { env } from "./config/env.js";
 import { requireTrustedCookieOrigin } from "./middleware/csrf.js";
+import { requestTimingMiddleware } from "./middleware/request-timing.js";
 import { apiRoutes } from "./routes/index.js";
 import { paymongoWebhookHandler } from "./routes/paymongo-webhook.routes.js";
 import { allowedFrontendOrigins } from "./utils/allowed-origins.js";
@@ -29,6 +30,7 @@ app.use((_request, response, next) => {
   response.setHeader("X-Request-Id", requestId);
   next();
 });
+app.use(requestTimingMiddleware);
 
 app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
 
@@ -39,8 +41,8 @@ app.use(cors({
   },
   credentials: true,
   methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Authorization", "Content-Type", "Idempotency-Key", "X-Request-Id"],
-  exposedHeaders: ["X-Request-Id", "RateLimit-Limit", "RateLimit-Remaining", "RateLimit-Reset", "Retry-After"],
+  allowedHeaders: ["Authorization", "Content-Type", "Idempotency-Key", "Last-Event-ID", "X-Request-Id"],
+  exposedHeaders: ["X-Request-Id", "Server-Timing", "RateLimit-Limit", "RateLimit-Remaining", "RateLimit-Reset", "Retry-After"],
   maxAge: 600
 }));
 app.use(morgan(

@@ -29,6 +29,7 @@ productsRoutes.get(
   asyncHandler(async (request, response) => {
     const filters = productQuerySchema.parse(request.query);
     const products = await listProducts(filters);
+    response.setHeader("Cache-Control", "public, max-age=30, s-maxage=30, stale-while-revalidate=60");
     response.json({ products });
   })
 );
@@ -39,6 +40,7 @@ productsRoutes.get(
   asyncHandler(async (request, response) => {
     const product = await getProduct(productIdSchema.parse(request.params.id));
     if (!product) throw new HttpError(404, "Product not found.");
+    response.setHeader("Cache-Control", "public, max-age=30, s-maxage=30, stale-while-revalidate=60");
     response.json({ product });
   })
 );

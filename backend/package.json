@@ -31,6 +31,8 @@
     "@prisma/client": "^5.22.0",
     "@supabase/supabase-js": "^2.108.2",
     "@types/web-push": "^3.6.4",
+    "@vercel/functions": "^3.9.5",
+    "ai": "^7.0.65",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.1",

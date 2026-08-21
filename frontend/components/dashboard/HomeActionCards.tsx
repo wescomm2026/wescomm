@@ -8,21 +8,6 @@ import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 const actionCardClass =
   "wes-card flex min-h-[112px] w-full items-center gap-4 p-5 text-left transition hover:-translate-y-0.5 hover:shadow-[0_12px_28px_rgba(0,91,43,0.08)]";
 
-const actions = [
-  {
-    title: "Digital Receipts",
-    text: "View, verify, and download receipt history.",
-    image: "/assets/digital-receipts.svg",
-    href: "/student/receipts"
-  },
-  {
-    title: "FAQ & Support",
-    text: "Find answers about pickup, receipts, and stock.",
-    image: "/assets/help-center.svg",
-    href: "/student/faq"
-  }
-];
-
 function CardContent({ image, title, text }: { image: string; title: string; text: string }) {
   return (
     <>
@@ -55,11 +40,16 @@ export function HomeActionCards() {
           <CardContent image="/assets/my-reservations.svg" title="Check My Reservations" text="Log in to view pickup schedules and updates." />
         </button>
       )}
-      {actions.map((action) => (
-        <Link key={action.title} href={action.href} className={actionCardClass}>
-          <CardContent image={action.image} title={action.title} text={action.text} />
-        </Link>
-      ))}
+      <Link href={user ? "/student/receipts" : "/verify-receipt"} className={actionCardClass}>
+        <CardContent
+          image="/assets/digital-receipts.svg"
+          title={user ? "Digital Receipts" : "Verify a Receipt"}
+          text={user ? "View and download your receipt history." : "Search an official receipt with masked student details."}
+        />
+      </Link>
+      <Link href="/student/faq" className={actionCardClass}>
+        <CardContent image="/assets/help-center.svg" title="FAQ & Support" text="Find answers about pickup, receipts, and stock." />
+      </Link>
     </div>
   );
 }

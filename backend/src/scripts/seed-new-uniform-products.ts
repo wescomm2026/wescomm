@@ -5,6 +5,7 @@ const SHOP_ASSET_BASE = "/assets/wup shop assets";
 
 type ProductSeed = {
   name: string;
+  legacyNames?: string[];
   categoryName: string;
   categorySlug: string;
   categoryIconUrl: string;
@@ -85,132 +86,144 @@ const assetProducts: ProductSeed[] = [
     status: "ON_SALE"
   },
   {
-    name: "Senior High Boys Polo",
+    name: "Senior High Men's Polo",
+    legacyNames: ["Senior High Boys Polo"],
     categoryName: "Uniforms",
     categorySlug: "uniforms",
     categoryIconUrl: "/assets/uniforms.svg",
-    description: "Senior High boys uniform polo",
+    description: "Senior High men's uniform polo",
     imageUrl: `${SHOP_ASSET_BASE}/senior high boys polo.png`,
     price: 300,
     stock: 24,
     lowStockThreshold: 10
   },
   {
-    name: "Senior High Boys Pants",
+    name: "Senior High Men's Pants",
+    legacyNames: ["Senior High Boys Pants"],
     categoryName: "Uniforms",
     categorySlug: "uniforms",
     categoryIconUrl: "/assets/uniforms.svg",
-    description: "Senior High boys uniform pants",
+    description: "Senior High men's uniform pants",
     imageUrl: `${SHOP_ASSET_BASE}/senior high boys pants.png`,
     price: 350,
     stock: 24,
     lowStockThreshold: 10
   },
   {
-    name: "Senior High Boys Uniform Set",
+    name: "Senior High Men's Uniform Set",
+    legacyNames: ["Senior High Boys Uniform Set"],
     categoryName: "Uniforms",
     categorySlug: "uniforms",
     categoryIconUrl: "/assets/uniforms.svg",
-    description: "Senior High boys polo and pants set",
+    description: "Senior High men's polo and pants set",
     imageUrl: `${SHOP_ASSET_BASE}/senior high boys set.png`,
     price: 600,
     stock: 24,
     lowStockThreshold: 10
   },
   {
-    name: "Senior High Girls Top",
+    name: "Senior High Women's Top",
+    legacyNames: ["Senior High Girls Top"],
     categoryName: "Uniforms",
     categorySlug: "uniforms",
     categoryIconUrl: "/assets/uniforms.svg",
-    description: "Senior High girls uniform top",
+    description: "Senior High women's uniform top",
     imageUrl: `${SHOP_ASSET_BASE}/senior high top girl.png`,
     price: 300,
     stock: 24,
     lowStockThreshold: 10
   },
   {
-    name: "Senior High Girls Skirt",
+    name: "Senior High Women's Skirt",
+    legacyNames: ["Senior High Girls Skirt"],
     categoryName: "Uniforms",
     categorySlug: "uniforms",
     categoryIconUrl: "/assets/uniforms.svg",
-    description: "Senior High girls uniform skirt",
+    description: "Senior High women's uniform skirt",
     imageUrl: `${SHOP_ASSET_BASE}/senior high palda girl.png`,
     price: 350,
     stock: 24,
     lowStockThreshold: 10
   },
   {
-    name: "Senior High Girls Uniform Set",
+    name: "Senior High Women's Uniform Set",
+    legacyNames: ["Senior High Girls Uniform Set"],
     categoryName: "Uniforms",
     categorySlug: "uniforms",
     categoryIconUrl: "/assets/uniforms.svg",
-    description: "Senior High girls top and skirt set",
+    description: "Senior High women's top and skirt set",
     imageUrl: `${SHOP_ASSET_BASE}/senior high uniform set girl.png`,
     price: 600,
     stock: 24,
     lowStockThreshold: 10
   },
   {
-    name: "Boys WUP Uniform",
+    name: "WUP Men's Uniform Top",
+    legacyNames: ["Boys WUP Uniform"],
     categoryName: "Uniforms",
     categorySlug: "uniforms",
     categoryIconUrl: "/assets/uniforms.svg",
-    description: "WUP boys uniform top",
+    description: "WUP men's uniform top",
     imageUrl: `${SHOP_ASSET_BASE}/boys-wup-uniform.png`,
     price: 350,
     stock: 24,
     lowStockThreshold: 10
   },
   {
-    name: "Boys WUP Uniform Set",
+    name: "WUP Men's Uniform Set",
+    legacyNames: ["Boys WUP Uniform Set"],
     categoryName: "Uniforms",
     categorySlug: "uniforms",
     categoryIconUrl: "/assets/uniforms.svg",
-    description: "WUP boys uniform set",
+    description: "WUP men's uniform set",
     imageUrl: `${SHOP_ASSET_BASE}/boys-wup-uniform-set.png`,
     price: 600,
     stock: 24,
     lowStockThreshold: 10
   },
   {
-    name: "WUP Girls Uniform Set",
+    name: "WUP Women's Uniform Set",
+    legacyNames: ["WUP Girls Uniform Set"],
     categoryName: "Uniforms",
     categorySlug: "uniforms",
     categoryIconUrl: "/assets/uniforms.svg",
-    description: "WUP girls blouse and skirt set",
+    description: "WUP women's blouse and skirt set",
     imageUrl: `${SHOP_ASSET_BASE}/wup-girls-uniform-set.png`,
     price: 600,
     stock: 24,
     lowStockThreshold: 10
   },
   {
-    name: "WUP Girls Blouse",
+    name: "WUP Women's Blouse with Ribbon",
+    legacyNames: ["WUP Girls Blouse"],
     categoryName: "Uniforms",
     categorySlug: "uniforms",
     categoryIconUrl: "/assets/uniforms.svg",
-    description: "WUP girls blouse with ribbon",
+    description: "WUP women's blouse with ribbon",
     imageUrl: `${SHOP_ASSET_BASE}/wup-girls-blouse-ribbon.png`,
     price: 350,
     stock: 24,
     lowStockThreshold: 10
   },
   {
-    name: "WUP Girls Blouse Classic",
+    name: "WUP Women's Blouse",
+    legacyNames: ["WUP Girls Blouse Classic"],
     categoryName: "Uniforms",
     categorySlug: "uniforms",
     categoryIconUrl: "/assets/uniforms.svg",
-    description: "WUP girls classic blouse",
+    description: "WUP women's standard blouse",
     imageUrl: `${SHOP_ASSET_BASE}/wup-girls-blouse.png`,
     price: 350,
     stock: 24,
     lowStockThreshold: 10
   },
   {
-    name: "WUP Girls Skirt",
+    name: "WUP Women's Skirt",
+    legacyNames: ["WUP Girls Skirt"],
     categoryName: "Uniforms",
     categorySlug: "uniforms",
     categoryIconUrl: "/assets/uniforms.svg",
-    description: "WUP girls uniform skirt",
+    description: "WUP women's uniform skirt",
     imageUrl: `${SHOP_ASSET_BASE}/wup-girls-skirt.png`,
     price: 350,
     stock: 24,
@@ -228,7 +241,8 @@ const assetProducts: ProductSeed[] = [
     lowStockThreshold: 10
   },
   {
-    name: "BSBA Girls Uniform Set",
+    name: "BSBA Women's Uniform Set",
+    legacyNames: ["BSBA Girls Uniform Set"],
     categoryName: "Uniforms",
     categorySlug: "uniforms",
     categoryIconUrl: "/assets/uniforms.svg",
@@ -239,7 +253,8 @@ const assetProducts: ProductSeed[] = [
     lowStockThreshold: 10
   },
   {
-    name: "BSBA Girls Uniform",
+    name: "BSBA Women's Blouse",
+    legacyNames: ["BSBA Girls Uniform"],
     categoryName: "Uniforms",
     categorySlug: "uniforms",
     categoryIconUrl: "/assets/uniforms.svg",
@@ -261,11 +276,12 @@ const assetProducts: ProductSeed[] = [
     lowStockThreshold: 10
   },
   {
-    name: "Nursing Girls Uniform",
+    name: "Nursing Women's Uniform",
+    legacyNames: ["Nursing Girls Uniform"],
     categoryName: "Uniforms",
     categorySlug: "uniforms",
     categoryIconUrl: "/assets/uniforms.svg",
-    description: "Nursing girls yellow uniform dress",
+    description: "Nursing women's yellow uniform dress",
     imageUrl: `${SHOP_ASSET_BASE}/chtm-dress-uniform.png`,
     price: 600,
     stock: 24,
@@ -294,11 +310,12 @@ const assetProducts: ProductSeed[] = [
     lowStockThreshold: 10
   },
   {
-    name: "Nursing Boys Uniform Set",
+    name: "Nursing Men's Uniform Set",
+    legacyNames: ["Nursing Boys Uniform Set"],
     categoryName: "Uniforms",
     categorySlug: "uniforms",
     categoryIconUrl: "/assets/uniforms.svg",
-    description: "Nursing boys uniform set",
+    description: "Nursing men's uniform set",
     imageUrl: `${SHOP_ASSET_BASE}/nursing-boys-uniform-set.png`,
     price: 600,
     stock: 24,
@@ -524,13 +541,17 @@ async function ensureCategory(slug: string) {
 }
 
 async function upsertProduct(categoryId: string, product: ProductSeed) {
-  const { data: existingProduct, error: existingError } = await supabaseAdmin
+  const { data: existingProducts, error: existingError } = await supabaseAdmin
     .from("products")
     .select("id,stock,low_stock_threshold,status")
-    .ilike("name", product.name)
-    .maybeSingle();
+    .in("name", [product.name, ...(product.legacyNames ?? [])])
+    .limit(2);
 
   if (existingError) throw existingError;
+  if ((existingProducts ?? []).length > 1) {
+    throw new Error(`Both current and legacy catalog rows exist for ${product.name}; merge them before reseeding.`);
+  }
+  const existingProduct = existingProducts?.[0];
 
   if (existingProduct?.id) {
     const { data, error } = await supabaseAdmin

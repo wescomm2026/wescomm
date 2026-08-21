@@ -7,6 +7,10 @@ export async function dismissWelcomeGate(page: Page) {
   const appeared = await gate.waitFor({ state: "visible", timeout: 4_000 }).then(() => true).catch(() => false);
   if (!appeared) return;
 
+  const skipButton = gate.getByRole("button", { name: "Skip welcome animation and continue" });
+  if (await skipButton.isVisible().catch(() => false)) {
+    await skipButton.click();
+  }
   await expect(gate).toBeHidden({ timeout: 18_000 });
 }
 

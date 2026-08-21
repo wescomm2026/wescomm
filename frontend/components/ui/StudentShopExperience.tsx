@@ -403,7 +403,7 @@ export function StudentShopExperience() {
       setError("");
     }
 
-    getProductsFromApi()
+    getProductsFromApi({ fresh: background })
       .then((apiProducts) => {
         if (!cancelled && requestSequence === productRequestSequenceRef.current) {
           setProducts(apiProducts);

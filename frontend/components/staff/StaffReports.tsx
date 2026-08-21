@@ -19,6 +19,8 @@ import {
 } from "recharts";
 import { ArrowRight, ChevronDown, Download, RefreshCw } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
+import { useRealtimeRefresh } from "@/components/realtime/RealtimeProvider";
+import { SiteFooterLinks } from "@/components/layout/SiteFooterLinks";
 import { AssetIcon } from "@/components/ui/AssetIcon";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
@@ -114,6 +116,10 @@ function useStaffReportsSummary() {
     }
   }, [ready, user]);
 
+  useRealtimeRefresh(["reports"], () => {
+    void loadSummary({ background: true });
+  });
+
   useEffect(() => {
     void loadSummary();
   }, [loadSummary]);
@@ -125,7 +131,7 @@ function useStaffReportsSummary() {
       if (document.visibilityState === "visible") void loadSummary({ background: true });
     };
 
-    const interval = window.setInterval(refresh, 20000);
+    const interval = window.setInterval(refresh, 60000);
     window.addEventListener("focus", refresh);
     document.addEventListener("visibilitychange", refresh);
 
@@ -581,21 +587,16 @@ export function StaffReports() {
         </details>
       </section>
 
-      <footer className="flex flex-col gap-4 border-t border-[#e2e8e3] py-6 text-xs text-[#68736c] md:flex-row md:items-center md:justify-between">
-        <div className="flex items-center gap-3">
+      <footer className="flex flex-col items-center gap-4 border-t border-[#e2e8e3] py-6 text-center text-xs text-[#68736c] md:flex-row md:justify-between md:text-left">
+        <div className="flex items-center justify-center gap-3 md:justify-start">
           <AssetIcon src="/assets/wescomm-logo.png" className="h-10 w-24" />
           <div>
             <p className="font-extrabold text-[#26322b]">Wesleyan University-Philippines</p>
             <p>Integrated Commissary Management System</p>
           </div>
         </div>
-        <div className="flex flex-wrap gap-5">
-          <span>Privacy Policy</span>
-          <span>Terms of Service</span>
-          <span>Data Privacy Notice</span>
-          <span>Contact Us</span>
-        </div>
-        <p>(c) 2026 Wesleyan University-Philippines</p>
+        <SiteFooterLinks />
+        <p className="md:text-right">© 2026 Wesleyan University-Philippines</p>
       </footer>
     </div>
   );

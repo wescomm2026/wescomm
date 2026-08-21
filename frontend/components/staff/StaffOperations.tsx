@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import Image from "next/image";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, Ban, Check, Edit3, Eye, Filter, Plus, RefreshCw, Search, Send, Trash2, Upload, X } from "lucide-react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { ArrowLeft, Ban, Bot, Check, Edit3, Eye, Filter, Headphones, LoaderCircle, Plus, RefreshCw, Search, Send, Trash2, Upload, X } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
+import { useRealtimeRefresh } from "@/components/realtime/RealtimeProvider";
 import { FaqManagementExperience } from "@/components/faq/FaqManagementExperience";
 import { WebPushSettings } from "@/components/notifications/WebPushSettings";
 import { ActionLoadingOverlay } from "@/components/ui/ActionLoadingOverlay";
@@ -12,15 +13,20 @@ import { AssetIcon } from "@/components/ui/AssetIcon";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import {
+  getConversationMessagesFromApi,
   getConversationsFromApi,
-  getReceiptsFromApi,
-  getReservationsFromApi,
+  getReceiptPageFromApi,
+  getReservationPageFromApi,
   getStaffUsersFromApi,
   markReceiptVerifiedFromApi,
+  returnConversationToBotFromApi,
   sendConversationMessageFromApi,
+  takeOverConversationFromApi,
   type BackendAdminUser,
   type BackendConversation,
+  type BackendConversationMessage,
   type BackendConversationStatus,
+  type BackendTypingUser,
   type BackendReceipt,
   type BackendReceiptStatus,
   updateConversationTypingFromApi,
@@ -35,7 +41,7 @@ import {
   clearStaffSession,
   createStaffProduct,
   getStaffCategories,
-  getStaffProducts,
+  getStaffProductsPage,
   getStoredStaffSession,
   restockStaffProduct,
   updateStaffProduct,
@@ -45,6 +51,7 @@ import {
 } from "@/lib/staff-api";
 import { isUniformClothOnly } from "@/lib/product-display";
 import { WUP_DEFAULT_PRODUCT_TEMPLATES } from "@/lib/wup-default-catalog";
+import { cn } from "@/lib/utils";
 
 type Product = {
   id: string;
@@ -114,6 +121,14 @@ function stockStatusFromQuery(value: string | null) {
   return "All";
 }
 
+function stockStatusForApi(value: string): StaffProduct["status"] | undefined {
+  if (value === "Available") return "IN_STOCK";
+  if (value === "Needs Restock") return "RESTOCK_SOON";
+  if (value === "Out of Stock") return "OUT_OF_STOCK";
+  if (value === "On Sale") return "ON_SALE";
+  return undefined;
+}
+
 function mapStaffProduct(product: StaffProduct): Product {
   return {
     id: product.id,
@@ -140,6 +155,18 @@ function formatReservationStatus(status: BackendReservationStatus) {
   };
 
   return labels[status];
+}
+
+function backendReservationStatusFilter(status: string) {
+  const statuses: Record<string, BackendReservationStatus> = {
+    Pending: "PENDING",
+    Confirmed: "CONFIRMED",
+    "Ready for Pick-up": "READY_FOR_PICKUP",
+    Completed: "COMPLETED",
+    Cancelled: "CANCELLED",
+    "No-show": "NO_SHOW"
+  };
+  return statuses[status];
 }
 
 function formatStaffPickup(startValue: string | null, endValue: string | null) {
@@ -212,6 +239,15 @@ function formatStaffReceiptStatus(status: BackendReceiptStatus) {
   return "Pending";
 }
 
+function backendReceiptStatusFilter(status: string) {
+  const statuses: Record<string, BackendReceiptStatus> = {
+    Pending: "PENDING",
+    Verified: "VERIFIED",
+    Voided: "VOIDED"
+  };
+  return statuses[status];
+}
+
 function formatStaffReceiptDate(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
@@ -247,8 +283,11 @@ function mapStaffReceipt(row: BackendReceipt): StaffReceiptRow {
   };
 }
 
-function formatConversationStatus(status: BackendConversationStatus) {
-  return status === "RESOLVED" ? "Resolved" : "Open";
+function formatConversationStatus(conversation: BackendConversation) {
+  if (conversation.mode === "BOT_ACTIVE") return "WesBot active";
+  if (conversation.mode === "WAITING_FOR_STAFF") return "Waiting for Staff";
+  if (conversation.mode === "STAFF_ACTIVE") return "Staff active";
+  return "Resolved";
 }
 
 function formatConversationTime(value: string) {
@@ -264,8 +303,69 @@ function formatConversationTime(value: string) {
   });
 }
 
+function formatConversationDay(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+
+  return date.toLocaleDateString("en-PH", {
+    month: "short",
+    day: "numeric",
+    year: date.getFullYear() === new Date().getFullYear() ? undefined : "numeric",
+    timeZone: "Asia/Manila"
+  });
+}
+
 function conversationPreview(conversation: BackendConversation) {
   return conversation.messages.at(-1)?.message ?? "No messages yet";
+}
+
+function mergeStaffMessages(
+  current: BackendConversationMessage[],
+  incoming: BackendConversationMessage[]
+) {
+  return Array.from(new Map([...current, ...incoming].map((message) => [message.id, message])).values())
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+}
+
+function StaffConversationAvatar({
+  kind,
+  name = "Student",
+  size = "md"
+}: {
+  kind: "BOT" | "STAFF" | "STUDENT";
+  name?: string;
+  size?: "sm" | "md" | "lg";
+}) {
+  const sizeClass = size === "sm" ? "size-8" : size === "lg" ? "size-16" : "size-11";
+
+  if (kind === "BOT") {
+    return (
+      <span className={cn("relative inline-grid shrink-0 place-items-center overflow-hidden rounded-full", sizeClass)} aria-hidden="true">
+        <Image src="/assets/chat-with-wesbot.svg" alt="" fill sizes={size === "sm" ? "32px" : size === "lg" ? "64px" : "44px"} className="object-contain" />
+      </span>
+    );
+  }
+
+  if (kind === "STAFF") {
+    return (
+      <span className={cn("inline-grid shrink-0 place-items-center rounded-full bg-sky-50 text-sky-800 ring-1 ring-inset ring-sky-200", sizeClass)} aria-hidden="true">
+        <Headphones className={size === "sm" ? "size-4" : size === "lg" ? "size-7" : "size-5"} />
+      </span>
+    );
+  }
+
+  const initials = name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join("") || "ST";
+
+  return (
+    <span className={cn("inline-grid shrink-0 place-items-center rounded-full bg-[#e8f3e9] font-extrabold text-primary ring-1 ring-inset ring-[#c8ddca]", sizeClass, size === "sm" ? "text-[10px]" : size === "lg" ? "text-lg" : "text-xs")} aria-hidden="true">
+      {initials}
+    </span>
+  );
 }
 
 function getNextReservationStatus(status: BackendReservationStatus): BackendReservationStatus | null {
@@ -490,6 +590,9 @@ export function StaffInventoryExperience() {
   const [staffEmail, setStaffEmail] = useState("");
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("All");
+  const deferredInventorySearch = useDeferredValue(search);
+  const [nextProductCursor, setNextProductCursor] = useState<string | null>(null);
+  const [loadingMoreProducts, setLoadingMoreProducts] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -505,24 +608,49 @@ export function StaffInventoryExperience() {
   const [addImagePreview, setAddImagePreview] = useState("");
   const [editImageFile, setEditImageFile] = useState<File | null>(null);
   const [editImagePreview, setEditImagePreview] = useState("");
+  const inventoryFilterReadyRef = useRef(false);
+  const inventoryRequestRef = useRef(0);
   const { user, ready, openAuth, logout } = useStudentAuth();
 
-  const loadProducts = async (authToken = token) => {
+  const loadProducts = async (authToken = token, options: {
+    cursor?: string | null;
+    append?: boolean;
+    query?: string;
+    status?: string;
+    productId?: string;
+  } = {}) => {
     if (!authToken) {
       setLoading(false);
       return;
     }
 
-    setLoading(true);
+    const requestId = ++inventoryRequestRef.current;
+    const append = Boolean(options.append && options.cursor);
+    if (append) setLoadingMoreProducts(true);
+    else setLoading(true);
     setError("");
 
     try {
-      const [productRows, categoryRows] = await Promise.all([
-        getStaffProducts(authToken),
-        getStaffCategories(authToken)
+      const [productPage, categoryRows] = await Promise.all([
+        getStaffProductsPage(authToken, {
+          limit: 25,
+          cursor: options.cursor,
+          query: options.query ?? deferredInventorySearch,
+          productId: options.productId,
+          status: stockStatusForApi(options.status ?? status)
+        }),
+        append ? Promise.resolve(null) : getStaffCategories(authToken)
       ]);
-      setProducts(productRows.map(mapStaffProduct));
-      setCategories(categoryRows);
+      if (requestId !== inventoryRequestRef.current) return;
+      const mappedProducts = productPage.products.map(mapStaffProduct);
+      setProducts((current) => append
+        ? [...current, ...mappedProducts.filter((product) => !current.some((item) => item.id === product.id))]
+        : mappedProducts);
+      setNextProductCursor(productPage.nextCursor);
+      if (categoryRows) setCategories(categoryRows);
+      const productId = options.productId ?? new URL(window.location.href).searchParams.get("productId");
+      const targetedProduct = mappedProducts.find((product) => product.id === productId);
+      if (targetedProduct) setSearch(targetedProduct.name);
     } catch (loadError) {
       const message = loadError instanceof Error ? loadError.message : "Unable to load staff inventory.";
       setError(message);
@@ -533,9 +661,16 @@ export function StaffInventoryExperience() {
         openAuth();
       }
     } finally {
-      setLoading(false);
+      if (requestId === inventoryRequestRef.current) {
+        setLoading(false);
+        setLoadingMoreProducts(false);
+      }
     }
   };
+
+  useRealtimeRefresh(["inventory"], () => {
+    if (token) void loadProducts(token, { query: deferredInventorySearch, status });
+  });
 
   useEffect(() => {
     const params = new URL(window.location.href).searchParams;
@@ -549,9 +684,27 @@ export function StaffInventoryExperience() {
 
     setToken(authToken);
     setStaffEmail(email);
-    void loadProducts(authToken);
+    void loadProducts(authToken, {
+      query: params.get("query") ?? "",
+      status: stockStatusFromQuery(params.get("status")),
+      productId: params.get("productId") ?? undefined
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, user?.accessToken, user?.email]);
+
+  useEffect(() => {
+    if (!token) return;
+    if (!inventoryFilterReadyRef.current) {
+      inventoryFilterReadyRef.current = true;
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      void loadProducts(token, { query: deferredInventorySearch, status });
+    }, 200);
+    return () => window.clearTimeout(timeout);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deferredInventorySearch, status, token]);
 
   const filtered = products.filter((product) =>
     `${product.name} ${product.category}`.toLowerCase().includes(search.toLowerCase()) &&
@@ -711,7 +864,7 @@ export function StaffInventoryExperience() {
         }
       />
       <Toolbar search={search} onSearch={setSearch} status={status} onStatus={setStatus} placeholder="Search product or category" statuses={stockStatusOptions} />
-      {error ? <p className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p> : null}
+      {error ? <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p> : null}
       <section className="overflow-hidden rounded-lg border border-[#dce5dd] bg-white shadow-sm">
         <div className="hidden grid-cols-[1.35fr_1fr_.7fr_.75fr_.6fr_.85fr_auto] gap-4 bg-[#f6f9f6] px-4 py-3 text-xs font-bold text-[#59655d] md:grid">
           <span>Product</span><span>Category</span><span>Current Stock</span><span>Restock Alert At</span><span>Price</span><span>Stock Status</span><span>Actions</span>
@@ -752,6 +905,23 @@ export function StaffInventoryExperience() {
           )}
         </div>
       </section>
+      {nextProductCursor ? (
+        <div className="flex justify-center">
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={loadingMoreProducts || loading || submitting}
+            onClick={() => void loadProducts(token, {
+              cursor: nextProductCursor,
+              append: true,
+              query: deferredInventorySearch,
+              status
+            })}
+          >
+            {loadingMoreProducts ? "Loading more..." : "Load more products"}
+          </Button>
+        </div>
+      ) : null}
       {adding ? (
         <div className="fixed inset-0 z-[10000] grid place-items-center bg-[#101820]/50 p-4">
           <form key={selectedTemplateId || "blank-product-form"} className="relative my-auto max-h-[calc(100vh-2rem)] w-full max-w-lg overflow-y-auto rounded-lg bg-white p-5 shadow-2xl" onSubmit={async (event) => {
@@ -1005,9 +1175,15 @@ export function StaffReservationsExperience() {
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [submittingId, setSubmittingId] = useState("");
+  const deferredSearch = useDeferredValue(search);
 
-  const loadReservations = useCallback(async ({ background = false }: { background?: boolean } = {}) => {
+  const loadReservations = useCallback(async ({
+    background = false,
+    cursor
+  }: { background?: boolean; cursor?: string } = {}) => {
     const session = getStoredStaffSession();
     if (!session.token) {
       setRows([]);
@@ -1015,22 +1191,44 @@ export function StaffReservationsExperience() {
       return;
     }
 
-    if (!background) {
+    if (cursor) setLoadingMore(true);
+    else if (!background) {
       setLoading(true);
       setError("");
     }
 
     try {
-      const reservations = await getReservationsFromApi(session.token);
-      setRows(reservations.map(mapStaffReservation));
+      const page = await getReservationPageFromApi(session.token, {
+        limit: 25,
+        cursor,
+        status: backendReservationStatusFilter(status),
+        query: deferredSearch
+      });
+      const mappedReservations = page.items.map(mapStaffReservation);
+      setRows((current) => {
+        if (!cursor && !background) return mappedReservations;
+        const source = cursor ? [...current, ...mappedReservations] : [...mappedReservations, ...current];
+        return source.filter((row, index) => source.findIndex((candidate) => candidate.id === row.id) === index);
+      });
+      setNextCursor(page.nextCursor);
+      const reservationId = new URL(window.location.href).searchParams.get("reservationId");
+      const reservationQuery = new URL(window.location.href).searchParams.get("query");
+      const targetedReservation = mappedReservations.find((reservation) => reservation.id === reservationId);
+      if (targetedReservation) setSearch(targetedReservation.reference);
+      else if (reservationQuery) setSearch(reservationQuery);
     } catch (reservationError) {
       if (!background) {
         setError(reservationError instanceof Error ? reservationError.message : "Unable to load reservations.");
       }
     } finally {
+      if (cursor) setLoadingMore(false);
       if (!background) setLoading(false);
     }
-  }, []);
+  }, [deferredSearch, status]);
+
+  useRealtimeRefresh(["reservations"], () => {
+    void loadReservations({ background: true });
+  });
 
   useEffect(() => {
     void loadReservations();
@@ -1041,7 +1239,7 @@ export function StaffReservationsExperience() {
       if (document.visibilityState === "visible") void loadReservations({ background: true });
     };
 
-    const interval = window.setInterval(refreshInBackground, 12000);
+    const interval = window.setInterval(refreshInBackground, 60000);
     window.addEventListener("focus", refreshInBackground);
     document.addEventListener("visibilitychange", refreshInBackground);
 
@@ -1052,10 +1250,7 @@ export function StaffReservationsExperience() {
     };
   }, [loadReservations]);
 
-  const filtered = rows.filter((row) =>
-    `${row.reference} ${row.student} ${row.item}`.toLowerCase().includes(search.toLowerCase()) &&
-    (status === "All" || row.status === status)
-  );
+  const filtered = rows;
 
   const updateStatus = async (row: StaffReservationRow, nextStatus: BackendReservationStatus) => {
     const session = getStoredStaffSession();
@@ -1152,6 +1347,18 @@ export function StaffReservationsExperience() {
           <div className="rounded-lg border border-[#dce5dd] bg-white p-6 text-sm font-semibold text-[#68746d] shadow-sm">No matching reservations found.</div>
         )}
       </div>
+      {nextCursor ? (
+        <div className="flex justify-center">
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={loadingMore}
+            onClick={() => void loadReservations({ cursor: nextCursor })}
+          >
+            {loadingMore ? "Loading more..." : "Load more reservations"}
+          </Button>
+        </div>
+      ) : null}
       {notice ? <Notice text={notice} onClose={() => setNotice("")} /> : null}
     </div>
   );
@@ -1164,12 +1371,18 @@ export function StaffReceiptsExperience() {
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [submittingId, setSubmittingId] = useState("");
   const [selectedReceipt, setSelectedReceipt] = useState<StaffReceiptRow | null>(null);
   const [receiptAction, setReceiptAction] = useState<{ type: "verify" | "void"; row: StaffReceiptRow } | null>(null);
   const [voidReason, setVoidReason] = useState("");
+  const deferredSearch = useDeferredValue(search);
 
-  const loadReceipts = useCallback(async ({ background = false }: { background?: boolean } = {}) => {
+  const loadReceipts = useCallback(async ({
+    background = false,
+    cursor
+  }: { background?: boolean; cursor?: string } = {}) => {
     const session = getStoredStaffSession();
     if (!session.token) {
       setRows([]);
@@ -1177,22 +1390,45 @@ export function StaffReceiptsExperience() {
       return;
     }
 
-    if (!background) {
+    if (cursor) setLoadingMore(true);
+    else if (!background) {
       setLoading(true);
       setError("");
     }
 
     try {
-      const receipts = await getReceiptsFromApi(session.token);
-      setRows(receipts.map(mapStaffReceipt));
+      const page = await getReceiptPageFromApi(session.token, {
+        limit: 25,
+        cursor,
+        status: backendReceiptStatusFilter(status),
+        query: deferredSearch
+      });
+      const mappedReceipts = page.items.map(mapStaffReceipt);
+      setRows((current) => {
+        if (!cursor && !background) return mappedReceipts;
+        const source = cursor ? [...current, ...mappedReceipts] : [...mappedReceipts, ...current];
+        return source.filter((row, index) => source.findIndex((candidate) => candidate.id === row.id) === index);
+      });
+      setNextCursor(page.nextCursor);
+      const receiptId = new URL(window.location.href).searchParams.get("receiptId");
+      const targetedReceipt = mappedReceipts.find((receipt) => receipt.id === receiptId);
+      if (targetedReceipt) {
+        setSearch(targetedReceipt.code);
+        setSelectedReceipt(targetedReceipt);
+      }
     } catch (receiptError) {
       if (!background) {
         setError(receiptError instanceof Error ? receiptError.message : "Unable to load receipts.");
       }
     } finally {
+      if (cursor) setLoadingMore(false);
       if (!background) setLoading(false);
     }
-  }, []);
+  }, [deferredSearch, status]);
+
+  useRealtimeRefresh(["receipts"], () => {
+    void loadReceipts({ background: true });
+  });
 
   useEffect(() => {
     void loadReceipts();
@@ -1203,7 +1439,7 @@ export function StaffReceiptsExperience() {
       if (document.visibilityState === "visible") void loadReceipts({ background: true });
     };
 
-    const interval = window.setInterval(refreshInBackground, 15000);
+    const interval = window.setInterval(refreshInBackground, 60000);
     window.addEventListener("focus", refreshInBackground);
     document.addEventListener("visibilitychange", refreshInBackground);
 
@@ -1214,10 +1450,7 @@ export function StaffReceiptsExperience() {
     };
   }, [loadReceipts]);
 
-  const filtered = rows.filter((row) =>
-    `${row.code} ${row.reference} ${row.student} ${row.items}`.toLowerCase().includes(search.toLowerCase()) &&
-    (status === "All" || row.status === status)
-  );
+  const filtered = rows;
 
   const applyReceiptUpdate = (receipt: BackendReceipt) => {
     const mappedReceipt = mapStaffReceipt(receipt);
@@ -1350,6 +1583,18 @@ export function StaffReceiptsExperience() {
           No matching receipts found.
         </div>
       )}
+      {nextCursor ? (
+        <div className="flex justify-center">
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={loadingMore}
+            onClick={() => void loadReceipts({ cursor: nextCursor })}
+          >
+            {loadingMore ? "Loading more..." : "Load more receipts"}
+          </Button>
+        </div>
+      ) : null}
       {notice ? <Notice text={notice} onClose={() => setNotice("")} /> : null}
       <StaffReceiptPreviewModal
         row={selectedReceipt}
@@ -1378,17 +1623,57 @@ export function StaffMessagesExperience() {
   const [conversations, setConversations] = useState<BackendConversation[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [reply, setReply] = useState("");
+  const [pendingReply, setPendingReply] = useState("");
   const [threadOpen, setThreadOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("All");
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
-  const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const [pendingAction, setPendingAction] = useState<{
+    conversationId: string;
+    type: "takeover" | "return-to-bot" | "resolve" | "reopen" | "send";
+  } | null>(null);
+  const messagesLogRef = useRef<HTMLDivElement | null>(null);
+  const replyComposerRef = useRef<HTMLTextAreaElement | null>(null);
   const typingStopTimerRef = useRef<number | null>(null);
   const lastTypingSignalRef = useRef(0);
-  const selected = conversations.find((conversation) => conversation.id === selectedId) ?? conversations[0] ?? null;
+  const loadedThreadIdsRef = useRef(new Set<string>());
+  const latestMessageAtRef = useRef("");
+  const typingExpiryTimersRef = useRef(new Map<string, number>());
+  const stickToBottomRef = useRef(true);
+  const selected = useMemo(
+    () => conversations.find((conversation) => conversation.id === selectedId) ?? conversations[0] ?? null,
+    [conversations, selectedId]
+  );
+  const submitting = pendingAction !== null;
+  const activeAction = selected && pendingAction?.conversationId === selected.id ? pendingAction.type : null;
+  const ownsConversation = Boolean(selected && selected.mode === "STAFF_ACTIVE" && selected.assignedStaffId === user?.id);
+  const canReply = selected?.status !== "RESOLVED" && ownsConversation;
+  const canTakeOver = Boolean(selected && selected.status !== "RESOLVED" && !ownsConversation);
+  const handlerName = selected?.assignedStaff?.fullName || "another staff member";
+  const composerStatus = activeAction === "send"
+    ? "Sending reply to the student..."
+    : selected?.status === "RESOLVED"
+      ? "This conversation is resolved. Reopen it before replying."
+      : selected?.mode === "BOT_ACTIVE"
+        ? "WesBot is replying. Take over this conversation to pause WesBot and reply as Staff."
+        : selected?.mode === "WAITING_FOR_STAFF"
+          ? "No Staff handler yet. Take over this conversation to reply."
+          : !ownsConversation
+            ? `Handled by: ${handlerName}. Take over ownership before replying.`
+            : `You are the current handler${user?.fullName ? `: ${user.fullName}` : ""}.`;
+  const pendingActionLabel = activeAction === "send"
+    ? "Sending reply to student"
+    : activeAction === "takeover"
+      ? "Taking over conversation"
+      : activeAction === "return-to-bot"
+        ? "Returning conversation to WesBot"
+        : activeAction === "resolve"
+          ? "Resolving conversation"
+          : activeAction === "reopen"
+            ? "Reopening conversation"
+            : "";
 
   const loadConversations = useCallback(async ({ background = false }: { background?: boolean } = {}) => {
     const session = getStoredStaffSession();
@@ -1405,10 +1690,16 @@ export function StaffMessagesExperience() {
 
     try {
       const rows = await getConversationsFromApi(session.token);
-      setConversations(rows);
-      setSelectedId((current) =>
-        rows.some((conversation) => conversation.id === current) ? current : rows[0]?.id || ""
-      );
+      setConversations((current) => rows.map((row) => {
+        const existing = current.find((conversation) => conversation.id === row.id);
+        if (!existing || !loadedThreadIdsRef.current.has(row.id)) return row;
+        return { ...row, messages: mergeStaffMessages(existing.messages, row.messages) };
+      }));
+      const conversationId = new URL(window.location.href).searchParams.get("conversationId");
+      setSelectedId((current) => conversationId && rows.some((conversation) => conversation.id === conversationId)
+        ? conversationId
+        : rows.some((conversation) => conversation.id === current) ? current : rows[0]?.id || "");
+      if (conversationId && rows.some((conversation) => conversation.id === conversationId)) setThreadOpen(true);
     } catch (messageError) {
       if (!background) {
         setError(messageError instanceof Error ? messageError.message : "Unable to load student messages.");
@@ -1417,6 +1708,78 @@ export function StaffMessagesExperience() {
       if (!background) setLoading(false);
     }
   }, []);
+
+  const loadThreadMessages = useCallback(async (conversationId: string, after?: string) => {
+    const session = getStoredStaffSession();
+    if (!session.token) return;
+    try {
+      const result = await getConversationMessagesFromApi(session.token, conversationId, {
+        limit: 50,
+        after: after || undefined
+      });
+      setConversations((current) => current.map((conversation) => conversation.id === conversationId
+        ? {
+            ...conversation,
+            messages: after ? mergeStaffMessages(conversation.messages, result.messages) : result.messages,
+            typingUsers: result.typingUsers
+          }
+        : conversation));
+      loadedThreadIdsRef.current.add(conversationId);
+    } catch (messageError) {
+      if (!after) setError(messageError instanceof Error ? messageError.message : "Unable to load this conversation.");
+    }
+  }, []);
+
+  useRealtimeRefresh(["conversations", "typing"], (update) => {
+    if (update.topic === "conversations") {
+      void loadConversations({ background: true });
+      if (threadOpen && selected?.id && update.entityId === selected.id) {
+        void loadThreadMessages(selected.id, latestMessageAtRef.current || undefined);
+      }
+      return;
+    }
+
+    const payload = update.payload as Partial<BackendTypingUser> & {
+      conversationId?: string;
+      isTyping?: boolean;
+    };
+    if (!payload.conversationId || !payload.userId || payload.userId === user?.id) return;
+    const conversationId = payload.conversationId;
+    const userId = payload.userId;
+    const timerKey = `${conversationId}:${userId}`;
+    const existingTimer = typingExpiryTimersRef.current.get(timerKey);
+    if (existingTimer) window.clearTimeout(existingTimer);
+
+    setConversations((current) => current.map((conversation) => {
+      if (conversation.id !== conversationId) return conversation;
+      const withoutSender = (conversation.typingUsers ?? []).filter((typingUser) => typingUser.userId !== userId);
+      if (!payload.isTyping || !payload.fullName || !payload.email || !payload.role || !payload.updatedAt) {
+        return { ...conversation, typingUsers: withoutSender };
+      }
+      return {
+        ...conversation,
+        typingUsers: [...withoutSender, {
+          userId,
+          fullName: payload.fullName,
+          email: payload.email,
+          role: payload.role,
+          updatedAt: payload.updatedAt
+        }]
+      };
+    }));
+
+    if (payload.isTyping) {
+      const timer = window.setTimeout(() => {
+        setConversations((current) => current.map((conversation) => conversation.id === conversationId
+          ? { ...conversation, typingUsers: (conversation.typingUsers ?? []).filter((typingUser) => typingUser.userId !== userId) }
+          : conversation));
+        typingExpiryTimersRef.current.delete(timerKey);
+      }, 7_000);
+      typingExpiryTimersRef.current.set(timerKey, timer);
+    } else {
+      typingExpiryTimersRef.current.delete(timerKey);
+    }
+  });
 
   useEffect(() => {
     void loadConversations();
@@ -1427,7 +1790,7 @@ export function StaffMessagesExperience() {
       if (document.visibilityState === "visible") void loadConversations({ background: true });
     };
 
-    const interval = window.setInterval(refreshInBackground, threadOpen ? 2500 : 7000);
+    const interval = window.setInterval(refreshInBackground, 60000);
     window.addEventListener("focus", refreshInBackground);
     document.addEventListener("visibilitychange", refreshInBackground);
 
@@ -1436,21 +1799,58 @@ export function StaffMessagesExperience() {
       window.removeEventListener("focus", refreshInBackground);
       document.removeEventListener("visibilitychange", refreshInBackground);
     };
-  }, [loadConversations, threadOpen]);
+  }, [loadConversations]);
+
+  useEffect(() => {
+    latestMessageAtRef.current = selected?.messages.at(-1)?.createdAt ?? "";
+  }, [selected?.messages]);
+
+  useEffect(() => {
+    if (!selected?.id || !threadOpen) return;
+    const conversationId = selected.id;
+    void loadThreadMessages(
+      conversationId,
+      loadedThreadIdsRef.current.has(conversationId) ? latestMessageAtRef.current : undefined
+    );
+
+    const refreshThread = () => {
+      if (document.visibilityState === "visible") {
+        void loadThreadMessages(conversationId, latestMessageAtRef.current || undefined);
+      }
+    };
+    const interval = window.setInterval(refreshThread, 60000);
+    window.addEventListener("focus", refreshThread);
+    window.addEventListener("online", refreshThread);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", refreshThread);
+      window.removeEventListener("online", refreshThread);
+    };
+  }, [loadThreadMessages, selected?.id, threadOpen]);
+
+  useEffect(() => () => {
+    if (typingStopTimerRef.current) window.clearTimeout(typingStopTimerRef.current);
+    typingExpiryTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+    typingExpiryTimersRef.current.clear();
+  }, []);
 
   useEffect(() => {
     if (!threadOpen) return;
-    messagesEndRef.current?.scrollIntoView({ block: "end" });
-  }, [threadOpen, selected?.messages.length]);
+    const messagesLog = messagesLogRef.current;
+    if (messagesLog && (stickToBottomRef.current || pendingReply)) {
+      messagesLog.scrollTop = messagesLog.scrollHeight;
+    }
+  }, [pendingReply, threadOpen, selected?.messages.length, selected?.typingUsers?.length]);
 
-  const filtered = conversations.filter((conversation) =>
+  const filtered = useMemo(() => conversations.filter((conversation) =>
     `${conversation.subject} ${conversation.student?.fullName ?? ""} ${conversation.student?.email ?? ""}`
       .toLowerCase()
       .includes(search.toLowerCase()) &&
-    (status === "All" || formatConversationStatus(conversation.status) === status)
-  );
+    (status === "All" || formatConversationStatus(conversation) === status)
+  ), [conversations, search, status]);
 
   const openConversation = (conversationId: string) => {
+    stickToBottomRef.current = true;
     setSelectedId(conversationId);
     setThreadOpen(true);
   };
@@ -1462,6 +1862,20 @@ export function StaffMessagesExperience() {
     }
     setThreadOpen(false);
     setReply("");
+  };
+
+  const handleMessageScroll = () => {
+    const messagesLog = messagesLogRef.current;
+    if (!messagesLog) return;
+    stickToBottomRef.current = messagesLog.scrollHeight - messagesLog.scrollTop - messagesLog.clientHeight < 120;
+  };
+
+  const focusLatestMessage = () => {
+    stickToBottomRef.current = true;
+    window.requestAnimationFrame(() => {
+      const messagesLog = messagesLogRef.current;
+      if (messagesLog) messagesLog.scrollTop = messagesLog.scrollHeight;
+    });
   };
 
   const sendTypingSignal = useCallback((conversationId: string, isTyping: boolean) => {
@@ -1496,176 +1910,445 @@ export function StaffMessagesExperience() {
 
   const sendReply = async () => {
     const session = getStoredStaffSession();
-    if (!session.token || !selected || !reply.trim()) return;
+    if (!session.token || !selected || !reply.trim() || submitting) return;
 
-    setSubmitting(true);
+    const message = reply.trim();
+    setPendingAction({ conversationId: selected.id, type: "send" });
+    setPendingReply(message);
     setError("");
 
     try {
-      const message = await sendConversationMessageFromApi(session.token, selected.id, reply.trim());
+      const result = await sendConversationMessageFromApi(session.token, selected.id, message);
       sendTypingSignal(selected.id, false);
-      setConversations((current) =>
-        current.map((conversation) =>
-          conversation.id === selected.id
-            ? {
-                ...conversation,
-                status: "OPEN",
-                assignedStaffId: conversation.assignedStaffId ?? user?.id ?? null,
-                updatedAt: message.createdAt,
-                messages: [...conversation.messages, message]
-              }
-            : conversation
-        )
-      );
+      setConversations((current) => current.map((conversation) => conversation.id === selected.id
+        ? {
+            ...result.conversation,
+            messages: mergeStaffMessages(
+              conversation.messages,
+              [result.message, ...(result.botMessage ? [result.botMessage] : [])]
+            )
+          }
+        : conversation));
       setReply("");
+      if (replyComposerRef.current) replyComposerRef.current.style.height = "auto";
       setNotice("Reply sent to student.");
     } catch (messageError) {
       setError(messageError instanceof Error ? messageError.message : "Unable to send reply.");
     } finally {
-      setSubmitting(false);
+      setPendingReply("");
+      setPendingAction(null);
+    }
+  };
+
+  const takeOverConversation = async (conversation: BackendConversation) => {
+    const session = getStoredStaffSession();
+    if (!session.token || submitting) return;
+    if (
+      conversation.mode === "STAFF_ACTIVE"
+      && conversation.assignedStaffId !== user?.id
+      && !window.confirm(`Take over this conversation from ${conversation.assignedStaff?.fullName || "the current Staff handler"}? Their reply box will be locked immediately.`)
+    ) return;
+    setPendingAction({ conversationId: conversation.id, type: "takeover" });
+    setError("");
+
+    try {
+      const updatedConversation = await takeOverConversationFromApi(session.token, conversation.id);
+      setConversations((current) => current.map((item) => item.id === conversation.id
+        ? { ...updatedConversation, messages: item.messages }
+        : item));
+      void loadThreadMessages(conversation.id, latestMessageAtRef.current || undefined);
+      focusLatestMessage();
+      setNotice(`You are now handling ${conversation.student?.fullName || "this student"}'s concern.`);
+    } catch (messageError) {
+      setError(messageError instanceof Error ? messageError.message : "Unable to take over conversation.");
+      void loadConversations({ background: true });
+    } finally {
+      setPendingAction(null);
+    }
+  };
+
+  const returnToWesBot = async (conversation: BackendConversation) => {
+    const session = getStoredStaffSession();
+    if (!session.token || submitting) return;
+    setPendingAction({ conversationId: conversation.id, type: "return-to-bot" });
+    setError("");
+
+    try {
+      const updatedConversation = await returnConversationToBotFromApi(session.token, conversation.id);
+      setConversations((current) => current.map((item) => item.id === conversation.id
+        ? { ...updatedConversation, messages: item.messages }
+        : item));
+      void loadThreadMessages(conversation.id, latestMessageAtRef.current || undefined);
+      setReply("");
+      setNotice("Conversation returned to WesBot.");
+    } catch (messageError) {
+      setError(messageError instanceof Error ? messageError.message : "Unable to return conversation to WesBot.");
+    } finally {
+      setPendingAction(null);
     }
   };
 
   const updateStatus = async (conversation: BackendConversation, nextStatus: BackendConversationStatus) => {
     const session = getStoredStaffSession();
-    if (!session.token) return;
+    if (!session.token || submitting) return;
 
-    setSubmitting(true);
+    setPendingAction({
+      conversationId: conversation.id,
+      type: nextStatus === "RESOLVED" ? "resolve" : "reopen"
+    });
     setError("");
 
     try {
       const updatedConversation = await updateConversationStatusFromApi(session.token, conversation.id, nextStatus);
-      setConversations((current) => current.map((item) => item.id === conversation.id ? updatedConversation : item));
-      setNotice(`${conversation.subject} marked as ${formatConversationStatus(nextStatus).toLowerCase()}.`);
+      setConversations((current) => current.map((item) => item.id === conversation.id
+        ? { ...updatedConversation, messages: item.messages }
+        : item));
+      setNotice(`${conversation.subject} marked as ${nextStatus === "RESOLVED" ? "resolved" : "open"}.`);
     } catch (messageError) {
       setError(messageError instanceof Error ? messageError.message : "Unable to update conversation.");
     } finally {
-      setSubmitting(false);
+      setPendingAction(null);
     }
   };
 
   return (
     <div className="space-y-5">
-      <PageHeading
-        eyebrow="Student messaging"
-        title="Message center"
-        detail="Read student inquiries, reply from one workspace, and resolve completed conversations."
-        action={<Button variant="secondary" onClick={() => void loadConversations()} disabled={loading || submitting}>Refresh</Button>}
-      />
-      <div className={threadOpen ? "hidden lg:block" : ""}>
-        <Toolbar search={search} onSearch={setSearch} status={status} onStatus={setStatus} placeholder="Search student, topic, or message" statuses={["Open", "Resolved"]} />
+      <div className="hidden lg:block">
+        <PageHeading
+          eyebrow="Student messaging"
+          title="Message center"
+          detail="Monitor WesBot, take over any active thread, and keep every Staff reply under one clear handler."
+          action={(
+            <Button variant="secondary" onClick={() => void loadConversations()} disabled={loading || submitting} aria-busy={loading}>
+              <RefreshCw className={`size-4 ${loading ? "motion-safe:animate-spin" : ""}`} aria-hidden="true" />
+              {loading ? "Refreshing..." : "Refresh"}
+            </Button>
+          )}
+        />
       </div>
-      {error ? <p className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p> : null}
-      <div className="grid min-h-[calc(100dvh-230px)] overflow-hidden rounded-lg border border-[#dce5dd] bg-white shadow-sm lg:min-h-[620px] lg:grid-cols-[360px_1fr]">
-        <aside className={`${threadOpen ? "hidden lg:block" : "block"} border-b border-[#e5ebe6] lg:border-b-0 lg:border-r`}>
-          <div className="flex items-center gap-3 border-b border-[#edf1ed] bg-white px-4 py-4">
-            <span className="grid size-11 shrink-0 place-items-center rounded-md bg-[#eef6ee]">
-              <AssetIcon src="/assets/messages.svg" className="size-8" />
+      <h1 className="sr-only lg:hidden">Message center</h1>
+      {error ? <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p> : null}
+      <section
+        aria-label="WESCOMM staff messenger"
+        className="grid h-[calc(100dvh-7.375rem)] min-h-0 grid-cols-[minmax(0,1fr)] overflow-hidden rounded-2xl border border-[#dce5dd] bg-white shadow-[0_16px_48px_rgba(16,24,32,0.08)] lg:h-[calc(100dvh-15.5rem)] lg:grid-cols-[320px_minmax(0,1fr)]"
+      >
+        <aside className={cn(
+          "h-full min-h-0 min-w-0 flex-col border-[#e5ebe6] bg-[#fbfcfb] lg:flex lg:border-r",
+          threadOpen ? "hidden" : "flex"
+        )}>
+          <div className="flex min-h-[68px] items-center gap-3 border-b border-[#edf1ed] px-4 py-3">
+            <span className="grid size-10 shrink-0 place-items-center rounded-full bg-[#eaf6eb] text-primary" aria-hidden="true">
+              <AssetIcon src="/assets/messages.svg" className="size-6" />
             </span>
             <div className="min-w-0">
-              <p className="font-extrabold text-[#17211b]">Message inbox</p>
-              <p className="text-xs text-[#68746d]">{filtered.length} conversation{filtered.length === 1 ? "" : "s"} shown</p>
+              <p className="font-extrabold text-[#17211b]">Messages</p>
+              <p className="text-xs text-[#68746d]">{filtered.length} conversation{filtered.length === 1 ? "" : "s"}</p>
             </div>
+            <button
+              type="button"
+              onClick={() => void loadConversations()}
+              disabled={loading || submitting}
+              aria-label="Refresh conversations"
+              title="Refresh"
+              className="ml-auto grid size-10 shrink-0 place-items-center rounded-full text-[#5d6962] transition hover:bg-[#edf4ee] hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
+            >
+              <RefreshCw className={cn("size-[18px]", loading && "motion-safe:animate-spin")} aria-hidden="true" />
+            </button>
           </div>
+
+          <div className="space-y-2 border-b border-[#edf1ed] p-3">
+            <label className="flex h-10 items-center rounded-full border border-[#d7e1d8] bg-white px-3 focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/15">
+              <Search className="mr-2 size-4 shrink-0 text-[#68746d]" aria-hidden="true" />
+              <span className="sr-only">Search conversations</span>
+              <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search messages" className="min-w-0 flex-1 bg-transparent text-sm outline-none" />
+            </label>
+            <label className="flex h-9 items-center gap-2 rounded-full border border-[#d7e1d8] bg-white px-3 text-xs">
+              <Filter className="size-3.5 shrink-0 text-primary" aria-hidden="true" />
+              <span className="sr-only">Filter conversation status</span>
+              <select value={status} onChange={(event) => setStatus(event.target.value)} className="min-w-0 flex-1 bg-transparent font-bold outline-none">
+                {["All", "WesBot active", "Waiting for Staff", "Staff active", "Resolved"].map((option) => <option key={option}>{option}</option>)}
+              </select>
+            </label>
+          </div>
+
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-2">
           {loading ? (
-            <p className="p-5 text-sm font-semibold text-[#68746d]">Loading conversations...</p>
+            <div className="grid min-h-48 place-items-center px-5 text-center">
+              <div>
+                <LoaderCircle className="mx-auto size-6 motion-safe:animate-spin text-primary" aria-hidden="true" />
+                <p className="mt-3 text-sm font-semibold text-[#68746d]">Loading conversations...</p>
+              </div>
+            </div>
           ) : filtered.length ? filtered.map((conversation) => (
             <button
               key={conversation.id}
               type="button"
               onClick={() => openConversation(conversation.id)}
-              className={`w-full border-b border-[#edf1ed] p-4 text-left transition hover:bg-[#f4f8f4] ${selected?.id === conversation.id ? "bg-[#eef6ee]" : ""}`}
+              disabled={submitting}
+              aria-current={selected?.id === conversation.id ? "true" : undefined}
+              className={cn(
+                "mb-1 flex w-full items-start gap-3 rounded-xl p-3 text-left transition hover:bg-[#f0f6f1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary disabled:cursor-wait disabled:opacity-70",
+                selected?.id === conversation.id && "bg-[#e8f3e9]"
+              )}
             >
-              <div className="flex items-start gap-2">
-                <p className="min-w-0 flex-1 truncate font-extrabold">{conversation.student?.fullName || conversation.student?.email || "Student"}</p>
-                <StatusBadge status={formatConversationStatus(conversation.status)} />
-              </div>
-              <p className="mt-1 truncate text-sm font-semibold">{conversation.subject}</p>
-              <p className="mt-1 truncate text-xs text-[#68746d]">{conversationPreview(conversation)}</p>
-              <p className="mt-2 text-xs font-semibold text-[#79837d]">{formatConversationTime(conversation.updatedAt)}</p>
+              <StaffConversationAvatar kind="STUDENT" name={conversation.student?.fullName || conversation.student?.email || "Student"} />
+              <span className="min-w-0 flex-1">
+                <span className="flex items-start gap-2">
+                  <span className="min-w-0 flex-1 truncate text-sm font-extrabold text-[#17211b]">{conversation.student?.fullName || conversation.student?.email || "Student"}</span>
+                  <span className="shrink-0 text-[10px] font-semibold text-[#879089]">{formatConversationTime(conversation.updatedAt)}</span>
+                </span>
+                <span className="mt-0.5 block truncate text-xs font-semibold text-[#3f4a44]">{conversation.subject}</span>
+                <span className="mt-1 block truncate text-xs text-[#68746d]">{conversationPreview(conversation)}</span>
+                <span className="mt-1.5 flex items-center gap-1.5 text-[10px] font-bold text-[#68746d]">
+                  <span className={cn(
+                    "size-1.5 rounded-full",
+                    conversation.mode === "BOT_ACTIVE" ? "bg-emerald-500" : conversation.mode === "WAITING_FOR_STAFF" ? "bg-amber-500" : conversation.mode === "STAFF_ACTIVE" ? "bg-sky-500" : "bg-slate-400"
+                  )} />
+                  {conversation.mode === "STAFF_ACTIVE"
+                    ? `Handled by ${conversation.assignedStaffId === user?.id ? "you" : conversation.assignedStaff?.fullName || "Staff"}`
+                    : formatConversationStatus(conversation)}
+                </span>
+              </span>
             </button>
           )) : (
-            <p className="p-5 text-sm font-semibold text-[#68746d]">No matching student messages found.</p>
+            <div className="grid h-full min-h-56 place-items-center px-6 text-center">
+              <div>
+                <span className="mx-auto grid size-14 place-items-center rounded-full bg-[#eaf6eb] text-primary"><Search className="size-6" /></span>
+                <p className="mt-3 font-extrabold text-[#17211b]">No matching messages</p>
+                <p className="mt-1 text-sm leading-5 text-[#68746d]">Try another student name, topic, or status.</p>
+              </div>
+            </div>
           )}
+          </div>
         </aside>
         {selected ? (
-          <section className={`${threadOpen ? "flex" : "hidden"} min-h-[calc(100dvh-230px)] flex-col lg:flex lg:min-h-[500px]`}>
-            <header className="flex flex-wrap items-start gap-3 border-b border-[#e5ebe6] px-5 py-4">
+          <div
+            data-testid="staff-conversation-thread"
+            className={cn("h-full min-h-0 min-w-0 flex-col lg:flex", threadOpen ? "flex" : "hidden")}
+          >
+            <header className="flex min-h-[68px] shrink-0 items-center gap-2 border-b border-[#e5ebe6] bg-white px-3 py-2.5 sm:gap-3 sm:px-5" aria-busy={Boolean(activeAction)}>
               <button
                 type="button"
                 onClick={closeConversation}
-                className="grid size-10 place-items-center rounded-md border border-[#d7e1d8] text-primary lg:hidden"
+                disabled={submitting}
+                className="grid size-10 shrink-0 place-items-center rounded-full text-primary transition hover:bg-[#eef6ee] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-wait disabled:opacity-50 lg:hidden"
                 aria-label="Back to message inbox"
               >
-                <ArrowLeft className="size-5" />
+                <ArrowLeft className="size-5" aria-hidden="true" />
               </button>
+              <StaffConversationAvatar kind="STUDENT" name={selected.student?.fullName || selected.student?.email || "Student"} />
               <div className="min-w-0 flex-1">
-                <h2 className="truncate font-extrabold">{selected.subject}</h2>
-                <p className="text-xs text-[#68746d]">{selected.student?.fullName || selected.student?.email || "Student"}</p>
+                <h2 className="truncate text-[15px] font-extrabold text-[#17211b] sm:text-base">{selected.student?.fullName || selected.student?.email || "Student"}</h2>
+                <p className="truncate text-[11px] font-semibold text-[#68746d] sm:text-xs">{selected.subject}</p>
               </div>
-              <StatusBadge status={formatConversationStatus(selected.status)} />
+              <span className="hidden shrink-0 md:inline-flex"><StatusBadge status={formatConversationStatus(selected)} /></span>
+              <button
+                type="button"
+                onClick={() => void loadConversations({ background: true })}
+                disabled={submitting}
+                aria-label="Refresh conversations"
+                title="Refresh"
+                className="grid size-10 shrink-0 place-items-center rounded-full text-[#5d6962] transition hover:bg-[#f0f5f1] hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
+              >
+                <RefreshCw className="size-[18px]" aria-hidden="true" />
+              </button>
+            </header>
+            {pendingActionLabel ? <p className="sr-only" role="status" aria-live="polite">{pendingActionLabel}</p> : null}
+
+            <div className="flex min-h-[52px] shrink-0 flex-wrap items-center gap-2 border-b border-[#e5ebe6] bg-[#fbfcfb] px-3 py-2 sm:px-5">
+              <span className="shrink-0 md:hidden"><StatusBadge status={formatConversationStatus(selected)} /></span>
+              {canTakeOver ? (
+                <Button className="min-h-10 shrink-0 rounded-full px-3" disabled={submitting} aria-busy={activeAction === "takeover"} onClick={() => void takeOverConversation(selected)}>
+                  {activeAction === "takeover" ? <LoaderCircle className="size-4 motion-safe:animate-spin" aria-hidden="true" /> : <Headphones className="size-4" aria-hidden="true" />}
+                  {activeAction === "takeover" ? "Taking over..." : "Take Over"}
+                </Button>
+              ) : null}
+              {selected.mode === "STAFF_ACTIVE" && selected.assignedStaffId === user?.id ? (
+                <Button variant="secondary" className="h-9 shrink-0 rounded-full px-3" disabled={submitting} aria-busy={activeAction === "return-to-bot"} onClick={() => void returnToWesBot(selected)}>
+                  {activeAction === "return-to-bot" ? <LoaderCircle className="size-4 motion-safe:animate-spin" aria-hidden="true" /> : <Bot className="size-4" aria-hidden="true" />}
+                  {activeAction === "return-to-bot" ? "Returning..." : "Return to WesBot"}
+                </Button>
+              ) : null}
               <Button
                 variant={selected.status === "RESOLVED" ? "secondary" : "ghost"}
-                className="h-9"
-                disabled={submitting}
+                className="min-h-10 shrink-0 rounded-full border border-[#d7e1d8] px-3"
+                disabled={submitting || (selected.status !== "RESOLVED" && !ownsConversation)}
+                aria-busy={activeAction === "resolve" || activeAction === "reopen"}
                 onClick={() => void updateStatus(selected, selected.status === "RESOLVED" ? "OPEN" : "RESOLVED")}
               >
-                {selected.status === "RESOLVED" ? "Reopen" : "Resolve"}
+                {activeAction === "resolve" || activeAction === "reopen" ? <LoaderCircle className="size-4 motion-safe:animate-spin" aria-hidden="true" /> : <Check className="size-4" aria-hidden="true" />}
+                {activeAction === "resolve" ? "Resolving..." : activeAction === "reopen" ? "Reopening..." : selected.status === "RESOLVED" ? "Reopen" : "Resolve"}
               </Button>
-            </header>
-            <div className="flex-1 space-y-3 overflow-y-auto bg-[#fafcfb] p-4 sm:p-5">
-              {selected.messages.map((message) => {
-                const mine = message.senderId === user?.id;
+            </div>
+            {selected.mode === "WAITING_FOR_STAFF" ? (
+              <div className="border-b border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-950">
+                <div className="flex items-start gap-2">
+                  <Headphones className="mt-0.5 size-5 shrink-0" />
+                  <div>
+                    <p className="font-extrabold">Student requested human support</p>
+                    <p className="mt-1 leading-5">{selected.escalationReason || "No escalation reason was provided."}</p>
+                    {selected.botSummary ? <p className="mt-2 whitespace-pre-wrap rounded-md bg-white/70 p-3 leading-5"><span className="font-extrabold">WesBot summary:</span> {selected.botSummary}</p> : null}
+                  </div>
+                </div>
+              </div>
+            ) : null}
+            {selected.mode === "STAFF_ACTIVE" && selected.assignedStaffId !== user?.id ? (
+              <div className="border-b border-sky-200 bg-sky-50 px-3 py-3 text-sm font-semibold text-sky-900 sm:px-5">
+                <span className="font-extrabold">Handled by: {handlerName}.</span> Your reply box is locked until ownership is transferred with Take Over.
+              </div>
+            ) : null}
+            {ownsConversation ? (
+              <div className="border-b border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-900 sm:px-5">
+                Handled by: You{user?.fullName ? ` (${user.fullName})` : ""}. Other Staff cannot reply unless they take over.
+              </div>
+            ) : null}
+            {selected.mode === "BOT_ACTIVE" ? (
+              <div className="flex items-start gap-2 border-b border-[#cfe0d0] bg-[#f3f9f3] px-3 py-3 text-sm text-[#445149] sm:px-5">
+                <Bot className="mt-0.5 size-5 shrink-0 text-primary" />
+                <p><span className="font-extrabold text-[#17211b]">Handled by: WesBot.</span> Staff can take over now; the bot is paused as soon as ownership changes.</p>
+              </div>
+            ) : null}
+            <div ref={messagesLogRef} onScroll={handleMessageScroll} role="log" aria-live="polite" aria-relevant="additions" className="min-h-0 min-w-0 flex-1 space-y-3 overflow-x-hidden overflow-y-auto overscroll-contain bg-[#f4f7f4] px-3 py-4 scroll-smooth sm:px-5 sm:py-5">
+              {selected.messages.map((message, index, messages) => {
+                const mine = message.senderType === "STAFF" && message.senderId === user?.id;
+                const day = formatConversationDay(message.createdAt);
+                const showDay = index === 0 || formatConversationDay(messages[index - 1].createdAt) !== day;
+                if (message.senderType === "SYSTEM") {
+                  return (
+                    <div key={message.id}>
+                      {showDay ? <p className="mb-3 text-center text-[11px] font-bold text-[#879089]">{day}</p> : null}
+                      <div className="flex justify-center py-1">
+                        <p className="max-w-[92%] rounded-full bg-[#e3e9e4] px-3 py-1.5 text-center text-[11px] font-semibold leading-4 text-[#667169]">{message.message}</p>
+                      </div>
+                    </div>
+                  );
+                }
+
+                const botMessage = message.senderType === "BOT";
+                const staffMessage = message.senderType === "STAFF";
+                const senderName = botMessage
+                  ? "WesBot"
+                  : staffMessage
+                    ? message.sender?.fullName || "Commissary staff"
+                    : selected.student?.fullName || "Student";
+                const senderKind = botMessage ? "BOT" : staffMessage ? "STAFF" : "STUDENT";
                 return (
-                  <div key={message.id} className={mine ? "flex justify-end" : "flex justify-start"}>
-                    <div className={mine ? "ml-auto max-w-[82%] rounded-lg bg-primary p-3 text-sm leading-6 text-white shadow-sm" : "max-w-[82%] rounded-lg border border-[#dce5dd] bg-white p-3 text-sm leading-6 shadow-sm"}>
-                      <p>{message.message}</p>
-                      <p className={mine ? "mt-2 text-[11px] font-semibold text-white/75" : "mt-2 text-[11px] font-semibold text-[#79837d]"}>
-                        {mine ? "You" : message.sender?.fullName || selected.student?.fullName || "Student"} - {formatConversationTime(message.createdAt)}
-                      </p>
+                  <div key={message.id}>
+                    {showDay ? <p className="mb-3 text-center text-[11px] font-bold text-[#879089]">{day}</p> : null}
+                    <div className={cn("flex items-end gap-2", mine ? "justify-end" : "justify-start")}>
+                      {!mine ? <StaffConversationAvatar kind={senderKind} name={senderName} size="sm" /> : null}
+                      <div className={cn("flex min-w-0 max-w-[82%] flex-col sm:max-w-[72%]", mine ? "items-end" : "items-start")}>
+                      {!mine ? <p className={cn("mb-1 px-1 text-[11px] font-bold", botMessage ? "text-primary" : staffMessage ? "text-sky-800" : "text-[#526058]")}>{senderName}</p> : null}
+                      <div className={cn(
+                        "rounded-[20px] px-4 py-2.5 text-sm shadow-sm",
+                        mine
+                          ? "rounded-br-md bg-primary text-white"
+                          : botMessage
+                            ? "rounded-bl-md bg-white text-[#17211b] ring-1 ring-[#dfe8e0]"
+                            : staffMessage
+                              ? "rounded-bl-md bg-white text-[#17211b] ring-1 ring-sky-200"
+                              : "rounded-bl-md bg-white text-[#17211b] ring-1 ring-[#dce5dd]"
+                      )}>
+                        <p className="whitespace-pre-wrap break-words leading-6 [overflow-wrap:anywhere]">{message.message}</p>
+                      </div>
+                      <p className="mt-1 px-1 text-[10px] font-semibold text-[#7b867f]">{mine ? "You" : senderName} · {formatConversationTime(message.createdAt)}</p>
+                    </div>
                     </div>
                   </div>
                 );
               })}
-              {selected.typingUsers?.length ? (
-                <div className="flex justify-start">
-                  <div className="max-w-[82%] rounded-lg border border-[#dce5dd] bg-white px-3 py-2 text-sm font-semibold text-[#68746d] shadow-sm">
-                    {selected.typingUsers[0].fullName || selected.typingUsers[0].email || "Student"} is typing...
+              {pendingReply ? (
+                <div className="flex justify-end">
+                  <div className="flex max-w-[82%] flex-col items-end sm:max-w-[72%]">
+                    <div className="rounded-[20px] rounded-br-md bg-primary px-4 py-2.5 text-sm text-white opacity-80 shadow-sm">
+                      <p className="whitespace-pre-wrap break-words leading-6 [overflow-wrap:anywhere]">{pendingReply}</p>
+                    </div>
+                    <p className="mt-1 px-1 text-[10px] font-semibold text-[#718078]">Sending...</p>
                   </div>
                 </div>
               ) : null}
-              <div ref={messagesEndRef} />
+              {selected.typingUsers?.length ? (
+                <div className="flex items-end gap-2">
+                  <StaffConversationAvatar kind="STUDENT" name={selected.typingUsers[0].fullName || selected.typingUsers[0].email || "Student"} size="sm" />
+                  <div className="rounded-[20px] rounded-bl-md bg-white px-4 py-2.5 text-xs font-semibold text-[#68746d] shadow-sm ring-1 ring-[#dce5dd]">
+                    {selected.typingUsers[0].fullName || selected.typingUsers[0].email || "Student"} is typing<span className="animate-pulse">...</span>
+                  </div>
+                </div>
+              ) : null}
             </div>
+            <div className="shrink-0 border-t border-[#e5ebe6] bg-white px-3 pt-2.5 pb-[calc(.625rem+env(safe-area-inset-bottom))] sm:px-4 sm:py-3">
+              <p id="staff-composer-status" role="status" className={cn(
+                "mb-2 rounded-xl px-3 py-2 text-xs font-bold ring-1 ring-inset",
+                canReply ? "bg-emerald-50 text-emerald-900 ring-emerald-200" : "bg-slate-50 text-slate-700 ring-slate-200"
+              )}>{composerStatus}</p>
             <form
-              className="flex gap-2 border-t border-[#e5ebe6] bg-white p-3 sm:p-4"
+              className="flex min-w-0 items-end gap-1.5 rounded-[24px] border border-[#d7e1d8] bg-[#f6f8f6] p-1.5 transition focus-within:border-primary focus-within:bg-white focus-within:ring-2 focus-within:ring-primary/15"
+              aria-busy={activeAction === "send"}
               onSubmit={(event) => {
                 event.preventDefault();
                 void sendReply();
               }}
             >
-              <input
+              <label htmlFor="staff-message-reply" className="sr-only">Reply to student</label>
+              <textarea
+                ref={replyComposerRef}
+                id="staff-message-reply"
                 value={reply}
-                onChange={(event) => handleReplyChange(event.target.value)}
+                onChange={(event) => {
+                  handleReplyChange(event.target.value);
+                  event.currentTarget.style.height = "auto";
+                  event.currentTarget.style.height = `${Math.min(event.currentTarget.scrollHeight, 128)}px`;
+                }}
                 onBlur={() => selected ? sendTypingSignal(selected.id, false) : undefined}
-                placeholder="Write a reply..."
-                className="h-11 min-w-0 flex-1 rounded-md border border-[#d7e1d8] px-3 outline-none focus:border-primary"
+                onFocus={focusLatestMessage}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    void sendReply();
+                  }
+                }}
+                maxLength={2000}
+                rows={1}
+                placeholder={
+                  activeAction === "send"
+                    ? "Sending reply..."
+                    : selected.mode === "WAITING_FOR_STAFF"
+                    ? "Take over this conversation before replying..."
+                    : selected.mode === "BOT_ACTIVE"
+                      ? "Take over from WesBot before replying..."
+                      : selected.status === "RESOLVED"
+                        ? "Reopen this conversation before replying..."
+                        : selected.assignedStaffId !== user?.id
+                          ? `Handled by ${handlerName}. Take over to reply...`
+                          : "Write a reply..."
+                }
+                disabled={!canReply || submitting}
+                aria-describedby="staff-composer-status"
+                className="max-h-32 min-h-11 min-w-0 flex-1 resize-none bg-transparent px-3 py-2 text-base leading-6 text-[#17211b] outline-none placeholder:text-[#8a948e] disabled:cursor-not-allowed disabled:text-[#69746e] sm:text-sm"
               />
-              <Button type="submit" className="h-11 px-3 sm:px-4" disabled={submitting || !reply.trim()}>
-                <Send className="size-4" />
-                <span className="hidden sm:inline">Send</span>
+              <Button
+                type="submit"
+                className="size-11 shrink-0 rounded-full p-0"
+                disabled={submitting || !canReply || !reply.trim()}
+                aria-busy={activeAction === "send"}
+                aria-label={activeAction === "send" ? "Sending reply" : "Send reply"}
+              >
+                {activeAction === "send" ? <LoaderCircle className="size-[18px] motion-safe:animate-spin" aria-hidden="true" /> : <Send className="size-[18px]" aria-hidden="true" />}
               </Button>
             </form>
-          </section>
+              <p className="mt-2 hidden px-1 text-[11px] text-[#88918b] sm:block">Press Enter to send, Shift+Enter for a new line.</p>
+            </div>
+          </div>
         ) : (
-          <section className="hidden min-h-[500px] place-items-center bg-[#fafcfb] p-6 text-center lg:grid">
+          <div className="hidden h-full place-items-center bg-[#f4f7f4] p-6 text-center lg:grid">
             <div>
-              <AssetIcon src="/assets/messages.svg" className="mx-auto size-12" />
+              <span className="mx-auto grid size-16 place-items-center rounded-full bg-white shadow-sm ring-1 ring-[#dce5dd]"><AssetIcon src="/assets/messages.svg" className="size-9" /></span>
               <p className="mt-3 font-extrabold text-[#17211b]">No conversation selected</p>
               <p className="mt-1 text-sm text-[#68746d]">Choose a student message from the inbox.</p>
             </div>
-          </section>
+          </div>
         )}
-      </div>
+      </section>
       {notice ? <Notice text={notice} onClose={() => setNotice("")} /> : null}
     </div>
   );
@@ -1716,7 +2399,7 @@ export function StaffUsersExperience() {
       if (document.visibilityState === "visible") void loadUsers({ background: true });
     };
 
-    const interval = window.setInterval(refresh, 20000);
+    const interval = window.setInterval(refresh, 60000);
     window.addEventListener("focus", refresh);
     document.addEventListener("visibilitychange", refresh);
 

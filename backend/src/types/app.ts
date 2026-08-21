@@ -54,6 +54,12 @@ export type NotificationType = (typeof NOTIFICATION_TYPES)[number];
 export const CONVERSATION_STATUSES = ["OPEN", "RESOLVED"] as const;
 export type ConversationStatus = (typeof CONVERSATION_STATUSES)[number];
 
+export const CONVERSATION_MODES = ["BOT_ACTIVE", "WAITING_FOR_STAFF", "STAFF_ACTIVE", "RESOLVED"] as const;
+export type ConversationMode = (typeof CONVERSATION_MODES)[number];
+
+export const CONVERSATION_MESSAGE_SENDER_TYPES = ["STUDENT", "BOT", "STAFF", "SYSTEM"] as const;
+export type ConversationMessageSenderType = (typeof CONVERSATION_MESSAGE_SENDER_TYPES)[number];
+
 export type RawProfile = {
   id: string;
   full_name: string;
