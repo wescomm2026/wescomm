@@ -30,6 +30,7 @@ export type StaffProductSku = {
 };
 
 export type ProductSaleMode = "SIMPLE" | "CLOTH_ONLY" | "OPTIONS";
+export type StaffProductVisibility = "ACTIVE" | "ARCHIVED";
 
 export type StaffProduct = {
   id: string;
@@ -95,6 +96,7 @@ export type StaffProductListOptions = {
   categoryId?: string;
   productId?: string;
   status?: StaffProduct["status"];
+  visibility?: StaffProductVisibility;
   includeCategories?: boolean;
   signal?: AbortSignal;
 };
@@ -217,6 +219,7 @@ export async function getStaffProductsPage(token: string, options: StaffProductL
   if (options.categoryId) params.set("categoryId", options.categoryId);
   if (options.productId) params.set("productId", options.productId);
   if (options.status) params.set("status", options.status);
+  if (options.visibility) params.set("visibility", options.visibility);
   if (options.includeCategories) params.set("includeCategories", "1");
   const suffix = params.size ? `?${params.toString()}` : "";
   const data = await staffFetch<{
@@ -239,6 +242,13 @@ export async function getStaffProducts(token: string) {
 export async function getStaffCategories(token: string) {
   const data = await staffFetch<{ categories: StaffCategory[] }>("/staff/products/categories", token);
   return data.categories;
+}
+
+export async function restoreStaffProduct(token: string, productId: string) {
+  const data = await staffFetch<{ product: StaffProduct }>(`/staff/products/${productId}/restore`, token, {
+    method: "POST"
+  });
+  return data.product;
 }
 
 export async function createStaffProduct(token: string, payload: StaffProductPayload) {

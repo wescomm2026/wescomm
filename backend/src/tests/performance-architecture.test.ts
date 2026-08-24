@@ -127,6 +127,7 @@ test("staff and FAQ confirmations use one accessible responsive dialog", () => {
     "../frontend/components/staff/StaffInventoryExperience.tsx",
     "../frontend/components/staff/ProductOptionsManager.tsx",
     "../frontend/components/staff/StaffMessagesExperience.tsx",
+    "../frontend/components/staff/StaffReservationsExperience.tsx",
   );
 
   assert.match(rootLayout, /ConfirmationDialogProvider/);
@@ -136,5 +137,8 @@ test("staff and FAQ confirmations use one accessible responsive dialog", () => {
   assert.match(confirmationDialog, /data-dialog-autofocus/);
   assert.match(confirmationDialog, /sm:flex-row/);
   assert.match(confirmationFlows, /useConfirmationDialog/);
+  assert.match(confirmationFlows, /Save these corrected stock counts\?/);
+  assert.match(confirmationFlows, /Cancel this reservation\?/);
+  assert.match(confirmationFlows, /Return this conversation to WesBot\?/);
   assert.doesNotMatch(confirmationFlows, /\bwindow\.(?:confirm|alert|prompt)\s*\(/);
 });

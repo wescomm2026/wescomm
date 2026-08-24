@@ -5,7 +5,7 @@ import { PrismaClient } from "@prisma/client";
 
 dotenv.config({ path: ".env" });
 
-const productionOrigin = "https://wescomm.vercel.app";
+const productionOrigin = "https://wescomm.store";
 const mutationGate = process.env.E2E_LIVE_MUTATION_SMOKE;
 const maintenanceSecret = process.env.PAYMENT_MAINTENANCE_SECRET;
 

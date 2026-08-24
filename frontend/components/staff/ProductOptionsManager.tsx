@@ -141,6 +141,16 @@ export function ProductOptionsManager({
       }
     }
 
+    const confirmed = await confirm({
+      title: creatingGroup ? `Add the ${optionName} option group?` : `Save changes to ${optionName}?`,
+      description: creatingGroup
+        ? `Students will be able to choose from these ${cleaned.length} ${optionName} value${cleaned.length === 1 ? "" : "s"} after inventory combinations are set up.`
+        : `These ${cleaned.length} saved ${optionName} value${cleaned.length === 1 ? "" : "s"} will be used by student ordering and inventory management.`,
+      confirmLabel: creatingGroup ? "Add option group" : "Save option changes",
+      tone: "warning"
+    });
+    if (!confirmed) return;
+
     setSaving(true);
     setError("");
     try {

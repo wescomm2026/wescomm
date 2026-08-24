@@ -3,7 +3,7 @@
 import Image from "next/image";
 import dynamic from "next/dynamic";
 import { useDeferredValue, useEffect, useRef, useState } from "react";
-import { ArrowLeft, ChevronRight, Edit3, Filter, Plus, RefreshCw, Trash2, Upload, X } from "lucide-react";
+import { Archive, ArrowLeft, ChevronRight, Edit3, Filter, Plus, RefreshCw, RotateCcw, Trash2, Upload, X } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import { useRealtimeRefresh } from "@/components/realtime/RealtimeProvider";
 import { ActionLoadingOverlay } from "@/components/ui/ActionLoadingOverlay";
@@ -19,12 +19,14 @@ import {
   getStaffProductsPage,
   getStoredStaffSession,
   restockStaffProduct,
+  restoreStaffProduct,
   syncStaffProductVariants,
   updateStaffProduct,
   updateStaffProductSaleMode,
   uploadStaffProductImage,
   type ProductSaleMode,
-  type StaffCategory
+  type StaffCategory,
+  type StaffProductVisibility
 } from "@/lib/staff-api";
 import { isUniformClothOnly } from "@/lib/product-display";
 import { WUP_DEFAULT_PRODUCT_TEMPLATES } from "@/lib/wup-default-catalog";
@@ -56,6 +58,10 @@ const SkuInventoryDialog = dynamic(
   { ssr: false }
 );
 
+function inventoryVisibilityFromQuery(value: string | null): StaffProductVisibility {
+  return value?.trim().toUpperCase() === "ARCHIVED" ? "ARCHIVED" : "ACTIVE";
+}
+
 export function StaffInventoryExperience() {
   const confirm = useConfirmationDialog();
   const [products, setProducts] = useState<Product[]>([]);
@@ -64,6 +70,7 @@ export function StaffInventoryExperience() {
   const [staffEmail, setStaffEmail] = useState("");
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("All");
+  const [visibility, setVisibility] = useState<StaffProductVisibility>("ACTIVE");
   const deferredInventorySearch = useDeferredValue(search);
   const [nextProductCursor, setNextProductCursor] = useState<string | null>(null);
   const [loadingMoreProducts, setLoadingMoreProducts] = useState(false);
@@ -72,6 +79,7 @@ export function StaffInventoryExperience() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [archivingProductId, setArchivingProductId] = useState("");
+  const [restoringProductId, setRestoringProductId] = useState("");
   const [adding, setAdding] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [manageSection, setManageSection] = useState<ManageSection>("menu");
@@ -103,6 +111,7 @@ export function StaffInventoryExperience() {
     query?: string;
     status?: string;
     productId?: string;
+    visibility?: StaffProductVisibility;
   } = {}) => {
     if (!authToken) {
       inventoryRequestRef.current += 1;
@@ -127,6 +136,7 @@ export function StaffInventoryExperience() {
         query: options.query ?? deferredInventorySearch,
         productId: options.productId,
         status: stockStatusForApi(options.status ?? status),
+        visibility: options.visibility ?? visibility,
         includeCategories: !append,
         signal: requestController.signal
       });
@@ -159,13 +169,15 @@ export function StaffInventoryExperience() {
   };
 
   useRealtimeRefresh(["inventory"], () => {
-    if (token) void loadProducts(token, { query: deferredInventorySearch, status });
+    if (token) void loadProducts(token, { query: deferredInventorySearch, status, visibility });
   });
 
   useEffect(() => {
     const params = new URL(window.location.href).searchParams;
+    const initialVisibility = inventoryVisibilityFromQuery(params.get("visibility"));
     setSearch(params.get("query") ?? "");
     setStatus(stockStatusFromQuery(params.get("status")));
+    setVisibility(initialVisibility);
     if (!ready) return;
 
     const session = getStoredStaffSession();
@@ -177,6 +189,7 @@ export function StaffInventoryExperience() {
     void loadProducts(authToken, {
       query: params.get("query") ?? "",
       status: stockStatusFromQuery(params.get("status")),
+      visibility: initialVisibility,
       productId: params.get("productId") ?? undefined
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -192,11 +205,11 @@ export function StaffInventoryExperience() {
     }
 
     const timeout = window.setTimeout(() => {
-      void loadProducts(token, { query: deferredInventorySearch, status });
+      void loadProducts(token, { query: deferredInventorySearch, status, visibility });
     }, 200);
     return () => window.clearTimeout(timeout);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [deferredInventorySearch, status, token]);
+  }, [deferredInventorySearch, status, token, visibility]);
 
   const filtered = products.filter((product) =>
     `${product.name} ${product.category}`.toLowerCase().includes(search.toLowerCase()) &&
@@ -218,6 +231,17 @@ export function StaffInventoryExperience() {
       || (editingProduct.stock === 0 && editingProduct.variants.every((variant) => variant.stock === 0))
     )
   );
+
+  const changeVisibility = (nextVisibility: StaffProductVisibility) => {
+    if (nextVisibility === visibility) return;
+    setVisibility(nextVisibility);
+    setStatus("All");
+    const url = new URL(window.location.href);
+    url.searchParams.delete("status");
+    if (nextVisibility === "ARCHIVED") url.searchParams.set("visibility", "archived");
+    else url.searchParams.delete("visibility");
+    window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+  };
 
   const openAddProduct = () => {
     setSelectedTemplateId("");
@@ -300,6 +324,14 @@ export function StaffInventoryExperience() {
         variants.findIndex((candidate) => candidate.optionValue.toLowerCase() === variant.optionValue.toLowerCase()) !== index
       );
       if (duplicate) throw new Error(`${duplicate.optionValue} is listed more than once.`);
+
+      const confirmed = await confirm({
+        title: "Save these size settings?",
+        description: `${editingProduct.name} will use the ${variants.length} size value${variants.length === 1 ? "" : "s"} shown here for student selection and inventory tracking.`,
+        confirmLabel: "Save size settings",
+        tone: "warning"
+      });
+      if (!confirmed) return;
 
       const updated = await syncStaffProductVariants(token, editingProduct.id, editSizeOptionName, variants);
       const mapped = mapStaffProduct(updated);
@@ -420,6 +452,16 @@ export function StaffInventoryExperience() {
       return;
     }
 
+    const confirmed = await confirm({
+      title: restockMode === "add" ? "Add this inventory stock?" : "Save this corrected stock count?",
+      description: restockMode === "add"
+        ? `${quantity} new item${quantity === 1 ? "" : "s"} will be added to ${restockingProduct.name}, bringing its available total to ${restockingProduct.stock + quantity}.`
+        : `${restockingProduct.name}'s available stock will be replaced with the exact count of ${quantity}.`,
+      confirmLabel: restockMode === "add" ? "Add stock" : "Save corrected count",
+      tone: restockMode === "add" ? "default" : "warning"
+    });
+    if (!confirmed) return;
+
     setSubmitting(true);
     setError("");
 
@@ -474,6 +516,31 @@ export function StaffInventoryExperience() {
       setError(archiveError instanceof Error ? archiveError.message : "Unable to archive product.");
     } finally {
       setArchivingProductId("");
+      setSubmitting(false);
+    }
+  };
+
+  const restoreProduct = async (product: Product) => {
+    const confirmed = await confirm({
+      title: "Restore this product?",
+      description: `${product.name} will return to active inventory with its existing stock, options, and reservation history. Its current availability will determine how it appears in the student shop.`,
+      confirmLabel: "Restore product",
+      tone: "default"
+    });
+    if (!confirmed) return;
+
+    setSubmitting(true);
+    setRestoringProductId(product.id);
+    setError("");
+
+    try {
+      await restoreStaffProduct(token, product.id);
+      setProducts((current) => current.filter((item) => item.id !== product.id));
+      setNotice(`${product.name} restored to active inventory.`);
+    } catch (restoreError) {
+      setError(restoreError instanceof Error ? restoreError.message : "Unable to restore product.");
+    } finally {
+      setRestoringProductId("");
       setSubmitting(false);
     }
   };
@@ -570,13 +637,43 @@ export function StaffInventoryExperience() {
     <div className="relative space-y-5">
       <PageHeading
         eyebrow="Inventory"
-        title="Centralized stock management"
-        detail={`Connected as ${staffEmail || "staff"}. Track products in one place and keep stock levels up to date.`}
-        action={<Button onClick={openAddProduct} disabled={loading || submitting}><Plus className="size-5" /> Add product</Button>}
+        title={visibility === "ARCHIVED" ? "Archived inventory" : "Centralized stock management"}
+        detail={visibility === "ARCHIVED"
+          ? `Connected as ${staffEmail || "staff"}. Restore archived products without losing their stock, options, or reservation history.`
+          : `Connected as ${staffEmail || "staff"}. Track products in one place and keep stock levels up to date.`}
+        action={visibility === "ACTIVE" ? (
+          <Button onClick={openAddProduct} disabled={loading || submitting}><Plus className="size-5" /> Add product</Button>
+        ) : (
+          <Button type="button" variant="secondary" onClick={() => changeVisibility("ACTIVE")} disabled={loading || submitting}>
+            <ArrowLeft className="size-4" /> Active inventory
+          </Button>
+        )}
       />
+      <div className="flex w-full flex-col gap-2 rounded-lg border border-[#dce5dd] bg-white p-2 shadow-sm sm:w-fit sm:flex-row" role="group" aria-label="Inventory view">
+        <Button
+          type="button"
+          variant={visibility === "ACTIVE" ? "primary" : "ghost"}
+          className="justify-center sm:min-w-40"
+          aria-pressed={visibility === "ACTIVE"}
+          onClick={() => changeVisibility("ACTIVE")}
+          disabled={loading || submitting}
+        >
+          <RefreshCw className="size-4" /> Active items
+        </Button>
+        <Button
+          type="button"
+          variant={visibility === "ARCHIVED" ? "primary" : "ghost"}
+          className="justify-center sm:min-w-40"
+          aria-pressed={visibility === "ARCHIVED"}
+          onClick={() => changeVisibility("ARCHIVED")}
+          disabled={loading || submitting}
+        >
+          <Archive className="size-4" /> Archived items
+        </Button>
+      </div>
       <Toolbar search={search} onSearch={setSearch} status={status} onStatus={setStatus} placeholder="Search product or category" statuses={stockStatusOptions} />
       {error ? <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p> : null}
-      <section className="overflow-hidden rounded-lg border border-[#dce5dd] bg-white shadow-sm">
+      <section id="inventory-product-list" aria-label={visibility === "ARCHIVED" ? "Archived inventory products" : "Active inventory products"} className="overflow-hidden rounded-lg border border-[#dce5dd] bg-white shadow-sm">
         <div className="hidden grid-cols-[2fr_.8fr_.65fr_.7fr_1.25fr_.75fr_auto] gap-4 bg-[#f6f9f6] px-4 py-3 text-xs font-bold uppercase tracking-wide text-[#59655d] lg:grid">
           <span>Product</span><span>Category</span><span>Total stock</span><span>Low-stock alert</span><span>Stock breakdown</span><span>Status</span><span>Actions</span>
         </div>
@@ -592,9 +689,11 @@ export function StaffInventoryExperience() {
             return (
               <article key={product.id} className="content-visibility-auto relative grid gap-4 px-4 py-4 lg:grid-cols-[2fr_.8fr_.65fr_.7fr_1.25fr_.75fr_auto] lg:items-center">
                 <ActionLoadingOverlay
-                  active={archivingProductId === product.id}
-                  title="Archiving product"
-                  detail="We are removing this item from the student shop."
+                  active={archivingProductId === product.id || restoringProductId === product.id}
+                  title={restoringProductId === product.id ? "Restoring product" : "Archiving product"}
+                  detail={restoringProductId === product.id
+                    ? "We are returning this item to active inventory."
+                    : "We are removing this item from the student shop."}
                 />
                 <div className="flex min-w-0 items-center gap-3">
                   <div className="relative grid size-16 shrink-0 place-items-center overflow-hidden rounded-lg border border-[#dce5dd] bg-[#f8fbf8]">
@@ -606,6 +705,7 @@ export function StaffInventoryExperience() {
                       <span className={cn("inline-flex rounded px-2 py-0.5 text-[10px] font-extrabold", product.saleMode === "CLOTH_ONLY" ? "bg-[#eef6ef] text-primary" : product.saleMode === "OPTIONS" ? "bg-blue-50 text-blue-700" : "bg-[#f2f4f2] text-[#667169]")}>
                         {product.saleMode === "CLOTH_ONLY" ? "Cloth only" : product.saleMode === "OPTIONS" ? "Sizes / options" : "Simple item"}
                       </span>
+                      {visibility === "ARCHIVED" ? <span className="inline-flex rounded bg-slate-100 px-2 py-0.5 text-[10px] font-extrabold text-slate-700">Archived</span> : null}
                       {product.saleMode === "OPTIONS" && !product.skuInventoryEnabled ? <span className="inline-flex rounded bg-amber-50 px-2 py-0.5 text-[10px] font-extrabold text-amber-800">Inventory setup needed</span> : null}
                     </div>
                     <p className="mt-1 text-xs text-[#68746d] lg:hidden">{product.category}</p>
@@ -645,19 +745,27 @@ export function StaffInventoryExperience() {
                 </div>
                 <StatusBadge status={product.status} />
                 <div className="flex flex-wrap gap-2 lg:w-[140px] lg:flex-col">
-                  <Button className="h-9 flex-1 px-3 lg:w-full" onClick={() => openRestock(product)} disabled={submitting}>
-                    <Plus className="size-4" />
-                    {product.saleMode === "OPTIONS" && !product.skuInventoryEnabled ? "Set up inventory" : "Update stock"}
-                  </Button>
-                  <Button variant="secondary" className="h-9 flex-1 px-3 lg:w-full" onClick={() => openEditor(product)} disabled={submitting}>
-                    <Edit3 className="size-4" />
-                    Manage
-                  </Button>
+                  {visibility === "ARCHIVED" ? (
+                    <Button className="h-9 flex-1 px-3 lg:w-full" onClick={() => void restoreProduct(product)} disabled={submitting}>
+                      <RotateCcw className="size-4" /> Restore item
+                    </Button>
+                  ) : (<>
+                    <Button className="h-9 flex-1 px-3 lg:w-full" onClick={() => openRestock(product)} disabled={submitting}>
+                      <Plus className="size-4" />
+                      {product.saleMode === "OPTIONS" && !product.skuInventoryEnabled ? "Set up inventory" : "Update stock"}
+                    </Button>
+                    <Button variant="secondary" className="h-9 flex-1 px-3 lg:w-full" onClick={() => openEditor(product)} disabled={submitting}>
+                      <Edit3 className="size-4" />
+                      Manage
+                    </Button>
+                  </>)}
                 </div>
               </article>
             );
           }) : (
-            <div className="p-6 text-sm font-semibold text-[#68746d]">No matching products found.</div>
+            <div className="p-6 text-sm font-semibold text-[#68746d]">
+              {visibility === "ARCHIVED" ? "No matching archived products found." : "No matching active products found."}
+            </div>
           )}
         </div>
       </section>
@@ -671,7 +779,8 @@ export function StaffInventoryExperience() {
               cursor: nextProductCursor,
               append: true,
               query: deferredInventorySearch,
-              status
+              status,
+              visibility
             })}
           >
             {loadingMoreProducts ? "Loading more..." : "Load more products"}

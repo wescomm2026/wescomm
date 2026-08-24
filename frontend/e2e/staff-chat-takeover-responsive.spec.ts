@@ -187,6 +187,9 @@ test("Staff can take over a bot-active conversation before the student requests 
   await expect(page.getByText("Handled by: WesBot.", { exact: false })).toBeVisible();
   await expect(page.getByLabel("Reply to student")).toBeDisabled();
   await page.getByRole("button", { name: "Take Over", exact: true }).click();
+  const confirmation = page.getByRole("alertdialog", { name: "Take over this conversation?" });
+  await expect(confirmation).toContainText("WesBot will pause");
+  await confirmation.getByRole("button", { name: "Take over", exact: true }).click();
   await expect(page.locator("#staff-composer-status")).toHaveText("You are the current handler: QA Staff.");
   await expect(page.getByLabel("Reply to student")).toBeEnabled();
   expect(unhandled).toEqual([]);

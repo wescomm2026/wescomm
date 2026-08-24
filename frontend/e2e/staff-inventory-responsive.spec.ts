@@ -92,15 +92,50 @@ const optionProduct: StaffProduct = {
   ]
 };
 
+const archivedProduct: StaffProduct = {
+  id: "00000000-0000-4000-8000-000000000205",
+  categoryId: category.id,
+  name: "Archived Laboratory Gown",
+  description: "Archived test product with inventory history preserved.",
+  imageUrl: null,
+  price: "450.00",
+  oldPrice: null,
+  status: "IN_STOCK",
+  stock: 5,
+  lowStockThreshold: 2,
+  isActive: false,
+  saleMode: "OPTIONS",
+  skuInventoryEnabled: true,
+  inventoryReconciledAt: "2026-08-24T08:00:00.000Z",
+  category,
+  variants: [
+    { id: "gown-medium", optionName: "Size", optionValue: "Medium", stock: 5, lowStockThreshold: 2 }
+  ],
+  skus: [
+    {
+      id: "gown-medium-sku",
+      code: "GOWN-M",
+      stock: 5,
+      lowStockThreshold: 2,
+      isActive: true,
+      variantIds: ["gown-medium"],
+      options: [{ optionName: "Size", optionValue: "Medium" }]
+    }
+  ]
+};
+
 function json(route: Route, body: unknown, status = 200) {
   return route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
 }
 
 async function mockInventory(page: Page) {
   const unhandled: string[] = [];
+  const restoredRequests: string[] = [];
+  let archivedProducts = [archivedProduct];
   await page.route("**/api/backend/**", async (route) => {
     const request = route.request();
-    const path = new URL(request.url()).pathname;
+    const requestUrl = new URL(request.url());
+    const path = requestUrl.pathname;
 
     if (path === "/api/backend/auth/me" && request.method() === "GET") {
       await json(route, { profile: staffProfile });
@@ -119,18 +154,25 @@ async function mockInventory(page: Page) {
       return;
     }
     if (path === "/api/backend/staff/products" && request.method() === "GET") {
+      const archived = requestUrl.searchParams.get("visibility") === "ARCHIVED";
       await json(route, {
-        products: [clothProduct, optionProduct],
+        products: archived ? archivedProducts : [clothProduct, optionProduct],
         categories: [category],
         nextCursor: null
       });
+      return;
+    }
+    if (path === `/api/backend/staff/products/${archivedProduct.id}/restore` && request.method() === "POST") {
+      restoredRequests.push(archivedProduct.id);
+      archivedProducts = [];
+      await json(route, { product: { ...archivedProduct, isActive: true } });
       return;
     }
 
     unhandled.push(`${request.method()} ${path}`);
     await json(route, { error: "Unexpected API request in inventory test." }, 500);
   });
-  return unhandled;
+  return { restoredRequests, unhandled };
 }
 
 const viewports = [
@@ -143,7 +185,7 @@ for (const viewport of viewports) {
     test.skip(testInfo.project.name !== "desktop-chromium", "Explicit viewport matrix runs once.");
     await page.setViewportSize({ width: viewport.width, height: viewport.height });
     await page.emulateMedia({ reducedMotion: "reduce" });
-    const unhandled = await mockInventory(page);
+    const { restoredRequests, unhandled } = await mockInventory(page);
 
     await page.goto("/staff/inventory");
     await dismissWelcomeGate(page);
@@ -164,6 +206,15 @@ for (const viewport of viewports) {
     const clothDialog = page.getByRole("dialog", { name: "Update stock" });
     await expect(clothDialog).toBeVisible();
     await expect(clothDialog.getByText("New items received")).toBeVisible();
+    await clothDialog.getByLabel("New items received").fill("2");
+    const clothSaveButton = clothDialog.getByRole("button", { name: "Confirm & add" });
+    await clothSaveButton.click();
+    const clothConfirmation = page.getByRole("alertdialog", { name: "Add this inventory stock?" });
+    await expect(clothConfirmation).toContainText("2 new items");
+    await expect(clothConfirmation.getByRole("button", { name: "Cancel" })).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(clothDialog).toBeVisible();
+    await expect(clothSaveButton).toBeFocused();
     await page.keyboard.press("Escape");
     await expect(clothDialog).toBeHidden();
     await expect(clothUpdateButton).toBeFocused();
@@ -179,6 +230,14 @@ for (const viewport of viewports) {
     await expect(skuDialog).toBeVisible();
     await expect(skuDialog.getByText("Size: M · Color: Red", { exact: true })).toBeVisible();
     await expect(skuDialog.getByText("Size: L · Color: Blue", { exact: true })).toBeVisible();
+    await skuDialog.getByLabel("Combination 1 new quantity").fill("1");
+    const skuSaveButton = skuDialog.getByRole("button", { name: "Confirm & add" });
+    await skuSaveButton.click();
+    const skuConfirmation = page.getByRole("alertdialog", { name: "Add this inventory stock?" });
+    await expect(skuConfirmation).toContainText("1 new item");
+    await page.keyboard.press("Escape");
+    await expect(skuDialog).toBeVisible();
+    await expect(skuSaveButton).toBeFocused();
     await skuDialog.getByRole("button", { name: "Edit options and rebuild combinations" }).click();
 
     const setupDialog = page.getByRole("dialog", { name: "Set up inventory" });
@@ -200,6 +259,30 @@ for (const viewport of viewports) {
     await page.keyboard.press("Escape");
     await expect(managerDialog).toBeHidden();
     await expect(manageButton).toBeFocused();
+
+    await page.getByRole("button", { name: "Archived items" }).click();
+    await expect(page.getByRole("heading", { name: "Archived inventory" })).toBeVisible();
+    const archivedRow = page.locator("article").filter({ hasText: archivedProduct.name }).first();
+    await expect(archivedRow).toBeVisible();
+    await expect(archivedRow).toContainText("Archived");
+    await expect(archivedRow.getByRole("button", { name: "Manage" })).toHaveCount(0);
+    await expect(archivedRow.getByRole("button", { name: "Update stock" })).toHaveCount(0);
+
+    const restoreButton = archivedRow.getByRole("button", { name: "Restore item" });
+    await restoreButton.click();
+    const restoreConfirmation = page.getByRole("alertdialog", { name: "Restore this product?" });
+    await expect(restoreConfirmation).toContainText("existing stock, options, and reservation history");
+    await expect(restoreConfirmation.getByRole("button", { name: "Cancel" })).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(restoreConfirmation).toBeHidden();
+    await expect(restoreButton).toBeFocused();
+    expect(restoredRequests).toEqual([]);
+
+    await restoreButton.click();
+    await page.getByRole("alertdialog", { name: "Restore this product?" }).getByRole("button", { name: "Restore product" }).click();
+    await expect(archivedRow).toBeHidden();
+    await expect(page.getByText(`${archivedProduct.name} restored to active inventory.`)).toBeVisible();
+    expect(restoredRequests).toEqual([archivedProduct.id]);
 
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
     expect(unhandled).toEqual([]);

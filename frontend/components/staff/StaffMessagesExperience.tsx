@@ -391,19 +391,18 @@ export function StaffMessagesExperience() {
   const takeOverConversation = async (conversation: BackendConversation) => {
     const session = getStoredStaffSession();
     if (!session.token || submitting) return;
-    const needsConfirmation =
-      conversation.mode === "STAFF_ACTIVE"
-      && conversation.assignedStaffId !== user?.id;
-    if (needsConfirmation) {
-      const currentHandler = conversation.assignedStaff?.fullName || "the current Staff handler";
-      const confirmed = await confirm({
-        title: "Take over this conversation?",
-        description: `You will replace ${currentHandler} as the current handler. Their reply box will be locked immediately.`,
-        confirmLabel: "Take over",
-        tone: "warning"
-      });
-      if (!confirmed) return;
-    }
+    const replacingStaff = conversation.mode === "STAFF_ACTIVE" && conversation.assignedStaffId !== user?.id;
+    const currentHandler = conversation.assignedStaff?.fullName || "the current Staff handler";
+    const confirmed = await confirm({
+      title: "Take over this conversation?",
+      description: replacingStaff
+        ? `You will replace ${currentHandler} as the current handler. Their reply box will be locked immediately.`
+        : "WesBot will pause for this thread and you will become its current Staff handler until it is returned to the bot or resolved.",
+      confirmLabel: "Take over",
+      tone: "warning"
+    });
+    if (!confirmed) return;
+
     setPendingAction({ conversationId: conversation.id, type: "takeover" });
     setError("");
 
@@ -426,6 +425,14 @@ export function StaffMessagesExperience() {
   const returnToWesBot = async (conversation: BackendConversation) => {
     const session = getStoredStaffSession();
     if (!session.token || submitting) return;
+    const confirmed = await confirm({
+      title: "Return this conversation to WesBot?",
+      description: "Your Staff ownership will end and WesBot can resume replying to the student in this thread.",
+      confirmLabel: "Return to WesBot",
+      tone: "warning"
+    });
+    if (!confirmed) return;
+
     setPendingAction({ conversationId: conversation.id, type: "return-to-bot" });
     setError("");
 
@@ -447,6 +454,15 @@ export function StaffMessagesExperience() {
   const updateStatus = async (conversation: BackendConversation, nextStatus: BackendConversationStatus) => {
     const session = getStoredStaffSession();
     if (!session.token || submitting) return;
+    if (nextStatus === "RESOLVED") {
+      const confirmed = await confirm({
+        title: "Resolve this conversation?",
+        description: "The thread will be marked resolved and the reply box will close. Staff can reopen it later if the student needs more help.",
+        confirmLabel: "Resolve conversation",
+        tone: "warning"
+      });
+      if (!confirmed) return;
+    }
 
     setPendingAction({
       conversationId: conversation.id,

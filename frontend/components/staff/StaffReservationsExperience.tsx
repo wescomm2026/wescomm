@@ -7,6 +7,7 @@ import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import { useRealtimeRefresh } from "@/components/realtime/RealtimeProvider";
 import { ActionLoadingOverlay } from "@/components/ui/ActionLoadingOverlay";
 import { Button } from "@/components/ui/button";
+import { useConfirmationDialog } from "@/components/ui/ConfirmationDialogProvider";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import {
   getReservationFromApi,
@@ -29,6 +30,7 @@ import {
 
 export function StaffReservationsExperience() {
   const { user } = useStudentAuth();
+  const confirm = useConfirmationDialog();
   const [rows, setRows] = useState<StaffReservationRow[]>([]);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("All");
@@ -153,6 +155,36 @@ export function StaffReservationsExperience() {
   const updateStatus = async (row: StaffReservationRow, nextStatus: BackendReservationStatus) => {
     const session = getStoredStaffSession();
     if (!session.token) return;
+
+    const confirmation = nextStatus === "CANCELLED"
+      ? {
+          title: "Cancel this reservation?",
+          description: `${row.reference} for ${row.student} will be cancelled and cannot continue through pickup. Existing payment and audit records will be retained.`,
+          confirmLabel: "Cancel reservation",
+          tone: "danger" as const
+        }
+      : nextStatus === "COMPLETED"
+        ? {
+            title: "Complete this reservation?",
+            description: `${row.reference} will be recorded as released to ${row.student}, and its official receipt will be generated.`,
+            confirmLabel: "Complete reservation",
+            tone: "warning" as const
+          }
+        : nextStatus === "READY_FOR_PICKUP"
+          ? {
+              title: "Mark this reservation ready?",
+              description: `${row.reference} will move to Ready for Pick-up so ${row.student} can proceed with collection.`,
+              confirmLabel: "Mark ready",
+              tone: "default" as const
+            }
+          : {
+              title: "Confirm this reservation?",
+              description: `${row.reference} will move from Pending to Confirmed and enter the staff preparation workflow.`,
+              confirmLabel: "Confirm reservation",
+              tone: "default" as const
+            };
+    const confirmed = await confirm(confirmation);
+    if (!confirmed) return;
 
     setSubmittingId(row.id);
     setError("");

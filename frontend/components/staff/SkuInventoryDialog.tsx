@@ -375,6 +375,17 @@ export function SkuInventoryDialog({
       if (stockMode === "add" && !quantities.some((entry) => entry.quantity > 0)) {
         throw new Error("Enter at least one new item before saving.");
       }
+      const totalQuantity = quantities.reduce((total, entry) => total + entry.quantity, 0);
+      const confirmed = await confirm({
+        title: stockMode === "add" ? "Add this inventory stock?" : "Save these corrected stock counts?",
+        description: stockMode === "add"
+          ? `${totalQuantity} new item${totalQuantity === 1 ? "" : "s"} will be added across ${product.skus.length} physical combination${product.skus.length === 1 ? "" : "s"} for ${product.name}.`
+          : `The exact available counts for all ${product.skus.length} physical combination${product.skus.length === 1 ? "" : "s"} of ${product.name} will be replaced by the values shown.`,
+        confirmLabel: stockMode === "add" ? "Add stock" : "Save corrected counts",
+        tone: stockMode === "add" ? "default" : "warning"
+      });
+      if (!confirmed) return;
+
       setSubmitting(true);
       const updated = await restockStaffProductSkus(token, product.id, {
         mode: stockMode,

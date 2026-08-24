@@ -159,6 +159,17 @@ export function FaqManagementExperience() {
 
   const togglePublished = async (faq: BackendFaq) => {
     if (!user?.accessToken) return;
+    const willPublish = faq.isPublished === false;
+    const confirmed = await confirm({
+      title: willPublish ? "Publish this FAQ?" : "Hide this FAQ from students?",
+      description: willPublish
+        ? `“${faq.question}” will become visible in student help content.`
+        : `“${faq.question}” will be unpublished and hidden from student help content. It will remain available here as a draft.`,
+      confirmLabel: willPublish ? "Publish FAQ" : "Hide FAQ",
+      tone: willPublish ? "default" : "warning"
+    });
+    if (!confirmed) return;
+
     setSubmitting(true);
     setError("");
 

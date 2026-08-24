@@ -6,7 +6,7 @@ const supabaseURL = process.env.E2E_SUPABASE_URL?.trim() ?? "";
 const supabaseAnonKey = process.env.E2E_SUPABASE_ANON_KEY?.trim() ?? "";
 const supabaseServiceRoleKey = process.env.E2E_SUPABASE_SERVICE_ROLE_KEY?.trim() ?? "";
 const enabled = process.env.E2E_LIVE_MUTATION_SMOKE === "true"
-  && baseURL === "https://wescomm.vercel.app"
+  && baseURL === "https://wescomm.store"
   && Boolean(supabaseURL && supabaseAnonKey && supabaseServiceRoleKey);
 
 type AppRole = "STUDENT" | "STAFF" | "ADMIN";

@@ -12,6 +12,7 @@ import {
   listCategories,
   listInventory,
   restockProduct,
+  restoreProduct,
   syncProductVariants,
   updateProduct,
   updateProductSaleMode,
@@ -207,6 +208,7 @@ const inventoryListQuerySchema = z.object({
   categoryId: z.string().uuid().optional(),
   productId: z.string().uuid().optional(),
   status: z.enum(PRODUCT_STATUSES).optional(),
+  visibility: z.enum(["ACTIVE", "ARCHIVED"]).default("ACTIVE"),
   includeCategories: z.literal("1").optional()
 });
 const inventoryWriteLimiter = createRateLimiter({
@@ -306,6 +308,16 @@ staffProductsRoutes.delete(
   asyncHandler(async (request: AuthenticatedRequest, response) => {
     const product = await archiveProduct(productIdSchema.parse(request.params.id), request.auth!.id);
     await publishInventoryChange(product.id, "archived");
+    response.json({ product });
+  })
+);
+
+staffProductsRoutes.post(
+  "/:id/restore",
+  inventoryWriteLimiter,
+  asyncHandler(async (request: AuthenticatedRequest, response) => {
+    const product = await restoreProduct(productIdSchema.parse(request.params.id), request.auth!.id);
+    await publishInventoryChange(product.id, "restored");
     response.json({ product });
   })
 );

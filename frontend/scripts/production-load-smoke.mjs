@@ -10,7 +10,7 @@ const studentCount = Math.min(Math.max(Number(process.env.LOAD_TEST_STUDENTS ?? 
 
 if (
   process.env.E2E_LIVE_LOAD_TEST !== "true"
-  || baseURL !== "https://wescomm.vercel.app"
+  || baseURL !== "https://wescomm.store"
   || !supabaseURL
   || !supabaseAnonKey
   || !supabaseServiceRoleKey

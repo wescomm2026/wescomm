@@ -123,6 +123,7 @@ export type InventoryListOptions = {
   categoryId?: string;
   productId?: string;
   status?: ProductStatus;
+  visibility?: "ACTIVE" | "ARCHIVED";
 };
 
 function mapCategory(row: RawCategory) {
@@ -384,7 +385,7 @@ export async function listInventory(input: InventoryListOptions = {}) {
   const query = input.query?.trim();
   const rows = await prisma.product.findMany({
     where: {
-      isActive: true,
+      isActive: input.visibility === "ARCHIVED" ? false : true,
       ...(input.productId ? { id: input.productId } : {}),
       ...(input.categoryId ? { categoryId: input.categoryId } : {}),
       ...(input.status ? { status: input.status } : {}),
@@ -939,6 +940,35 @@ export async function archiveProduct(productId: string, performedById: string) {
   });
 
   return archivedProduct;
+}
+
+export async function restoreProduct(productId: string, performedById: string) {
+  const current = await requireInventoryProduct(productId);
+  if (current.isActive) return current;
+
+  await prisma.product.update({
+    where: { id: productId },
+    data: { isActive: true, updatedAt: new Date() },
+    select: { id: true }
+  });
+
+  const restoredProduct = await requireInventoryProduct(productId);
+
+  await safelyRecordAuditLog({
+    actorId: performedById,
+    action: "PRODUCT_RESTORED",
+    entityType: "product",
+    entityId: productId,
+    summary: `Restored product ${restoredProduct.name}.`,
+    metadata: {
+      name: restoredProduct.name,
+      stock: restoredProduct.stock,
+      status: restoredProduct.status,
+      saleMode: restoredProduct.saleMode
+    }
+  });
+
+  return restoredProduct;
 }
 
 export async function restockProduct(input: {

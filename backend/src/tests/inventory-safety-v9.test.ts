@@ -66,3 +66,19 @@ test("inventory repair migration cleans only stale aggregate data and auto-recon
   assert.match(migration, /products_stock_nonnegative/);
   assert.match(migration, /product_variants_stock_nonnegative/);
 });
+
+test("archived products have an explicit filtered, audited, and realtime restore workflow", () => {
+  const routes = source("src/routes/staff-products.routes.ts");
+  const service = source("src/services/inventory.service.ts");
+  const client = source("../frontend/lib/staff-api.ts");
+  const inventoryScreen = source("../frontend/components/staff/StaffInventoryExperience.tsx");
+
+  assert.match(routes, /visibility: z\.enum\(\["ACTIVE", "ARCHIVED"\]\)\.default\("ACTIVE"\)/);
+  assert.match(routes, /"\/:id\/restore"[\s\S]*restoreProduct[\s\S]*publishInventoryChange\(product\.id, "restored"\)/);
+  assert.match(service, /isActive: input\.visibility === "ARCHIVED" \? false : true/);
+  assert.match(service, /export async function restoreProduct[\s\S]*data: \{ isActive: true[\s\S]*action: "PRODUCT_RESTORED"/);
+  assert.match(client, /export async function restoreStaffProduct[\s\S]*method: "POST"/);
+  assert.match(inventoryScreen, /Archived items/);
+  assert.match(inventoryScreen, /Restore this product\?/);
+  assert.match(inventoryScreen, /Restore item/);
+});
