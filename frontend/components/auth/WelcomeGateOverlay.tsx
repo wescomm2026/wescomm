@@ -72,7 +72,11 @@ export function WelcomeGateOverlay() {
   }, [beginExit, clearStartupTimeouts]);
 
   const refreshStartupStallTimeout = useCallback(() => {
-    if (exitStartedRef.current || mediaPlayableRef.current) return;
+    if (
+      exitStartedRef.current
+      || mediaPlayableRef.current
+      || autoplayPolicyBlockedRef.current
+    ) return;
     if (startupTimeoutRef.current !== null) window.clearTimeout(startupTimeoutRef.current);
     startupTimeoutRef.current = window.setTimeout(() => {
       startupTimeoutRef.current = null;

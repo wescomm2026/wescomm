@@ -85,6 +85,7 @@ test("role bundles and list refreshes avoid startup blockers and stale responses
   assert.match(welcomeOverlay, /onProgress=\{handleVideoProgress\}/);
   assert.match(welcomeOverlay, /isAutoplayPolicyError[\s\S]*setMediaState\("awaiting-sound"\)/);
   assert.match(welcomeOverlay, /isAutoplayPolicyError[\s\S]*clearStartupTimeouts\(\)[\s\S]*setMediaState\("awaiting-sound"\)/);
+  assert.match(welcomeOverlay, /refreshStartupStallTimeout[\s\S]*autoplayPolicyBlockedRef\.current/);
   assert.match(adminCharts, /dynamic\([\s\S]*AdminCharts/);
   assert.doesNotMatch(adminCharts, /from "recharts"/);
   assert.match(adminRequests, /requestAbortRef\.current\?\.abort\(\)/);
