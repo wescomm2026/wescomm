@@ -40,7 +40,6 @@ export function WelcomeGateOverlay() {
   const [shouldLoadAnimation, setShouldLoadAnimation] = useState(false);
   const finishedRef = useRef(false);
   const exitStartedRef = useRef(false);
-  const mediaMetadataReadyRef = useRef(false);
   const mediaPlayableRef = useRef(false);
   const autoplayPolicyBlockedRef = useRef(false);
   const autoplayAttemptedRef = useRef(false);
@@ -143,8 +142,8 @@ export function WelcomeGateOverlay() {
     void video.play().catch((error: unknown) => {
       if (isAutoplayPolicyError(error)) {
         autoplayPolicyBlockedRef.current = true;
+        clearStartupTimeouts();
         setMediaState("awaiting-sound");
-        if (mediaMetadataReadyRef.current) clearStartupTimeouts();
         return;
       }
       failMediaAndExit();
@@ -161,7 +160,6 @@ export function WelcomeGateOverlay() {
 
   const handleVideoMetadata = (event: SyntheticEvent<HTMLVideoElement>) => {
     const video = event.currentTarget;
-    mediaMetadataReadyRef.current = true;
     if (autoplayPolicyBlockedRef.current) clearStartupTimeouts();
     else refreshStartupStallTimeout();
     video.defaultPlaybackRate = LOGO_ANIMATION_PLAYBACK_RATE;
@@ -226,8 +224,8 @@ export function WelcomeGateOverlay() {
     } catch (error: unknown) {
       if (isAutoplayPolicyError(error)) {
         autoplayPolicyBlockedRef.current = true;
+        clearStartupTimeouts();
         setMediaState("awaiting-sound");
-        if (mediaMetadataReadyRef.current) clearStartupTimeouts();
         return;
       }
       failMediaAndExit();
