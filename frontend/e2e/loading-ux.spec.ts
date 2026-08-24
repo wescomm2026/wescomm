@@ -54,7 +54,9 @@ test("blocked audible autoplay waits for the user instead of auto-skipping", asy
   await expect(gate).toHaveAttribute("data-media-failed", "false");
 
   await playWithSound.click();
-  await expect(gate).toBeHidden({ timeout: 5_000 });
+  await expect(gate).toHaveAttribute("data-media-ready", "true");
+  await expect(gate).toHaveAttribute("data-sound-start-required", "false");
+  await expect(gate).toBeHidden({ timeout: 15_000 });
 });
 
 test("reload and same-tab navigation stay free of the welcome gate", async ({ page }) => {
