@@ -1,9 +1,36 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { dismissWelcomeGate } from "./helpers";
 
 const WELCOME_VIDEO_PATH = "/assets/wescomm-logo-intro-new.mp4";
 
-test("fresh app session shows the responsive welcome animation while dashboard data loads", async ({ page }) => {
+async function emulateInstalledWebApp(page: Page) {
+  await page.addInitScript(() => {
+    Object.defineProperty(window.navigator, "standalone", {
+      configurable: true,
+      value: true
+    });
+  });
+}
+
+test("normal browser bypasses the welcome media without downloading it", async ({ page }) => {
+  let animationRequests = 0;
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === WELCOME_VIDEO_PATH) animationRequests += 1;
+  });
+
+  await page.goto("/student/dashboard", { waitUntil: "domcontentloaded" });
+
+  await expect(page.locator(".welcome-gate-overlay")).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => ({
+    state: document.documentElement.getAttribute("data-wescomm-intro"),
+    seen: window.sessionStorage.getItem("wescomm_welcome_intro_v2_seen")
+  }))).toEqual({ state: "seen", seen: null });
+  await page.waitForTimeout(500);
+  expect(animationRequests).toBe(0);
+});
+
+test("fresh installed-app session starts the welcome media without blocking dashboard data", async ({ page }) => {
+  await emulateInstalledWebApp(page);
   let animationRequests = 0;
   page.on("request", (request) => {
     if (new URL(request.url()).pathname === WELCOME_VIDEO_PATH) animationRequests += 1;
@@ -25,14 +52,13 @@ test("fresh app session shows the responsive welcome animation while dashboard d
   await expect(gate).toHaveCSS("position", "fixed");
   await expect(gate).toHaveCSS("background-color", "rgb(251, 251, 251)");
   await expect(gate.locator(".welcome-gate-fallback-logo")).toHaveCount(0);
-  await expect(page.getByTestId("welcome-logo-animation")).toHaveJSProperty("muted", false);
-  await expect(page.getByTestId("welcome-logo-animation")).toHaveJSProperty("volume", 1);
   await expect.poll(() => animationRequests).toBeGreaterThan(0);
   await expect(page.getByRole("heading", { name: "Stock Status Overview" })).toBeVisible();
   await dismissWelcomeGate(page);
 });
 
-test("blocked audible autoplay waits for the user instead of auto-skipping", async ({ page }) => {
+test("blocked audible autoplay falls back to visible muted playback", async ({ page }) => {
+  await emulateInstalledWebApp(page);
   await page.addInitScript(() => {
     const originalPlay = HTMLMediaElement.prototype.play;
     let blockNextAudiblePlay = true;
@@ -48,19 +74,22 @@ test("blocked audible autoplay waits for the user instead of auto-skipping", asy
   await page.goto("/student/dashboard", { waitUntil: "domcontentloaded" });
 
   const gate = page.locator(".welcome-gate-overlay");
-  const playWithSound = gate.getByRole("button", { name: "Play welcome animation with sound" });
-  await expect(playWithSound).toBeVisible();
-  await page.waitForTimeout(2_500);
-  await expect(gate).toBeVisible();
+  const restartWithSound = gate.getByRole("button", { name: "Restart welcome animation with sound" });
+  await expect(restartWithSound).toBeVisible();
+  await expect(gate).toHaveAttribute("data-media-ready", "true");
+  await expect(gate).toHaveAttribute("data-sound-start-required", "true");
+  await expect(page.getByTestId("welcome-logo-animation")).toHaveJSProperty("muted", true);
   await expect(gate).toHaveAttribute("data-media-failed", "false");
 
-  await playWithSound.click();
+  await restartWithSound.click();
+  await expect(page.getByTestId("welcome-logo-animation")).toHaveJSProperty("muted", false);
   await expect(gate).toHaveAttribute("data-media-ready", "true");
   await expect(gate).toHaveAttribute("data-sound-start-required", "false");
   await expect(gate).toBeHidden({ timeout: 15_000 });
 });
 
 test("reload and same-tab navigation stay free of the welcome gate", async ({ page }) => {
+  await emulateInstalledWebApp(page);
   let animationRequests = 0;
   page.on("request", (request) => {
     if (new URL(request.url()).pathname === WELCOME_VIDEO_PATH) animationRequests += 1;
@@ -86,6 +115,7 @@ test("reload and same-tab navigation stay free of the welcome gate", async ({ pa
 });
 
 test("reduced-motion visitors bypass the welcome video", async ({ page }) => {
+  await emulateInstalledWebApp(page);
   await page.emulateMedia({ reducedMotion: "reduce" });
   let animationRequests = 0;
   page.on("request", (request) => {
@@ -101,6 +131,7 @@ test("reduced-motion visitors bypass the welcome video", async ({ page }) => {
 });
 
 test("failed welcome media exits safely and is not retried on reload", async ({ page }) => {
+  await emulateInstalledWebApp(page);
   let animationRequests = 0;
   await page.route(`**${WELCOME_VIDEO_PATH}`, async (route) => {
     animationRequests += 1;
@@ -121,6 +152,7 @@ test("failed welcome media exits safely and is not retried on reload", async ({ 
 });
 
 test("stalled welcome media leaves the blank loading surface within two seconds", async ({ page }) => {
+  await emulateInstalledWebApp(page);
   let animationRequests = 0;
   let releaseStalledRequest: (() => void) | undefined;
   const stalledRequest = new Promise<void>((resolve) => {

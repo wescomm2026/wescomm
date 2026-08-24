@@ -144,7 +144,6 @@ for (const viewport of viewports) {
     await page.setViewportSize({ width: viewport.width, height: viewport.height });
     await page.emulateMedia({ reducedMotion: "reduce" });
     const unhandled = await mockStaffSupport(page, "STAFF_ACTIVE");
-    page.on("dialog", (dialog) => void dialog.accept());
 
     await page.goto("/staff/messages");
     await dismissWelcomeGate(page);
@@ -157,6 +156,12 @@ for (const viewport of viewports) {
     await expect(page.locator("#staff-composer-status")).toHaveText("Handled by: Other Staff. Take over ownership before replying.");
     await expect(composer).toBeDisabled();
     await page.getByRole("button", { name: "Take Over", exact: true }).click();
+    const confirmation = page.getByRole("alertdialog", { name: "Take over this conversation?" });
+    await expect(confirmation).toBeVisible();
+    await expect(confirmation).toContainText("Other Staff");
+    await expect(confirmation.getByRole("button", { name: "Cancel" })).toBeFocused();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+    await confirmation.getByRole("button", { name: "Take over", exact: true }).click();
 
     await expect(page.locator("#staff-composer-status")).toHaveText("You are the current handler: QA Staff.");
     await expect(composer).toBeEnabled();

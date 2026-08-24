@@ -4,6 +4,7 @@ import Image from "next/image";
 import { useMemo, useState } from "react";
 import { AlertTriangle, Plus, RefreshCw, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useConfirmationDialog } from "@/components/ui/ConfirmationDialogProvider";
 import { useAccessibleDialog } from "@/components/ui/useAccessibleDialog";
 import {
   reconcileStaffProductSkuInventory,
@@ -166,6 +167,7 @@ export function SkuInventoryDialog({
   returnFocus?: HTMLElement | null;
 }) {
   const dialog = useAccessibleDialog<HTMLElement>(true, onClose, { returnFocus });
+  const confirm = useConfirmationDialog();
   const [initialStructure] = useState(() => {
     const groups = initialOptionGroups(product);
     return { groups, rows: initialReconcileRows(product, groups) };
@@ -334,11 +336,14 @@ export function SkuInventoryDialog({
         };
       });
 
-      const confirmed = window.confirm(
-        product.skuInventoryEnabled
-          ? "Save this option structure and rebuild all inventory combinations using the exact available counts shown?"
-          : "Confirm these option groups, physical combinations, and exact available counts. Student ordering will resume after this save."
-      );
+      const confirmed = await confirm({
+        title: "Save inventory structure?",
+        description: product.skuInventoryEnabled
+          ? "This will rebuild every inventory combination using the exact available counts shown. The structure and counts save together."
+          : "Confirm these option groups, physical combinations, and exact available counts. Student ordering will resume after this save.",
+        confirmLabel: product.skuInventoryEnabled ? "Save and rebuild" : "Confirm and save",
+        tone: "warning"
+      });
       if (!confirmed) return;
 
       setSubmitting(true);

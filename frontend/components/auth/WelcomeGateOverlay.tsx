@@ -15,7 +15,7 @@ import {
 } from "@/lib/welcome-intro";
 
 type WelcomeGatePhase = "entering" | "holding" | "exiting";
-type WelcomeMediaState = "loading" | "awaiting-sound" | "playing" | "failed";
+type WelcomeMediaState = "loading" | "playing" | "playing-muted" | "failed";
 
 const ENTER_FALLBACK_MS = 250;
 const EXIT_FALLBACK_MS = 400;
@@ -72,11 +72,7 @@ export function WelcomeGateOverlay() {
   }, [beginExit, clearStartupTimeouts]);
 
   const refreshStartupStallTimeout = useCallback(() => {
-    if (
-      exitStartedRef.current
-      || mediaPlayableRef.current
-      || autoplayPolicyBlockedRef.current
-    ) return;
+    if (exitStartedRef.current || mediaPlayableRef.current) return;
     if (startupTimeoutRef.current !== null) window.clearTimeout(startupTimeoutRef.current);
     startupTimeoutRef.current = window.setTimeout(() => {
       startupTimeoutRef.current = null;
@@ -137,6 +133,16 @@ export function WelcomeGateOverlay() {
     else if (phase === "exiting") finish();
   };
 
+  const startMutedPlayback = useCallback((video: HTMLVideoElement) => {
+    if (exitStartedRef.current) return;
+    video.muted = true;
+    video.volume = 1;
+
+    void video.play().catch(() => {
+      failMediaAndExit();
+    });
+  }, [failMediaAndExit]);
+
   const attemptAudiblePlayback = useCallback((video: HTMLVideoElement) => {
     if (exitStartedRef.current || autoplayAttemptedRef.current) return;
     autoplayAttemptedRef.current = true;
@@ -146,13 +152,12 @@ export function WelcomeGateOverlay() {
     void video.play().catch((error: unknown) => {
       if (isAutoplayPolicyError(error)) {
         autoplayPolicyBlockedRef.current = true;
-        clearStartupTimeouts();
-        setMediaState("awaiting-sound");
+        startMutedPlayback(video);
         return;
       }
       failMediaAndExit();
     });
-  }, [clearStartupTimeouts, failMediaAndExit]);
+  }, [failMediaAndExit, startMutedPlayback]);
 
   useEffect(() => {
     if (!shouldLoadAnimation) return;
@@ -164,20 +169,19 @@ export function WelcomeGateOverlay() {
 
   const handleVideoMetadata = (event: SyntheticEvent<HTMLVideoElement>) => {
     const video = event.currentTarget;
-    if (autoplayPolicyBlockedRef.current) clearStartupTimeouts();
-    else refreshStartupStallTimeout();
+    refreshStartupStallTimeout();
     video.defaultPlaybackRate = LOGO_ANIMATION_PLAYBACK_RATE;
     video.playbackRate = LOGO_ANIMATION_PLAYBACK_RATE;
-    video.muted = false;
+    video.muted = autoplayPolicyBlockedRef.current;
     video.volume = 1;
   };
 
   const handleVideoCanPlay = (event: SyntheticEvent<HTMLVideoElement>) => {
     const video = event.currentTarget;
-    mediaPlayableRef.current = true;
-    clearStartupTimeouts();
+    refreshStartupStallTimeout();
     if (!video.paused) return;
-    attemptAudiblePlayback(video);
+    if (autoplayPolicyBlockedRef.current) startMutedPlayback(video);
+    else attemptAudiblePlayback(video);
   };
 
   const handleVideoProgress = (event: SyntheticEvent<HTMLVideoElement>) => {
@@ -191,15 +195,7 @@ export function WelcomeGateOverlay() {
     }
   };
 
-  const handleVideoPlaying = (event: SyntheticEvent<HTMLVideoElement>) => {
-    const video = event.currentTarget;
-    if (exitStartedRef.current) {
-      video.pause();
-      return;
-    }
-    mediaPlayableRef.current = true;
-    setMediaState("playing");
-    clearStartupTimeouts();
+  const schedulePlaybackExit = useCallback((video: HTMLVideoElement) => {
     if (playbackTimeoutRef.current !== null) window.clearTimeout(playbackTimeoutRef.current);
     const remainingSeconds = Number.isFinite(video.duration) && video.duration > 0
       ? Math.max(0, video.duration - video.currentTime) / Math.max(video.playbackRate, 0.1)
@@ -208,6 +204,18 @@ export function WelcomeGateOverlay() {
       beginExit,
       Math.ceil(remainingSeconds * 1_000) + PLAYBACK_TIMEOUT_BUFFER_MS
     );
+  }, [beginExit]);
+
+  const handleVideoPlaying = (event: SyntheticEvent<HTMLVideoElement>) => {
+    const video = event.currentTarget;
+    if (exitStartedRef.current) {
+      video.pause();
+      return;
+    }
+    mediaPlayableRef.current = true;
+    setMediaState(video.muted ? "playing-muted" : "playing");
+    clearStartupTimeouts();
+    schedulePlaybackExit(video);
   };
 
   const handleSkip = () => {
@@ -215,21 +223,25 @@ export function WelcomeGateOverlay() {
     beginExit();
   };
 
-  const handlePlayWithSound = async () => {
+  const handleRestartWithSound = async () => {
     const video = videoRef.current;
     if (!video) return;
 
+    video.pause();
     if (video.readyState >= HTMLMediaElement.HAVE_METADATA) video.currentTime = 0;
+    autoplayPolicyBlockedRef.current = false;
     video.muted = false;
     video.volume = 1;
 
     try {
       await video.play();
+      setMediaState("playing");
+      clearStartupTimeouts();
+      schedulePlaybackExit(video);
     } catch (error: unknown) {
       if (isAutoplayPolicyError(error)) {
         autoplayPolicyBlockedRef.current = true;
-        clearStartupTimeouts();
-        setMediaState("awaiting-sound");
+        startMutedPlayback(video);
         return;
       }
       failMediaAndExit();
@@ -248,9 +260,9 @@ export function WelcomeGateOverlay() {
       data-phase={phase}
       data-media-state={mediaState}
       data-media-started={shouldLoadAnimation ? "true" : "false"}
-      data-media-ready={mediaState === "playing" ? "true" : "false"}
+      data-media-ready={mediaState === "playing" || mediaState === "playing-muted" ? "true" : "false"}
       data-media-failed={mediaState === "failed" ? "true" : "false"}
-      data-sound-start-required={mediaState === "awaiting-sound" ? "true" : "false"}
+      data-sound-start-required={mediaState === "playing-muted" ? "true" : "false"}
       role="dialog"
       aria-modal="true"
       aria-label="WESCOMM welcome animation"
@@ -282,15 +294,15 @@ export function WelcomeGateOverlay() {
           <ArrowRight className="size-4" aria-hidden="true" />
         </button>
       ) : null}
-      {mediaState === "awaiting-sound" && phase !== "exiting" ? (
+      {mediaState === "playing-muted" && phase !== "exiting" ? (
         <button
           type="button"
-          onClick={handlePlayWithSound}
-          className="absolute z-20 inline-flex min-h-12 items-center gap-2 rounded-full bg-[#08743f] px-6 py-3 text-base font-bold text-white shadow-[0_12px_32px_rgba(0,68,36,0.24)] transition hover:bg-[#075c32] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#08743f] focus-visible:ring-offset-4 focus-visible:ring-offset-[#fbfbfb] active:scale-[0.98]"
-          aria-label="Play welcome animation with sound"
+          onClick={handleRestartWithSound}
+          className="welcome-gate-sound-action z-20 inline-flex min-h-11 items-center gap-2 rounded-full bg-[#08743f] px-5 py-2.5 text-sm font-bold text-white shadow-[0_12px_32px_rgba(0,68,36,0.24)] transition hover:bg-[#075c32] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#08743f] focus-visible:ring-offset-4 focus-visible:ring-offset-[#fbfbfb] active:scale-[0.98]"
+          aria-label="Restart welcome animation with sound"
         >
           <Volume2 className="size-5" aria-hidden="true" />
-          Play with sound
+          Restart with sound
         </button>
       ) : null}
       <video

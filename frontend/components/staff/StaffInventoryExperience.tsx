@@ -8,6 +8,7 @@ import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import { useRealtimeRefresh } from "@/components/realtime/RealtimeProvider";
 import { ActionLoadingOverlay } from "@/components/ui/ActionLoadingOverlay";
 import { Button } from "@/components/ui/button";
+import { useConfirmationDialog } from "@/components/ui/ConfirmationDialogProvider";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { useAccessibleDialog } from "@/components/ui/useAccessibleDialog";
 import { isRequestAbortError } from "@/lib/api";
@@ -56,6 +57,7 @@ const SkuInventoryDialog = dynamic(
 );
 
 export function StaffInventoryExperience() {
+  const confirm = useConfirmationDialog();
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<StaffCategory[]>([]);
   const [token, setToken] = useState("");
@@ -452,7 +454,13 @@ export function StaffInventoryExperience() {
   };
 
   const archiveProduct = async (product: Product) => {
-    if (!window.confirm(`Archive ${product.name}? It will be hidden from student shop.`)) return;
+    const confirmed = await confirm({
+      title: "Archive this product?",
+      description: `${product.name} will be hidden from the student shop. Existing reservation records will be kept.`,
+      confirmLabel: "Archive product",
+      tone: "danger"
+    });
+    if (!confirmed) return;
     setSubmitting(true);
     setArchivingProductId(product.id);
     setError("");

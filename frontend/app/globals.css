@@ -78,6 +78,12 @@ html:not([data-wescomm-intro="pending"]) .welcome-gate-overlay {
   display: none;
 }
 
+.welcome-gate-sound-action {
+  position: absolute;
+  left: max(1rem, env(safe-area-inset-left));
+  bottom: max(1rem, env(safe-area-inset-bottom));
+}
+
 .welcome-gate-overlay[data-phase="entering"] {
   opacity: 1;
 }
@@ -97,6 +103,16 @@ html:not([data-wescomm-intro="pending"]) .welcome-gate-overlay {
   }
   to {
     opacity: 0;
+  }
+}
+
+@media (max-width: 420px) {
+  .welcome-gate-sound-action {
+    left: 50%;
+    bottom: max(4.75rem, calc(env(safe-area-inset-bottom) + 4.75rem));
+    max-width: calc(100vw - 2rem);
+    transform: translateX(-50%);
+    white-space: nowrap;
   }
 }
 

@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useConfirmationDialog } from "@/components/ui/ConfirmationDialogProvider";
 import {
   syncStaffProductVariants,
   type StaffProduct,
@@ -74,6 +75,7 @@ export function ProductOptionsManager({
   onSaved: (product: StaffProduct) => void;
   onDone: () => void;
 }) {
+  const confirm = useConfirmationDialog();
   const groups = useMemo(() => groupVariants(product), [product]);
   const [activeGroupName, setActiveGroupName] = useState(groups[0]?.name ?? "");
   const activeGroup = groups.find((group) => group.name === activeGroupName) ?? groups[0];
@@ -163,7 +165,13 @@ export function ProductOptionsManager({
 
   const removeGroup = async () => {
     if (!activeGroup) return;
-    if (!window.confirm(`Remove the ${activeGroup.name} option group?`)) return;
+    const confirmed = await confirm({
+      title: `Remove the ${activeGroup.name} option group?`,
+      description: "The saved option values in this group will be removed. This action cannot be undone from this screen.",
+      confirmLabel: "Remove group",
+      tone: "danger"
+    });
+    if (!confirmed) return;
     setSaving(true);
     setError("");
     try {

@@ -12,9 +12,12 @@ export function welcomeIntroBootstrapScript() {
     if (existingState === "pending" || existingState === "seen") return;
     let shouldShow = true;
     try {
+      const isInstalledApp = window.matchMedia("(display-mode: standalone)").matches
+        || window.matchMedia("(display-mode: minimal-ui)").matches
+        || window.navigator.standalone === true;
       const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
       const alreadySeen = window.sessionStorage.getItem(${sessionKey}) === "1";
-      shouldShow = !reducedMotion && !alreadySeen;
+      shouldShow = isInstalledApp && !reducedMotion && !alreadySeen;
       if (shouldShow) window.sessionStorage.setItem(${sessionKey}, "1");
     } catch {}
     root.setAttribute(${documentAttribute}, shouldShow ? "pending" : "seen");

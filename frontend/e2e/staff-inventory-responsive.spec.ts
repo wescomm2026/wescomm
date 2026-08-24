@@ -179,8 +179,22 @@ for (const viewport of viewports) {
     await expect(skuDialog).toBeVisible();
     await expect(skuDialog.getByText("Size: M · Color: Red", { exact: true })).toBeVisible();
     await expect(skuDialog.getByText("Size: L · Color: Blue", { exact: true })).toBeVisible();
+    await skuDialog.getByRole("button", { name: "Edit options and rebuild combinations" }).click();
+
+    const setupDialog = page.getByRole("dialog", { name: "Set up inventory" });
+    const saveStructureButton = setupDialog.getByRole("button", { name: "Save structure & inventory" });
+    await saveStructureButton.click();
+    const confirmation = page.getByRole("alertdialog", { name: "Save inventory structure?" });
+    await expect(confirmation).toBeVisible();
+    await expect(confirmation).toContainText("exact available counts shown");
+    await expect(confirmation.getByRole("button", { name: "Cancel" })).toBeFocused();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
     await page.keyboard.press("Escape");
-    await expect(skuDialog).toBeHidden();
+    await expect(confirmation).toBeHidden();
+    await expect(setupDialog).toBeVisible();
+    await expect(saveStructureButton).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(setupDialog).toBeHidden();
     await expect(managerDialog).toBeVisible();
     await expect(combinationsButton).toBeFocused();
     await page.keyboard.press("Escape");

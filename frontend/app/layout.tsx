@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { WelcomeGateOverlay } from "@/components/auth/WelcomeGateOverlay";
 import { PwaLifecycle } from "@/components/pwa/PwaLifecycle";
+import { ConfirmationDialogProvider } from "@/components/ui/ConfirmationDialogProvider";
 import { welcomeIntroBootstrapScript } from "@/lib/welcome-intro";
 import "./globals.css";
 
@@ -48,11 +49,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           dangerouslySetInnerHTML={{ __html: welcomeIntroBootstrapScript() }}
         />
         <WelcomeGateOverlay />
-        <PwaLifecycle
-          enableServiceWorker={enableServiceWorker}
-          enableRuntimeCaching={enableRuntimeCaching}
-        />
-        {children}
+        <ConfirmationDialogProvider>
+          <PwaLifecycle
+            enableServiceWorker={enableServiceWorker}
+            enableRuntimeCaching={enableRuntimeCaching}
+          />
+          {children}
+        </ConfirmationDialogProvider>
       </body>
     </html>
   );

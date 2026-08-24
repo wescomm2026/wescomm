@@ -6,6 +6,7 @@ import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import { useRealtimeRefresh } from "@/components/realtime/RealtimeProvider";
 import { AssetIcon } from "@/components/ui/AssetIcon";
 import { Button } from "@/components/ui/button";
+import { useConfirmationDialog } from "@/components/ui/ConfirmationDialogProvider";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import {
   getConversationMessagesFromApi,
@@ -35,6 +36,7 @@ import {
 
 export function StaffMessagesExperience() {
   const { user } = useStudentAuth();
+  const confirm = useConfirmationDialog();
   const [conversations, setConversations] = useState<BackendConversation[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [reply, setReply] = useState("");
@@ -389,11 +391,19 @@ export function StaffMessagesExperience() {
   const takeOverConversation = async (conversation: BackendConversation) => {
     const session = getStoredStaffSession();
     if (!session.token || submitting) return;
-    if (
+    const needsConfirmation =
       conversation.mode === "STAFF_ACTIVE"
-      && conversation.assignedStaffId !== user?.id
-      && !window.confirm(`Take over this conversation from ${conversation.assignedStaff?.fullName || "the current Staff handler"}? Their reply box will be locked immediately.`)
-    ) return;
+      && conversation.assignedStaffId !== user?.id;
+    if (needsConfirmation) {
+      const currentHandler = conversation.assignedStaff?.fullName || "the current Staff handler";
+      const confirmed = await confirm({
+        title: "Take over this conversation?",
+        description: `You will replace ${currentHandler} as the current handler. Their reply box will be locked immediately.`,
+        confirmLabel: "Take over",
+        tone: "warning"
+      });
+      if (!confirmed) return;
+    }
     setPendingAction({ conversationId: conversation.id, type: "takeover" });
     setError("");
 

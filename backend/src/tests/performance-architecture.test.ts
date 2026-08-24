@@ -73,8 +73,12 @@ test("role bundles and list refreshes avoid startup blockers and stale responses
   assert.doesNotMatch(auth, /WelcomeGateOverlay|WELCOME_GATE_(?:MINIMUM|MAXIMUM)_DURATION_MS/);
   assert.match(welcomeIntro, /window\.sessionStorage\.getItem/);
   assert.match(welcomeIntro, /prefers-reduced-motion: reduce/);
+  assert.match(welcomeIntro, /display-mode: standalone/);
+  assert.match(welcomeIntro, /display-mode: minimal-ui/);
+  assert.match(welcomeIntro, /window\.navigator\.standalone === true/);
+  assert.match(welcomeIntro, /shouldShow = isInstalledApp && !reducedMotion && !alreadySeen/);
   assert.match(welcomeOverlay, /WELCOME_INTRO_VIDEO_SRC/);
-  assert.match(welcomeOverlay, /Play with sound/);
+  assert.match(welcomeOverlay, /Restart with sound/);
   assert.doesNotMatch(welcomeOverlay, /next\/image|welcome-gate-fallback-logo/);
   assert.doesNotMatch(welcomeOverlay, /\n\s*muted\s*\n/);
   assert.doesNotMatch(welcomeOverlay, /\n\s*autoPlay\s*\n/);
@@ -83,12 +87,54 @@ test("role bundles and list refreshes avoid startup blockers and stale responses
   assert.match(welcomeOverlay, /refreshStartupStallTimeout[\s\S]*failMediaAndExit/);
   assert.match(welcomeOverlay, /handleVideoProgress[\s\S]*bufferedUntil > bufferedUntilRef\.current/);
   assert.match(welcomeOverlay, /onProgress=\{handleVideoProgress\}/);
-  assert.match(welcomeOverlay, /isAutoplayPolicyError[\s\S]*setMediaState\("awaiting-sound"\)/);
-  assert.match(welcomeOverlay, /isAutoplayPolicyError[\s\S]*clearStartupTimeouts\(\)[\s\S]*setMediaState\("awaiting-sound"\)/);
-  assert.match(welcomeOverlay, /refreshStartupStallTimeout[\s\S]*autoplayPolicyBlockedRef\.current/);
+  assert.match(welcomeOverlay, /type WelcomeMediaState = "loading" \| "playing" \| "playing-muted" \| "failed"/);
+  assert.match(welcomeOverlay, /startMutedPlayback[\s\S]*video\.muted = true/);
+  assert.match(welcomeOverlay, /isAutoplayPolicyError[\s\S]*autoplayPolicyBlockedRef\.current = true;[\s\S]*startMutedPlayback\(video\)/);
+  assert.match(welcomeOverlay, /data-media-ready=\{mediaState === "playing" \|\| mediaState === "playing-muted"/);
+  assert.match(welcomeOverlay, /data-sound-start-required=\{mediaState === "playing-muted"/);
+  assert.doesNotMatch(welcomeOverlay, /awaiting-sound|Play with sound/);
   assert.match(adminCharts, /dynamic\([\s\S]*AdminCharts/);
   assert.doesNotMatch(adminCharts, /from "recharts"/);
   assert.match(adminRequests, /requestAbortRef\.current\?\.abort\(\)/);
   assert.match(staffRequests, /requestAbortRef\.current\?\.abort\(\)/);
   assert.match(api, /signal\?: AbortSignal/);
+});
+
+test("welcome media stays compact, progressively playable, and outside the PWA install payload", () => {
+  const welcomeMedia = readFileSync(path.resolve(
+    process.cwd(),
+    "../frontend/public/assets/wescomm-logo-intro-new.mp4",
+  ));
+  const mediaAtoms = welcomeMedia.toString("latin1");
+  const serviceWorker = source("../frontend/public/sw.js");
+  const precacheUrls = serviceWorker.match(/const PRECACHE_URLS = \[[\s\S]*?\];/)?.[0] ?? "";
+
+  assert.ok(welcomeMedia.byteLength <= 750 * 1024);
+  assert.ok(mediaAtoms.indexOf("moov") >= 0);
+  assert.ok(mediaAtoms.indexOf("mdat") >= 0);
+  assert.ok(mediaAtoms.indexOf("moov") < mediaAtoms.indexOf("mdat"));
+  assert.match(mediaAtoms, /avc1/);
+  assert.match(mediaAtoms, /mp4a/);
+  assert.doesNotMatch(precacheUrls, /wescomm-logo-intro|\.mp4/);
+});
+
+test("staff and FAQ confirmations use one accessible responsive dialog", () => {
+  const rootLayout = source("../frontend/app/layout.tsx");
+  const confirmationDialog = source("../frontend/components/ui/ConfirmationDialogProvider.tsx");
+  const confirmationFlows = sources(
+    "../frontend/components/faq/FaqManagementExperience.tsx",
+    "../frontend/components/staff/SkuInventoryDialog.tsx",
+    "../frontend/components/staff/StaffInventoryExperience.tsx",
+    "../frontend/components/staff/ProductOptionsManager.tsx",
+    "../frontend/components/staff/StaffMessagesExperience.tsx",
+  );
+
+  assert.match(rootLayout, /ConfirmationDialogProvider/);
+  assert.match(confirmationDialog, /useAccessibleDialog/);
+  assert.match(confirmationDialog, /role="alertdialog"/);
+  assert.match(confirmationDialog, /aria-describedby/);
+  assert.match(confirmationDialog, /data-dialog-autofocus/);
+  assert.match(confirmationDialog, /sm:flex-row/);
+  assert.match(confirmationFlows, /useConfirmationDialog/);
+  assert.doesNotMatch(confirmationFlows, /\bwindow\.(?:confirm|alert|prompt)\s*\(/);
 });

@@ -5,6 +5,7 @@ import { Edit3, Plus, RefreshCw, Trash2, X } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import { AssetIcon } from "@/components/ui/AssetIcon";
 import { Button } from "@/components/ui/button";
+import { useConfirmationDialog } from "@/components/ui/ConfirmationDialogProvider";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { useAccessibleDialog } from "@/components/ui/useAccessibleDialog";
 import {
@@ -55,6 +56,7 @@ function mapFaqToDraft(faq: BackendFaq): FaqDraft {
 
 export function FaqManagementExperience() {
   const { user, ready, openAuth } = useStudentAuth();
+  const confirm = useConfirmationDialog();
   const [faqs, setFaqs] = useState<BackendFaq[]>([]);
   const [editing, setEditing] = useState<FaqDraft | null>(null);
   const [search, setSearch] = useState("");
@@ -175,7 +177,13 @@ export function FaqManagementExperience() {
 
   const removeFaq = async (faq: BackendFaq) => {
     if (!user?.accessToken) return;
-    if (!window.confirm(`Delete this FAQ?\n\n${faq.question}`)) return;
+    const confirmed = await confirm({
+      title: "Delete this FAQ?",
+      description: `“${faq.question}” will be permanently removed from FAQ management.`,
+      confirmLabel: "Delete FAQ",
+      tone: "danger"
+    });
+    if (!confirmed) return;
 
     setSubmitting(true);
     setError("");
