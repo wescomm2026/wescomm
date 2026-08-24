@@ -75,9 +75,15 @@ test("role bundles and list refreshes avoid startup blockers and stale responses
   assert.match(welcomeIntro, /prefers-reduced-motion: reduce/);
   assert.match(welcomeOverlay, /WELCOME_INTRO_VIDEO_SRC/);
   assert.match(welcomeOverlay, /Play with sound/);
+  assert.doesNotMatch(welcomeOverlay, /next\/image|welcome-gate-fallback-logo/);
   assert.doesNotMatch(welcomeOverlay, /\n\s*muted\s*\n/);
   assert.doesNotMatch(welcomeOverlay, /\n\s*autoPlay\s*\n/);
-  assert.match(welcomeOverlay, /startupTimeoutRef\.current = window\.setTimeout\([\s\S]*setSoundStartRequired\(true\)/);
+  assert.match(welcomeOverlay, /MEDIA_STARTUP_TIMEOUT_MS = 1_600/);
+  assert.match(welcomeOverlay, /MEDIA_ABSOLUTE_TIMEOUT_MS = 4_000/);
+  assert.match(welcomeOverlay, /refreshStartupStallTimeout[\s\S]*failMediaAndExit/);
+  assert.match(welcomeOverlay, /handleVideoProgress[\s\S]*bufferedUntil > bufferedUntilRef\.current/);
+  assert.match(welcomeOverlay, /onProgress=\{handleVideoProgress\}/);
+  assert.match(welcomeOverlay, /isAutoplayPolicyError[\s\S]*setMediaState\("awaiting-sound"\)/);
   assert.match(adminCharts, /dynamic\([\s\S]*AdminCharts/);
   assert.doesNotMatch(adminCharts, /from "recharts"/);
   assert.match(adminRequests, /requestAbortRef\.current\?\.abort\(\)/);

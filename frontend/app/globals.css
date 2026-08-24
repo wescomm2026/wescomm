@@ -78,14 +78,6 @@ html:not([data-wescomm-intro="pending"]) .welcome-gate-overlay {
   display: none;
 }
 
-.welcome-gate-fallback-logo {
-  position: relative;
-  z-index: 1;
-  width: min(82vw, 900px);
-  height: auto;
-  object-fit: contain;
-}
-
 .welcome-gate-overlay[data-phase="entering"] {
   opacity: 1;
 }
@@ -118,12 +110,6 @@ html:not([data-wescomm-intro="pending"]) .welcome-gate-overlay {
   }
 
   .welcome-gate-overlay {
-    background: #fbfbfb url("/assets/wescomm-logo.png") center / min(82vw, 900px) auto no-repeat;
-  }
-}
-
-@media (max-width: 640px) {
-  .welcome-gate-fallback-logo {
-    width: min(88vw, 560px);
+    background: #fbfbfb;
   }
 }

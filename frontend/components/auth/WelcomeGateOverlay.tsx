@@ -1,6 +1,5 @@
 "use client";
 
-import Image from "next/image";
 import { ArrowRight, Volume2 } from "lucide-react";
 import {
   useCallback,
@@ -16,37 +15,71 @@ import {
 } from "@/lib/welcome-intro";
 
 type WelcomeGatePhase = "entering" | "holding" | "exiting";
+type WelcomeMediaState = "loading" | "awaiting-sound" | "playing" | "failed";
 
 const ENTER_FALLBACK_MS = 250;
-const EXIT_FALLBACK_MS = 450;
+const EXIT_FALLBACK_MS = 400;
 const E2E_TEST_ENABLED = process.env.NEXT_PUBLIC_E2E_TEST === "true";
-const LOGO_ANIMATION_PLAYBACK_RATE = E2E_TEST_ENABLED ? 16 : 1;
-const MEDIA_STARTUP_TIMEOUT_MS = E2E_TEST_ENABLED ? 2_000 : 8_000;
+const LOGO_ANIMATION_PLAYBACK_RATE = E2E_TEST_ENABLED ? 4 : 1;
+const MEDIA_STARTUP_TIMEOUT_MS = 1_600;
+const MEDIA_ABSOLUTE_TIMEOUT_MS = 4_000;
 const PLAYBACK_TIMEOUT_BUFFER_MS = 1_500;
 const LOADING_BACKGROUND = "#fbfbfb";
+
+function isAutoplayPolicyError(error: unknown) {
+  return typeof error === "object"
+    && error !== null
+    && "name" in error
+    && error.name === "NotAllowedError";
+}
 
 export function WelcomeGateOverlay() {
   const [visible, setVisible] = useState(true);
   const [phase, setPhase] = useState<WelcomeGatePhase>("entering");
-  const [mediaReady, setMediaReady] = useState(false);
-  const [mediaFailed, setMediaFailed] = useState(false);
+  const [mediaState, setMediaState] = useState<WelcomeMediaState>("loading");
   const [shouldLoadAnimation, setShouldLoadAnimation] = useState(false);
-  const [soundStartRequired, setSoundStartRequired] = useState(false);
   const finishedRef = useRef(false);
+  const exitStartedRef = useRef(false);
+  const mediaMetadataReadyRef = useRef(false);
+  const mediaPlayableRef = useRef(false);
+  const autoplayPolicyBlockedRef = useRef(false);
   const autoplayAttemptedRef = useRef(false);
+  const bufferedUntilRef = useRef(0);
   const playbackTimeoutRef = useRef<number | null>(null);
   const startupTimeoutRef = useRef<number | null>(null);
+  const absoluteStartupTimeoutRef = useRef<number | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
 
   const beginExit = useCallback(() => {
+    exitStartedRef.current = true;
     setPhase((current) => (current === "exiting" ? current : "exiting"));
   }, []);
 
-  const clearStartupTimeout = useCallback(() => {
-    if (startupTimeoutRef.current === null) return;
-    window.clearTimeout(startupTimeoutRef.current);
-    startupTimeoutRef.current = null;
+  const clearStartupTimeouts = useCallback(() => {
+    if (startupTimeoutRef.current !== null) {
+      window.clearTimeout(startupTimeoutRef.current);
+      startupTimeoutRef.current = null;
+    }
+    if (absoluteStartupTimeoutRef.current !== null) {
+      window.clearTimeout(absoluteStartupTimeoutRef.current);
+      absoluteStartupTimeoutRef.current = null;
+    }
   }, []);
+
+  const failMediaAndExit = useCallback(() => {
+    clearStartupTimeouts();
+    setMediaState("failed");
+    beginExit();
+  }, [beginExit, clearStartupTimeouts]);
+
+  const refreshStartupStallTimeout = useCallback(() => {
+    if (exitStartedRef.current || mediaPlayableRef.current) return;
+    if (startupTimeoutRef.current !== null) window.clearTimeout(startupTimeoutRef.current);
+    startupTimeoutRef.current = window.setTimeout(() => {
+      startupTimeoutRef.current = null;
+      failMediaAndExit();
+    }, MEDIA_STARTUP_TIMEOUT_MS);
+  }, [failMediaAndExit]);
 
   const finish = useCallback(() => {
     if (finishedRef.current) return;
@@ -64,10 +97,11 @@ export function WelcomeGateOverlay() {
     const originalOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     setShouldLoadAnimation(true);
-    startupTimeoutRef.current = window.setTimeout(() => {
-      startupTimeoutRef.current = null;
-      setSoundStartRequired(true);
-    }, MEDIA_STARTUP_TIMEOUT_MS);
+    refreshStartupStallTimeout();
+    absoluteStartupTimeoutRef.current = window.setTimeout(
+      failMediaAndExit,
+      MEDIA_ABSOLUTE_TIMEOUT_MS
+    );
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") beginExit();
@@ -77,10 +111,10 @@ export function WelcomeGateOverlay() {
     return () => {
       document.body.style.overflow = originalOverflow;
       window.removeEventListener("keydown", handleKeyDown);
-      if (startupTimeoutRef.current !== null) window.clearTimeout(startupTimeoutRef.current);
+      clearStartupTimeouts();
       if (playbackTimeoutRef.current !== null) window.clearTimeout(playbackTimeoutRef.current);
     };
-  }, [beginExit, finish]);
+  }, [beginExit, clearStartupTimeouts, failMediaAndExit, finish, refreshStartupStallTimeout]);
 
   useEffect(() => {
     const fallbackMs = phase === "entering" ? ENTER_FALLBACK_MS : phase === "exiting" ? EXIT_FALLBACK_MS : null;
@@ -100,8 +134,36 @@ export function WelcomeGateOverlay() {
     else if (phase === "exiting") finish();
   };
 
+  const attemptAudiblePlayback = useCallback((video: HTMLVideoElement) => {
+    if (exitStartedRef.current || autoplayAttemptedRef.current) return;
+    autoplayAttemptedRef.current = true;
+    video.muted = false;
+    video.volume = 1;
+
+    void video.play().catch((error: unknown) => {
+      if (isAutoplayPolicyError(error)) {
+        autoplayPolicyBlockedRef.current = true;
+        setMediaState("awaiting-sound");
+        if (mediaMetadataReadyRef.current) clearStartupTimeouts();
+        return;
+      }
+      failMediaAndExit();
+    });
+  }, [clearStartupTimeouts, failMediaAndExit]);
+
+  useEffect(() => {
+    if (!shouldLoadAnimation) return;
+    const video = videoRef.current;
+    if (!video) return;
+
+    attemptAudiblePlayback(video);
+  }, [attemptAudiblePlayback, shouldLoadAnimation]);
+
   const handleVideoMetadata = (event: SyntheticEvent<HTMLVideoElement>) => {
     const video = event.currentTarget;
+    mediaMetadataReadyRef.current = true;
+    if (autoplayPolicyBlockedRef.current) clearStartupTimeouts();
+    else refreshStartupStallTimeout();
     video.defaultPlaybackRate = LOGO_ANIMATION_PLAYBACK_RATE;
     video.playbackRate = LOGO_ANIMATION_PLAYBACK_RATE;
     video.muted = false;
@@ -110,22 +172,32 @@ export function WelcomeGateOverlay() {
 
   const handleVideoCanPlay = (event: SyntheticEvent<HTMLVideoElement>) => {
     const video = event.currentTarget;
-    if (autoplayAttemptedRef.current || !video.paused) return;
-    autoplayAttemptedRef.current = true;
-    video.muted = false;
-    video.volume = 1;
+    mediaPlayableRef.current = true;
+    clearStartupTimeouts();
+    if (!video.paused) return;
+    attemptAudiblePlayback(video);
+  };
 
-    void video.play().catch(() => {
-      clearStartupTimeout();
-      setSoundStartRequired(true);
-    });
+  const handleVideoProgress = (event: SyntheticEvent<HTMLVideoElement>) => {
+    const video = event.currentTarget;
+    if (video.buffered.length === 0) return;
+
+    const bufferedUntil = video.buffered.end(video.buffered.length - 1);
+    if (bufferedUntil > bufferedUntilRef.current) {
+      bufferedUntilRef.current = bufferedUntil;
+      refreshStartupStallTimeout();
+    }
   };
 
   const handleVideoPlaying = (event: SyntheticEvent<HTMLVideoElement>) => {
     const video = event.currentTarget;
-    setMediaReady(true);
-    setSoundStartRequired(false);
-    clearStartupTimeout();
+    if (exitStartedRef.current) {
+      video.pause();
+      return;
+    }
+    mediaPlayableRef.current = true;
+    setMediaState("playing");
+    clearStartupTimeouts();
     if (playbackTimeoutRef.current !== null) window.clearTimeout(playbackTimeoutRef.current);
     const remainingSeconds = Number.isFinite(video.duration) && video.duration > 0
       ? Math.max(0, video.duration - video.currentTime) / Math.max(video.playbackRate, 0.1)
@@ -145,23 +217,25 @@ export function WelcomeGateOverlay() {
     const video = videoRef.current;
     if (!video) return;
 
-    clearStartupTimeout();
-    video.currentTime = 0;
+    if (video.readyState >= HTMLMediaElement.HAVE_METADATA) video.currentTime = 0;
     video.muted = false;
     video.volume = 1;
-    setSoundStartRequired(false);
 
     try {
       await video.play();
-    } catch {
-      setMediaFailed(true);
-      beginExit();
+    } catch (error: unknown) {
+      if (isAutoplayPolicyError(error)) {
+        autoplayPolicyBlockedRef.current = true;
+        setMediaState("awaiting-sound");
+        if (mediaMetadataReadyRef.current) clearStartupTimeouts();
+        return;
+      }
+      failMediaAndExit();
     }
   };
 
   const handleMediaError = () => {
-    setMediaFailed(true);
-    beginExit();
+    failMediaAndExit();
   };
 
   if (!visible) return null;
@@ -170,9 +244,11 @@ export function WelcomeGateOverlay() {
     <div
       className="welcome-gate-overlay fixed inset-0 z-[12000] grid place-items-center overflow-hidden"
       data-phase={phase}
-      data-media-ready={mediaReady ? "true" : "false"}
-      data-media-failed={mediaFailed ? "true" : "false"}
-      data-sound-start-required={soundStartRequired ? "true" : "false"}
+      data-media-state={mediaState}
+      data-media-started={shouldLoadAnimation ? "true" : "false"}
+      data-media-ready={mediaState === "playing" ? "true" : "false"}
+      data-media-failed={mediaState === "failed" ? "true" : "false"}
+      data-sound-start-required={mediaState === "awaiting-sound" ? "true" : "false"}
       role="dialog"
       aria-modal="true"
       aria-label="WESCOMM welcome animation"
@@ -204,7 +280,7 @@ export function WelcomeGateOverlay() {
           <ArrowRight className="size-4" aria-hidden="true" />
         </button>
       ) : null}
-      {soundStartRequired && phase !== "exiting" ? (
+      {mediaState === "awaiting-sound" && phase !== "exiting" ? (
         <button
           type="button"
           onClick={handlePlayWithSound}
@@ -215,24 +291,15 @@ export function WelcomeGateOverlay() {
           Play with sound
         </button>
       ) : null}
-      {shouldLoadAnimation && !mediaReady ? (
-        <Image
-          src="/assets/wescomm-logo.png"
-          alt=""
-          width={1600}
-          height={900}
-          className="welcome-gate-fallback-logo"
-          aria-hidden="true"
-          priority
-        />
-      ) : null}
       <video
         ref={videoRef}
-        className={`welcome-gate-video${mediaFailed ? " welcome-gate-video-failed" : ""}`}
+        className={`welcome-gate-video${mediaState === "failed" ? " welcome-gate-video-failed" : ""}`}
         data-testid="welcome-logo-animation"
         playsInline
         preload={shouldLoadAnimation ? "auto" : "none"}
         src={shouldLoadAnimation ? WELCOME_INTRO_VIDEO_SRC : undefined}
+        onLoadStart={refreshStartupStallTimeout}
+        onProgress={handleVideoProgress}
         onLoadedMetadata={handleVideoMetadata}
         onCanPlay={handleVideoCanPlay}
         onPlaying={handleVideoPlaying}

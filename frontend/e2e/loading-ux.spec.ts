@@ -24,6 +24,7 @@ test("fresh app session shows the responsive welcome animation while dashboard d
   await expect(gate).toBeVisible();
   await expect(gate).toHaveCSS("position", "fixed");
   await expect(gate).toHaveCSS("background-color", "rgb(251, 251, 251)");
+  await expect(gate.locator(".welcome-gate-fallback-logo")).toHaveCount(0);
   await expect(page.getByTestId("welcome-logo-animation")).toHaveJSProperty("muted", false);
   await expect(page.getByTestId("welcome-logo-animation")).toHaveJSProperty("volume", 1);
   await expect.poll(() => animationRequests).toBeGreaterThan(0);
@@ -117,6 +118,31 @@ test("failed welcome media exits safely and is not retried on reload", async ({ 
   await page.reload({ waitUntil: "domcontentloaded" });
   await expect(page.locator(".welcome-gate-overlay")).toHaveCount(0);
   expect(animationRequests).toBe(1);
+});
+
+test("stalled welcome media leaves the blank loading surface within two seconds", async ({ page }) => {
+  let animationRequests = 0;
+  let releaseStalledRequest: (() => void) | undefined;
+  const stalledRequest = new Promise<void>((resolve) => {
+    releaseStalledRequest = resolve;
+  });
+
+  await page.route(`**${WELCOME_VIDEO_PATH}`, async (route) => {
+    animationRequests += 1;
+    await stalledRequest;
+    await route.abort("timedout").catch(() => undefined);
+  });
+
+  await page.goto("/student/dashboard", { waitUntil: "domcontentloaded" });
+
+  const gate = page.locator(".welcome-gate-overlay");
+  await expect(gate).toBeVisible();
+  await expect(gate).toHaveCSS("background-color", "rgb(251, 251, 251)");
+  await expect(gate.locator(".welcome-gate-fallback-logo")).toHaveCount(0);
+  await expect.poll(() => animationRequests).toBe(1);
+  await expect(gate).toBeHidden({ timeout: 2_500 });
+
+  releaseStalledRequest?.();
 });
 
 test("student dashboard shares one products request across its loading cards", async ({ page }) => {
