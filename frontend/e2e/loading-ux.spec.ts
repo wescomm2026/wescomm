@@ -23,6 +23,9 @@ test("fresh app session shows the responsive welcome animation while dashboard d
   const gate = page.locator(".welcome-gate-overlay");
   await expect(gate).toBeVisible();
   await expect(gate).toHaveCSS("position", "fixed");
+  await expect(gate).toHaveCSS("background-color", "rgb(255, 255, 255)");
+  await expect(page.getByTestId("welcome-logo-animation")).toHaveJSProperty("muted", false);
+  await expect(page.getByTestId("welcome-logo-animation")).toHaveJSProperty("volume", 1);
   await expect.poll(() => animationRequests).toBeGreaterThan(0);
   await expect(page.getByRole("heading", { name: "Stock Status Overview" })).toBeVisible();
   await dismissWelcomeGate(page);
@@ -107,7 +110,7 @@ test("student dashboard shares one products request across its loading cards", a
 
 test("email OTP uses the delayed compact action loader", async ({ page }) => {
   await page.route(/\/auth\/v1\/otp(?:\?.*)?$/, async (route) => {
-    await new Promise((resolve) => setTimeout(resolve, 900));
+    await new Promise((resolve) => setTimeout(resolve, 1_600));
     await route.fulfill({
       status: 200,
       contentType: "application/json",

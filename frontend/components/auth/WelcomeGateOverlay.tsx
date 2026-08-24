@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, Volume2 } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -23,7 +23,7 @@ const E2E_TEST_ENABLED = process.env.NEXT_PUBLIC_E2E_TEST === "true";
 const LOGO_ANIMATION_PLAYBACK_RATE = E2E_TEST_ENABLED ? 16 : 1;
 const MEDIA_STARTUP_TIMEOUT_MS = E2E_TEST_ENABLED ? 2_000 : 8_000;
 const PLAYBACK_TIMEOUT_BUFFER_MS = 1_500;
-const LOADING_BACKGROUND = "radial-gradient(circle at center, #f8f9f3 0%, #edf2ec 100%)";
+const LOADING_BACKGROUND = "#ffffff";
 
 export function WelcomeGateOverlay() {
   const [visible, setVisible] = useState(true);
@@ -31,13 +31,21 @@ export function WelcomeGateOverlay() {
   const [mediaReady, setMediaReady] = useState(false);
   const [mediaFailed, setMediaFailed] = useState(false);
   const [shouldLoadAnimation, setShouldLoadAnimation] = useState(false);
+  const [soundStartRequired, setSoundStartRequired] = useState(false);
   const finishedRef = useRef(false);
+  const autoplayAttemptedRef = useRef(false);
   const playbackTimeoutRef = useRef<number | null>(null);
   const startupTimeoutRef = useRef<number | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
 
   const beginExit = useCallback(() => {
     setPhase((current) => (current === "exiting" ? current : "exiting"));
+  }, []);
+
+  const clearStartupTimeout = useCallback(() => {
+    if (startupTimeoutRef.current === null) return;
+    window.clearTimeout(startupTimeoutRef.current);
+    startupTimeoutRef.current = null;
   }, []);
 
   const finish = useCallback(() => {
@@ -93,17 +101,31 @@ export function WelcomeGateOverlay() {
   };
 
   const handleVideoMetadata = (event: SyntheticEvent<HTMLVideoElement>) => {
-    event.currentTarget.defaultPlaybackRate = LOGO_ANIMATION_PLAYBACK_RATE;
-    event.currentTarget.playbackRate = LOGO_ANIMATION_PLAYBACK_RATE;
+    const video = event.currentTarget;
+    video.defaultPlaybackRate = LOGO_ANIMATION_PLAYBACK_RATE;
+    video.playbackRate = LOGO_ANIMATION_PLAYBACK_RATE;
+    video.muted = false;
+    video.volume = 1;
+  };
+
+  const handleVideoCanPlay = (event: SyntheticEvent<HTMLVideoElement>) => {
+    const video = event.currentTarget;
+    if (autoplayAttemptedRef.current || !video.paused) return;
+    autoplayAttemptedRef.current = true;
+    video.muted = false;
+    video.volume = 1;
+
+    void video.play().catch(() => {
+      clearStartupTimeout();
+      setSoundStartRequired(true);
+    });
   };
 
   const handleVideoPlaying = (event: SyntheticEvent<HTMLVideoElement>) => {
     const video = event.currentTarget;
     setMediaReady(true);
-    if (startupTimeoutRef.current !== null) {
-      window.clearTimeout(startupTimeoutRef.current);
-      startupTimeoutRef.current = null;
-    }
+    setSoundStartRequired(false);
+    clearStartupTimeout();
     if (playbackTimeoutRef.current !== null) window.clearTimeout(playbackTimeoutRef.current);
     const remainingSeconds = Number.isFinite(video.duration) && video.duration > 0
       ? Math.max(0, video.duration - video.currentTime) / Math.max(video.playbackRate, 0.1)
@@ -119,6 +141,23 @@ export function WelcomeGateOverlay() {
     beginExit();
   };
 
+  const handlePlayWithSound = async () => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    video.currentTime = 0;
+    video.muted = false;
+    video.volume = 1;
+    setSoundStartRequired(false);
+
+    try {
+      await video.play();
+    } catch {
+      setMediaFailed(true);
+      beginExit();
+    }
+  };
+
   const handleMediaError = () => {
     setMediaFailed(true);
     beginExit();
@@ -132,6 +171,7 @@ export function WelcomeGateOverlay() {
       data-phase={phase}
       data-media-ready={mediaReady ? "true" : "false"}
       data-media-failed={mediaFailed ? "true" : "false"}
+      data-sound-start-required={soundStartRequired ? "true" : "false"}
       role="dialog"
       aria-modal="true"
       aria-label="WESCOMM welcome animation"
@@ -163,6 +203,17 @@ export function WelcomeGateOverlay() {
           <ArrowRight className="size-4" aria-hidden="true" />
         </button>
       ) : null}
+      {soundStartRequired && phase !== "exiting" ? (
+        <button
+          type="button"
+          onClick={handlePlayWithSound}
+          className="absolute z-20 inline-flex min-h-12 items-center gap-2 rounded-full bg-[#08743f] px-6 py-3 text-base font-bold text-white shadow-[0_12px_32px_rgba(0,68,36,0.24)] transition hover:bg-[#075c32] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#08743f] focus-visible:ring-offset-4 focus-visible:ring-offset-white active:scale-[0.98]"
+          aria-label="Play welcome animation with sound"
+        >
+          <Volume2 className="size-5" aria-hidden="true" />
+          Play with sound
+        </button>
+      ) : null}
       {shouldLoadAnimation && !mediaReady ? (
         <Image
           src="/assets/wescomm-logo.png"
@@ -179,11 +230,11 @@ export function WelcomeGateOverlay() {
         className={`welcome-gate-video${mediaFailed ? " welcome-gate-video-failed" : ""}`}
         data-testid="welcome-logo-animation"
         autoPlay
-        muted
         playsInline
         preload={shouldLoadAnimation ? "auto" : "none"}
         src={shouldLoadAnimation ? WELCOME_INTRO_VIDEO_SRC : undefined}
         onLoadedMetadata={handleVideoMetadata}
+        onCanPlay={handleVideoCanPlay}
         onPlaying={handleVideoPlaying}
         onClick={handleSkip}
         onEnded={beginExit}
