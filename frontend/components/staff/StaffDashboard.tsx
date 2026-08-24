@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ArrowRight, ChevronDown, Megaphone, RefreshCw } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import { useRealtimeRefresh } from "@/components/realtime/RealtimeProvider";
@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import {
   getStaffDashboardSummaryFromApi,
+  isRequestAbortError,
   type BackendDashboardProduct,
   type BackendReservation,
   type BackendReservationStatus,
@@ -120,9 +121,16 @@ function useStaffDashboardData() {
   const [initialLoadComplete, setInitialLoadComplete] = useState(false);
   const [error, setError] = useState("");
   const [hasCredential, setHasCredential] = useState(false);
+  const requestSequenceRef = useRef(0);
+  const requestAbortRef = useRef<AbortController | null>(null);
 
   const loadDashboard = useCallback(async ({ background = false }: { background?: boolean } = {}) => {
     if (!ready) return;
+
+    const requestId = ++requestSequenceRef.current;
+    requestAbortRef.current?.abort();
+    const requestController = new AbortController();
+    requestAbortRef.current = requestController;
 
     const storedSession = getStoredStaffSession();
     const userCanUseStaffApi = user?.role === "STAFF" || user?.role === "ADMIN";
@@ -130,6 +138,7 @@ function useStaffDashboardData() {
     setHasCredential(Boolean(token));
 
     if (!token) {
+      requestController.abort();
       setLoading(false);
       if (!background) {
         setInitialLoadComplete(true);
@@ -144,13 +153,15 @@ function useStaffDashboardData() {
     }
 
     try {
-      setData(await getStaffDashboardSummaryFromApi(token));
+      const nextData = await getStaffDashboardSummaryFromApi(token, requestController.signal);
+      if (requestId !== requestSequenceRef.current) return;
+      setData(nextData);
     } catch (dashboardError) {
-      if (!background) {
+      if (requestId === requestSequenceRef.current && !background && !isRequestAbortError(dashboardError)) {
         setError(dashboardError instanceof Error ? dashboardError.message : "Unable to load staff dashboard.");
       }
     } finally {
-      if (!background) {
+      if (requestId === requestSequenceRef.current && !background) {
         setLoading(false);
         setInitialLoadComplete(true);
         markWelcomeContentReady(window.location.pathname);
@@ -164,6 +175,7 @@ function useStaffDashboardData() {
 
   useEffect(() => {
     void loadDashboard();
+    return () => requestAbortRef.current?.abort();
   }, [loadDashboard]);
 
   useEffect(() => {
@@ -173,7 +185,7 @@ function useStaffDashboardData() {
       if (document.visibilityState === "visible") void loadDashboard({ background: true });
     };
 
-    const interval = window.setInterval(refresh, 60000);
+    const interval = window.setInterval(refresh, 5 * 60_000);
     window.addEventListener("focus", refresh);
     window.addEventListener("online", refresh);
 

@@ -10,9 +10,8 @@ import {
   useState,
   type ReactNode
 } from "react";
-import { usePathname, useRouter } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { StudentAuthModal } from "@/components/auth/StudentAuthModal";
-import { WelcomeGateOverlay } from "@/components/auth/WelcomeGateOverlay";
 import {
   API_BASE_URL,
   AUTH_UNAUTHORIZED_EVENT,
@@ -31,12 +30,6 @@ import {
 } from "@/lib/password-login-policy.mjs";
 import { clearStaffSession, storeStaffSession } from "@/lib/staff-api";
 import { getSupabaseBrowserClient, hasSupabaseBrowserConfig } from "@/lib/supabase-browser";
-import {
-  getWelcomeContentReadyPath,
-  isWelcomeContentReady,
-  resetWelcomeContentReady,
-  WELCOME_CONTENT_READY_EVENT
-} from "@/lib/welcome-readiness";
 
 type AppRole = "STUDENT" | "STAFF" | "ADMIN";
 
@@ -88,10 +81,6 @@ const TEMPORARY_PRODUCTION_STAFF_LOGIN_ENABLED =
   process.env.NEXT_PUBLIC_ENABLE_TEMP_PRODUCTION_STAFF_LOGIN === "true";
 const TEMPORARY_PRODUCTION_STAFF_LOGIN_EXPIRES_AT =
   process.env.NEXT_PUBLIC_TEMP_PRODUCTION_STAFF_LOGIN_EXPIRES_AT;
-const E2E_TEST_ENABLED = process.env.NEXT_PUBLIC_E2E_TEST === "true";
-const WELCOME_GATE_MINIMUM_DURATION_MS = E2E_TEST_ENABLED ? 0 : 2200;
-const WELCOME_GATE_MAXIMUM_DURATION_MS = E2E_TEST_ENABLED ? 1000 : 7000;
-const READINESS_AWARE_DASHBOARD_PATHS = new Set(["/student/dashboard", "/staff", "/admin/dashboard"]);
 const ALLOWED_EMAIL_DOMAIN = process.env.NEXT_PUBLIC_AUTH_ALLOWED_EMAIL_DOMAIN ?? "wesleyan.edu.ph";
 const AUTH_SESSION_LOCK_NAME = "wescomm-auth-session";
 const StudentAuthContext = createContext<StudentAuthContextValue | null>(null);
@@ -225,22 +214,15 @@ function clearLegacyBrowserAuthTokens() {
 
 export function StudentAuthProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
-  const pathname = usePathname();
   const [user, setUser] = useState<StudentUser | null>(null);
   const [ready, setReady] = useState(false);
-  const [browserLoaded, setBrowserLoaded] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
-  const [welcomeGateUser, setWelcomeGateUser] = useState<StudentUser | "GUEST" | null>("GUEST");
-  const [welcomeGateTargetPath, setWelcomeGateTargetPath] = useState(pathname);
-  const [welcomeContentReady, setWelcomeContentReady] = useState(false);
   const [, refreshTemporaryLoginPolicy] = useState(0);
   const mountedRef = useRef(false);
   const profileCheckRef = useRef<Promise<ProfileCheckResult> | null>(null);
   const pendingLogoutRef = useRef<Promise<boolean> | null>(null);
   const pendingAuthReturnPathRef = useRef<string | null>(null);
   const sessionGenerationRef = useRef(0);
-  const welcomeTargetNeedsContentReady = READINESS_AWARE_DASHBOARD_PATHS.has(welcomeGateTargetPath);
-  const dismissWelcomeGate = useCallback(() => setWelcomeGateUser(null), []);
 
   useEffect(() => {
     if (!TEMPORARY_PRODUCTION_STAFF_LOGIN_ENABLED) return;
@@ -256,22 +238,7 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
     return () => window.clearTimeout(timer);
   }, []);
 
-  const showWelcomeGate = useCallback((gateUser: StudentUser | "GUEST", targetPath: string) => {
-    setWelcomeGateTargetPath(targetPath);
-    setWelcomeContentReady(
-      targetPath === window.location.pathname && isWelcomeContentReady(targetPath)
-    );
-    setWelcomeGateUser(gateUser);
-  }, []);
-
-  const showGuestWelcomeGate = useCallback((targetPath: string) => {
-    showWelcomeGate("GUEST", targetPath);
-  }, [showWelcomeGate]);
-
-  const persistSession = useCallback((
-    session: StudentUser,
-    options?: { showWelcomeGate?: boolean; welcomeGateTargetPath?: string }
-  ) => {
+  const persistSession = useCallback((session: StudentUser) => {
     window.sessionStorage.removeItem(LEGACY_DEV_SESSION_KEY);
     window.localStorage.removeItem(LEGACY_SESSION_KEY);
     if (session.role === "STAFF" || session.role === "ADMIN") {
@@ -280,10 +247,7 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
       clearStaffSession();
     }
     setUser(session);
-    if (options?.showWelcomeGate) {
-      showWelcomeGate(session, options.welcomeGateTargetPath ?? window.location.pathname);
-    }
-  }, [showWelcomeGate]);
+  }, []);
 
   const clearConfirmedSession = useCallback(() => {
     sessionGenerationRef.current += 1;
@@ -293,7 +257,6 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
     clearLegacyBrowserAuthTokens();
     clearStaffSession();
     setUser(null);
-    setWelcomeGateUser(null);
   }, []);
 
   const flushPendingLogout = useCallback((expectedGeneration = sessionGenerationRef.current) => {
@@ -420,46 +383,6 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
   }, [clearConfirmedSession, flushPendingLogout, user]);
 
   useEffect(() => {
-    if (!welcomeGateUser) return undefined;
-
-    const syncReadiness = () => {
-      const currentPath = window.location.pathname;
-      const targetIsCurrent = welcomeGateTargetPath === currentPath && welcomeGateTargetPath === pathname;
-      setWelcomeContentReady(
-        targetIsCurrent && isWelcomeContentReady(welcomeGateTargetPath)
-      );
-    };
-
-    const handleContentReady = (event: Event) => {
-      const readyPath = getWelcomeContentReadyPath(event);
-      if (
-        readyPath === welcomeGateTargetPath &&
-        readyPath === window.location.pathname &&
-        isWelcomeContentReady(readyPath)
-      ) {
-        setWelcomeContentReady(true);
-      }
-    };
-
-    syncReadiness();
-    window.addEventListener(WELCOME_CONTENT_READY_EVENT, handleContentReady);
-
-    return () => window.removeEventListener(WELCOME_CONTENT_READY_EVENT, handleContentReady);
-  }, [pathname, welcomeGateTargetPath, welcomeGateUser]);
-
-  useEffect(() => {
-    if (document.readyState === "complete") {
-      setBrowserLoaded(true);
-      return undefined;
-    }
-
-    const markBrowserLoaded = () => setBrowserLoaded(true);
-    window.addEventListener("load", markBrowserLoaded, { once: true });
-
-    return () => window.removeEventListener("load", markBrowserLoaded);
-  }, []);
-
-  useEffect(() => {
     let cancelled = false;
 
     const url = new URL(window.location.href);
@@ -480,7 +403,6 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
         const logoutGeneration = sessionGenerationRef.current;
         await flushPendingLogout(logoutGeneration);
         if (cancelled) return;
-        if (!shouldOpenLogin) showGuestWelcomeGate(window.location.pathname);
         setReady(true);
         return;
       }
@@ -488,11 +410,6 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
       const result = await revalidateProfileSession();
       if (cancelled) return;
 
-      if (result.status === "authenticated") {
-        showWelcomeGate(result.session, window.location.pathname);
-      } else if (result.status !== "stale" && !shouldOpenLogin) {
-        showGuestWelcomeGate(window.location.pathname);
-      }
       setReady(true);
     }
 
@@ -501,7 +418,7 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [clearConfirmedSession, flushPendingLogout, revalidateProfileSession, showGuestWelcomeGate, showWelcomeGate]);
+  }, [clearConfirmedSession, flushPendingLogout, revalidateProfileSession]);
 
   useEffect(() => {
     if (!ready) return;
@@ -517,7 +434,7 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
     const refreshVisibleSession = () => {
       if (document.visibilityState === "visible") void refreshSession();
     };
-    const sessionTimer = window.setInterval(refreshVisibleSession, 60_000);
+    const sessionTimer = window.setInterval(refreshVisibleSession, 5 * 60_000);
 
     window.addEventListener("online", refreshVisibleSession);
     window.addEventListener("focus", refreshVisibleSession);
@@ -551,13 +468,7 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
     const requestedReturnPath = session.role === "STUDENT" ? pendingAuthReturnPathRef.current : null;
     pendingAuthReturnPathRef.current = null;
     const targetPath = requestedReturnPath ?? getDashboardPath(session.role);
-    if (targetPath !== window.location.pathname) {
-      resetWelcomeContentReady(targetPath);
-    }
-    persistSession(session, {
-      showWelcomeGate: true,
-      welcomeGateTargetPath: targetPath
-    });
+    persistSession(session);
     setModalOpen(false);
     router.replace(targetPath);
     return true;
@@ -824,15 +735,6 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
 
   return (
     <StudentAuthContext.Provider value={value}>
-      {welcomeGateUser ? (
-        <WelcomeGateOverlay
-          user={welcomeGateUser}
-          readyToFinish={ready && browserLoaded && (!welcomeTargetNeedsContentReady || welcomeContentReady)}
-          minimumDurationMs={WELCOME_GATE_MINIMUM_DURATION_MS}
-          maximumDurationMs={WELCOME_GATE_MAXIMUM_DURATION_MS}
-          onFinish={dismissWelcomeGate}
-        />
-      ) : null}
       {children}
       <StudentAuthModal open={modalOpen} onClose={closeAuth} />
     </StudentAuthContext.Provider>

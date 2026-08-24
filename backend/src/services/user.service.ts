@@ -34,8 +34,8 @@ function mapUser(row: {
   department: string | null;
   role: PrismaAppRole;
   avatarUrl: string | null;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt: Date | string;
+  updatedAt: Date | string;
 }) {
   return {
     id: row.id,
@@ -46,8 +46,8 @@ function mapUser(row: {
     department: row.department,
     role: row.role,
     avatarUrl: row.avatarUrl,
-    createdAt: row.createdAt.toISOString(),
-    updatedAt: row.updatedAt.toISOString()
+    createdAt: typeof row.createdAt === "string" ? row.createdAt : row.createdAt.toISOString(),
+    updatedAt: typeof row.updatedAt === "string" ? row.updatedAt : row.updatedAt.toISOString()
   };
 }
 
@@ -59,48 +59,70 @@ export async function listUsers(options: {
 } = {}) {
   const limit = normalizePageLimit(options.limit);
   const cursorId = decodeCursor(options.cursor);
-  const where: Prisma.ProfileWhereInput = {};
-  if (options.role) where.role = options.role as PrismaAppRole;
-  if (options.query?.trim()) {
-    const query = options.query.trim();
-    where.OR = [
-      { fullName: { contains: query, mode: "insensitive" } },
-      { email: { contains: query, mode: "insensitive" } },
-      { studentNumber: { contains: query, mode: "insensitive" } },
-      { department: { contains: query, mode: "insensitive" } }
-    ];
+  const conditions: Prisma.Sql[] = [];
+  if (options.role) {
+    conditions.push(Prisma.sql`profile.role = CAST(${options.role} AS "app_role")`);
   }
+  if (options.query?.trim()) {
+    const pattern = `%${options.query.trim()}%`;
+    conditions.push(Prisma.sql`(
+      profile.full_name ILIKE ${pattern}
+      OR profile.email ILIKE ${pattern}
+      OR profile.student_number ILIKE ${pattern}
+      OR profile.department ILIKE ${pattern}
+    )`);
+  }
+  if (cursorId) {
+    conditions.push(Prisma.sql`(profile.created_at, profile.id) < (
+      SELECT cursor_profile.created_at, cursor_profile.id
+      FROM profiles cursor_profile
+      WHERE cursor_profile.id = CAST(${cursorId} AS uuid)
+    )`);
+  }
+  const whereSql = conditions.length
+    ? Prisma.sql`WHERE ${Prisma.join(conditions, " AND ")}`
+    : Prisma.empty;
 
-  const [users, roleGroups] = await withTransientPrismaReadRetry(() => prisma.$transaction([
-    prisma.profile.findMany({
-      where,
-      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-      ...(cursorId ? { cursor: { id: cursorId }, skip: 1 } : {}),
-      take: limit + 1,
-      select: {
-        id: true,
-        fullName: true,
-        email: true,
-        studentNumber: true,
-        phone: true,
-        department: true,
-        role: true,
-        avatarUrl: true,
-        createdAt: true,
-        updatedAt: true
-      }
-    }),
-    prisma.profile.groupBy({ by: ["role"], _count: { _all: true } })
-  ]));
-
-  const roleCounts = Object.fromEntries(roleGroups.map((group) => [group.role, group._count._all]));
+  type UserPayloadRow = {
+    users: Array<Parameters<typeof mapUser>[0]>;
+    roleCounts: { students: number; staff: number; admins: number };
+  };
+  const payloadRows = await withTransientPrismaReadRetry(() => prisma.$queryRaw<UserPayloadRow[]>`
+    SELECT
+      jsonb_build_object(
+        'students', COUNT(*) FILTER (WHERE role = 'STUDENT')::integer,
+        'staff', COUNT(*) FILTER (WHERE role = 'STAFF')::integer,
+        'admins', COUNT(*) FILTER (WHERE role = 'ADMIN')::integer
+      ) AS "roleCounts",
+      COALESCE((
+        SELECT jsonb_agg(to_jsonb(user_row))
+        FROM (
+          SELECT
+            profile.id,
+            profile.full_name AS "fullName",
+            profile.email,
+            profile.student_number AS "studentNumber",
+            profile.phone,
+            profile.department,
+            profile.role::text AS role,
+            profile.avatar_url AS "avatarUrl",
+            profile.created_at AS "createdAt",
+            profile.updated_at AS "updatedAt"
+          FROM profiles profile
+          ${whereSql}
+          ORDER BY profile.created_at DESC, profile.id DESC
+          LIMIT ${limit + 1}
+        ) user_row
+      ), '[]'::jsonb) AS users
+    FROM profiles
+  `);
+  const payload = payloadRows[0] ?? {
+    users: [],
+    roleCounts: { students: 0, staff: 0, admins: 0 }
+  };
   return {
-    ...createPage(users.map(mapUser), limit),
-    roleCounts: {
-      students: roleCounts.STUDENT ?? 0,
-      staff: roleCounts.STAFF ?? 0,
-      admins: roleCounts.ADMIN ?? 0
-    }
+    ...createPage(payload.users.map(mapUser), limit),
+    roleCounts: payload.roleCounts
   };
 }
 

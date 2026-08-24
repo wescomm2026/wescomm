@@ -98,7 +98,7 @@ export function StudentRestrictionProvider({ children }: { children: ReactNode }
     };
     const refreshOnFocus = () => void refresh();
     const refreshFromEvent = () => void refresh();
-    const timer = window.setInterval(refreshWhenVisible, 60_000);
+    const timer = window.setInterval(refreshWhenVisible, 5 * 60_000);
 
     window.addEventListener("focus", refreshOnFocus);
     window.addEventListener("wescomm:restriction-refresh", refreshFromEvent);

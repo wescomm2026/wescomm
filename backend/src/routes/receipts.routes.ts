@@ -8,6 +8,7 @@ import { asyncHandler } from "../utils/async-handler.js";
 import { HttpError } from "../utils/http-error.js";
 import { measureRequestPhase } from "../middleware/request-timing.js";
 import { scheduleOutboxProcessing } from "../services/outbox.service.js";
+import { invalidateDashboardAndReportCaches } from "../services/operational-cache.service.js";
 
 export const receiptsRoutes = Router();
 
@@ -102,6 +103,7 @@ receiptsRoutes.post(
       ...input,
       issuedById: request.auth!.id
     });
+    await invalidateDashboardAndReportCaches();
     response.status(201).json({ receipt });
   })
 );
@@ -113,6 +115,7 @@ receiptsRoutes.patch(
   receiptWriteLimiter,
   asyncHandler(async (request: AuthenticatedRequest, response) => {
     const receipt = await markReceiptVerified(receiptIdSchema.parse(request.params.id), request.auth!.id);
+    await invalidateDashboardAndReportCaches();
     scheduleOutboxProcessing();
     response.json({ receipt });
   })
@@ -126,6 +129,7 @@ receiptsRoutes.patch(
   asyncHandler(async (request: AuthenticatedRequest, response) => {
     const input = voidReceiptSchema.parse(request.body);
     const receipt = await voidReceipt(receiptIdSchema.parse(request.params.id), request.auth!.id, input.reason);
+    await invalidateDashboardAndReportCaches();
     scheduleOutboxProcessing();
     response.json({ receipt });
   })

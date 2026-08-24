@@ -15,7 +15,7 @@ type RawNotification = {
   created_at: string;
 };
 
-type NotificationInput = {
+export type NotificationInput = {
   userId: string;
   title: string;
   message: string;
@@ -86,6 +86,29 @@ export async function createNotification(input: NotificationInput) {
   }]);
   dispatchPushNotifications([notification]);
   return notification;
+}
+
+export async function createNotificationBestEffort(input: NotificationInput) {
+  try {
+    return await createNotification(input);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown notification error.";
+    console.warn(`Unable to create notification: ${message}`);
+    return null;
+  }
+}
+
+export async function createNotificationsForRolesBestEffort(
+  roles: AppRole[],
+  input: Omit<NotificationInput, "userId">
+) {
+  try {
+    return await createNotificationsForRoles(roles, input);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown role notification error.";
+    console.warn(`Unable to create role notifications: ${message}`);
+    return [];
+  }
 }
 
 export async function createNotificationsForRoles(

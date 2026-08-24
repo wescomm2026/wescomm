@@ -238,12 +238,45 @@ previous backend remains compatible throughout the release:
 5. Set `WESBOT_ENABLED=true` and redeploy. This enables deterministic,
    database-grounded replies without any model or Gateway cost.
 
-Optional AI wording polish is a separate release toggle. Enable Vercel AI
-Gateway/OIDC (or configure `AI_GATEWAY_API_KEY` server-side), keep
-`WESBOT_MODEL` in `provider/model` form, and only then set
-`WESBOT_AI_ENABLED=true`. Never expose the Gateway credential to the frontend.
-If the model, Gateway, or factual validation fails, WesBot automatically sends
-the deterministic database answer.
+WesBot v2 semantic routing and wording polish are separate release toggles.
+The reviewed v2 dataset is versioned under `datasets/wesbot/v2`; validate and
+import it with:
+
+```powershell
+npm run wesbot:dataset:validate
+npm run wesbot:import:dry-run
+npm run wesbot:import:apply
+npm run wesbot:import:verify
+npm run wesbot:grounding:verify
+```
+
+FAQ imports are unpublished drafts. The importer deactivates only its exact,
+reviewed junk product targets and unpublishes only its exact junk FAQ targets;
+it never hard-deletes those records.
+
+Keep `WESBOT_SEMANTIC_MODE=off` and `WESBOT_AI_REWRITE_ENABLED=false` for the
+fast deterministic/database-grounded path. To evaluate semantic routing,
+enable Vercel AI Gateway/OIDC (or configure `AI_GATEWAY_API_KEY` server-side),
+keep `WESBOT_MODEL` in `provider/model` form, and run
+`npm run wesbot:eval:semantic`. The evaluator is hard-capped at 300 calls and
+uses only the versioned dataset. Use `shadow` in Preview first; promote to
+`active` only after the holdout, context, clarification, and latency gates pass.
+`WESBOT_AI_REWRITE_ENABLED` should remain false when semantic routing is active
+so an ambiguous message needs at most one model call. Never expose a Gateway
+credential to the frontend. If the classifier, Gateway, or grounding lookup
+fails, WesBot returns a safe clarification/fallback instead of inventing facts.
+
+For a local evaluation without writing a Gateway credential to disk, run this
+from the repository root after linking the project with Vercel:
+
+```powershell
+npx vercel env run -e development -- npm --prefix backend run wesbot:eval:semantic
+```
+
+This injects a short-lived Development OIDC token into the evaluator process.
+The evaluator performs one Gateway preflight first and stops immediately with a
+sanitized diagnostic if authentication, billing, or model access is unavailable;
+only a successful preflight proceeds through the full 81 dataset-only cases.
 
 Never mark `20260718000000_enforce_single_active_restriction` as applied unless
 its SQL was executed manually and its exact partial unique index was verified.

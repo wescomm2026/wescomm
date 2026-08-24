@@ -14,7 +14,7 @@ const supabaseUrl = "https://project.supabase.co";
 test("serverless runtime URLs add conservative Prisma pool defaults", () => {
   const parsed = new URL(buildRuntimeDatabaseUrl(transactionUrl, true));
 
-  assert.equal(parsed.searchParams.get("connection_limit"), "1");
+  assert.equal(parsed.searchParams.get("connection_limit"), "5");
   assert.equal(parsed.searchParams.get("pool_timeout"), "10");
   assert.equal(parsed.searchParams.get("connect_timeout"), "10");
   assert.equal(parsed.searchParams.get("pgbouncer"), "true");

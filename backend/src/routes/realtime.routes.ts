@@ -7,7 +7,7 @@ import {
 } from "../services/realtime-event.service.js";
 import { asyncHandler } from "../utils/async-handler.js";
 
-const STREAM_LIFETIME_MS = 50_000;
+const STREAM_LIFETIME_MS = 240_000;
 const HEARTBEAT_INTERVAL_MS = 15_000;
 const MAX_EVENT_ID = 9_223_372_036_854_775_807n;
 const cursorSchema = z.string().regex(/^\d{1,19}$/).refine((value) => BigInt(value) <= MAX_EVENT_ID).optional();

@@ -19,6 +19,7 @@ import {
 import { CONVERSATION_STATUSES } from "../types/app.js";
 import { asyncHandler } from "../utils/async-handler.js";
 import { measureRequestPhase } from "../middleware/request-timing.js";
+import { invalidateDashboardAndReportCaches } from "../services/operational-cache.service.js";
 
 export const messagesRoutes = Router();
 
@@ -113,6 +114,7 @@ messagesRoutes.post(
       subject: input.subject,
       message: input.message
     }));
+    await invalidateDashboardAndReportCaches();
     response.status(201).json(result);
   })
 );
@@ -128,6 +130,7 @@ messagesRoutes.patch(
       status: input.status,
       performedById: request.auth!.id
     }));
+    await invalidateDashboardAndReportCaches();
     response.json({ conversation });
   })
 );

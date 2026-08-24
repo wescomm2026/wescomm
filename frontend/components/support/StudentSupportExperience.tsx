@@ -138,6 +138,7 @@ export function StudentSupportExperience() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [botReplyPending, setBotReplyPending] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
   const messagesLogRef = useRef<HTMLDivElement | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
@@ -190,6 +191,16 @@ export function StudentSupportExperience() {
       if (!background) setLoading(false);
     }
   }, [user?.accessToken, user?.id, user?.role]);
+
+  const refreshConversations = useCallback(async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      await loadConversations({ background: true });
+    } finally {
+      setRefreshing(false);
+    }
+  }, [loadConversations, refreshing]);
 
   const loadThreadMessages = useCallback(async (conversationId: string, after?: string) => {
     if (!user?.accessToken) return;
@@ -275,7 +286,7 @@ export function StudentSupportExperience() {
       if (document.visibilityState === "visible") void loadConversations({ background: true });
     };
 
-    const interval = window.setInterval(refreshInBackground, 60000);
+    const interval = window.setInterval(refreshInBackground, 5 * 60_000);
     window.addEventListener("focus", refreshInBackground);
     document.addEventListener("visibilitychange", refreshInBackground);
 
@@ -303,7 +314,7 @@ export function StudentSupportExperience() {
         void loadThreadMessages(conversationId, latestMessageAtRef.current || undefined);
       }
     };
-    const interval = window.setInterval(refreshThread, 60000);
+    const interval = window.setInterval(refreshThread, 5 * 60_000);
     window.addEventListener("focus", refreshThread);
     window.addEventListener("online", refreshThread);
     return () => {
@@ -557,10 +568,6 @@ export function StudentSupportExperience() {
           <p className="mt-2 text-sm text-[#68746d]">Ask WesBot first, then switch to a real staff member in the same conversation anytime.</p>
         </div>
         <div className="flex gap-2">
-          <Button variant="secondary" onClick={() => void loadConversations({ background: true })} disabled={submitting} aria-label="Refresh conversations">
-            <RefreshCw className="size-4" />
-            Refresh
-          </Button>
           <Button onClick={startNewChat} disabled={submitting}>
             <Plus className="size-5" />
             New chat
@@ -668,13 +675,13 @@ export function StudentSupportExperience() {
             ) : null}
             <button
               type="button"
-              onClick={() => void loadConversations({ background: true })}
-              disabled={submitting}
+              onClick={() => void refreshConversations()}
+              disabled={submitting || refreshing}
               aria-label="Refresh conversations"
               title="Refresh"
               className="grid size-10 shrink-0 place-items-center rounded-full text-[#5d6962] transition hover:bg-[#f0f5f1] hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
             >
-              <RefreshCw className="size-[18px]" />
+              <RefreshCw className={`size-[18px] ${refreshing ? "animate-spin" : ""}`} />
             </button>
             <button
               type="button"
@@ -815,7 +822,7 @@ export function StudentSupportExperience() {
                 <button
                   type="button"
                   onClick={() => void requestStaff()}
-                  disabled={submitting || botReplyPending}
+                  disabled={submitting}
                   aria-label="Talk to a real staff member"
                   className="inline-flex min-h-8 shrink-0 items-center gap-1.5 rounded-full border border-[#bcd5bf] bg-white px-3 font-extrabold text-primary transition hover:bg-[#e7f2e8] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-50"
                 >

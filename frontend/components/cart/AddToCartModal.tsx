@@ -8,9 +8,12 @@ import type { CartProduct } from "@/components/cart/StudentCartProvider";
 import { AssetIcon } from "@/components/ui/AssetIcon";
 import { Button } from "@/components/ui/button";
 import {
+  hasCompleteProductSelections,
   isProductUnavailable,
   isUniformClothOnly,
+  productOptionValueStock,
   productPurchaseLimit,
+  selectedProductAvailability,
   UNIFORM_CLOTH_NOTICE
 } from "@/lib/product-display";
 
@@ -20,10 +23,6 @@ function parsePrice(price: string) {
 
 function formatPrice(value: number) {
   return `PHP ${value.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
-
-function defaultSelections(product: CartProduct) {
-  return Object.fromEntries(product.options.map((option) => [option.name, option.values[0] ?? ""]));
 }
 
 export function AddToCartModal({
@@ -47,7 +46,7 @@ export function AddToCartModal({
 
   useEffect(() => {
     if (!product) return;
-    setSelectedOptions(defaultSelections(product));
+    setSelectedOptions({});
     setQuantity(1);
 
     const previousBodyOverflow = document.body.style.overflow;
@@ -63,10 +62,17 @@ export function AddToCartModal({
     };
   }, [product, onClose]);
 
-  const limit = product ? productPurchaseLimit(product) : 0;
-  const unavailable = product ? isProductUnavailable(product) : true;
+  const selectionsComplete = product ? hasCompleteProductSelections(product, selectedOptions) : false;
+  const stockUnavailable = product ? isProductUnavailable(product) : true;
+  const limit = product ? productPurchaseLimit(product, 10, selectedOptions) : 0;
+  const selectedAvailability = product ? selectedProductAvailability(product, selectedOptions) : 0;
+  const unavailable = stockUnavailable || !selectionsComplete || limit === 0;
   const total = useMemo(() => (product ? parsePrice(product.price) * quantity : 0), [product, quantity]);
   const clothOnly = product ? isUniformClothOnly(product) : false;
+
+  useEffect(() => {
+    if (limit > 0) setQuantity((current) => Math.min(current, limit));
+  }, [limit]);
 
   if (!mounted || !product) return null;
 
@@ -155,20 +161,32 @@ export function AddToCartModal({
                 <fieldset key={option.name}>
                   <legend className="text-sm font-extrabold text-[#253029]">{option.name}</legend>
                   <div className="mt-2 flex flex-wrap gap-2">
-                    {option.values.map((value) => (
-                      <button
-                        key={value}
-                        type="button"
-                        onClick={() => setSelectedOptions((current) => ({ ...current, [option.name]: value }))}
-                        className={`min-h-10 rounded-md border px-4 text-sm font-semibold transition ${
-                          selectedOptions[option.name] === value
-                            ? "border-primary bg-[#e8f4e8] text-primary ring-1 ring-primary"
-                            : "border-[#d5ded6] bg-white text-[#39443d] hover:border-[#a9bfab]"
-                        }`}
-                      >
-                        {value}
-                      </button>
-                    ))}
+                    {option.values.map((value) => {
+                      const valueStock = productOptionValueStock(product, option.name, value, selectedOptions);
+                      const valueUnavailable = valueStock === 0;
+                      return (
+                        <button
+                          key={value}
+                          type="button"
+                          disabled={valueUnavailable}
+                          onClick={() => setSelectedOptions((current) => {
+                            if (current[option.name] === value) {
+                              const next = { ...current };
+                              delete next[option.name];
+                              return next;
+                            }
+                            return { ...current, [option.name]: value };
+                          })}
+                          className={`min-h-10 rounded-md border px-4 text-sm font-semibold transition disabled:cursor-not-allowed disabled:border-[#e1e5e2] disabled:bg-[#f3f4f3] disabled:text-[#9aa29d] ${
+                            selectedOptions[option.name] === value
+                              ? "border-primary bg-[#e8f4e8] text-primary ring-1 ring-primary"
+                              : "border-[#d5ded6] bg-white text-[#39443d] hover:border-[#a9bfab]"
+                          }`}
+                        >
+                          {value}{valueUnavailable ? " — Out of stock" : valueStock !== null ? ` (${valueStock} available)` : ""}
+                        </button>
+                      );
+                    })}
                   </div>
                 </fieldset>
               ))}
@@ -179,7 +197,11 @@ export function AddToCartModal({
             <div>
               <p className="text-sm font-extrabold text-[#253029]">Quantity</p>
               <p className="text-xs text-[#6d7771]">
-                {unavailable ? "This item is currently unavailable" : `Maximum ${limit} per item option`}
+                {stockUnavailable
+                  ? "This item is currently unavailable"
+                  : !selectionsComplete
+                    ? "Choose the required option before setting quantity"
+                    : `${selectedAvailability} available · ${Math.max(0, selectedAvailability - quantity)} remaining after adding`}
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -219,7 +241,7 @@ export function AddToCartModal({
             }}
           >
             <AssetIcon src="/assets/cart.svg" className="size-6" />
-            {unavailable ? "Out of Stock" : "Add to Cart"}
+            {stockUnavailable ? "Out of Stock" : !selectionsComplete ? "Select Options" : "Add to Cart"}
           </Button>
         </footer>
       </section>

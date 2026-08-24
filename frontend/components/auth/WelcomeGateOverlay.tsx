@@ -10,49 +10,30 @@ import {
   type AnimationEvent,
   type SyntheticEvent
 } from "react";
+import {
+  WELCOME_INTRO_DOCUMENT_ATTRIBUTE,
+  WELCOME_INTRO_VIDEO_SRC
+} from "@/lib/welcome-intro";
 
-type WelcomeGateUser = {
-  role: "STUDENT" | "STAFF" | "ADMIN";
-  fullName?: string;
-};
-
-type WelcomeGateMode = WelcomeGateUser | "GUEST";
 type WelcomeGatePhase = "entering" | "holding" | "exiting";
 
 const ENTER_FALLBACK_MS = 250;
 const EXIT_FALLBACK_MS = 450;
 const E2E_TEST_ENABLED = process.env.NEXT_PUBLIC_E2E_TEST === "true";
 const LOGO_ANIMATION_PLAYBACK_RATE = E2E_TEST_ENABLED ? 16 : 1;
-const LOGO_VISIBLE_END_BUFFER_SECONDS = 0.8;
+const MEDIA_STARTUP_TIMEOUT_MS = E2E_TEST_ENABLED ? 2_000 : 8_000;
+const PLAYBACK_TIMEOUT_BUFFER_MS = 1_500;
 const LOADING_BACKGROUND = "radial-gradient(circle at center, #f8f9f3 0%, #edf2ec 100%)";
 
-function getLoadingLabel(user: WelcomeGateMode) {
-  if (user === "GUEST") return "Loading WESCOMM";
-  if (user.role === "ADMIN") return "Loading the WESCOMM admin portal";
-  if (user.role === "STAFF") return "Loading the WESCOMM staff portal";
-  return "Loading the WESCOMM student portal";
-}
-
-export function WelcomeGateOverlay({
-  user,
-  onFinish,
-  readyToFinish = true,
-  minimumDurationMs = 2200,
-  maximumDurationMs = 7000
-}: {
-  user: WelcomeGateMode;
-  onFinish: () => void;
-  readyToFinish?: boolean;
-  minimumDurationMs?: number;
-  maximumDurationMs?: number;
-}) {
+export function WelcomeGateOverlay() {
+  const [visible, setVisible] = useState(true);
   const [phase, setPhase] = useState<WelcomeGatePhase>("entering");
-  const [minimumElapsed, setMinimumElapsed] = useState(minimumDurationMs <= 0);
-  const [animationComplete, setAnimationComplete] = useState(false);
+  const [mediaReady, setMediaReady] = useState(false);
   const [mediaFailed, setMediaFailed] = useState(false);
   const [shouldLoadAnimation, setShouldLoadAnimation] = useState(false);
-  const animationCompleteRef = useRef(false);
   const finishedRef = useRef(false);
+  const playbackTimeoutRef = useRef<number | null>(null);
+  const startupTimeoutRef = useRef<number | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
 
   const beginExit = useCallback(() => {
@@ -62,48 +43,36 @@ export function WelcomeGateOverlay({
   const finish = useCallback(() => {
     if (finishedRef.current) return;
     finishedRef.current = true;
-    onFinish();
-  }, [onFinish]);
-
-  const holdLastVisibleFrame = useCallback((video?: HTMLVideoElement | null) => {
-    if (animationCompleteRef.current) return;
-    animationCompleteRef.current = true;
-
-    if (video && Number.isFinite(video.duration) && video.duration > 0) {
-      const lastVisibleTime = Math.max(0, video.duration - LOGO_VISIBLE_END_BUFFER_SECONDS);
-      video.pause();
-      if (video.currentTime > lastVisibleTime) video.currentTime = lastVisibleTime;
-    }
-
-    setAnimationComplete(true);
+    document.documentElement.setAttribute(WELCOME_INTRO_DOCUMENT_ATTRIBUTE, "seen");
+    setVisible(false);
   }, []);
 
   useEffect(() => {
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    if (document.documentElement.getAttribute(WELCOME_INTRO_DOCUMENT_ATTRIBUTE) !== "pending") {
       finish();
       return;
     }
 
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
     setShouldLoadAnimation(true);
-  }, [finish]);
+    startupTimeoutRef.current = window.setTimeout(() => {
+      setMediaFailed(true);
+      beginExit();
+    }, MEDIA_STARTUP_TIMEOUT_MS);
 
-  useEffect(() => {
-    if (minimumDurationMs <= 0) return undefined;
-    const timeout = window.setTimeout(() => setMinimumElapsed(true), minimumDurationMs);
-    return () => window.clearTimeout(timeout);
-  }, [minimumDurationMs]);
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") beginExit();
+    };
+    window.addEventListener("keydown", handleKeyDown);
 
-  useEffect(() => {
-    if (minimumElapsed && readyToFinish && animationComplete) beginExit();
-  }, [animationComplete, beginExit, minimumElapsed, readyToFinish]);
-
-  useEffect(() => {
-    const timeout = window.setTimeout(
-      () => holdLastVisibleFrame(videoRef.current),
-      Math.max(0, maximumDurationMs)
-    );
-    return () => window.clearTimeout(timeout);
-  }, [holdLastVisibleFrame, maximumDurationMs]);
+    return () => {
+      document.body.style.overflow = originalOverflow;
+      window.removeEventListener("keydown", handleKeyDown);
+      if (startupTimeoutRef.current !== null) window.clearTimeout(startupTimeoutRef.current);
+      if (playbackTimeoutRef.current !== null) window.clearTimeout(playbackTimeoutRef.current);
+    };
+  }, [beginExit, finish]);
 
   useEffect(() => {
     const fallbackMs = phase === "entering" ? ENTER_FALLBACK_MS : phase === "exiting" ? EXIT_FALLBACK_MS : null;
@@ -128,11 +97,21 @@ export function WelcomeGateOverlay({
     event.currentTarget.playbackRate = LOGO_ANIMATION_PLAYBACK_RATE;
   };
 
-  const handleVideoTimeUpdate = (event: SyntheticEvent<HTMLVideoElement>) => {
+  const handleVideoPlaying = (event: SyntheticEvent<HTMLVideoElement>) => {
     const video = event.currentTarget;
-    if (!Number.isFinite(video.duration) || video.duration <= 0) return;
-    if (video.duration - video.currentTime > LOGO_VISIBLE_END_BUFFER_SECONDS) return;
-    holdLastVisibleFrame(video);
+    setMediaReady(true);
+    if (startupTimeoutRef.current !== null) {
+      window.clearTimeout(startupTimeoutRef.current);
+      startupTimeoutRef.current = null;
+    }
+    if (playbackTimeoutRef.current !== null) window.clearTimeout(playbackTimeoutRef.current);
+    const remainingSeconds = Number.isFinite(video.duration) && video.duration > 0
+      ? Math.max(0, video.duration - video.currentTime) / Math.max(video.playbackRate, 0.1)
+      : 10;
+    playbackTimeoutRef.current = window.setTimeout(
+      beginExit,
+      Math.ceil(remainingSeconds * 1_000) + PLAYBACK_TIMEOUT_BUFFER_MS
+    );
   };
 
   const handleSkip = () => {
@@ -140,11 +119,19 @@ export function WelcomeGateOverlay({
     beginExit();
   };
 
+  const handleMediaError = () => {
+    setMediaFailed(true);
+    beginExit();
+  };
+
+  if (!visible) return null;
+
   return (
     <div
       className="welcome-gate-overlay fixed inset-0 z-[12000] grid place-items-center overflow-hidden"
       data-phase={phase}
-      data-animation-complete={animationComplete ? "true" : "false"}
+      data-media-ready={mediaReady ? "true" : "false"}
+      data-media-failed={mediaFailed ? "true" : "false"}
       role="dialog"
       aria-modal="true"
       aria-label="WESCOMM welcome animation"
@@ -176,6 +163,17 @@ export function WelcomeGateOverlay({
           <ArrowRight className="size-4" aria-hidden="true" />
         </button>
       ) : null}
+      {shouldLoadAnimation && !mediaReady ? (
+        <Image
+          src="/assets/wescomm-logo.png"
+          alt=""
+          width={1600}
+          height={900}
+          className="welcome-gate-fallback-logo"
+          aria-hidden="true"
+          priority
+        />
+      ) : null}
       <video
         ref={videoRef}
         className={`welcome-gate-video${mediaFailed ? " welcome-gate-video-failed" : ""}`}
@@ -184,15 +182,12 @@ export function WelcomeGateOverlay({
         muted
         playsInline
         preload={shouldLoadAnimation ? "auto" : "none"}
-        src={shouldLoadAnimation ? "/assets/wescomm-logo-intro.mp4" : undefined}
+        src={shouldLoadAnimation ? WELCOME_INTRO_VIDEO_SRC : undefined}
         onLoadedMetadata={handleVideoMetadata}
-         onTimeUpdate={handleVideoTimeUpdate}
-         onClick={handleSkip}
-        onEnded={(event) => holdLastVisibleFrame(event.currentTarget)}
-        onError={() => {
-          setMediaFailed(true);
-          holdLastVisibleFrame();
-        }}
+        onPlaying={handleVideoPlaying}
+        onClick={handleSkip}
+        onEnded={beginExit}
+        onError={handleMediaError}
         style={{
           width: "100%",
           height: "100%",
@@ -202,18 +197,8 @@ export function WelcomeGateOverlay({
         }}
         aria-hidden="true"
       />
-      {mediaFailed ? (
-        <Image
-          src="/assets/wescomm-logo.png"
-          alt=""
-          width={1600}
-          height={900}
-          className="welcome-gate-fallback-logo"
-          aria-hidden="true"
-        />
-      ) : null}
       <span className="sr-only" role="status" aria-live="polite">
-        {getLoadingLabel(user)}
+        Opening WESCOMM
       </span>
     </div>
   );

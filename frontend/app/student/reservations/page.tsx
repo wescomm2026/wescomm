@@ -1,5 +1,5 @@
-import { ReservationsPage } from "@/components/ui/ModulePages";
+import { StudentReservationsExperience } from "@/components/reservations/StudentReservationsExperience";
 
 export default function Page() {
-  return <ReservationsPage />;
+  return <StudentReservationsExperience />;
 }

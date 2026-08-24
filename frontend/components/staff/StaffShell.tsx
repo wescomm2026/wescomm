@@ -9,6 +9,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import { useRealtimeRefresh } from "@/components/realtime/RealtimeProvider";
 import { AssetIcon } from "@/components/ui/AssetIcon";
+import { useAccessibleDialog } from "@/components/ui/useAccessibleDialog";
 import {
   getNotificationsFromApi,
   getUnreadNotificationCountFromApi,
@@ -95,14 +96,7 @@ function StaffMobileMenu({
   open: boolean;
   onClose: () => void;
 }) {
-  useEffect(() => {
-    if (!open) return;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = previousOverflow;
-    };
-  }, [open]);
+  const dialog = useAccessibleDialog<HTMLElement>(open, onClose);
 
   if (!open) return null;
 
@@ -110,16 +104,16 @@ function StaffMobileMenu({
     <div className="fixed inset-0 z-[10000] bg-[#101820]/45 lg:hidden" onMouseDown={(event) => {
       if (event.target === event.currentTarget) onClose();
     }}>
-      <aside className="flex h-[100svh] w-[min(88vw,360px)] flex-col bg-white shadow-[20px_0_60px_rgba(0,0,0,0.2)]">
+      <aside ref={dialog.dialogRef} {...dialog.dialogProps} className="flex h-[100svh] w-[min(88vw,360px)] flex-col bg-white shadow-[20px_0_60px_rgba(0,0,0,0.2)]">
         <div className="flex h-20 shrink-0 items-center border-b border-[#e5ebe6] px-5">
           <Image src="/assets/wescomm-logo.png" alt="WESCOMM" width={145} height={58} className="h-12 w-auto object-contain" />
-          <button type="button" onClick={onClose} aria-label="Close staff menu" className="ml-auto grid size-10 place-items-center rounded-md hover:bg-[#eef6ee]">
+          <button type="button" data-dialog-autofocus onClick={onClose} aria-label="Close staff menu" className="ml-auto grid size-10 place-items-center rounded-md hover:bg-[#eef6ee]">
             <X className="size-6" />
           </button>
         </div>
         <div className="border-b border-[#edf1ed] px-5 py-4">
           <p className="text-xs font-bold uppercase text-primary">{portalLabel}</p>
-          <p className="mt-1 font-extrabold text-[#17211b]">{portalTitle}</p>
+          <p id={dialog.titleId} className="mt-1 font-extrabold text-[#17211b]">{portalTitle}</p>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto p-4">
           <StaffNavigation items={items} homeHref={homeHref} onNavigate={onClose} />
@@ -301,7 +295,7 @@ export function StaffShell({
     const refreshWhenActive = () => {
       if (document.visibilityState === "visible") void loadUnreadCount();
     };
-    const timer = window.setInterval(refreshWhenActive, 60000);
+    const timer = window.setInterval(refreshWhenActive, 5 * 60_000);
     window.addEventListener("focus", refreshWhenActive);
     window.addEventListener("online", refreshWhenActive);
     return () => {

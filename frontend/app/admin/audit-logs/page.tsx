@@ -1,4 +1,4 @@
-import { AdminAuditLogsExperience } from "@/components/admin/AdminExperiences";
+import { AdminAuditLogsExperience } from "@/components/admin/AdminAuditLogsExperience";
 
 export default function Page() {
   return <AdminAuditLogsExperience />;

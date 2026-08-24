@@ -1,22 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Cell,
-  LabelList,
-  Line,
-  LineChart,
-  Pie,
-  PieChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis
-} from "recharts";
+import dynamic from "next/dynamic";
 import { ArrowRight, ChevronDown, Download, RefreshCw } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import { useRealtimeRefresh } from "@/components/realtime/RealtimeProvider";
@@ -24,7 +10,7 @@ import { SiteFooterLinks } from "@/components/layout/SiteFooterLinks";
 import { AssetIcon } from "@/components/ui/AssetIcon";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
-import { getStaffReportSummaryFromApi, type BackendReportSummary } from "@/lib/api";
+import { getStaffReportSummaryFromApi, isRequestAbortError, type BackendReportSummary } from "@/lib/api";
 import { exportStyledExcelWorkbook } from "@/lib/excel-export";
 import { getStoredStaffSession } from "@/lib/staff-api";
 
@@ -48,6 +34,10 @@ const emptySummary: BackendReportSummary = {
 };
 
 const statusColors = ["#16803c", "#8cc665", "#f5b000", "#9aa3a8", "#00652f"];
+const StaffReportCharts = dynamic(
+  () => import("@/components/staff/StaffReportCharts").then((module) => module.StaffReportCharts),
+  { ssr: false, loading: () => <div className="h-[310px] animate-pulse rounded-lg bg-[#edf3ed]" /> }
+);
 
 type ReportExport = {
   name: string;
@@ -85,9 +75,16 @@ function useStaffReportsSummary() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [hasCredential, setHasCredential] = useState(false);
+  const requestSequenceRef = useRef(0);
+  const requestAbortRef = useRef<AbortController | null>(null);
 
   const loadSummary = useCallback(async ({ background = false }: { background?: boolean } = {}) => {
     if (!ready) return;
+
+    const requestId = ++requestSequenceRef.current;
+    requestAbortRef.current?.abort();
+    const requestController = new AbortController();
+    requestAbortRef.current = requestController;
 
     const storedSession = getStoredStaffSession();
     const userCanUseStaffApi = user?.role === "STAFF" || user?.role === "ADMIN";
@@ -95,6 +92,7 @@ function useStaffReportsSummary() {
     setHasCredential(Boolean(token));
 
     if (!token) {
+      requestController.abort();
       setLoading(false);
       return;
     }
@@ -105,14 +103,15 @@ function useStaffReportsSummary() {
     }
 
     try {
-      const data = await getStaffReportSummaryFromApi(token);
+      const data = await getStaffReportSummaryFromApi(token, requestController.signal);
+      if (requestId !== requestSequenceRef.current) return;
       setSummary(data);
     } catch (summaryError) {
-      if (!background) {
+      if (requestId === requestSequenceRef.current && !background && !isRequestAbortError(summaryError)) {
         setError(summaryError instanceof Error ? summaryError.message : "Unable to load staff reports.");
       }
     } finally {
-      if (!background) setLoading(false);
+      if (requestId === requestSequenceRef.current && !background) setLoading(false);
     }
   }, [ready, user]);
 
@@ -122,6 +121,7 @@ function useStaffReportsSummary() {
 
   useEffect(() => {
     void loadSummary();
+    return () => requestAbortRef.current?.abort();
   }, [loadSummary]);
 
   useEffect(() => {
@@ -131,7 +131,7 @@ function useStaffReportsSummary() {
       if (document.visibilityState === "visible") void loadSummary({ background: true });
     };
 
-    const interval = window.setInterval(refresh, 60000);
+    const interval = window.setInterval(refresh, 5 * 60_000);
     window.addEventListener("focus", refresh);
     document.addEventListener("visibilitychange", refresh);
 
@@ -172,30 +172,6 @@ function ReportStat({
       </div>
     </article>
   );
-}
-
-function ChartCard({
-  title,
-  action,
-  children
-}: {
-  title: string;
-  action: string;
-  children: ReactNode;
-}) {
-  return (
-    <section className="overflow-hidden rounded-lg border border-[#dce5dd] bg-white shadow-sm">
-      <div className="flex h-14 items-center border-b border-[#e5ebe6] px-4">
-        <h2 className="font-extrabold text-[#17211b]">{title}</h2>
-        <span className="ml-auto rounded-md bg-[#f3f7f3] px-3 py-1.5 text-xs font-semibold text-[#4f5b54]">{action}</span>
-      </div>
-      {children}
-    </section>
-  );
-}
-
-function EmptyPanel({ children }: { children: ReactNode }) {
-  return <div className="p-5 text-sm font-semibold text-[#68746d]">{children}</div>;
 }
 
 function StaffReportAccessState({
@@ -267,8 +243,6 @@ export function StaffReports() {
       })),
     [summary.reservationStatusDistribution]
   );
-
-  const totalReservations = reservationStatus.reduce((total, status) => total + status.value, 0);
 
   const recordExport = (format: "PDF" | "Excel") => {
     setExports((current) => [
@@ -407,85 +381,7 @@ export function StaffReports() {
         <ReportStat title="Items to Restock" value={formatNumber(summary.lowStockItems)} detail="Reached the restock alert count" iconSrc="/assets/low-stock.svg" warning={summary.lowStockItems > 0} />
       </section>
 
-      <section className="grid gap-5 xl:grid-cols-3">
-        <ChartCard title="Sales Trend" action="Last 7 days">
-          <div className="h-[310px] p-4">
-            {summary.salesTrend.length ? (
-              <>
-                <div className="mb-3 flex flex-wrap gap-4 text-xs text-[#647068]">
-                  <span className="flex items-center gap-2"><span className="h-1 w-5 rounded bg-primary" /> Live sales</span>
-                </div>
-                <ResponsiveContainer width="100%" height="88%">
-                  <LineChart data={summary.salesTrend} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
-                    <CartesianGrid vertical={false} stroke="#e5ebe6" />
-                    <XAxis dataKey="day" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
-                    <YAxis tickFormatter={(value) => `PHP ${Math.round(Number(value) / 1000)}K`} tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
-                    <Tooltip formatter={(value: number) => formatCurrency(value)} />
-                    <Line type="monotone" dataKey="sales" stroke="#08742f" strokeWidth={3} dot={{ r: 3, fill: "#08742f" }} />
-                  </LineChart>
-                </ResponsiveContainer>
-              </>
-            ) : (
-              <EmptyPanel>No sales trend data yet.</EmptyPanel>
-            )}
-          </div>
-        </ChartCard>
-
-        <ChartCard title="Top Categories by Sales" action="Live data">
-          <div className="h-[310px] p-4">
-            {summary.categorySales.length ? (
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={summary.categorySales} layout="vertical" margin={{ top: 5, right: 55, left: 8, bottom: 0 }}>
-                  <XAxis type="number" hide />
-                  <YAxis type="category" dataKey="category" width={105} tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
-                  <Tooltip formatter={(value: number) => formatCurrency(value)} />
-                  <Bar dataKey="amount" fill="#16803c" radius={[0, 4, 4, 0]} barSize={13}>
-                    <LabelList dataKey="amount" position="right" formatter={(value: number) => `PHP ${Math.round(Number(value) / 1000)}K`} style={{ fontSize: 10, fontWeight: 700, fill: "#176b36" }} />
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            ) : (
-              <EmptyPanel>No category sales data yet.</EmptyPanel>
-            )}
-          </div>
-        </ChartCard>
-
-        <ChartCard title="Reservation Status Distribution" action="Live data">
-          <div className="grid min-h-[310px] items-center gap-3 p-4 sm:grid-cols-[1fr_1fr] xl:grid-cols-1 2xl:grid-cols-[1fr_1fr]">
-            {reservationStatus.length ? (
-              <>
-                <div className="relative mx-auto h-52 w-full max-w-52">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie data={reservationStatus} dataKey="value" nameKey="name" innerRadius={52} outerRadius={82} paddingAngle={1}>
-                        {reservationStatus.map((entry) => <Cell key={entry.name} fill={entry.color} />)}
-                      </Pie>
-                      <Tooltip />
-                    </PieChart>
-                  </ResponsiveContainer>
-                  <div className="pointer-events-none absolute inset-0 grid place-items-center text-center">
-                    <div>
-                      <p className="text-2xl font-extrabold text-primary">{formatNumber(totalReservations)}</p>
-                      <p className="text-xs text-[#69746e]">Total</p>
-                    </div>
-                  </div>
-                </div>
-                <div className="space-y-3">
-                  {reservationStatus.map((status) => (
-                    <div key={status.name} className="grid grid-cols-[auto_1fr_auto] items-center gap-2 text-xs">
-                      <span className="size-2.5 rounded-full" style={{ backgroundColor: status.color }} />
-                      <span className="text-[#536058]">{status.name}</span>
-                      <span className="font-bold">{formatNumber(status.value)}</span>
-                    </div>
-                  ))}
-                </div>
-              </>
-            ) : (
-              <EmptyPanel>No reservation status data yet.</EmptyPanel>
-            )}
-          </div>
-        </ChartCard>
-      </section>
+      <StaffReportCharts summary={summary} />
 
       <section className="grid gap-5 xl:grid-cols-[0.95fr_1.05fr]">
         <details className="group overflow-hidden rounded-lg border border-[#dce5dd] bg-white shadow-sm">
@@ -549,7 +445,7 @@ export function StaffReports() {
                 </button>
               </>
             ) : (
-              <EmptyPanel>No exported reports yet. Use Export PDF or Export Excel to create one from the live data.</EmptyPanel>
+              <div className="p-5 text-sm font-semibold text-[#68746d]">No exported reports yet. Use Export PDF or Export Excel to create one from the live data.</div>
             )}
           </div>
         </details>
@@ -580,7 +476,7 @@ export function StaffReports() {
                 ))}
               </div>
             ) : (
-              <EmptyPanel>No inventory insights available yet.</EmptyPanel>
+              <div className="p-5 text-sm font-semibold text-[#68746d]">No inventory insights available yet.</div>
             )}
             <Link href="/staff/inventory?status=needs-restock" className="flex min-h-12 items-center gap-2 border-t border-[#e5ebe6] px-4 text-sm font-bold text-primary">Review affected inventory <ArrowRight className="size-4" /></Link>
           </div>

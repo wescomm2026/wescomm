@@ -1,4 +1,3 @@
-import { Prisma } from "@prisma/client";
 import { getCache } from "@vercel/functions";
 import { prisma } from "../lib/prisma.js";
 import { withTransientPrismaReadRetry } from "../utils/prisma-retry.js";
@@ -51,83 +50,128 @@ async function buildReportSummary() {
     totalProducts: number;
     lowStockItems: number;
     outOfStockItems: number;
-    inventoryValue: Prisma.Decimal | string | number | null;
+    inventoryValue: string | number | null;
   };
   type SalesTrendRow = {
     key: string;
-    sales: Prisma.Decimal | string | number;
+    sales: string | number;
     receipts: number;
   };
   type CategorySalesRow = {
     category: string;
-    amount: Prisma.Decimal | string | number;
+    amount: string | number;
   };
 
-  const [
-    productMetricRows,
-    reservationGroups,
-    receiptAggregate,
-    pendingReceiptCount,
-    userGroups,
-    activeConversations,
-    salesTrendRows,
-    categorySalesRows
-  ] = await withTransientPrismaReadRetry(() => prisma.$transaction([
-    prisma.$queryRaw<ProductMetricsRow[]>`
-      SELECT
-        COUNT(*)::integer AS "totalProducts",
-        COUNT(*) FILTER (WHERE "stock" <= "low_stock_threshold")::integer AS "lowStockItems",
-        COUNT(*) FILTER (WHERE "stock" <= 0)::integer AS "outOfStockItems",
-        COALESCE(SUM("price" * "stock"), 0) AS "inventoryValue"
-      FROM "products"
-      WHERE "is_active" = TRUE
-    `,
-    prisma.reservation.groupBy({
-      by: ["status"],
-      _count: { _all: true }
-    }),
-    prisma.receipt.aggregate({
-      where: { status: { not: "VOIDED" } },
-      _sum: { totalAmount: true },
-      _count: { _all: true }
-    }),
-    prisma.receipt.count({ where: { status: "PENDING" } }),
-    prisma.profile.groupBy({
-      by: ["role"],
-      _count: { _all: true }
-    }),
-    prisma.conversation.count({ where: { status: "OPEN" } }),
-    prisma.$queryRaw<SalesTrendRow[]>`
-      SELECT
-        TO_CHAR("issued_at" AT TIME ZONE 'Asia/Manila', 'YYYY-MM-DD') AS "key",
-        COALESCE(SUM("total_amount"), 0) AS "sales",
-        COUNT(*)::integer AS "receipts"
-      FROM "receipts"
-      WHERE "status" <> 'VOIDED'::"receipt_status"
-        AND "issued_at" >= ${trendStart}
-      GROUP BY TO_CHAR("issued_at" AT TIME ZONE 'Asia/Manila', 'YYYY-MM-DD')
-      ORDER BY "key" ASC
-    `,
-    prisma.$queryRaw<CategorySalesRow[]>`
-      SELECT
-        "categories"."name" AS "category",
-        COALESCE(SUM("reservation_items"."subtotal"), 0) AS "amount"
-      FROM "receipts"
-      INNER JOIN "reservations"
-        ON "reservations"."id" = "receipts"."reservation_id"
-      INNER JOIN "reservation_items"
-        ON "reservation_items"."reservation_id" = "reservations"."id"
-      INNER JOIN "products"
-        ON "products"."id" = "reservation_items"."product_id"
-      INNER JOIN "categories"
-        ON "categories"."id" = "products"."category_id"
-      WHERE "receipts"."status" <> 'VOIDED'::"receipt_status"
-        AND "receipts"."issued_at" >= ${trendStart}
-      GROUP BY "categories"."name"
-      ORDER BY "amount" DESC
-      LIMIT 6
-    `
-  ]));
+  type ReportPayloadRow = {
+    productMetrics: ProductMetricsRow;
+    reservationGroups: Array<{ status: string; count: number }>;
+    receiptAggregate: { totalAmount: string | number | null; count: number };
+    pendingReceiptCount: number;
+    userGroups: Array<{ role: string; count: number }>;
+    activeConversations: number;
+    salesTrendRows: SalesTrendRow[];
+    categorySalesRows: CategorySalesRow[];
+  };
+
+  const rows = await withTransientPrismaReadRetry(() => prisma.$queryRaw<ReportPayloadRow[]>`
+    SELECT
+      (
+        SELECT jsonb_build_object(
+          'totalProducts', COUNT(*)::integer,
+          'lowStockItems', COUNT(*) FILTER (WHERE stock <= low_stock_threshold)::integer,
+          'outOfStockItems', COUNT(*) FILTER (WHERE stock <= 0)::integer,
+          'inventoryValue', COALESCE(SUM(price * stock), 0)::text
+        )
+        FROM products
+        WHERE is_active = true
+      ) AS "productMetrics",
+      COALESCE((
+        SELECT jsonb_agg(jsonb_build_object('status', grouped.status, 'count', grouped.count))
+        FROM (
+          SELECT status::text AS status, COUNT(*)::integer AS count
+          FROM reservations
+          GROUP BY status
+        ) grouped
+      ), '[]'::jsonb) AS "reservationGroups",
+      (
+        SELECT jsonb_build_object(
+          'totalAmount', COALESCE(SUM(total_amount), 0)::text,
+          'count', COUNT(*)::integer
+        )
+        FROM receipts
+        WHERE status <> 'VOIDED'
+      ) AS "receiptAggregate",
+      (SELECT COUNT(*)::integer FROM receipts WHERE status = 'PENDING') AS "pendingReceiptCount",
+      COALESCE((
+        SELECT jsonb_agg(jsonb_build_object('role', grouped.role, 'count', grouped.count))
+        FROM (
+          SELECT role::text AS role, COUNT(*)::integer AS count
+          FROM profiles
+          GROUP BY role
+        ) grouped
+      ), '[]'::jsonb) AS "userGroups",
+      (SELECT COUNT(*)::integer FROM conversations WHERE status = 'OPEN') AS "activeConversations",
+      COALESCE((
+        SELECT jsonb_agg(to_jsonb(trend_row))
+        FROM (
+          SELECT
+            TO_CHAR(issued_at AT TIME ZONE 'Asia/Manila', 'YYYY-MM-DD') AS key,
+            COALESCE(SUM(total_amount), 0)::text AS sales,
+            COUNT(*)::integer AS receipts
+          FROM receipts
+          WHERE status <> 'VOIDED'
+            AND issued_at >= ${trendStart}
+          GROUP BY TO_CHAR(issued_at AT TIME ZONE 'Asia/Manila', 'YYYY-MM-DD')
+          ORDER BY key ASC
+        ) trend_row
+      ), '[]'::jsonb) AS "salesTrendRows",
+      COALESCE((
+        SELECT jsonb_agg(to_jsonb(category_row))
+        FROM (
+          SELECT
+            categories.name AS category,
+            COALESCE(SUM(reservation_items.subtotal), 0)::text AS amount
+          FROM receipts
+          INNER JOIN reservations ON reservations.id = receipts.reservation_id
+          INNER JOIN reservation_items ON reservation_items.reservation_id = reservations.id
+          INNER JOIN products ON products.id = reservation_items.product_id
+          INNER JOIN categories ON categories.id = products.category_id
+          WHERE receipts.status <> 'VOIDED'
+            AND receipts.issued_at >= ${trendStart}
+          GROUP BY categories.name
+          ORDER BY SUM(reservation_items.subtotal) DESC
+          LIMIT 6
+        ) category_row
+      ), '[]'::jsonb) AS "categorySalesRows"
+  `);
+
+  const payload = rows[0] ?? {
+    productMetrics: { totalProducts: 0, lowStockItems: 0, outOfStockItems: 0, inventoryValue: 0 },
+    reservationGroups: [],
+    receiptAggregate: { totalAmount: 0, count: 0 },
+    pendingReceiptCount: 0,
+    userGroups: [],
+    activeConversations: 0,
+    salesTrendRows: [],
+    categorySalesRows: []
+  };
+  const productMetricRows = [payload.productMetrics];
+  const reservationGroups = payload.reservationGroups.map((group) => ({
+    status: group.status,
+    _count: { _all: group.count }
+  }));
+  const receiptAggregate = {
+    _sum: { totalAmount: payload.receiptAggregate.totalAmount },
+    _count: { _all: payload.receiptAggregate.count }
+  };
+  const pendingReceiptCount = payload.pendingReceiptCount;
+  const userGroups = payload.userGroups.map((group) => ({
+    role: group.role,
+    _count: { _all: group.count }
+  }));
+  const activeConversations = payload.activeConversations;
+  const salesTrendRows = payload.salesTrendRows;
+  const categorySalesRows = payload.categorySalesRows;
 
   const productMetrics = productMetricRows[0];
   const totalProducts = productMetrics?.totalProducts ?? 0;
@@ -227,7 +271,10 @@ function isReportSummary(value: unknown): value is ReportSummary {
 
 export async function invalidateReportSummaryCache() {
   cachedReport = null;
-  await reportRuntimeCache.delete(REPORT_CACHE_KEY).catch(() => undefined);
+  await Promise.all([
+    reportRuntimeCache.delete(REPORT_CACHE_KEY),
+    reportRuntimeCache.expireTag("reports")
+  ]).catch(() => undefined);
 }
 
 export async function getReportSummary() {

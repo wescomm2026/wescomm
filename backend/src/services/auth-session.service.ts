@@ -19,6 +19,16 @@ const PRODUCTION_COOKIE_NAME = "__Host-wescomm_session";
 const LAST_SEEN_WRITE_INTERVAL_MS = 15 * 60 * 1000;
 const TEMPORARY_STAFF_SESSION_TOKEN_PREFIX = "tmp_staff.";
 
+type ResolvedAuthSession = {
+  sessionId: string;
+  profile: Profile;
+} | null;
+
+// Initial page load opens several authenticated requests at once (page data,
+// notifications, restrictions and realtime). Share only the in-flight lookup;
+// completed results are not cached, so logout/revocation stays immediate.
+const pendingSessionResolutions = new Map<string, Promise<ResolvedAuthSession>>();
+
 export type AuthSessionKind = "STANDARD" | "TEMPORARY_STAFF";
 
 export const AUTH_SESSION_TRANSACTION_OPTIONS = Object.freeze({
@@ -196,11 +206,12 @@ export async function issueAuthSession(input: {
   );
 }
 
-export async function resolveAuthSession(rawToken: string) {
+async function resolveAuthSessionUncached(rawToken: string, tokenHash: string): Promise<ResolvedAuthSession> {
   const now = new Date();
   const session = await withTransientPrismaReadRetry(() => prisma.authSession.findUnique({
-    where: { tokenHash: hashToken(rawToken) },
-    include: { user: true }
+    where: { tokenHash },
+    include: { user: true },
+    relationLoadStrategy: "join"
   }));
 
   if (!session || session.revokedAt || session.expiresAt <= now) return null;
@@ -229,6 +240,20 @@ export async function resolveAuthSession(rawToken: string) {
     sessionId: session.id,
     profile: mapSessionProfile(session.user as Parameters<typeof mapSessionProfile>[0])
   };
+}
+
+export async function resolveAuthSession(rawToken: string): Promise<ResolvedAuthSession> {
+  const tokenHash = hashToken(rawToken);
+  const pending = pendingSessionResolutions.get(tokenHash);
+  if (pending) return pending;
+
+  const resolution = resolveAuthSessionUncached(rawToken, tokenHash).finally(() => {
+    if (pendingSessionResolutions.get(tokenHash) === resolution) {
+      pendingSessionResolutions.delete(tokenHash);
+    }
+  });
+  pendingSessionResolutions.set(tokenHash, resolution);
+  return resolution;
 }
 
 export async function revokeAuthSession(rawToken: string | null) {

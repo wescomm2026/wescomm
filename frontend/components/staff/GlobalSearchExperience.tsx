@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowRight, MessageCircleMore, PackageSearch, ReceiptText, Search } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import {
   searchStaffWorkspaceFromApi,
+  isRequestAbortError,
   type BackendGlobalSearchResult
 } from "@/lib/api";
 
@@ -35,28 +36,38 @@ export function GlobalSearchExperience({ routeBase }: { routeBase: "/staff" | "/
   const [results, setResults] = useState<BackendGlobalSearchResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const requestSequenceRef = useRef(0);
 
   useEffect(() => {
+    const requestId = ++requestSequenceRef.current;
     if (!ready || !user?.accessToken || query.length < 2) {
       setResults([]);
+      setLoading(false);
       return;
     }
 
-    let active = true;
+    const requestController = new AbortController();
     setLoading(true);
     setError("");
-    void searchStaffWorkspaceFromApi(user.accessToken, query, routeBase === "/admin" ? "ADMIN" : "STAFF")
+    void searchStaffWorkspaceFromApi(
+      user.accessToken,
+      query,
+      routeBase === "/admin" ? "ADMIN" : "STAFF",
+      requestController.signal
+    )
       .then((rows) => {
-        if (active) setResults(rows);
+        if (requestId === requestSequenceRef.current) setResults(rows);
       })
       .catch((searchError) => {
-        if (active) setError(searchError instanceof Error ? searchError.message : "Unable to search the workspace.");
+        if (requestId === requestSequenceRef.current && !isRequestAbortError(searchError)) {
+          setError(searchError instanceof Error ? searchError.message : "Unable to search the workspace.");
+        }
       })
       .finally(() => {
-        if (active) setLoading(false);
+        if (requestId === requestSequenceRef.current) setLoading(false);
       });
     return () => {
-      active = false;
+      requestController.abort();
     };
   }, [query, ready, routeBase, user?.accessToken]);
 

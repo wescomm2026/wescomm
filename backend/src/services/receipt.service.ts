@@ -9,9 +9,12 @@ import {
 import { supabaseAdmin } from "../lib/supabase.js";
 import { prisma } from "../lib/prisma.js";
 import { safelyRecordAuditLog } from "./audit-log.service.js";
-import { createNotification, createNotificationsForRoles } from "./notification.service.js";
+import {
+  createNotificationBestEffort,
+  createNotificationsForRolesBestEffort
+} from "./notification.service.js";
 import { OUTBOX_EVENT_TYPES } from "./outbox.service.js";
-import { publishRealtimeEvents, REALTIME_TOPICS } from "./realtime-event.service.js";
+import { publishRealtimeEvents, publishRealtimeEventsBestEffort, REALTIME_TOPICS } from "./realtime-event.service.js";
 import {
   type AppRole,
   type PaymentMethod,
@@ -356,6 +359,30 @@ function mapPrismaReceipt(receipt: ReceiptRecord) {
   };
 }
 
+async function publishReceiptCreated(input: { receiptId: string; studentId: string; status: string }) {
+  await publishRealtimeEventsBestEffort([
+    {
+      topic: REALTIME_TOPICS.receipts,
+      entityId: input.receiptId,
+      audienceUserIds: [input.studentId],
+      audienceRoles: ["STAFF", "ADMIN"],
+      payload: { action: "created", status: input.status }
+    },
+    {
+      topic: REALTIME_TOPICS.dashboard,
+      entityId: input.receiptId,
+      audienceRoles: ["STAFF", "ADMIN"],
+      payload: { action: "receipt-created", status: input.status }
+    },
+    {
+      topic: REALTIME_TOPICS.reports,
+      entityId: input.receiptId,
+      audienceRoles: ["STAFF", "ADMIN"],
+      payload: { action: "receipt-created", status: input.status }
+    }
+  ]);
+}
+
 export type ReceiptListOptions = {
   receiptCode?: string;
   status?: "PENDING" | "VERIFIED" | "VOIDED";
@@ -454,8 +481,9 @@ export async function createReceipt(input: {
 
   if (error) throw HttpError.fromSupabase(error);
   const receipt = mapReceipt(data as unknown as RawReceipt);
+  await publishReceiptCreated({ receiptId: receipt.id, studentId: receipt.studentId, status: receipt.status });
 
-  await createNotification({
+  await createNotificationBestEffort({
     userId: input.studentId,
     type: "RECEIPT",
     title: "Digital receipt ready",
@@ -522,16 +550,17 @@ export async function createReceiptForReservation(reservationId: string, issuedB
 
   if (error) throw HttpError.fromSupabase(error);
   const receipt = mapReceipt(data as unknown as RawReceipt);
+  await publishReceiptCreated({ receiptId: receipt.id, studentId: receipt.studentId, status: receipt.status });
 
   await Promise.all([
-    createNotification({
+    createNotificationBestEffort({
       userId: reservation.student_id,
       type: "RECEIPT",
       title: "Digital receipt generated",
       message: `${receipt.receiptCode} was created for ${reservation.reference_code} and is waiting for verification.`,
       actionUrl: "/student/receipts"
     }),
-    createNotificationsForRoles(["STAFF", "ADMIN"], {
+    createNotificationsForRolesBestEffort(["STAFF", "ADMIN"], {
       type: "RECEIPT",
       title: "Receipt needs verification",
       message: `${receipt.receiptCode} was generated for ${reservation.reference_code}.`,

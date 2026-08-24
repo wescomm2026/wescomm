@@ -2,7 +2,11 @@
 
 import { useEffect, useRef, type ReactNode } from "react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
-import { API_BASE_URL, AUTH_UNAUTHORIZED_EVENT } from "@/lib/api";
+import {
+  API_BASE_URL,
+  AUTH_UNAUTHORIZED_EVENT,
+  requestProductsRefresh
+} from "@/lib/api";
 
 export const REALTIME_UPDATE_EVENT = "wescomm:realtime-update";
 
@@ -64,6 +68,9 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
         window.sessionStorage.setItem(storageKey, event.lastEventId);
       }
       window.dispatchEvent(new CustomEvent<RealtimeUpdate>(REALTIME_UPDATE_EVENT, { detail: update }));
+      if (update.topic === "inventory") {
+        requestProductsRefresh(update);
+      }
       if (update.topic === "users" && update.entityId === user.id) {
         window.dispatchEvent(new Event(AUTH_UNAUTHORIZED_EVENT));
       }

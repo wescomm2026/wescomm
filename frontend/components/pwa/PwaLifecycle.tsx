@@ -23,7 +23,7 @@ type NavigatorWithStandalone = Navigator & {
 const INSTALL_DISMISSED_KEY = "wescomm:pwa-install-dismissed:v1";
 const INSTALL_PROMPT_SNOOZE_MS = 14 * 24 * 60 * 60 * 1000;
 const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
-const PRODUCT_REFRESH_INTERVAL_MS = 60 * 1000;
+const PRODUCT_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 const UPDATE_ACTIVATION_TIMEOUT_MS = 10 * 1000;
 
 function isStandaloneDisplay() {

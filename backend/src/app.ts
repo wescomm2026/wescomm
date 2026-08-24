@@ -40,7 +40,7 @@ app.use(cors({
     return callback(new HttpError(403, "Origin is not allowed."));
   },
   credentials: true,
-  methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Authorization", "Content-Type", "Idempotency-Key", "Last-Event-ID", "X-Request-Id"],
   exposedHeaders: ["X-Request-Id", "Server-Timing", "RateLimit-Limit", "RateLimit-Remaining", "RateLimit-Reset", "Retry-After"],
   maxAge: 600

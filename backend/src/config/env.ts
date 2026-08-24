@@ -61,6 +61,9 @@ const envSchema = z.object({
   VAPID_SUBJECT: z.string().trim().default("mailto:wescomm@wesleyan.edu.ph"),
   WESBOT_ENABLED: booleanEnv.default(false),
   WESBOT_AI_ENABLED: booleanEnv.default(false),
+  WESBOT_AI_REWRITE_ENABLED: booleanEnv.default(false),
+  WESBOT_SEMANTIC_MODE: z.enum(["off", "shadow", "active"]).default("off"),
+  WESBOT_AI_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(15_000).default(5_000),
   WESBOT_MODEL: z.string().trim().min(3).default("openai/gpt-5.6-luna"),
   AI_GATEWAY_API_KEY: optionalTrimmedString,
   VERCEL_OIDC_TOKEN: optionalTrimmedString,
@@ -148,6 +151,13 @@ if (parsedEnv.WESBOT_AI_ENABLED) {
   if (!parsedEnv.AI_GATEWAY_API_KEY && !parsedEnv.VERCEL_OIDC_TOKEN) {
     throw new Error("WesBot AI requires Vercel OIDC or an AI Gateway API key.");
   }
+}
+
+if (parsedEnv.WESBOT_AI_REWRITE_ENABLED && !parsedEnv.WESBOT_AI_ENABLED) {
+  throw new Error("WESBOT_AI_REWRITE_ENABLED requires WESBOT_AI_ENABLED to be true.");
+}
+if (parsedEnv.WESBOT_SEMANTIC_MODE !== "off" && !parsedEnv.WESBOT_AI_ENABLED) {
+  throw new Error("WESBOT_SEMANTIC_MODE shadow/active requires WESBOT_AI_ENABLED to be true.");
 }
 
 function validateEncryptionKeys(value: string | undefined, currentVersion: string) {

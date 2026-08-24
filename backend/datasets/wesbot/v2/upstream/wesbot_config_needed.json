@@ -1,0 +1,23 @@
+[
+  {
+    "question": "What are the official commissary working hours?",
+    "category": "PICKUP",
+    "is_published": false,
+    "required_value": "Official day-by-day opening/closing hours and holiday/closure policy",
+    "reason": "The code has a commissary-hours intent phrase but the ZIP does not contain an authoritative hours value."
+  },
+  {
+    "question": "Where is the WUP commissary located?",
+    "category": "GENERAL",
+    "is_published": false,
+    "required_value": "Official building/location and directions text",
+    "reason": "No authoritative commissary location was found in the reviewed source ZIP."
+  },
+  {
+    "question": "What contact number or email should students use for the commissary?",
+    "category": "SUPPORT",
+    "is_published": false,
+    "required_value": "Official support phone/email",
+    "reason": "No authoritative public support contact was found in the reviewed source ZIP."
+  }
+]

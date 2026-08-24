@@ -27,10 +27,11 @@ function requestFingerprint(payload: CreateReservationPayload) {
     items: [...payload.items]
       .map((item) => ({
         productId: item.productId,
+        skuId: item.skuId ?? "",
         variantSummary: item.variantSummary?.trim() ?? "",
         quantity: item.quantity
       }))
-      .sort((left, right) => `${left.productId}:${left.variantSummary}:${left.quantity}`.localeCompare(`${right.productId}:${right.variantSummary}:${right.quantity}`))
+      .sort((left, right) => `${left.productId}:${left.skuId}:${left.variantSummary}:${left.quantity}`.localeCompare(`${right.productId}:${right.skuId}:${right.variantSummary}:${right.quantity}`))
   });
 
   const seeds = [2166136261, 2246822507, 3266489909, 668265263];

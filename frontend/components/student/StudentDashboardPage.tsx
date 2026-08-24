@@ -1,32 +1,12 @@
 import Image from "next/image";
 import Link from "next/link";
-import { Suspense } from "react";
-import { FaqExperience } from "@/components/faq/FaqExperience";
 import { DashboardProductsProvider } from "@/components/dashboard/DashboardProductsProvider";
-import { HomeActionCards } from "@/components/dashboard/HomeActionCards";
 import { HeroProductCarousel } from "@/components/dashboard/HeroProductCarousel";
+import { HomeActionCards } from "@/components/dashboard/HomeActionCards";
 import { StockOverview } from "@/components/dashboard/StockOverview";
-import { StudentReservationsExperience } from "@/components/reservations/StudentReservationsExperience";
-import { SiteFooterLinks } from "@/components/layout/SiteFooterLinks";
+import { StudentFooter } from "@/components/student/StudentFooter";
 import { AssetIcon } from "@/components/ui/AssetIcon";
 import { Button } from "@/components/ui/button";
-import { StudentShopExperience } from "@/components/ui/StudentShopExperience";
-
-function StudentFooter() {
-  return (
-    <footer className="mt-7 flex flex-col items-center gap-4 border-t border-[#e6ece6] py-7 text-center text-sm text-[#3f4a44] md:flex-row md:justify-between md:text-left">
-      <div className="flex items-center justify-center gap-3 md:justify-start">
-        <Image src="/assets/wescomm-logo.png" alt="" width={86} height={42} className="object-contain" />
-        <div>
-          <p className="font-semibold text-[#101820]">Wesleyan University-Philippines</p>
-          <p className="text-xs text-muted-foreground">Integrated Commissary Management System</p>
-        </div>
-      </div>
-      <SiteFooterLinks />
-      <p className="text-xs text-muted-foreground md:text-right">© 2026 Wesleyan University-Philippines</p>
-    </footer>
-  );
-}
 
 function StudentHero() {
   return (
@@ -62,16 +42,7 @@ function StudentHero() {
   );
 }
 
-export function PageTitle({ title, eyebrow }: { title: string; eyebrow: string }) {
-  return (
-    <div className="mb-6">
-      <p className="text-sm font-semibold uppercase tracking-wide text-primary">{eyebrow}</p>
-      <h1 className="mt-1 text-2xl font-semibold sm:text-3xl">{title}</h1>
-    </div>
-  );
-}
-
-export function StudentDashboard() {
+export function StudentDashboardPage() {
   return (
     <DashboardProductsProvider>
       <div className="space-y-5">
@@ -96,38 +67,5 @@ export function StudentDashboard() {
         <StudentFooter />
       </div>
     </DashboardProductsProvider>
-  );
-}
-
-export function ShopPage() {
-  return (
-    <div className="space-y-5">
-      <Suspense
-        fallback={
-          <div className="wes-card p-8 text-center">
-            <p className="font-semibold">Loading live shop items...</p>
-            <p className="mt-1 text-sm text-muted-foreground">Preparing the WESCOMM catalog.</p>
-          </div>
-        }
-      >
-        <StudentShopExperience />
-      </Suspense>
-      <StudentFooter />
-    </div>
-  );
-}
-
-export function ReservationsPage() {
-  return <StudentReservationsExperience />;
-}
-
-export function FaqPage({ manage = false }: { manage?: boolean }) {
-  if (manage) return <FaqExperience manage />;
-
-  return (
-    <>
-      <PageTitle eyebrow="FAQ" title="Frequently asked questions" />
-      <FaqExperience />
-    </>
   );
 }

@@ -1,4 +1,4 @@
-import { StaffSettingsExperience } from "@/components/staff/StaffOperations";
+import { StaffSettingsExperience } from "@/components/staff/StaffSettingsExperience";
 
 export default function Page() {
   return <StaffSettingsExperience />;

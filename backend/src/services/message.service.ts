@@ -11,12 +11,13 @@ import {
 import { decryptSensitiveText, encryptSensitiveText } from "../utils/field-encryption.js";
 import { HttpError } from "../utils/http-error.js";
 import { safelyRecordAuditLog } from "./audit-log.service.js";
-import { createNotification, createNotificationsForRoles } from "./notification.service.js";
+import { createNotification, createNotificationBestEffort, createNotificationsForRoles } from "./notification.service.js";
 import {
   publishRealtimeEventsBestEffort,
   REALTIME_TOPICS
 } from "./realtime-event.service.js";
 import { buildWesbotHandoffSummary, resolveWesbotReply } from "./wesbot.service.js";
+import { WESBOT_CLASSIFIER_VERSION } from "./wesbot-classifier.service.js";
 
 type ConversationMessageSenderType = "STUDENT" | "BOT" | "STAFF" | "SYSTEM";
 
@@ -298,11 +299,23 @@ async function createBotReply(
 
   const detectedIntent = detectWesbotIntent(userMessage);
   const candidateConcernKey = createWesbotConcernKey(detectedIntent, userMessage);
-  const repeatCount = candidateConcernKey === conversation.lastConcernKey ? conversation.botReplyCount : 0;
 
   let reply;
   try {
-    reply = await resolveWesbotReply({ studentId, message: userMessage, repeatCount });
+    const context = (await loadRecentConversationMessages(conversationId, 10))
+      .filter((message) => message.id !== replyToMessageId && (message.senderType === "STUDENT" || message.senderType === "BOT"))
+      .slice(-6)
+      .map((message) => ({
+        role: message.senderType === "STUDENT" ? "student" as const : "wesbot" as const,
+        text: message.message.slice(0, 500)
+      }));
+    reply = await resolveWesbotReply({
+      studentId,
+      message: userMessage,
+      context,
+      previousConcernKey: conversation.lastConcernKey,
+      previousReplyCount: conversation.botReplyCount
+    });
   } catch (error) {
     const detail = error instanceof Error ? error.name : "unknown";
     console.warn(`WesBot grounded lookup failed; returning safe fallback (${detail}).`);
@@ -314,7 +327,26 @@ async function createBotReply(
       sourceReferences: ["support:lookup-failed"],
       handoffRequested: false,
       staffRecommended: true,
-      usedAi: false
+      usedAi: false,
+      routing: {
+        version: WESBOT_CLASSIFIER_VERSION,
+        intent: detectedIntent,
+        source: "SAFE_FALLBACK",
+        confidence: 0,
+        confidenceBand: "LOW",
+        needsClarification: false,
+        missingInformation: [],
+        entities: {
+          productName: null,
+          department: null,
+          options: [],
+          quantity: null,
+          reservationReference: null,
+          receiptCode: null,
+          contextReference: null
+        },
+        usedAi: false
+      }
     } as const;
   }
 
@@ -324,7 +356,17 @@ async function createBotReply(
     ...(replyToMessageId ? { replyToMessageId } : {}),
     sources: reply.sourceReferences,
     staffRecommended: reply.staffRecommended,
-    usedAi: reply.usedAi
+    usedAi: reply.usedAi,
+    routing: {
+      version: reply.routing.version,
+      source: reply.routing.source,
+      confidence: reply.routing.confidence,
+      confidenceBand: reply.routing.confidenceBand,
+      needsClarification: reply.routing.needsClarification,
+      missingInformation: reply.routing.missingInformation,
+      usedAi: reply.routing.usedAi,
+      ...(reply.routing.shadow ? { shadow: reply.routing.shadow } : {})
+    }
   };
   const { data: botMessageData, error: botMessageError } = await supabaseAdmin
     .rpc("insert_active_wesbot_reply", {
@@ -818,11 +860,12 @@ export async function updateConversationStatus(input: {
 
   const updatedConversation = mapConversation(data as unknown as RawConversation);
   if (input.status === "RESOLVED") {
-    await createNotification({
+    await createNotificationBestEffort({
       userId: conversation.studentId,
       type: "MESSAGE",
       title: "Support conversation resolved",
-      message: "Your support conversation has been marked as resolved."
+      message: "Your support conversation has been marked as resolved.",
+      actionUrl: `/student/support?conversationId=${encodeURIComponent(input.conversationId)}`
     });
   }
 

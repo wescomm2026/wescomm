@@ -1,8 +1,10 @@
 "use client";
 
 import Image from "next/image";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useDashboardProducts, type DashboardProducts } from "@/components/dashboard/DashboardProductsProvider";
+import { isProductUnavailable } from "@/lib/product-display";
 import { cn } from "@/lib/utils";
 
 type HeroSlide = {
@@ -21,7 +23,7 @@ function categoryPriority(category: string) {
 
 function buildHeroSlides(products: DashboardProducts) {
   const availableProducts = products
-    .filter((product) => product.status !== "Out of Stock" && product.image)
+    .filter((product) => !isProductUnavailable(product) && product.image)
     .sort((left, right) => categoryPriority(left.category) - categoryPriority(right.category) || left.name.localeCompare(right.name));
 
   const uniforms = availableProducts.filter((product) => product.category === "Uniforms").slice(0, 3);
@@ -110,11 +112,35 @@ export function HeroProductCarousel({ className, priority = false }: { className
               </div>
             </div>
           ))}
-          <div className="absolute bottom-5 left-1/2 flex -translate-x-1/2 gap-2" aria-hidden="true">
+          {slides.length > 1 ? (
+            <>
+              <button
+                type="button"
+                onClick={() => setActiveIndex((current) => (current - 1 + slides.length) % slides.length)}
+                aria-label="Previous product preview"
+                className="absolute left-3 top-1/2 z-10 grid size-10 -translate-y-1/2 place-items-center rounded-full border border-[#d8e4d9] bg-white/90 text-primary shadow-sm transition hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              >
+                <ChevronLeft className="size-5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveIndex((current) => (current + 1) % slides.length)}
+                aria-label="Next product preview"
+                className="absolute right-3 top-1/2 z-10 grid size-10 -translate-y-1/2 place-items-center rounded-full border border-[#d8e4d9] bg-white/90 text-primary shadow-sm transition hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              >
+                <ChevronRight className="size-5" />
+              </button>
+            </>
+          ) : null}
+          <div className="absolute bottom-5 left-1/2 z-10 flex -translate-x-1/2 gap-2" aria-label="Choose product preview">
             {Array.from({ length: indicators }).map((_, index) => (
-              <span
+              <button
                 key={index}
-                className={cn("h-2 rounded-full bg-[#c6dcc5] transition-all motion-reduce:transition-none", activeIndex === index ? "w-7 bg-primary" : "w-2")}
+                type="button"
+                onClick={() => setActiveIndex(index)}
+                aria-label={`Show product preview ${index + 1}`}
+                aria-current={activeIndex === index ? "true" : undefined}
+                className={cn("h-2 rounded-full bg-[#c6dcc5] transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 motion-reduce:transition-none", activeIndex === index ? "w-7 bg-primary" : "w-2")}
               />
             ))}
           </div>

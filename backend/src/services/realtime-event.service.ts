@@ -39,11 +39,14 @@ type RealtimeSubscription = {
 };
 
 const BROKER_BATCH_SIZE = 100;
-const BROKER_POLL_INTERVAL_MS = 750;
+const BROKER_IDLE_POLL_INTERVAL_MS = 2_000;
+const BROKER_ACTIVE_POLL_INTERVAL_MS = 250;
 const subscriptions = new Map<symbol, RealtimeSubscription>();
 let brokerCursor: bigint | null = null;
 let brokerTimer: ReturnType<typeof setTimeout> | null = null;
 let brokerStartPromise: Promise<void> | null = null;
+let brokerPolling = false;
+let brokerWakeRequested = false;
 
 export async function publishRealtimeEvents(
   client: RealtimeEventWriter,
@@ -78,7 +81,9 @@ export async function publishRealtimeEvents(
 
 export async function publishRealtimeEventsBestEffort(events: RealtimeEventInput[]) {
   try {
-    return await publishRealtimeEvents(prisma, events);
+    const count = await publishRealtimeEvents(prisma, events);
+    if (count) wakeRealtimeBroker();
+    return count;
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown realtime publish error.";
     console.warn(`Unable to publish realtime invalidation: ${message}`);
@@ -133,7 +138,7 @@ export async function listRealtimeEvents(input: {
   });
 }
 
-function scheduleBrokerPoll(delayMs = BROKER_POLL_INTERVAL_MS) {
+function scheduleBrokerPoll(delayMs = BROKER_IDLE_POLL_INTERVAL_MS) {
   if (!subscriptions.size || brokerTimer) return;
   brokerTimer = setTimeout(() => {
     brokerTimer = null;
@@ -144,6 +149,13 @@ function scheduleBrokerPoll(delayMs = BROKER_POLL_INTERVAL_MS) {
 
 async function pollBroker() {
   if (!subscriptions.size || brokerCursor === null) return;
+  if (brokerPolling) {
+    brokerWakeRequested = true;
+    return;
+  }
+
+  brokerPolling = true;
+  let nextDelayMs = BROKER_IDLE_POLL_INTERVAL_MS;
   try {
     const events = await prisma.realtimeEvent.findMany({
       where: {
@@ -184,12 +196,34 @@ async function pollBroker() {
         }
       }
     }
-    scheduleBrokerPoll(events.length === BROKER_BATCH_SIZE ? 0 : BROKER_POLL_INTERVAL_MS);
+
+    if (events.length === BROKER_BATCH_SIZE) nextDelayMs = 0;
+    else if (events.length) nextDelayMs = BROKER_ACTIVE_POLL_INTERVAL_MS;
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown realtime broker error.";
     console.warn(`Realtime broker poll failed: ${message}`);
-    scheduleBrokerPoll(2_000);
+    nextDelayMs = 2_000;
+  } finally {
+    brokerPolling = false;
+    if (!subscriptions.size) return;
+    if (brokerWakeRequested) {
+      brokerWakeRequested = false;
+      scheduleBrokerPoll(0);
+    } else {
+      scheduleBrokerPoll(nextDelayMs);
+    }
   }
+}
+
+export function wakeRealtimeBroker() {
+  if (!subscriptions.size) return;
+  if (brokerPolling) {
+    brokerWakeRequested = true;
+    return;
+  }
+  if (brokerTimer) clearTimeout(brokerTimer);
+  brokerTimer = null;
+  scheduleBrokerPoll(0);
 }
 
 async function ensureBrokerRunning() {

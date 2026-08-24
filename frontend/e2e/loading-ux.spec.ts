@@ -1,90 +1,63 @@
 import { expect, test } from "@playwright/test";
 import { dismissWelcomeGate } from "./helpers";
 
-test("startup gate uses the WESCOMM logo animation without legacy welcome content", async ({ page }) => {
+const WELCOME_VIDEO_PATH = "/assets/wescomm-logo-intro-new.mp4";
+
+test("fresh app session shows the responsive welcome animation while dashboard data loads", async ({ page }) => {
+  let animationRequests = 0;
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === WELCOME_VIDEO_PATH) animationRequests += 1;
+  });
   await page.route(/\/api\/backend\/products(?:\?.*)?$/, async (route) => {
     await new Promise((resolve) => setTimeout(resolve, 2000));
     await route.continue();
   });
 
-  const animationResponse = page.waitForResponse((response) => (
-    new URL(response.url()).pathname === "/assets/wescomm-logo-intro.mp4"
-  ));
-
   await page.goto("/student/dashboard", { waitUntil: "domcontentloaded" });
 
-  await expect(
-    page.locator('link[rel="preload"][as="video"][href="/assets/wescomm-logo-intro.mp4"]')
-  ).toHaveCount(1);
-
+  await expect.poll(() => page.evaluate(() => ({
+    state: document.documentElement.getAttribute("data-wescomm-intro"),
+    seen: window.sessionStorage.getItem("wescomm_welcome_intro_v2_seen"),
+    reducedMotion: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  }))).toEqual({ state: "pending", seen: "1", reducedMotion: false });
   const gate = page.locator(".welcome-gate-overlay");
   await expect(gate).toBeVisible();
-  expect(await gate.evaluate((element) => element.style.position)).toBe("fixed");
-  expect(await gate.evaluate((element) => {
-    const main = document.querySelector("main");
-    return Boolean(
-      main && (element.compareDocumentPosition(main) & Node.DOCUMENT_POSITION_FOLLOWING)
-    );
-  })).toBe(true);
-
-  const animation = gate.getByTestId("welcome-logo-animation");
-  await expect(animation).toHaveJSProperty("autoplay", true);
-  await expect(animation).toHaveJSProperty("muted", true);
-  await expect(animation).toHaveAttribute("src", "/assets/wescomm-logo-intro.mp4");
-  const skipButton = gate.getByRole("button", { name: "Skip welcome animation and continue" });
-  await expect(skipButton).toBeVisible();
-  const skipButtonBox = await skipButton.boundingBox();
-  const viewport = page.viewportSize();
-  expect(skipButtonBox).not.toBeNull();
-  expect(viewport).not.toBeNull();
-  expect(skipButtonBox?.x ?? 0).toBeGreaterThan((viewport?.width ?? 0) * 0.65);
-  expect(skipButtonBox?.y ?? 0).toBeGreaterThan((viewport?.height ?? 0) * 0.75);
-  await expect(gate.getByRole("heading")).toHaveCount(0);
-  await expect(gate.getByText(/Welcome (?:Back )?to WESCOMM/)).toHaveCount(0);
-  expect([200, 206]).toContain((await animationResponse).status());
-
-  await expect(gate).toHaveAttribute("data-animation-complete", "true");
-  await expect(animation).toHaveJSProperty("paused", true);
-  const heldFrame = await animation.evaluate((element) => {
-    const video = element as HTMLVideoElement;
-    return {
-      currentTime: video.currentTime,
-      duration: video.duration
-    };
-  });
-  expect(heldFrame.duration - heldFrame.currentTime).toBeGreaterThan(0.6);
-
+  await expect(gate).toHaveCSS("position", "fixed");
+  await expect.poll(() => animationRequests).toBeGreaterThan(0);
+  await expect(page.getByRole("heading", { name: "Stock Status Overview" })).toBeVisible();
   await dismissWelcomeGate(page);
 });
 
-test("welcome animation can be skipped on every visit", async ({ page }) => {
-  await page.route(/\/api\/backend\/products(?:\?.*)?$/, async (route) => {
-    await new Promise((resolve) => setTimeout(resolve, 5000));
-    await route.continue();
+test("reload and same-tab navigation stay free of the welcome gate", async ({ page }) => {
+  let animationRequests = 0;
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === WELCOME_VIDEO_PATH) animationRequests += 1;
   });
 
   await page.goto("/student/dashboard", { waitUntil: "domcontentloaded" });
-
   const gate = page.locator(".welcome-gate-overlay");
   await expect(gate).toBeVisible();
-  await gate.getByRole("button", { name: "Skip welcome animation and continue" }).click();
-  await expect(gate).toBeHidden({ timeout: 1500 });
+  await expect.poll(() => animationRequests).toBeGreaterThan(0);
+  await dismissWelcomeGate(page);
+  await page.waitForTimeout(500);
+  const firstOpenRequestCount = animationRequests;
 
   await page.reload({ waitUntil: "domcontentloaded" });
-  await expect(gate).toBeVisible();
-  await expect(gate.getByTestId("welcome-logo-animation")).toHaveAttribute(
-    "src",
-    "/assets/wescomm-logo-intro.mp4"
-  );
-  await gate.getByRole("button", { name: "Skip welcome animation and continue" }).click();
-  await expect(gate).toBeHidden({ timeout: 1500 });
+  await expect(gate).toHaveCount(0);
+  await page.waitForTimeout(500);
+  expect(animationRequests).toBe(firstOpenRequestCount);
+
+  await page.goto("/student/shop", { waitUntil: "domcontentloaded" });
+  await expect(gate).toHaveCount(0);
+  await page.waitForTimeout(500);
+  expect(animationRequests).toBe(firstOpenRequestCount);
 });
 
 test("reduced-motion visitors bypass the welcome video", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   let animationRequests = 0;
   page.on("request", (request) => {
-    if (new URL(request.url()).pathname === "/assets/wescomm-logo-intro.mp4") {
+    if (new URL(request.url()).pathname === WELCOME_VIDEO_PATH) {
       animationRequests += 1;
     }
   });
@@ -93,6 +66,26 @@ test("reduced-motion visitors bypass the welcome video", async ({ page }) => {
 
   await expect(page.locator(".welcome-gate-overlay")).toHaveCount(0);
   expect(animationRequests).toBe(0);
+});
+
+test("failed welcome media exits safely and is not retried on reload", async ({ page }) => {
+  let animationRequests = 0;
+  await page.route(`**${WELCOME_VIDEO_PATH}`, async (route) => {
+    animationRequests += 1;
+    await route.abort("failed");
+  });
+
+  await page.goto("/student/dashboard", { waitUntil: "domcontentloaded" });
+
+  await expect(page.locator(".welcome-gate-overlay")).toHaveCount(0);
+  await expect.poll(() => animationRequests).toBe(1);
+  await expect.poll(() => page.evaluate(() => (
+    window.sessionStorage.getItem("wescomm_welcome_intro_v2_seen")
+  ))).toBe("1");
+
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(page.locator(".welcome-gate-overlay")).toHaveCount(0);
+  expect(animationRequests).toBe(1);
 });
 
 test("student dashboard shares one products request across its loading cards", async ({ page }) => {

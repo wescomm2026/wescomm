@@ -71,6 +71,7 @@ export function StudentNotifications({ onRequireAuth }: { onRequireAuth?: () => 
   const containerRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const requestSequenceRef = useRef(0);
+  const unreadRequestSequenceRef = useRef(0);
   const accountId = user?.id ?? "";
   const visibleNotifications = notificationOwnerId === accountId ? notifications : [];
 
@@ -95,8 +96,10 @@ export function StudentNotifications({ onRequireAuth }: { onRequireAuth?: () => 
 
   const loadUnreadCount = useCallback(async () => {
     if (!user?.accessToken || !accountId) return;
+    const requestSequence = ++unreadRequestSequenceRef.current;
     try {
       const count = await getUnreadNotificationCountFromApi(user.accessToken);
+      if (requestSequence !== unreadRequestSequenceRef.current) return;
       setUnreadCount(count);
     } catch {
       // Keep the last known badge count; opening the panel still offers an explicit retry.
@@ -124,11 +127,12 @@ export function StudentNotifications({ onRequireAuth }: { onRequireAuth?: () => 
     const refreshWhenActive = () => {
       if (document.visibilityState === "visible") void loadUnreadCount();
     };
-    const timer = window.setInterval(refreshWhenActive, 60000);
+    const timer = window.setInterval(refreshWhenActive, 5 * 60_000);
     window.addEventListener("focus", refreshWhenActive);
     window.addEventListener("online", refreshWhenActive);
     return () => {
       requestSequenceRef.current += 1;
+      unreadRequestSequenceRef.current += 1;
       window.clearInterval(timer);
       window.removeEventListener("focus", refreshWhenActive);
       window.removeEventListener("online", refreshWhenActive);

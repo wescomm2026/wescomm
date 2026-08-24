@@ -14,18 +14,35 @@ import { PAYMENT_METHODS, RESERVATION_STATUSES } from "../types/app.js";
 import { asyncHandler } from "../utils/async-handler.js";
 import { measureRequestPhase } from "../middleware/request-timing.js";
 import { scheduleOutboxProcessing } from "../services/outbox.service.js";
+import { invalidateOperationalReadCaches } from "../services/operational-cache.service.js";
 
 export const reservationsRoutes = Router();
+
+function manilaDateKey(date: Date) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Manila",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+function tomorrowInManilaKey() {
+  return manilaDateKey(new Date(Date.now() + 24 * 60 * 60 * 1000));
+}
 
 const createReservationSchema = z
   .object({
     paymentMethod: z.enum(PAYMENT_METHODS).default("PAY_AT_COMMISSARY"),
-    pickupStart: z.coerce.date().optional(),
-    pickupEnd: z.coerce.date().optional(),
+    pickupStart: z.coerce.date(),
+    pickupEnd: z.coerce.date(),
     items: z
       .array(
         z.object({
           productId: z.string().uuid(),
+          skuId: z.string().uuid().optional(),
           variantSummary: z.string().trim().max(500).optional(),
           quantity: z.number().int().positive().max(20)
         })
@@ -34,10 +51,25 @@ const createReservationSchema = z
       .max(25)
   })
   .superRefine((input, context) => {
-    if (input.pickupStart && input.pickupEnd && input.pickupEnd <= input.pickupStart) {
+    if (input.pickupEnd <= input.pickupStart) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         message: "Pickup end must be later than pickup start.",
+        path: ["pickupEnd"]
+      });
+    }
+    const pickupDate = manilaDateKey(input.pickupStart);
+    if (pickupDate < tomorrowInManilaKey()) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Pickup must be scheduled at least one day in advance.",
+        path: ["pickupStart"]
+      });
+    }
+    if (pickupDate !== manilaDateKey(input.pickupEnd)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Pickup start and end must be on the same Manila calendar date.",
         path: ["pickupEnd"]
       });
     }
@@ -112,6 +144,7 @@ reservationsRoutes.post(
       idempotencyKey,
       ...input
     }));
+    if (!result.idempotentReplay) await invalidateOperationalReadCaches();
     scheduleOutboxProcessing();
     response.setHeader("Idempotent-Replayed", result.idempotentReplay ? "true" : "false");
     response.status(result.idempotentReplay ? 200 : 201).json(result);
@@ -128,6 +161,7 @@ reservationsRoutes.post(
       reservationIdSchema.parse(request.params.id),
       request.auth!.id
     ));
+    await invalidateOperationalReadCaches();
     scheduleOutboxProcessing();
     response.json(result);
   })
@@ -143,6 +177,7 @@ reservationsRoutes.patch(
     const result = await measureRequestPhase(response, "reservation_status", () =>
       updateReservationStatus(reservationIdSchema.parse(request.params.id), input.status, request.auth!.id)
     );
+    await invalidateOperationalReadCaches();
     scheduleOutboxProcessing();
     response.json(result);
   })
@@ -155,6 +190,7 @@ reservationsRoutes.post(
   reservationStatusLimiter,
   asyncHandler(async (request: AuthenticatedRequest, response) => {
     const result = await updateReservationStatus(reservationIdSchema.parse(request.params.id), "NO_SHOW", request.auth!.id);
+    await invalidateOperationalReadCaches();
     scheduleOutboxProcessing();
     response.json(result);
   })

@@ -1,5 +1,5 @@
-import { FaqPage } from "@/components/ui/ModulePages";
+import { FaqManagementExperience } from "@/components/faq/FaqManagementExperience";
 
 export default function Page() {
-  return <FaqPage manage />;
+  return <FaqManagementExperience />;
 }

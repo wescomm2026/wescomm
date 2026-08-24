@@ -8,6 +8,8 @@ monitoring through one responsive web platform.
 
 - `frontend/` - Next.js 14 App Router web application
 - `backend/` - Express, Prisma, and Supabase API
+- [`system-design-diagrams/`](system-design-diagrams/README.md) - as-built
+  business rules, analysis/design, UML, DFD, and ERD package
 - `txt_files/` - database SQL, setup notes, security guides, and QA runbooks
 
 Design-source mockups, local archives, dependencies, build output, and secret

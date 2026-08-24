@@ -6,6 +6,7 @@ import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import { AssetIcon } from "@/components/ui/AssetIcon";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
+import { useAccessibleDialog } from "@/components/ui/useAccessibleDialog";
 import {
   createFaqFromApi,
   deleteFaqFromApi,
@@ -62,6 +63,7 @@ export function FaqManagementExperience() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const dialog = useAccessibleDialog<HTMLFormElement>(Boolean(editing), () => setEditing(null));
 
   const loadFaqs = useCallback(async ({ background = false }: { background?: boolean } = {}) => {
     if (!user?.accessToken) {
@@ -281,6 +283,8 @@ export function FaqManagementExperience() {
       {editing ? (
         <div className="fixed inset-0 z-[10000] grid place-items-center overflow-y-auto bg-[#101820]/50 p-4">
           <form
+            ref={dialog.dialogRef}
+            {...dialog.dialogProps}
             className="my-auto w-full max-w-xl rounded-lg bg-white p-5 shadow-2xl"
             onSubmit={(event) => {
               event.preventDefault();
@@ -288,8 +292,8 @@ export function FaqManagementExperience() {
             }}
           >
             <div className="flex items-center gap-3">
-              <h2 className="text-xl font-extrabold">{editing.id ? "Edit FAQ" : "Add FAQ"}</h2>
-              <button type="button" onClick={() => setEditing(null)} className="ml-auto grid size-9 place-items-center rounded-md hover:bg-[#eef3ee]">
+              <h2 id={dialog.titleId} className="text-xl font-extrabold">{editing.id ? "Edit FAQ" : "Add FAQ"}</h2>
+              <button type="button" data-dialog-autofocus onClick={() => setEditing(null)} aria-label="Close FAQ editor" className="ml-auto grid size-9 place-items-center rounded-md hover:bg-[#eef3ee]">
                 <X className="size-5" />
               </button>
             </div>

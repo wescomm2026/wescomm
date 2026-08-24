@@ -12,13 +12,22 @@ export const WESBOT_INTENTS = [
 
 export type WesbotIntent = (typeof WESBOT_INTENTS)[number];
 
+export type DeterministicWesbotIntent = {
+  intent: WesbotIntent;
+  reason: "human_handoff" | "record_reference" | "explicit_policy" | "explicit_action";
+};
+
 const HANDOFF_PATTERNS = [
   /\b(?:talk|speak|connect|chat)\s+(?:to|with)\s+(?:a\s+)?(?:real\s+)?(?:person|human|staff|admin|agent|commissary)\b/,
   /\b(?:real|human|live)\s+(?:person|staff|agent|support)\b/,
   /\b(?:staff|admin|agent)\s+(?:please|pls|po)\b/,
   /\b(?:gusto|nais|need|kailangan)\s+ko\s+(?:ng|makipag-usap\s+sa|makausap\s+na?)\s*(?:real\s+)?(?:tao|staff|admin|person|agent)\b/,
   /\b(?:ayoko|ayaw\s+ko)\s+(?:sa\s+)?(?:bot|ai|wesbot)\b/,
-  /\b(?:makausap|kausapin)\s+(?:ang|yung|ng)?\s*(?:staff|admin|tao|commissary)\b/
+  /\b(?:makausap|kausapin)\s+(?:ang|yung|ng)?\s*(?:staff|admin|tao|commissary)\b/,
+  /\b(?:transfer|escalate|hand\s*over|handover|put\s+me\s+through|connect\s+me)\b.{0,50}\b(?:staff|personnel|person|human|tao)\b/,
+  /\b(?:person|human|tao)\b.{0,40}\b(?:reply|response|sumagot|help|assist)\b/,
+  /\b(?:staff|commissary\s+personnel)\b.{0,40}\b(?:handle|assist|take\s+over|answer|reply)\b/,
+  /\b(?:someone|somebody)\s+from\s+(?:the\s+)?commissary\b.{0,30}\b(?:handle|assist|help|answer|reply)\b/
 ];
 
 const STOP_WORDS = new Set([
@@ -82,6 +91,35 @@ export function detectWesbotIntent(value: string): WesbotIntent {
     return "POLICY_QUESTION";
   }
   return "GENERAL_SUPPORT";
+}
+
+export function detectHighConfidenceWesbotIntent(value: string): DeterministicWesbotIntent | null {
+  const normalized = normalizeWesbotText(value);
+  if (requestsHumanSupport(normalized)) return { intent: "HUMAN_HANDOFF", reason: "human_handoff" };
+
+  const reservationReference = extractReservationReference(value);
+  const receiptCode = extractReceiptCode(value);
+  if (receiptCode) return { intent: "RECEIPT_STATUS", reason: "record_reference" };
+  if (reservationReference) {
+    if (containsAny(normalized, ["cancel", "cancellation", "kansel", "bawi", "withdraw", "undo", "remove"])) {
+      return { intent: "CANCELLATION_ELIGIBILITY", reason: "record_reference" };
+    }
+    if (containsAny(normalized, ["payment", "paid", "paymongo", "gcash", "bayad", "transaction", "credit"])) {
+      return { intent: "PAYMENT_STATUS", reason: "record_reference" };
+    }
+    if (containsAny(normalized, ["pickup", "pick up", "claim", "collect", "kunin", "kuha", "schedule"])) {
+      return { intent: "PICKUP_INFORMATION", reason: "record_reference" };
+    }
+    return { intent: "RESERVATION_STATUS", reason: "record_reference" };
+  }
+
+  if (containsAny(normalized, ["policy", "rule", "rules", "restriction", "restrictions", "allowed ba", "bawal ba", "what happens if"])) {
+    return { intent: "POLICY_QUESTION", reason: "explicit_policy" };
+  }
+  if (containsAny(normalized, ["cancel reservation", "cancel my reservation", "kansela", "bawiin", "withdraw the request", "undo my reservation", "back out"])) {
+    return { intent: "CANCELLATION_ELIGIBILITY", reason: "explicit_action" };
+  }
+  return null;
 }
 
 export function extractReservationReference(value: string) {

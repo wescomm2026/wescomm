@@ -22,6 +22,57 @@ let stockRestored = false;
 let receiptVoided = false;
 let cancellationProbeId = "";
 let cancellationProbeStatus = "";
+let reservationVariantSummary = "";
+let selectedProductOptions: Array<{ optionName: string; optionValue: string }> = [];
+let restoreVariantQuantities: Array<{ variantId: string; quantity: number }> = [];
+
+function normalizeOption(value: unknown) {
+  return String(value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function reservationSelection(product: JsonRecord) {
+  const variants = Array.isArray(product.variants) ? product.variants as JsonRecord[] : [];
+  if (!variants.length) return { summary: "", selections: [] as Array<{ optionName: string; optionValue: string }> };
+
+  const groups = new Map<string, { optionName: string; variants: JsonRecord[] }>();
+  for (const variant of variants) {
+    const key = normalizeOption(variant.optionName);
+    const group = groups.get(key) ?? { optionName: String(variant.optionName), variants: [] };
+    group.variants.push(variant);
+    groups.set(key, group);
+  }
+
+  const productStock = Number(product.stock);
+  const selections: Array<{ optionName: string; optionValue: string }> = [];
+  for (const group of Array.from(groups.values())) {
+    const total = group.variants.reduce((sum: number, variant: JsonRecord) => sum + Number(variant.stock ?? 0), 0);
+    const available = group.variants.find((variant: JsonRecord) => Number(variant.stock) >= 1);
+    if (total !== productStock || !available) return null;
+    selections.push({ optionName: group.optionName, optionValue: String(available.optionValue) });
+  }
+
+  return {
+    summary: selections.map((selection) => `${selection.optionName}: ${selection.optionValue}`).join(", "),
+    selections
+  };
+}
+
+function reservationItem() {
+  return {
+    productId,
+    quantity: 1,
+    ...(reservationVariantSummary ? { variantSummary: reservationVariantSummary } : {})
+  };
+}
+
+function restoreStockData(notes: string) {
+  return {
+    mode: "add" as const,
+    quantity: 1,
+    ...(restoreVariantQuantities.length ? { variantQuantities: restoreVariantQuantities } : {}),
+    notes
+  };
+}
 
 function originHeader() {
   return { Origin: new URL(baseURL).origin };
@@ -113,7 +164,24 @@ test.describe.serial("production mutation smoke", () => {
 
   test.afterEach(async ({ page }) => logout(page));
 
-  test("student dashboard, catalog, reservation, receipts, notifications, and support", async ({ page }, testInfo) => {
+
+function futurePickupWindow(days = 2) {
+  const target = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Manila",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(target);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  const date = `${values.year}-${values.month}-${values.day}`;
+  return {
+    pickupStart: new Date(`${date}T10:00:00+08:00`).toISOString(),
+    pickupEnd: new Date(`${date}T12:00:00+08:00`).toISOString()
+  };
+}
+
+test("student dashboard, catalog, reservation, receipts, notifications, and support", async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== "desktop-chromium", "Run the live mutation sequence only once.");
     const student = await loginWithOneTimeLink(page, "student@wesleyan.edu.ph", "STUDENT");
     studentId = student.id;
@@ -136,12 +204,42 @@ test.describe.serial("production mutation smoke", () => {
     await responseJson(notificationsResponse, "student:notifications");
     await responseJson(conversationsResponse, "student:support");
 
-    const product = (productsBody.products as JsonRecord[]).find((item) => (
-      item.isActive !== false && item.status !== "OUT_OF_STOCK" && Number(item.stock) >= 1
-    ));
+    const productChoice = (productsBody.products as JsonRecord[])
+      .map((item) => ({ item, selection: reservationSelection(item) }))
+      .find(({ item, selection }) => (
+        item.isActive !== false
+        && item.status !== "OUT_OF_STOCK"
+        && Number(item.stock) >= 1
+        && selection !== null
+      ));
+    const product = productChoice?.item;
     expect(product, "an in-stock QA reservation product").toBeTruthy();
-    if (!product) throw new Error("No in-stock product is available for the production reservation smoke test.");
+    if (!product || !productChoice?.selection) {
+      throw new Error("No option-consistent in-stock product is available for the production reservation smoke test.");
+    }
     productId = product.id;
+    reservationVariantSummary = productChoice.selection.summary;
+    selectedProductOptions = productChoice.selection.selections;
+
+    const admin = createClient(supabaseURL, supabaseServiceRoleKey, {
+      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
+    });
+    const variantResult = await admin
+      .from("product_variants")
+      .select("id,option_name,option_value")
+      .eq("product_id", productId);
+    expect(variantResult.error, "load exact QA option identifiers for reversible cleanup").toBeNull();
+    const liveVariants = variantResult.data ?? [];
+    restoreVariantQuantities = liveVariants.map((variant) => ({
+      variantId: variant.id,
+      quantity: selectedProductOptions.some((selection) => (
+        normalizeOption(selection.optionName) === normalizeOption(variant.option_name)
+        && normalizeOption(selection.optionValue) === normalizeOption(variant.option_value)
+      )) ? 1 : 0
+    }));
+    if (selectedProductOptions.length) {
+      expect(restoreVariantQuantities.filter((entry) => entry.quantity === 1)).toHaveLength(selectedProductOptions.length);
+    }
 
     await startRealtimeProbe(page);
 
@@ -150,7 +248,8 @@ test.describe.serial("production mutation smoke", () => {
       headers: { ...originHeader(), "Idempotency-Key": cancellationKey },
       data: {
         paymentMethod: "PAY_AT_COMMISSARY",
-        items: [{ productId, quantity: 1 }]
+        ...futurePickupWindow(),
+        items: [reservationItem()]
       }
     });
     const cancellationReservation = await responseJson(cancellationCreate, "student:reservation-cancel-probe-create");
@@ -169,7 +268,8 @@ test.describe.serial("production mutation smoke", () => {
       headers: { ...originHeader(), "Idempotency-Key": idempotencyKey },
       data: {
         paymentMethod: "PAY_AT_COMMISSARY",
-        items: [{ productId, quantity: 1 }]
+        ...futurePickupWindow(),
+        items: [reservationItem()]
       }
     });
     const created = await responseJson(createResponse, "student:reservation-create");
@@ -184,7 +284,8 @@ test.describe.serial("production mutation smoke", () => {
       headers: { ...originHeader(), "Idempotency-Key": idempotencyKey },
       data: {
         paymentMethod: "PAY_AT_COMMISSARY",
-        items: [{ productId, quantity: 1 }]
+        ...futurePickupWindow(),
+        items: [reservationItem()]
       }
     });
     const replay = await responseJson(replayResponse, "student:reservation-idempotent-replay");
@@ -246,7 +347,7 @@ test.describe.serial("production mutation smoke", () => {
 
       const restockResponse = await page.request.post(`/api/staff/products/${productId}/restock`, {
         headers: originHeader(),
-        data: { mode: "add", quantity: 1, notes: `Restore production smoke reservation ${reservationReference}.` }
+        data: restoreStockData(`Restore production smoke reservation ${reservationReference}.`)
       });
       await responseJson(restockResponse, "staff:inventory-restore");
       stockRestored = true;
@@ -275,7 +376,7 @@ test.describe.serial("production mutation smoke", () => {
       if (reservationStatus === "COMPLETED" && productId && !stockRestored) {
         await page.request.post(`/api/staff/products/${productId}/restock`, {
           headers: originHeader(),
-          data: { mode: "add", quantity: 1, notes: `Emergency restore for production smoke ${reservationReference}.` }
+          data: restoreStockData(`Emergency restore for production smoke ${reservationReference}.`)
         }).catch(() => undefined);
       }
     }

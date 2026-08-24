@@ -32,7 +32,7 @@ test("secure realtime events stay server-only, targeted, replayable, and idempot
 test("chat typing leaves process-local memory and uses authenticated realtime delivery", () => {
   const messages = source("src/services/message.service.ts");
   const studentChat = source("../frontend/components/support/StudentSupportExperience.tsx");
-  const staffChat = source("../frontend/components/staff/StaffOperations.tsx");
+  const staffChat = source("../frontend/components/staff/StaffMessagesExperience.tsx");
 
   assert.doesNotMatch(messages, /typingState\s*=\s*new Map/);
   assert.match(messages, /topic: REALTIME_TOPICS\.typing/);
@@ -67,6 +67,9 @@ test("reservation creation retries bounded serialization conflicts without weake
   assert.match(reservations, /withReservationSerializationRetry[\s\S]*error\.code !== "P2034"[\s\S]*waitForReservationSerializationRetry\(attempt\)/);
   assert.match(reservations, /const transactionResult = await withReservationSerializationRetry\(executeTransaction\)/);
   assert.match(reservations, /const result = await withReservationSerializationRetry\(\(\) => prisma\.\$transaction/);
-  assert.match(reservations, /stock: \{ gte: quantity \}/);
+  assert.match(reservations, /product\."stock" >= requested\."quantity"/);
+  assert.match(reservations, /sku\."stock" >= requested\."quantity"/);
+  assert.match(reservations, /variant\."stock" >= requested\."quantity"/);
+  assert.match(reservations, /Prisma\.join\(productStockUpdates/);
   assert.match(reservations, /RESERVATION_SERIALIZATION_CONFLICT/);
 });

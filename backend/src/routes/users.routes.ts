@@ -6,6 +6,7 @@ import { createRateLimiter, userRateLimitKey } from "../middleware/rate-limit.js
 import { listUsers, updateUserRole } from "../services/user.service.js";
 import { APP_ROLES } from "../types/app.js";
 import { asyncHandler } from "../utils/async-handler.js";
+import { invalidateReportReadCache } from "../services/operational-cache.service.js";
 
 export const usersRoutes = Router();
 
@@ -44,6 +45,7 @@ usersRoutes.patch(
   asyncHandler(async (request: AuthenticatedRequest, response) => {
     const input = updateRoleSchema.parse(request.body);
     const user = await updateUserRole(userIdSchema.parse(request.params.id), input.role, request.auth!.id);
+    await invalidateReportReadCache();
     response.json({ user });
   })
 );

@@ -1,0 +1,536 @@
+[
+  {
+    "id": "WB-PROD-001",
+    "canonical_name": "Elementary PE Shirt",
+    "category": "Uniforms",
+    "aliases": [
+      "Elementary Physical Education Shirt"
+    ],
+    "dynamic_fields": [
+      "price",
+      "stock",
+      "variant_stock"
+    ],
+    "note": "Never hard-code dynamic fields from this alias file."
+  },
+  {
+    "id": "WB-PROD-002",
+    "canonical_name": "Elementary PE Jogging Pants",
+    "category": "Uniforms",
+    "aliases": [
+      "Elementary Physical Education Jogging Pants"
+    ],
+    "dynamic_fields": [
+      "price",
+      "stock",
+      "variant_stock"
+    ],
+    "note": "Never hard-code dynamic fields from this alias file."
+  },
+  {
+    "id": "WB-PROD-003",
+    "canonical_name": "Elementary PE Uniform Set",
+    "category": "Uniforms",
+    "aliases": [
+      "Elementary Physical Education Uniform Set"
+    ],
+    "dynamic_fields": [
+      "price",
+      "stock",
+      "variant_stock"
+    ],
+    "note": "Never hard-code dynamic fields from this alias file."
+  },
+  {
+    "id": "WB-PROD-004",
+    "canonical_name": "PE Uniform Top",
+    "category": "Uniforms",
+    "aliases": [
+      "Physical Education Uniform Top"
+    ],
+    "dynamic_fields": [
+      "price",
+      "stock",
+      "variant_stock"
+    ],
+    "note": "Never hard-code dynamic fields from this alias file."
+  },
+  {
+    "id": "WB-PROD-005",
+    "canonical_name": "PE Uniform Pants",
+    "category": "Uniforms",
+    "aliases": [
+      "Physical Education Uniform Pants"
+    ],
+    "dynamic_fields": [
+      "price",
+      "stock",
+      "variant_stock"
+    ],
+    "note": "Never hard-code dynamic fields from this alias file."
+  },
+  {
+    "id": "WB-PROD-006",
+    "canonical_name": "PE Uniform Set",
+    "category": "Uniforms",
+    "aliases": [
+      "Physical Education Uniform Set"
+    ],
+    "dynamic_fields": [
+      "price",
+      "stock",
+      "variant_stock"
+    ],
+    "note": "Never hard-code dynamic fields from this alias file."
+  },
+  {
+    "id": "WB-PROD-007",
+    "canonical_name": "Senior High Men's Polo",
+    "category": "Uniforms",
+    "aliases": [
+      "Senior High Boys Polo",
+      "senior high men polo"
+    ],
+    "dynamic_fields": [
+      "price",
+      "stock",
+      "variant_stock"
+    ],
+    "note": "Never hard-code dynamic fields from this alias file."
+  },
+  {
+    "id": "WB-PROD-008",
+    "canonical_name": "Senior High Men's Pants",
+    "category": "Uniforms",
+    "aliases": [
+      "Senior High Boys Pants",
+      "senior high men pants"
+    ],
+    "dynamic_fields": [
+      "price",
+      "stock",
+      "variant_stock"
+    ],
+    "note": "Never hard-code dynamic fields from this alias file."
+  },
+  {
+    "id": "WB-PROD-009",
+    "canonical_name": "Senior High Men's Uniform Set",
+    "category": "Uniforms",
+    "aliases": [
+      "Senior High Boys Uniform Set",
+      "senior high men uniform set"
+    ],
+    "dynamic_fields": [
+      "price",
+      "stock",
+      "variant_stock"
+    ],
+    "note": "Never hard-code dynamic fields from this alias file."
+  },
+  {
+    "id": "WB-PROD-010",
+    "canonical_name": "Senior High Women's Top",
+    "category": "Uniforms",
+    "aliases": [
+      "Senior High Girls Top",
+      "senior high women top"
+    ],
+    "dynamic_fields": [
+      "price",
+      "stock",
+      "variant_stock"
+    ],
+    "note": "Never hard-code dynamic fields from this alias file."
+  },
+  {
+    "id": "WB-PROD-011",
+    "canonical_name": "Senior High Women's Skirt",
+    "category": "Uniforms",
+    "aliases": [
+      "Senior High Girls Skirt",
+      "senior high women skirt"
+    ],
+    "dynamic_fields": [
+      "price",
+      "stock",
+      "variant_stock"
+    ],
+    "note": "Never hard-code dynamic fields from this alias file."
+  },
+  {
+    "id": "WB-PROD-012",
+    "canonical_name": "Senior High Women's Uniform Set",
+    "category": "Uniforms",
+    "aliases": [
+      "Senior High Girls Uniform Set",
+      "senior high women uniform set"
+    ],
+    "dynamic_fields": [
+      "price",
+      "stock",
+      "variant_stock"
+    ],
+    "note": "Never hard-code dynamic fields from this alias file."
+  },
+  {
+    "id": "WB-PROD-013",
+    "canonical_name": "WUP Men's Uniform Top",
+    "category": "Uniforms",
+    "aliases": [
+      "Boys WUP Uniform",
+      "wup men uniform top",
+      "Wesleyan Men's Uniform Top"
+    ],
+    "dynamic_fields": [
+      "price",
+      "stock",
+      "variant_stock"
+    ],
+    "note": "Never hard-code dynamic fields from this alias file."
+  },
+  {
+    "id": "WB-PROD-014",
+    "canonical_name": "WUP Men's Uniform Set",
+    "category": "Uniforms",
+    "aliases": [
+      "Boys WUP Uniform Set",
+      "wup men uniform set",
+      "Wesleyan Men's Uniform Set"
+    ],
+    "dynamic_fields": [
+      "price",
+      "stock",
+      "variant_stock"
+    ],
+    "note": "Never hard-code dynamic fields from this alias file."
+  },
+  {
+    "id": "WB-PROD-015",
+    "canonical_name": "WUP Women's Uniform Set",
+    "category": "Uniforms",
+    "aliases": [
+      "WUP Girls Uniform Set",
+      "wup women uniform set",
+      "Wesleyan Women's Uniform Set"
+    ],
+    "dynamic_fields": [
+      "price",
+      "stock",
+      "variant_stock"
+    ],
+    "note": "Never hard-code dynamic fields from this alias file."
+  },
+  {
+    "id": "WB-PROD-016",
+    "canonical_name": "WUP Women's Blouse with Ribbon",
+    "category": "Uniforms",
+    "aliases": [
+      "WUP Girls Blouse",
+      "wup women blouse with ribbon",
+      "Wesleyan Women's Blouse with Ribbon"
+    ],
+    "dynamic_fields": [
+      "price",
+      "stock",
+      "variant_stock"
+    ],
+    "note": "Never hard-code dynamic fields from this alias file."
+  },
+  {
+    "id": "WB-PROD-017",
+    "canonical_name": "WUP Women's Blouse",
+    "category": "Uniforms",
+    "aliases": [
+      "WUP Girls Blouse Classic",
+      "wup women blouse",
+      "Wesleyan Women's Blouse"
+    ],
+    "dynamic_fields": [
+      "price",
+      "stock",
+      "variant_stock"
+    ],
+    "note": "Never hard-code dynamic fields from this alias file."
+  },
+  {
+    "id": "WB-PROD-018",
+    "canonical_name": "WUP Women's Skirt",
+    "category": "Uniforms",
+    "aliases": [
+      "WUP Girls Skirt",
+      "wup women skirt",
+      "Wesleyan Women's Skirt"
+    ],
+    "dynamic_fields": [
+      "price",
+      "stock",
+      "variant_stock"
+    ],
+    "note": "Never hard-code dynamic fields from this alias file."
+  },
+  {
+    "id": "WB-PROD-019",
+    "canonical_name": "WUP Slacks",
+    "category": "Uniforms",
+    "aliases": [
+      "Wesleyan Slacks"
+    ],
+    "dynamic_fields": [
+      "price",
+      "stock",
+      "variant_stock"
+    ],
+    "note": "Never hard-code dynamic fields from this alias file."
+  },
+  {
+    "id": "WB-PROD-020",
+    "canonical_name": "BSBA Women's Uniform Set",
+    "category": "Uniforms",
+    "aliases": [
+      "BSBA Girls Uniform Set",
+      "bsba women uniform set"
+    ],
+    "dynamic_fields": [
+      "price",
+      "stock",
+      "variant_stock"
+    ],
+    "note": "Never hard-code dynamic fields from this alias file."
+  },
+  {
+    "id": "WB-PROD-021",
+    "canonical_name": "BSBA Women's Blouse",
+    "category": "Uniforms",
+    "aliases": [
+      "BSBA Girls Uniform",
+      "bsba women blouse"
+    ],
+    "dynamic_fields": [
+      "price",
+      "stock",
+      "variant_stock"
+    ],
+    "note": "Never hard-code dynamic fields from this alias file."
+  },
+  {
+    "id": "WB-PROD-022",
+    "canonical_name": "BSBA Skirt",
+    "category": "Uniforms",
+    "aliases": [],
+    "dynamic_fields": [
+      "price",
+      "stock",
+      "variant_stock"
+    ],
+    "note": "Never hard-code dynamic fields from this alias file."
+  },
+  {
+    "id": "WB-PROD-023",
+    "canonical_name": "Nursing Women's Uniform",
+    "category": "Uniforms",
+    "aliases": [
+      "Nursing Girls Uniform",
+      "nursing women uniform"
+    ],
+    "dynamic_fields": [
+      "price",
+      "stock",
+      "variant_stock"
+    ],
+    "note": "Never hard-code dynamic fields from this alias file."
+  },
+  {
+    "id": "WB-PROD-024",
+    "canonical_name": "WUP Criminology Uniform",
+    "category": "Uniforms",
+    "aliases": [
+      "Wesleyan Criminology Uniform"
+    ],
+    "dynamic_fields": [
+      "price",
+      "stock",
+      "variant_stock"
+    ],
+    "note": "Never hard-code dynamic fields from this alias file."
+  },
+  {
+    "id": "WB-PROD-025",
+    "canonical_name": "Nursing Uniform Set",
+    "category": "Uniforms",
+    "aliases": [],
+    "dynamic_fields": [
+      "price",
+      "stock",
+      "variant_stock"
+    ],
+    "note": "Never hard-code dynamic fields from this alias file."
+  },
+  {
+    "id": "WB-PROD-026",
+    "canonical_name": "Nursing Men's Uniform Set",
+    "category": "Uniforms",
+    "aliases": [
+      "Nursing Boys Uniform Set",
+      "nursing men uniform set"
+    ],
+    "dynamic_fields": [
+      "price",
+      "stock",
+      "variant_stock"
+    ],
+    "note": "Never hard-code dynamic fields from this alias file."
+  },
+  {
+    "id": "WB-PROD-027",
+    "canonical_name": "Nursing Clinical Top",
+    "category": "Uniforms",
+    "aliases": [],
+    "dynamic_fields": [
+      "price",
+      "stock",
+      "variant_stock"
+    ],
+    "note": "Never hard-code dynamic fields from this alias file."
+  },
+  {
+    "id": "WB-PROD-028",
+    "canonical_name": "Nursing Slacks",
+    "category": "Uniforms",
+    "aliases": [],
+    "dynamic_fields": [
+      "price",
+      "stock",
+      "variant_stock"
+    ],
+    "note": "Never hard-code dynamic fields from this alias file."
+  },
+  {
+    "id": "WB-PROD-029",
+    "canonical_name": "Nursing Smock Gown",
+    "category": "Uniforms",
+    "aliases": [],
+    "dynamic_fields": [
+      "price",
+      "stock",
+      "variant_stock"
+    ],
+    "note": "Never hard-code dynamic fields from this alias file."
+  },
+  {
+    "id": "WB-PROD-030",
+    "canonical_name": "Med Tech Uniform Set",
+    "category": "Uniforms",
+    "aliases": [
+      "Medical Technology Uniform Set"
+    ],
+    "dynamic_fields": [
+      "price",
+      "stock",
+      "variant_stock"
+    ],
+    "note": "Never hard-code dynamic fields from this alias file."
+  },
+  {
+    "id": "WB-PROD-031",
+    "canonical_name": "Med Tech Uniform Top",
+    "category": "Uniforms",
+    "aliases": [
+      "Medical Technology Uniform Top"
+    ],
+    "dynamic_fields": [
+      "price",
+      "stock",
+      "variant_stock"
+    ],
+    "note": "Never hard-code dynamic fields from this alias file."
+  },
+  {
+    "id": "WB-PROD-032",
+    "canonical_name": "Med Tech Uniform Pants",
+    "category": "Uniforms",
+    "aliases": [
+      "Medical Technology Uniform Pants"
+    ],
+    "dynamic_fields": [
+      "price",
+      "stock",
+      "variant_stock"
+    ],
+    "note": "Never hard-code dynamic fields from this alias file."
+  },
+  {
+    "id": "WB-PROD-033",
+    "canonical_name": "Wesleyan ID Lace",
+    "category": "ID Accessories",
+    "aliases": [],
+    "dynamic_fields": [
+      "price",
+      "stock",
+      "variant_stock"
+    ],
+    "note": "Never hard-code dynamic fields from this alias file."
+  },
+  {
+    "id": "WB-PROD-034",
+    "canonical_name": "WUP Black ID Lace",
+    "category": "ID Accessories",
+    "aliases": [
+      "Wesleyan Black ID Lace"
+    ],
+    "dynamic_fields": [
+      "price",
+      "stock",
+      "variant_stock"
+    ],
+    "note": "Never hard-code dynamic fields from this alias file."
+  },
+  {
+    "id": "WB-PROD-035",
+    "canonical_name": "Principles of Medical Laboratory Science 1",
+    "category": "Textbooks",
+    "aliases": [],
+    "dynamic_fields": [
+      "price",
+      "stock",
+      "variant_stock"
+    ],
+    "note": "Never hard-code dynamic fields from this alias file."
+  },
+  {
+    "id": "WB-PROD-036",
+    "canonical_name": "Drug Guide for Nurses and Clinicians",
+    "category": "Textbooks",
+    "aliases": [],
+    "dynamic_fields": [
+      "price",
+      "stock",
+      "variant_stock"
+    ],
+    "note": "Never hard-code dynamic fields from this alias file."
+  },
+  {
+    "id": "WB-PROD-037",
+    "canonical_name": "Fundamentals of Nursing Volume 1",
+    "category": "Textbooks",
+    "aliases": [],
+    "dynamic_fields": [
+      "price",
+      "stock",
+      "variant_stock"
+    ],
+    "note": "Never hard-code dynamic fields from this alias file."
+  },
+  {
+    "id": "WB-PROD-038",
+    "canonical_name": "Fundamentals of Nursing Volume 2",
+    "category": "Textbooks",
+    "aliases": [],
+    "dynamic_fields": [
+      "price",
+      "stock",
+      "variant_stock"
+    ],
+    "note": "Never hard-code dynamic fields from this alias file."
+  }
+]

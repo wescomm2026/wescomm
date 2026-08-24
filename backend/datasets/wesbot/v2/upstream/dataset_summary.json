@@ -1,0 +1,29 @@
+{
+  "reviewed_source": "src(1).zip + prisma.zip (latest library copies reviewed on 2026-08-21)",
+  "current_supported_intents": [
+    "PRODUCT_INQUIRY",
+    "RESERVATION_STATUS",
+    "CANCELLATION_ELIGIBILITY",
+    "PAYMENT_STATUS",
+    "RECEIPT_STATUS",
+    "PICKUP_INFORMATION",
+    "POLICY_QUESTION",
+    "HUMAN_HANDOFF",
+    "GENERAL_SUPPORT"
+  ],
+  "current_intent_examples": 310,
+  "hard_cases": 20,
+  "future_extension_examples": 40,
+  "verified_faq_seed_entries": 26,
+  "configuration_needed_entries": 3,
+  "product_alias_entries": 38,
+  "validation_mismatches_removed": 12,
+  "important_current_gap": "Current accept flow only allows Staff to accept WAITING_FOR_STAFF conversations; direct takeover from BOT_ACTIVE and reassignment from another active staff handler require code changes.",
+  "balanced_eval_examples": 180,
+  "dataset_version": "2.0",
+  "semantic_intent_examples": 225,
+  "multiturn_context_examples": 21,
+  "clarification_cases": 15,
+  "semantic_holdout_eval_examples": 45,
+  "semantic_upgrade_note": "v2 is designed for semantic + context-aware classification. Exact phrase matching is explicitly not required."
+}

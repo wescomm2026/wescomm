@@ -75,7 +75,7 @@ async function cancelPendingReservationAndReleaseHeldInventory(input: {
     id: string;
     status: string;
     referenceCode: string;
-    items: Array<{ productId: string; variantSummary: string | null; quantity: number }>;
+    items: Array<{ productId: string; skuId: string | null; variantSummary: string | null; quantity: number }>;
   };
   actorId?: string | null;
   reason: string;
@@ -90,6 +90,7 @@ async function cancelPendingReservationAndReleaseHeldInventory(input: {
     select: {
       productId: true,
       variantId: true,
+      skuId: true,
       quantity: true,
       notes: true,
       variant: {
@@ -100,23 +101,42 @@ async function cancelPendingReservationAndReleaseHeldInventory(input: {
           optionValue: true,
           stock: true
         }
+      },
+      sku: {
+        select: {
+          id: true,
+          productId: true,
+          stock: true,
+          optionValues: { select: { variantId: true } }
+        }
       }
     }
-  })).filter((movement) => movement.notes === holdNote || movement.notes?.startsWith(`${holdNote} (`));
+  }));
 
   const expectedBaseQuantity = input.reservation.items.reduce((map, item) => {
     map.set(item.productId, (map.get(item.productId) ?? 0) + item.quantity);
     return map;
   }, new Map<string, number>());
   const expectedVariantQuantity = input.reservation.items.reduce((map, item) => {
+    if (item.skuId) return map;
     const selectedVariantCount = parseVariantSelections(item.variantSummary).length;
     if (selectedVariantCount > 0) {
       map.set(item.productId, (map.get(item.productId) ?? 0) + item.quantity * selectedVariantCount);
     }
     return map;
   }, new Map<string, number>());
-  const baseMovements = holdMovements.filter((movement) => movement.notes === holdNote);
-  const variantMovements = holdMovements.filter((movement) => movement.notes?.startsWith(`${holdNote} (`));
+  const expectedSkuQuantity = input.reservation.items.reduce((map, item) => {
+    if (item.skuId) map.set(item.skuId, (map.get(item.skuId) ?? 0) + item.quantity);
+    return map;
+  }, new Map<string, number>());
+
+  const baseMovements = holdMovements.filter((movement) => movement.notes === holdNote && !movement.variantId && !movement.skuId);
+  const variantMovements = holdMovements.filter((movement) => Boolean(movement.variantId));
+  const skuMovements = holdMovements.filter((movement) => Boolean(movement.skuId));
+  const unrecognizedMovements = holdMovements.filter((movement) => (
+    movement.notes !== holdNote && !movement.variantId && !movement.skuId
+  ));
+
   const heldBaseQuantity = baseMovements.reduce((map, movement) => {
     map.set(movement.productId, (map.get(movement.productId) ?? 0) + movement.quantity);
     return map;
@@ -125,28 +145,46 @@ async function cancelPendingReservationAndReleaseHeldInventory(input: {
     map.set(movement.productId, (map.get(movement.productId) ?? 0) + movement.quantity);
     return map;
   }, new Map<string, number>());
+  const heldSkuQuantity = skuMovements.reduce((map, movement) => {
+    if (movement.skuId) map.set(movement.skuId, (map.get(movement.skuId) ?? 0) + movement.quantity);
+    return map;
+  }, new Map<string, number>());
   const mapMatches = (expected: Map<string, number>, actual: Map<string, number>) =>
     expected.size === actual.size
-    && [...expected].every(([productId, quantity]) => actual.get(productId) === quantity);
-  const invalidBaseLedger = baseMovements.some((movement) => movement.variantId !== null || movement.quantity <= 0)
+    && [...expected].every(([key, quantity]) => actual.get(key) === quantity);
+  const invalidBaseLedger = unrecognizedMovements.length > 0
+    || baseMovements.some((movement) => movement.variantId !== null || movement.skuId !== null || movement.quantity <= 0)
     || !mapMatches(expectedBaseQuantity, heldBaseQuantity);
   const invalidVariantLedger = variantMovements.some((movement) => (
     movement.quantity <= 0
     || !movement.variantId
+    || movement.skuId !== null
     || !movement.variant
     || movement.productId !== movement.variant.productId
     || movement.variantId !== movement.variant.id
   )) || !mapMatches(expectedVariantQuantity, heldVariantQuantity);
+  const invalidSkuLedger = skuMovements.some((movement) => (
+    movement.quantity <= 0
+    || !movement.skuId
+    || movement.variantId !== null
+    || !movement.sku
+    || movement.productId !== movement.sku.productId
+    || movement.skuId !== movement.sku.id
+  )) || !mapMatches(expectedSkuQuantity, heldSkuQuantity);
 
   // Reservation summaries are display text and can outlive a renamed or deleted
   // variant. The original hold movements are the immutable identity source for
   // stock restoration. If that ledger is incomplete, fail closed and create a
   // durable review case instead of partially or incorrectly restoring stock.
-  if (invalidBaseLedger || invalidVariantLedger) {
+  if (invalidBaseLedger || invalidVariantLedger || invalidSkuLedger) {
     return {
       cancelled: false,
       inventoryReviewRequired: true,
-      reviewReason: invalidVariantLedger ? "VARIANT_HOLD_LEDGER_MISMATCH" : "BASE_HOLD_LEDGER_MISMATCH",
+      reviewReason: invalidSkuLedger
+        ? "SKU_HOLD_LEDGER_MISMATCH"
+        : invalidVariantLedger
+          ? "VARIANT_HOLD_LEDGER_MISMATCH"
+          : "BASE_HOLD_LEDGER_MISMATCH",
       backInStockNotificationCount: 0
     };
   }
@@ -242,6 +280,46 @@ async function cancelPendingReservationAndReleaseHeldInventory(input: {
         newStock,
         performedById: input.actorId ?? null,
         notes: `${input.reason} (${input.reservation.referenceCode}; ${variant.optionName}: ${variant.optionValue})`
+      }
+    });
+  }
+
+  const skuRelease = new Map<string, {
+    sku: NonNullable<(typeof skuMovements)[number]["sku"]>;
+    quantity: number;
+  }>();
+  for (const movement of skuMovements) {
+    const sku = movement.sku!;
+    const existing = skuRelease.get(sku.id);
+    skuRelease.set(sku.id, {
+      sku,
+      quantity: (existing?.quantity ?? 0) + movement.quantity
+    });
+  }
+  for (const { sku, quantity } of skuRelease.values()) {
+    const newStock = sku.stock + quantity;
+    await input.tx.productSku.update({
+      where: { id: sku.id },
+      data: { stock: newStock, updatedAt: now },
+      select: { id: true }
+    });
+    for (const link of sku.optionValues) {
+      await input.tx.productVariant.update({
+        where: { id: link.variantId },
+        data: { stock: { increment: quantity }, updatedAt: now },
+        select: { id: true }
+      });
+    }
+    await input.tx.inventoryMovement.create({
+      data: {
+        productId: sku.productId,
+        skuId: sku.id,
+        type: "RESERVATION_CANCEL",
+        quantity,
+        previousStock: sku.stock,
+        newStock,
+        performedById: input.actorId ?? null,
+        notes: `${input.reason} (${input.reservation.referenceCode}; SKU)`
       }
     });
   }
@@ -412,7 +490,7 @@ async function persistAttemptExpired(attemptId: string, actorId?: string | null)
                 referenceCode: true,
                 status: true,
                 items: {
-                  select: { productId: true, variantSummary: true, quantity: true }
+                  select: { productId: true, skuId: true, variantSummary: true, quantity: true }
                 }
               }
             }
@@ -1214,7 +1292,7 @@ export async function quarantineUnknownAttempt(attemptId: string, actorId?: stri
                 studentId: true,
                 referenceCode: true,
                 status: true,
-                items: { select: { productId: true, variantSummary: true, quantity: true } }
+                items: { select: { productId: true, skuId: true, variantSummary: true, quantity: true } }
               }
             }
           }

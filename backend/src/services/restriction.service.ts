@@ -151,7 +151,18 @@ async function consecutiveOffenseCount(tx: Prisma.TransactionClient, studentId: 
 }
 
 export async function assertReservationAccessInTransaction(tx: Prisma.TransactionClient, studentId: string) {
-  const restriction = await findActiveRestriction(tx, studentId);
+  const now = new Date();
+  // Reservation creation only needs to know whether access is blocked. Expiring
+  // historical rows here added a write to every checkout transaction and made
+  // otherwise independent reservations contend on the restrictions table.
+  const restriction = await tx.accountRestriction.findFirst({
+    where: {
+      studentId,
+      status: "ACTIVE",
+      OR: [{ endsAt: null }, { endsAt: { gt: now } }]
+    },
+    orderBy: [{ level: "desc" }, { createdAt: "desc" }]
+  });
   if (!restriction) return;
 
   const endMessage = restriction.endsAt

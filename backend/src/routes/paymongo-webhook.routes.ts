@@ -8,6 +8,7 @@ import {
   normalizePaymongoWebhookPayload,
   verifyPaymongoWebhookSignature
 } from "../utils/paymongo-webhook.js";
+import { invalidateOperationalReadCaches } from "../services/operational-cache.service.js";
 
 export const paymongoWebhookHandler: RequestHandler = asyncHandler(async (request, response) => {
   response.setHeader("Cache-Control", "no-store");
@@ -42,6 +43,7 @@ export const paymongoWebhookHandler: RequestHandler = asyncHandler(async (reques
     event,
     payloadHash: hashPaymongoPayload(rawBody)
   });
+  await invalidateOperationalReadCaches();
 
   response.status(200).json({ received: true, ...result });
 });

@@ -1,0 +1,20 @@
+{
+  "datasetVersion": "2.0",
+  "importedAt": "2026-08-24",
+  "sourceArchive": "WesBot_Dataset_Package_v2.zip",
+  "sourceArchiveSha256": "dde13eddce889791c86fa307f67d233d1a983aed1ca7a4251fd066bbc34d27b1",
+  "reviewedAgainstRepositoryCommit": "3ba87900de37658ec6ef44079d0913cb20d9e448",
+  "runtimeUsage": "evaluation_and_seed_input_only",
+  "semanticTrainingExamples": 225,
+  "semanticHoldoutExamples": 45,
+  "multiturnExamples": 21,
+  "clarificationExamples": 15,
+  "faqDrafts": 26,
+  "productAliasEntries": 38,
+  "notes": [
+    "The upstream SQL seed is intentionally excluded and must never be executed directly.",
+    "The upstream staff takeover limitation is stale; current code supports atomic takeover and reassignment.",
+    "wesbot_intents_balanced.jsonl is a deterministic regression subset, not an independent holdout.",
+    "All live facts remain grounded in authenticated WESCOMM services."
+  ]
+}

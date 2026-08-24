@@ -15,7 +15,13 @@ import { useStudentRestriction } from "@/components/restrictions/StudentRestrict
 import { ActionLoadingOverlay } from "@/components/ui/ActionLoadingOverlay";
 import { AssetIcon } from "@/components/ui/AssetIcon";
 import { Button } from "@/components/ui/button";
-import { BackendApiError, createGcashCheckoutFromApi, createReservationFromApi, type BackendReservation } from "@/lib/api";
+import {
+  BackendApiError,
+  createGcashCheckoutFromApi,
+  createReservationFromApi,
+  requestProductsRefresh,
+  type BackendReservation
+} from "@/lib/api";
 import { reservationCacheKey, upsertCursorItem } from "@/lib/server-state";
 import {
   getPaymentIdempotencyKey,
@@ -26,6 +32,8 @@ import {
   isProductUnavailable,
   isUniformClothOnly,
   productPurchaseLimit,
+  selectedProductAvailability,
+  selectedProductSkuId,
   UNIFORM_CLOTH_NOTICE
 } from "@/lib/product-display";
 import {
@@ -42,10 +50,19 @@ function formatPrice(value: number) {
   return `PHP ${value.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+function manilaDateKey(date: Date) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Manila",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
 function getFutureDate(days: number) {
-  const date = new Date();
-  date.setDate(date.getDate() + days);
-  return date.toISOString().slice(0, 10);
+  return manilaDateKey(new Date(Date.now() + days * 24 * 60 * 60 * 1000));
 }
 
 function formatSelectedOptions(options: Record<string, string>) {
@@ -130,7 +147,10 @@ export function StudentCartDrawer() {
     [items]
   );
   const unavailableItems = useMemo(
-    () => items.filter((item) => isProductUnavailable(item.product)),
+    () => items.filter((item) => (
+      isProductUnavailable(item.product)
+      || productPurchaseLimit(item.product, 10, item.selectedOptions) === 0
+    )),
     [items]
   );
   const hasUnavailableItems = unavailableItems.length > 0;
@@ -212,12 +232,19 @@ export function StudentCartDrawer() {
       paymentMethod,
       ...getPickupWindow(pickupDate, pickupTime),
       items: items.map((item) => {
-        const selectedOptions = formatSelectedOptions(item.selectedOptions);
+        const effectiveOptions = item.product.saleMode === "OPTIONS"
+          ? item.selectedOptions
+          : item.product.saleMode || isUniformClothOnly(item.product)
+            ? {}
+            : item.selectedOptions;
+        const selectedOptions = formatSelectedOptions(effectiveOptions);
         const noteDetails = notes.trim();
         const variantSummary = [selectedOptions, noteDetails ? `Note: ${noteDetails}` : ""].filter(Boolean).join(" | ");
+        const skuId = selectedProductSkuId(item.product, effectiveOptions);
 
         return {
           productId: item.product.id!,
+          ...(skuId ? { skuId } : {}),
           variantSummary,
           quantity: item.quantity
         };
@@ -234,7 +261,7 @@ export function StudentCartDrawer() {
       clearReservationRequestIdentity(user.id, requestIdentity);
       clearCart();
       pendingRequestRef.current = null;
-      window.dispatchEvent(new Event("wescomm:products-refresh"));
+      requestProductsRefresh();
       if (paymentMethod === "PAYMONGO_GCASH") {
         setGcashRecovery({
           reservationId: reservation.id,
@@ -455,8 +482,9 @@ export function StudentCartDrawer() {
           <>
             <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4 sm:p-5">
               {items.map((item) => {
-                const limit = productPurchaseLimit(item.product);
-                const unavailable = isProductUnavailable(item.product);
+                const limit = productPurchaseLimit(item.product, 10, item.selectedOptions);
+                const selectedAvailability = selectedProductAvailability(item.product, item.selectedOptions);
+                const unavailable = isProductUnavailable(item.product) || limit === 0;
                 return (
                   <article key={item.id} className="grid grid-cols-[82px_1fr] gap-3 rounded-lg border border-[#dfe7e0] p-3">
                     <div className="relative h-20 overflow-hidden rounded-md bg-[#eef5ee]">
@@ -467,7 +495,7 @@ export function StudentCartDrawer() {
                         <div className="min-w-0">
                           <h3 className="truncate font-bold text-[#17211b]">{item.product.name}</h3>
                           <p className="text-xs text-[#69746e]">{item.product.detail}</p>
-                          {Object.keys(item.selectedOptions).length ? (
+                          {(item.product.saleMode === "OPTIONS" || (!item.product.saleMode && !isUniformClothOnly(item.product))) && Object.keys(item.selectedOptions).length ? (
                             <p className="mt-1 text-xs font-semibold leading-5 text-primary">{formatSelectedOptions(item.selectedOptions)}</p>
                           ) : null}
                           {isUniformClothOnly(item.product) ? (
@@ -476,7 +504,11 @@ export function StudentCartDrawer() {
                           <p className="mt-1 font-extrabold text-primary">{item.product.price}</p>
                           {unavailable ? (
                             <p className="mt-1 text-xs font-extrabold text-[#a75a00]">Currently unavailable</p>
-                          ) : null}
+                          ) : (
+                            <p className="mt-1 text-xs font-semibold text-[#5f6d64]">
+                              {selectedAvailability} available · {Math.max(0, selectedAvailability - item.quantity)} remaining after reservation
+                            </p>
+                          )}
                         </div>
                         <button
                           type="button"

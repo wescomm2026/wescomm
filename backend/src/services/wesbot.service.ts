@@ -5,7 +5,6 @@ import { env } from "../config/env.js";
 import { assertStudentCanCancelReservation } from "../domain/student-reservation-cancellation.js";
 import {
   createWesbotConcernKey,
-  detectWesbotIntent,
   extractReceiptCode,
   extractReservationReference,
   formatWesbotCurrency,
@@ -16,10 +15,16 @@ import {
   tokenizeWesbotText,
   type WesbotIntent
 } from "../domain/wesbot.js";
-import { listPublishedFaqs } from "./faq.service.js";
 import { listProducts } from "./product.service.js";
 import { listReceipts } from "./receipt.service.js";
 import { listReservations } from "./reservation.service.js";
+import {
+  classifyWesbotMessage,
+  type WesbotContextMessage,
+  type WesbotEntities,
+  type WesbotRoutingDecision
+} from "./wesbot-classifier.service.js";
+import { listPublishedWesbotFaqs } from "./wesbot-knowledge.service.js";
 
 type WesbotProduct = Awaited<ReturnType<typeof listProducts>>[number];
 type WesbotReservation = Awaited<ReturnType<typeof listReservations>>["items"][number];
@@ -34,9 +39,10 @@ export type WesbotReply = {
   handoffRequested: boolean;
   staffRecommended: boolean;
   usedAi: boolean;
+  routing: WesbotRoutingDecision;
 };
 
-type GroundedAnswer = Omit<WesbotReply, "message" | "usedAi"> & {
+type GroundedAnswer = Omit<WesbotReply, "message" | "usedAi" | "routing"> & {
   draft: string;
 };
 
@@ -59,10 +65,22 @@ const PRODUCT_QUERY_STOP_WORDS = new Set([
   "what", "much", "magkano", "meron", "may", "gusto", "need"
 ]);
 
-function productCandidateTerms(message: string) {
-  return tokenizeWesbotText(message)
-    .filter((token) => token.length >= 3 && !PRODUCT_QUERY_STOP_WORDS.has(token))
-    .slice(0, 6);
+const PRODUCT_NON_DISCRIMINATING_TERMS = new Set([
+  "uniform", "uniforms", "set", "sets", "men", "mens", "women", "womens", "boy", "boys", "girl", "girls",
+  "size", "sizes", "color", "colors", "small", "medium", "large", "xs", "xl", "xxl", "xxxl",
+  "red", "blue", "black", "white", "green", "yellow", "gray", "grey", "navy"
+]);
+
+export function productCandidateTerms(message: string, entities: WesbotEntities) {
+  const tokens = tokenizeWesbotText([
+    message,
+    entities.productName ?? "",
+    entities.department ?? ""
+  ].join(" "))
+    .filter((token) => (token.length >= 3 || token === "pe" || token === "id") && !PRODUCT_QUERY_STOP_WORDS.has(token));
+  return [...new Set(tokens)]
+    .filter((token) => !PRODUCT_NON_DISCRIMINATING_TERMS.has(token))
+    .slice(0, 3);
 }
 
 function createWesbotAgent(grounded: GroundedAnswer, studentId: string) {
@@ -162,7 +180,9 @@ function productSearchText(product: WesbotProduct) {
     product.name,
     product.description ?? "",
     product.category?.name ?? "",
-    ...product.variants.flatMap((variant) => [variant.optionName, variant.optionValue])
+    ...product.aliases,
+    ...product.variants.flatMap((variant) => [variant.optionName, variant.optionValue]),
+    ...product.skus.flatMap((sku) => sku.options.flatMap((option) => [option.optionName, option.optionValue]))
   ].join(" ");
 }
 
@@ -174,16 +194,49 @@ function findProductMatches(products: WesbotProduct[], message: string) {
     .slice(0, 5);
 }
 
-function requestedVariants(product: WesbotProduct, message: string) {
+function requestedProductOptions(product: WesbotProduct, message: string, entities: WesbotEntities) {
   const normalized = normalizeWesbotText(message);
-  const tokens = new Set(tokenizeWesbotText(message));
-  return product.variants.filter((variant) => {
-    const value = normalizeWesbotText(variant.optionValue);
-    return value.length > 1 && (tokens.has(value) || normalized.includes(value));
-  });
+  const padded = ` ${normalized} `;
+  const requested = new Map<string, { optionName: string; optionValue: string }>();
+
+  for (const entity of entities.options) {
+    const entityName = normalizeWesbotText(entity.name);
+    const entityValue = normalizeWesbotText(entity.value);
+    const variant = product.variants.find((candidate) => (
+      normalizeWesbotText(candidate.optionName) === entityName
+      && normalizeWesbotText(candidate.optionValue) === entityValue
+    ));
+    if (variant) requested.set(entityName, { optionName: variant.optionName, optionValue: variant.optionValue });
+  }
+
+  for (const variant of product.variants) {
+    const optionName = normalizeWesbotText(variant.optionName);
+    const optionValue = normalizeWesbotText(variant.optionValue);
+    if (!optionValue || requested.has(optionName)) continue;
+    if (padded.includes(` ${optionValue} `)) {
+      requested.set(optionName, { optionName: variant.optionName, optionValue: variant.optionValue });
+    }
+  }
+  return [...requested.values()];
 }
 
-function productAnswer(products: WesbotProduct[], message: string): Pick<GroundedAnswer, "draft" | "sourceReferences"> {
+function skuMatchesOptions(sku: WesbotProduct["skus"][number], options: Array<{ optionName: string; optionValue: string }>) {
+  return options.every((requested) => sku.options.some((option) => (
+    normalizeWesbotText(option.optionName) === normalizeWesbotText(requested.optionName)
+    && normalizeWesbotText(option.optionValue) === normalizeWesbotText(requested.optionValue)
+  )));
+}
+
+function formatSkuAvailability(sku: WesbotProduct["skus"][number]) {
+  const label = sku.options.map((option) => `${option.optionName} ${option.optionValue}`).join(" + ");
+  return `${label}: ${sku.stock} piece${sku.stock === 1 ? "" : "s"}`;
+}
+
+export function productAnswer(
+  products: WesbotProduct[],
+  message: string,
+  entities: WesbotEntities
+): Pick<GroundedAnswer, "draft" | "sourceReferences"> {
   const matches = findProductMatches(products, message);
   if (!matches.length) {
     return {
@@ -202,28 +255,45 @@ function productAnswer(products: WesbotProduct[], message: string): Pick<Grounde
   }
 
   const product = best.product;
-  const variants = requestedVariants(product, message);
-  if (variants.length) {
-    const details = variants.map((variant) => `${variant.optionName} ${variant.optionValue}: ${variant.stock} piece${variant.stock === 1 ? "" : "s"}`).join(", ");
+  const requestedOptions = requestedProductOptions(product, message, entities);
+
+  if (product.saleMode === "CLOTH_ONLY") {
     return {
-      draft: `${product.name} is ${formatWesbotCurrency(product.price)}. Current live availability — ${details}. ${variants.some((variant) => variant.stock > 0) ? "At least one requested option is available." : "The requested option is currently out of stock."}`,
+      draft: `${product.name} is ${formatWesbotCurrency(product.price)} and currently has ${product.stock} cloth unit${product.stock === 1 ? "" : "s"} in stock. This item is sold by cloth quantity and has no selectable size or color combination.`,
       sourceReferences: [`product:${product.id}`, "inventory:live"]
     };
   }
 
-  if (product.variants.length) {
-    const available = product.variants.filter((variant) => variant.stock > 0).slice(0, 8);
-    const variantText = available.length
-      ? available.map((variant) => `${variant.optionValue} (${variant.stock})`).join(", ")
-      : "no variants currently in stock";
+  if (product.saleMode === "OPTIONS") {
+    if (product.inventorySetupRequired || !product.skuInventoryEnabled) {
+      return {
+        draft: `${product.name} is listed at ${formatWesbotCurrency(product.price)}, but its size/color inventory setup is not ready. I can't verify an option safely yet; please ask Staff.`,
+        sourceReferences: [`product:${product.id}`, "inventory:setup-required"]
+      };
+    }
+
+    const matchingSkus = requestedOptions.length
+      ? product.skus.filter((sku) => skuMatchesOptions(sku, requestedOptions))
+      : product.skus.filter((sku) => sku.stock > 0);
+    if (!matchingSkus.length) {
+      const selection = requestedOptions.map((option) => `${option.optionName} ${option.optionValue}`).join(" + ");
+      return {
+        draft: requestedOptions.length
+          ? `${product.name} is ${formatWesbotCurrency(product.price)}. There is no configured ${selection} combination in the live catalog.`
+          : `${product.name} is ${formatWesbotCurrency(product.price)}, but no configured option combination is currently in stock.`,
+        sourceReferences: [`product:${product.id}`, "inventory:sku-live"]
+      };
+    }
+
+    const details = matchingSkus.slice(0, 8).map(formatSkuAvailability).join(", ");
     return {
-      draft: `${product.name} is ${formatWesbotCurrency(product.price)}. Available options and current stock: ${variantText}.`,
-      sourceReferences: [`product:${product.id}`, "inventory:live"]
+      draft: `${product.name} is ${formatWesbotCurrency(product.price)}. Live configured combinations — ${details}. ${matchingSkus.some((sku) => sku.stock > 0) ? "At least one matching combination is available." : "The matching combination is currently out of stock."}`,
+      sourceReferences: [`product:${product.id}`, "inventory:sku-live"]
     };
   }
 
   return {
-    draft: `${product.name} is ${formatWesbotCurrency(product.price)} and currently has ${product.stock} piece${product.stock === 1 ? "" : "s"} in stock.`,
+    draft: `${product.name} is ${formatWesbotCurrency(product.price)} and currently has ${product.stock} piece${product.stock === 1 ? "" : "s"} in stock.${requestedOptions.length ? " This item has no selectable size or color combination." : ""}`,
     sourceReferences: [`product:${product.id}`, "inventory:live"]
   };
 }
@@ -320,9 +390,17 @@ function pickupAnswer(reservations: WesbotReservation[], message: string) {
 }
 
 async function knowledgeAnswer(message: string) {
-  const faqs = await listPublishedFaqs();
+  const faqs = await listPublishedWesbotFaqs();
   const matches = faqs
-    .map((faq) => ({ faq, score: scoreWesbotTextMatch(message, `${faq.question} ${faq.answer} ${faq.category ?? ""}`) }))
+    .map((faq) => ({
+      faq,
+      score: scoreWesbotTextMatch(message, [
+        faq.question,
+        faq.answer,
+        faq.category ?? "",
+        ...faq.variants.map((variant) => variant.variant)
+      ].join(" "))
+    }))
     .filter((entry) => entry.score >= 10)
     .sort((left, right) => right.score - left.score);
 
@@ -334,15 +412,31 @@ async function knowledgeAnswer(message: string) {
     : null;
 }
 
+function clarificationAnswer(routing: WesbotRoutingDecision) {
+  const missing = new Set(routing.missingInformation.map(normalizeWesbotText));
+  if (routing.intent === "PRODUCT_INQUIRY" || missing.has("product")) {
+    return "Which item would you like me to check? Include the product name and, if applicable, the size or color.";
+  }
+  if (routing.intent === "CANCELLATION_ELIGIBILITY" || missing.has("requested action")) {
+    return "What would you like to do—cancel a reservation, check its status, or something else?";
+  }
+  if (missing.has("record type") || missing.has("topic or reference") || missing.has("thing to check")) {
+    return "What would you like me to check: a product, reservation, payment, receipt, pickup, or policy?";
+  }
+  return "I need one more detail before I check. Please name the product or tell me whether this is about a reservation, payment, receipt, pickup, or policy.";
+}
+
 async function buildGroundedAnswer(input: {
   studentId: string;
   message: string;
-  repeatCount: number;
+  routing: WesbotRoutingDecision;
+  previousConcernKey: string | null;
+  previousReplyCount: number;
 }): Promise<GroundedAnswer> {
-  const intent = detectWesbotIntent(input.message);
+  const intent = input.routing.intent;
   const category = categoryForIntent(intent);
   const concernKey = createWesbotConcernKey(intent, input.message);
-  const repeatCount = input.repeatCount + 1;
+  const repeatCount = concernKey === input.previousConcernKey ? input.previousReplyCount + 1 : 1;
   const staffRecommended = shouldRecommendStaff(repeatCount);
 
   if (intent === "HUMAN_HANDOFF") {
@@ -357,37 +451,55 @@ async function buildGroundedAnswer(input: {
     };
   }
 
+  if (input.routing.needsClarification) {
+    return {
+      draft: clarificationAnswer(input.routing),
+      intent,
+      category,
+      concernKey,
+      sourceReferences: ["support:clarification"],
+      handoffRequested: false,
+      staffRecommended
+    };
+  }
+
   let draft: string;
   let sourceReferences: string[];
 
   if (intent === "PRODUCT_INQUIRY") {
-    const candidateTerms = productCandidateTerms(input.message);
+    const productMessage = [
+      input.message,
+      input.routing.entities.productName ?? "",
+      input.routing.entities.department ?? ""
+    ].join(" ");
+    const candidateTerms = productCandidateTerms(input.message, input.routing.entities);
     const products = candidateTerms.length
-      ? await listProducts({ candidateTerms, limit: 25 })
+      ? await listProducts({ candidateTerms, limit: 12 })
       : [];
-    const answer = productAnswer(products, input.message);
+    const answer = productAnswer(products, productMessage, input.routing.entities);
     draft = answer.draft;
     sourceReferences = answer.sourceReferences;
   } else if (intent === "RESERVATION_STATUS" || intent === "CANCELLATION_ELIGIBILITY" || intent === "PAYMENT_STATUS" || intent === "PICKUP_INFORMATION") {
-    const referenceCode = extractReservationReference(input.message) ?? undefined;
+    const referenceCode = extractReservationReference(input.message) ?? input.routing.entities.reservationReference ?? undefined;
     const reservationPage = await listReservations(input.studentId, "STUDENT", {
       referenceCode,
       limit: referenceCode ? 1 : 3
     });
     const reservations = reservationPage.items;
-    if (intent === "CANCELLATION_ELIGIBILITY") draft = cancellationAnswer(reservations, input.message);
-    else if (intent === "PAYMENT_STATUS") draft = paymentAnswer(reservations, input.message);
-    else if (intent === "PICKUP_INFORMATION") draft = pickupAnswer(reservations, input.message);
-    else draft = reservationStatusAnswer(reservations, input.message);
+    const groundedMessage = referenceCode ? `${input.message} ${referenceCode}` : input.message;
+    if (intent === "CANCELLATION_ELIGIBILITY") draft = cancellationAnswer(reservations, groundedMessage);
+    else if (intent === "PAYMENT_STATUS") draft = paymentAnswer(reservations, groundedMessage);
+    else if (intent === "PICKUP_INFORMATION") draft = pickupAnswer(reservations, groundedMessage);
+    else draft = reservationStatusAnswer(reservations, groundedMessage);
     sourceReferences = ["account:reservations"];
   } else if (intent === "RECEIPT_STATUS") {
-    const receiptCode = extractReceiptCode(input.message) ?? undefined;
+    const receiptCode = extractReceiptCode(input.message) ?? input.routing.entities.receiptCode ?? undefined;
     const receiptPage = await listReceipts(input.studentId, "STUDENT", {
       receiptCode,
       limit: receiptCode ? 1 : 3
     });
     const receipts = receiptPage.items;
-    draft = receiptAnswer(receipts, input.message);
+    draft = receiptAnswer(receipts, receiptCode ? `${input.message} ${receiptCode}` : input.message);
     sourceReferences = ["account:receipts"];
   } else {
     const knowledge = await knowledgeAnswer(input.message);
@@ -470,12 +582,18 @@ function replyLanguageStyle(message: string) {
     : "clear English";
 }
 
-async function optionallyRewriteWithAi(input: { studentId: string; userMessage: string; grounded: GroundedAnswer }) {
-  if (!env.WESBOT_AI_ENABLED) return null;
+async function optionallyRewriteWithAi(input: {
+  studentId: string;
+  userMessage: string;
+  grounded: GroundedAnswer;
+  routing: WesbotRoutingDecision;
+}) {
+  if (!env.WESBOT_AI_ENABLED || !env.WESBOT_AI_REWRITE_ENABLED || input.routing.usedAi) return null;
 
   try {
     const result = await createWesbotAgent(input.grounded, input.studentId).generate({
-      prompt: `Rewrite the verified grounded answer in ${replyLanguageStyle(input.userMessage)}. Preserve every fact, number, reference, status, and restriction.`
+      prompt: `Rewrite the verified grounded answer in ${replyLanguageStyle(input.userMessage)}. Preserve every fact, number, reference, status, and restriction.`,
+      timeout: env.WESBOT_AI_TIMEOUT_MS
     });
     return isSafeAiRewrite(input.grounded.draft, result.text) ? result.text.trim() : null;
   } catch (error) {
@@ -488,12 +606,19 @@ async function optionallyRewriteWithAi(input: { studentId: string; userMessage: 
 export async function resolveWesbotReply(input: {
   studentId: string;
   message: string;
-  repeatCount: number;
+  context?: WesbotContextMessage[];
+  previousConcernKey: string | null;
+  previousReplyCount: number;
 }) {
-  const grounded = await buildGroundedAnswer(input);
+  const routing = await classifyWesbotMessage({
+    studentId: input.studentId,
+    message: input.message,
+    context: input.context
+  });
+  const grounded = await buildGroundedAnswer({ ...input, routing });
   const aiReply = grounded.handoffRequested
     ? null
-    : await optionallyRewriteWithAi({ studentId: input.studentId, userMessage: input.message, grounded });
+    : await optionallyRewriteWithAi({ studentId: input.studentId, userMessage: input.message, grounded, routing });
 
   return {
     message: aiReply ?? grounded.draft,
@@ -503,7 +628,8 @@ export async function resolveWesbotReply(input: {
     sourceReferences: grounded.sourceReferences,
     handoffRequested: grounded.handoffRequested,
     staffRecommended: grounded.staffRecommended,
-    usedAi: Boolean(aiReply)
+    usedAi: routing.usedAi || Boolean(aiReply),
+    routing
   } satisfies WesbotReply;
 }
 

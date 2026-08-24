@@ -842,7 +842,7 @@ export function StudentReceiptsExperience() {
       if (document.visibilityState === "visible") void loadReceipts({ background: true });
     };
 
-    const interval = window.setInterval(refreshInBackground, 60000);
+    const interval = window.setInterval(refreshInBackground, 5 * 60_000);
     window.addEventListener("focus", refreshInBackground);
     document.addEventListener("visibilitychange", refreshInBackground);
 
@@ -902,7 +902,7 @@ export function StudentReceiptsExperience() {
             <>
             <div className="grid gap-6 lg:grid-cols-2 xl:grid-cols-3">
               {visibleReceipts.map((receipt) => (
-                <article key={receipt.id} className="overflow-hidden rounded-lg border border-[#dce5dd] bg-[#edf2ed] p-3 shadow-sm">
+                <article key={receipt.id} className="content-visibility-auto overflow-hidden rounded-lg border border-[#dce5dd] bg-[#edf2ed] p-3 shadow-sm">
                   <div className="overflow-hidden shadow-[0_8px_24px_rgba(0,0,0,0.09)]">
                     <ReceiptPaper receipt={receipt} compact />
                   </div>

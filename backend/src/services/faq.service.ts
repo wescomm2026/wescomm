@@ -1,6 +1,7 @@
 import { supabaseAdmin } from "../lib/supabase.js";
 import { safelyRecordAuditLog } from "./audit-log.service.js";
 import { HttpError } from "../utils/http-error.js";
+import { invalidateWesbotFaqCache } from "./wesbot-knowledge.service.js";
 
 type RawFaq = {
   id: string;
@@ -8,6 +9,8 @@ type RawFaq = {
   answer: string;
   category: string | null;
   is_published: boolean;
+  source: string | null;
+  source_version: string | null;
   updated_by_id: string | null;
   created_at: string;
   updated_at: string;
@@ -21,7 +24,7 @@ type FaqInput = {
   updatedById?: string | null;
 };
 
-const faqSelect = "id,question,answer,category,is_published,updated_by_id,created_at,updated_at";
+const faqSelect = "id,question,answer,category,is_published,source,source_version,updated_by_id,created_at,updated_at";
 
 function mapFaq(row: RawFaq) {
   return {
@@ -30,6 +33,8 @@ function mapFaq(row: RawFaq) {
     answer: row.answer,
     category: row.category,
     isPublished: row.is_published,
+    source: row.source,
+    sourceVersion: row.source_version,
     updatedById: row.updated_by_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at
@@ -77,6 +82,7 @@ export async function createFaq(input: FaqInput) {
   }
 
   const faq = mapFaq(data as RawFaq);
+  invalidateWesbotFaqCache();
 
   await safelyRecordAuditLog({
     actorId: input.updatedById,
@@ -118,6 +124,7 @@ export async function updateFaq(faqId: string, input: Partial<FaqInput>) {
   if (!data) throw new HttpError(404, "FAQ not found.");
 
   const faq = mapFaq(data as RawFaq);
+  invalidateWesbotFaqCache();
 
   await safelyRecordAuditLog({
     actorId: input.updatedById,
@@ -147,6 +154,7 @@ export async function deleteFaq(faqId: string, performedById?: string) {
   if (!data) throw new HttpError(404, "FAQ not found.");
 
   const faq = mapFaq(data as RawFaq);
+  invalidateWesbotFaqCache();
 
   await safelyRecordAuditLog({
     actorId: performedById,

@@ -828,8 +828,15 @@ export function StudentReservationsExperience() {
     if (!background) setReady(true);
   }, [accountId, authReady, cacheKey, user?.accessToken]);
 
-  useRealtimeRefresh(["reservations"], () => {
-    void loadReservations({ background: true });
+  useRealtimeRefresh(["reservations"], (update) => {
+    if (!user?.accessToken || !update.entityId) {
+      void loadReservations({ background: true });
+      return;
+    }
+
+    void getReservationFromApi(user.accessToken, update.entityId)
+      .then((reservation) => upsertCursorItem(cacheKey, reservation, true))
+      .catch(() => loadReservations({ background: true }));
   });
 
   useEffect(() => {
@@ -837,7 +844,7 @@ export function StudentReservationsExperience() {
     const cached = readServerState<CursorPage<BackendReservation>>(cacheKey);
     if (cached) {
       setReady(true);
-      if (Date.now() - cached.updatedAt >= 60_000) void loadReservations({ background: true });
+      if (Date.now() - cached.updatedAt >= 5 * 60_000) void loadReservations({ background: true });
     } else {
       void loadReservations();
     }
@@ -853,7 +860,7 @@ export function StudentReservationsExperience() {
       if (document.visibilityState === "visible") void loadReservations({ background: true });
     };
 
-    const interval = window.setInterval(refreshInBackground, 60000);
+    const interval = window.setInterval(refreshInBackground, 5 * 60_000);
     window.addEventListener("focus", refreshInBackground);
     document.addEventListener("visibilitychange", refreshInBackground);
 
@@ -880,12 +887,7 @@ export function StudentReservationsExperience() {
   const openReservationDetails = useCallback((reservationId: string, trigger: HTMLButtonElement) => {
     reservationTriggerRef.current = trigger;
     setSelectedReservationId(reservationId);
-    if (user?.accessToken) {
-      void getReservationFromApi(user.accessToken, reservationId)
-        .then((reservation) => upsertCursorItem(cacheKey, reservation))
-        .catch(() => undefined);
-    }
-  }, [cacheKey, user?.accessToken]);
+  }, []);
 
   const closeReservationDetails = useCallback(() => setSelectedReservationId(null), []);
 

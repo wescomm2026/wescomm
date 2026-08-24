@@ -146,12 +146,30 @@ async function createLoadProduct(runId) {
   notificationActionUrls.push(`/staff/inventory?productId=${encodeURIComponent(productId)}`);
 }
 
+
+function futurePickupWindow(days = 2) {
+  const target = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Manila",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(target);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  const date = `${values.year}-${values.month}-${values.day}`;
+  return {
+    pickupStart: new Date(`${date}T10:00:00+08:00`).toISOString(),
+    pickupEnd: new Date(`${date}T12:00:00+08:00`).toISOString()
+  };
+}
+
 async function createReservation(actor, suffix) {
   const result = await timedRequest(actor, "/api/reservations", {
     method: "POST",
     headers: { "Idempotency-Key": `load-${suffix}-${crypto.randomUUID()}` },
     body: JSON.stringify({
       paymentMethod: "PAY_AT_COMMISSARY",
+      ...futurePickupWindow(),
       items: [{ productId, quantity: 1 }]
     })
   }, "command:reservation-create");

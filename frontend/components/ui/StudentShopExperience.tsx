@@ -11,7 +11,7 @@ import { useStudentCart, type CartProduct } from "@/components/cart/StudentCartP
 import { StudentCheckoutModal } from "@/components/checkout/StudentCheckoutModal";
 import { AssetIcon } from "@/components/ui/AssetIcon";
 import { Button } from "@/components/ui/button";
-import { getProductsFromApi } from "@/lib/api";
+import { getProductsFromApi, PRODUCTS_REFRESH_EVENT } from "@/lib/api";
 import {
   isProductUnavailable,
   isUniformClothOnly,
@@ -25,6 +25,12 @@ type Product = CartProduct;
 
 const allCategory = { label: "All Items", image: "/assets/all-items.svg", href: "/student/shop" };
 const statusFilters = ["In Stock", "Restock Soon", "Out of Stock", "On Sale"];
+const routeStatusMap: Record<string, string> = {
+  "in-stock": "In Stock",
+  "restock-soon": "Restock Soon",
+  "out-of-stock": "Out of Stock",
+  "on-sale": "On Sale"
+};
 const categoryIconByName = new Map([
   ["Uniforms", "/assets/uniforms.svg"],
   ["ID Accessories", "/assets/id-accessories.svg"],
@@ -44,6 +50,18 @@ function availabilityText(product: Product) {
   }
 
   return `${count} available item${count === 1 ? "" : "s"}`;
+}
+
+function effectiveProductStatus(product: Product) {
+  return isProductUnavailable(product) ? "Out of Stock" : product.status;
+}
+
+function optionAvailabilityText(product: Product) {
+  const sizeOption = product.options.find((option) => /size/i.test(option.name));
+  if (!sizeOption?.stockByValue) return "";
+  return sizeOption.values
+    .map((value) => `${value}: ${Math.max(0, Number(sizeOption.stockByValue?.[value]) || 0)}`)
+    .join(" · ");
 }
 
 function ProductCard({
@@ -69,10 +87,11 @@ function ProductCard({
 }) {
   const disabled = isProductUnavailable(product);
   const clothOnly = isUniformClothOnly(product);
+  const effectiveStatus = effectiveProductStatus(product);
   const tone =
-    product.status === "In Stock"
+    effectiveStatus === "In Stock"
       ? "bg-[#dff3df] text-primary"
-      : product.status === "Out of Stock"
+      : effectiveStatus === "Out of Stock"
         ? "bg-[#ffe3b0] text-[#d97706]"
         : "bg-[#fff0bf] text-[#d97706]";
 
@@ -106,7 +125,7 @@ function ProductCard({
           </span>
         </button>
         <span className={`pointer-events-none absolute left-1.5 top-1.5 z-10 max-w-[calc(100%-52px)] truncate rounded-full px-2 py-1 text-[9px] font-extrabold leading-none sm:left-2 sm:top-2 sm:px-3 sm:text-xs ${tone}`}>
-          {product.status}
+          {effectiveStatus}
         </span>
         {!disabled ? (
           <button
@@ -134,6 +153,11 @@ function ProductCard({
         {product.oldPrice ? <p className="truncate text-[10px] text-muted-foreground line-through sm:text-sm">{product.oldPrice}</p> : null}
       </div>
       <p className="mt-1.5 truncate text-[10px] font-semibold text-[#506059] sm:mt-2 sm:text-sm">{availabilityText(product)}</p>
+      {optionAvailabilityText(product) ? (
+        <p className="mt-1 line-clamp-2 text-[9px] font-semibold leading-4 text-[#68746d] sm:text-xs sm:leading-5">
+          {optionAvailabilityText(product)}
+        </p>
+      ) : null}
       {clothOnly ? (
         <p className="mt-1.5 rounded-md border border-[#cfe2d1] bg-[#f5faf5] px-2 py-1 text-[9px] font-semibold leading-4 text-[#4e6255] sm:mt-2 sm:px-3 sm:py-2 sm:text-xs sm:font-medium sm:leading-5">
           <span className="sm:hidden">Cloth only · image is a preview</span>
@@ -374,11 +398,13 @@ export function StudentShopExperience() {
   const routeQuery = searchParams.get("query") ?? "";
   const wishlistRequested = searchParams.get("wishlist") === "1";
   const productFromNotification = searchParams.get("product") ?? "";
+  const routeStatus = routeStatusMap[searchParams.get("status") ?? ""] ?? "";
   const highlightedProductId = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(productFromNotification)
     ? productFromNotification
     : "";
   const processedRestockLinkRef = useRef("");
   const productRequestSequenceRef = useRef(0);
+  const latestSuccessfulProductRequestRef = useRef(0);
   const wishlistFilterRef = useRef<HTMLButtonElement>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [query, setQuery] = useState("");
@@ -393,6 +419,12 @@ export function StudentShopExperience() {
   const [cartProduct, setCartProduct] = useState<Product | null>(null);
   const [addedNotice, setAddedNotice] = useState<{ productName: string; itemDetails: string } | null>(null);
   const [shopNotice, setShopNotice] = useState<{ title: string; message: string; error?: boolean } | null>(null);
+  const liveCartProduct = cartProduct
+    ? products.find((product) => product.id === cartProduct.id) ?? null
+    : null;
+  const liveCheckoutProduct = checkoutProduct
+    ? products.find((product) => product.id === checkoutProduct.id) ?? null
+    : null;
 
   const loadProducts = useCallback(({ background = false }: { background?: boolean } = {}) => {
     const requestSequence = ++productRequestSequenceRef.current;
@@ -405,13 +437,14 @@ export function StudentShopExperience() {
 
     getProductsFromApi({ fresh: background })
       .then((apiProducts) => {
-        if (!cancelled && requestSequence === productRequestSequenceRef.current) {
+        if (!cancelled && requestSequence >= latestSuccessfulProductRequestRef.current) {
+          latestSuccessfulProductRequestRef.current = requestSequence;
           setProducts(apiProducts);
           setError("");
         }
       })
       .catch((productsError) => {
-        if (!cancelled && requestSequence === productRequestSequenceRef.current) {
+        if (!cancelled && requestSequence >= latestSuccessfulProductRequestRef.current) {
           if (!background) {
             setProducts([]);
             setError(productsError instanceof Error ? productsError.message : "Unable to load shop items.");
@@ -419,7 +452,7 @@ export function StudentShopExperience() {
         }
       })
       .finally(() => {
-        if (!cancelled && !background && requestSequence === productRequestSequenceRef.current) {
+        if (!cancelled && !background) {
           setLoading(false);
         }
       });
@@ -435,13 +468,26 @@ export function StudentShopExperience() {
 
   useEffect(() => {
     const refreshProducts = () => {
-      if (!navigator.onLine || loading) return;
+      if (!navigator.onLine) return;
       loadProducts({ background: true });
     };
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") refreshProducts();
+    };
 
-    window.addEventListener("wescomm:products-refresh", refreshProducts);
-    return () => window.removeEventListener("wescomm:products-refresh", refreshProducts);
-  }, [loadProducts, loading]);
+    const fallbackRefresh = window.setInterval(refreshWhenVisible, 5 * 60_000);
+    window.addEventListener(PRODUCTS_REFRESH_EVENT, refreshProducts);
+    window.addEventListener("focus", refreshProducts);
+    window.addEventListener("online", refreshProducts);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      window.clearInterval(fallbackRefresh);
+      window.removeEventListener(PRODUCTS_REFRESH_EVENT, refreshProducts);
+      window.removeEventListener("focus", refreshProducts);
+      window.removeEventListener("online", refreshProducts);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, [loadProducts]);
 
   useEffect(() => {
     const handleShopSearch = (event: Event) => {
@@ -455,11 +501,11 @@ export function StudentShopExperience() {
   useEffect(() => {
     setQuery(routeQuery);
     setWishlistOnly(wishlistRequested);
-    if (wishlistRequested && highlightedProductId) {
+    setStatuses(routeStatus ? [routeStatus] : []);
+    if ((wishlistRequested && highlightedProductId) || routeStatus) {
       setCategory("All Items");
-      setStatuses([]);
     }
-  }, [highlightedProductId, routeQuery, wishlistRequested]);
+  }, [highlightedProductId, routeQuery, routeStatus, wishlistRequested]);
 
   useEffect(() => {
     if (!wishlistRequested || !highlightedProductId || loading || !navigator.onLine) return;
@@ -489,9 +535,10 @@ export function StudentShopExperience() {
 
     return products
       .filter((product) => {
-        const matchesSearch = !lowerQuery || `${product.name} ${product.category} ${product.detail} ${product.status}`.toLowerCase().includes(lowerQuery);
+        const effectiveStatus = effectiveProductStatus(product);
+        const matchesSearch = !lowerQuery || `${product.name} ${product.category} ${product.detail} ${effectiveStatus}`.toLowerCase().includes(lowerQuery);
         const matchesCategory = category === "All Items" || product.category === category;
-        const matchesStatus = statuses.length === 0 || statuses.includes(product.status);
+        const matchesStatus = statuses.length === 0 || statuses.includes(effectiveStatus);
         const matchesWishlist = !wishlistOnly || Boolean(product.id && wishlist.productIds.has(product.id));
         return matchesSearch && matchesCategory && matchesStatus && matchesWishlist;
       })
@@ -782,8 +829,8 @@ export function StudentShopExperience() {
         ) : null}
       </main>
       <ProductImageDialog product={imagePreviewProduct} onClose={closeImagePreview} />
-      <AddToCartModal product={cartProduct} relatedProducts={relatedClothProducts(cartProduct)} onSwitchProduct={setCartProduct} onClose={closeCartSelector} onConfirm={confirmAddToCart} />
-      <StudentCheckoutModal product={checkoutProduct} relatedProducts={relatedClothProducts(checkoutProduct)} onSwitchProduct={setCheckoutProduct} onClose={closeCheckout} />
+      <AddToCartModal product={liveCartProduct} relatedProducts={relatedClothProducts(liveCartProduct)} onSwitchProduct={setCartProduct} onClose={closeCartSelector} onConfirm={confirmAddToCart} />
+      <StudentCheckoutModal product={liveCheckoutProduct} relatedProducts={relatedClothProducts(liveCheckoutProduct)} onSwitchProduct={setCheckoutProduct} onClose={closeCheckout} />
       {addedNotice ? (
         <AddedToCartToast
           productName={addedNotice.productName}

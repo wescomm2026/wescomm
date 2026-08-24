@@ -25,8 +25,14 @@ const reservationCreatedPayloadSchema = z.object({
   lowStockAlerts: z.array(z.object({
     productId: z.string().uuid(),
     productName: z.string().min(1).max(240),
-    newStock: z.number().int().nonnegative()
-  })).max(25)
+    newStock: z.number().int().nonnegative(),
+    variantId: z.string().uuid().optional(),
+    skuId: z.string().uuid().optional(),
+    skuLabel: z.string().min(1).max(500).optional(),
+    optionName: z.string().min(1).max(80).optional(),
+    optionValue: z.string().min(1).max(120).optional(),
+    lowStockThreshold: z.number().int().nonnegative().optional()
+  })).max(100)
 });
 
 const reservationStatusChangedPayloadSchema = z.object({
@@ -169,10 +175,18 @@ async function processReservationCreated(event: ClaimedOutboxEvent) {
       userId: profile.id,
       role: profile.role,
       type: "LOW_STOCK" as const,
-      title: `Low stock: ${alert.productName}`,
-      message: `${alert.productName} dropped to ${alert.newStock} pcs after reservation ${payload.referenceCode}.`,
+      title: alert.skuLabel
+        ? `Low stock: ${alert.productName}`
+        : alert.optionValue
+          ? `Low stock: ${alert.productName} — ${alert.optionValue}`
+          : `Low stock: ${alert.productName}`,
+      message: alert.skuLabel
+        ? `${alert.skuLabel} dropped to ${alert.newStock} pcs after reservation ${payload.referenceCode}.${alert.lowStockThreshold === undefined ? "" : ` Alert level is ${alert.lowStockThreshold} pcs.`}`
+        : alert.optionValue
+          ? `${alert.optionName ?? "Size"} ${alert.optionValue} dropped to ${alert.newStock} pcs after reservation ${payload.referenceCode}.${alert.lowStockThreshold === undefined ? "" : ` Alert level is ${alert.lowStockThreshold} pcs.`}`
+          : `${alert.productName} dropped to ${alert.newStock} pcs after reservation ${payload.referenceCode}.`,
       actionUrl: `/staff/inventory?productId=${encodeURIComponent(alert.productId)}`,
-      dedupeKey: `${event.id}:low-stock:${alert.productId}:${profile.id}`
+      dedupeKey: `${event.id}:low-stock:${alert.skuId ?? alert.variantId ?? alert.productId}:${profile.id}`
     })))
   ];
 

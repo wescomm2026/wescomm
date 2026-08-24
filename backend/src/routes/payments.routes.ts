@@ -18,6 +18,7 @@ import {
 } from "../services/paymongo-reconciliation.service.js";
 import { runOutboxBatch } from "../services/outbox.service.js";
 import { deleteExpiredRealtimeEvents } from "../services/realtime-event.service.js";
+import { invalidateOperationalReadCaches } from "../services/operational-cache.service.js";
 
 const paymentIdSchema = z.string().uuid();
 const checkoutSchema = z.object({
@@ -91,6 +92,7 @@ paymentsRoutes.post(
       runOutboxBatch({ limit }),
       deleteExpiredRealtimeEvents()
     ]);
+    await invalidateOperationalReadCaches();
     response.json({ maintenance: paymentMaintenance, outbox, deletedRealtimeEvents });
   })
 );
@@ -125,6 +127,7 @@ paymentsRoutes.post(
       role: request.auth!.role
     });
     const reconciliation = await reconcileOnlinePayment(paymentId, request.auth!.id);
+    await invalidateOperationalReadCaches();
     const payment = await getOnlinePaymentById({
       paymentId,
       userId: request.auth!.id,

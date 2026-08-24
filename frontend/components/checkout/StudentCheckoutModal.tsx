@@ -19,7 +19,13 @@ import { useStudentRestriction } from "@/components/restrictions/StudentRestrict
 import { ActionLoadingOverlay } from "@/components/ui/ActionLoadingOverlay";
 import { AssetIcon } from "@/components/ui/AssetIcon";
 import { Button } from "@/components/ui/button";
-import { BackendApiError, createGcashCheckoutFromApi, createReservationFromApi, type BackendReservation } from "@/lib/api";
+import {
+  BackendApiError,
+  createGcashCheckoutFromApi,
+  createReservationFromApi,
+  requestProductsRefresh,
+  type BackendReservation
+} from "@/lib/api";
 import { reservationCacheKey, upsertCursorItem } from "@/lib/server-state";
 import {
   getPaymentIdempotencyKey,
@@ -27,9 +33,13 @@ import {
   rememberPaymentCheckout
 } from "@/lib/payment-checkout";
 import {
+  hasCompleteProductSelections,
   isProductUnavailable,
   isUniformClothOnly,
+  productOptionValueStock,
   productPurchaseLimit,
+  selectedProductAvailability,
+  selectedProductSkuId,
   productStockCount,
   UNIFORM_CLOTH_NOTICE
 } from "@/lib/product-display";
@@ -52,6 +62,7 @@ export type CheckoutProduct = {
   options: Array<{
     name: string;
     values: string[];
+    stockByValue?: Record<string, number>;
   }>;
 };
 
@@ -63,14 +74,19 @@ function formatPrice(value: number) {
   return `PHP ${value.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-function getFutureDate(days: number) {
-  const date = new Date();
-  date.setDate(date.getDate() + days);
-  return date.toISOString().slice(0, 10);
+function getManilaDateKey(date: Date) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Manila",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(date);
+  const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${value.year}-${value.month}-${value.day}`;
 }
 
-function defaultSelections(product: CheckoutProduct) {
-  return Object.fromEntries(product.options.map((option) => [option.name, option.values[0] ?? ""]));
+function getFutureDate(days: number) {
+  return getManilaDateKey(new Date(Date.now() + days * 24 * 60 * 60 * 1000));
 }
 
 function formatSelections(options: Record<string, string>) {
@@ -136,7 +152,7 @@ export function StudentCheckoutModal({
     setPickupTime("10:00 AM - 12:00 PM");
     setPaymentMethod("PAY_AT_COMMISSARY");
     setNotes("");
-    setSelectedOptions(defaultSelections(product));
+    setSelectedOptions({});
     setError("");
     setReference("");
     setGcashRecovery(null);
@@ -162,10 +178,17 @@ export function StudentCheckoutModal({
 
   const unitPrice = product ? parsePrice(product.price) : 0;
   const stockCount = product ? productStockCount(product) : 0;
-  const maxQuantity = product ? productPurchaseLimit(product) : 0;
-  const unavailable = product ? isProductUnavailable(product) : true;
+  const selectionsComplete = product ? hasCompleteProductSelections(product, selectedOptions) : false;
+  const stockUnavailable = product ? isProductUnavailable(product) : true;
+  const maxQuantity = product ? productPurchaseLimit(product, 10, selectedOptions) : 0;
+  const selectedAvailability = product ? selectedProductAvailability(product, selectedOptions) : 0;
+  const unavailable = stockUnavailable || !selectionsComplete || maxQuantity === 0;
   const total = useMemo(() => unitPrice * quantity, [quantity, unitPrice]);
   const clothOnly = product ? isUniformClothOnly(product) : false;
+
+  useEffect(() => {
+    if (maxQuantity > 0) setQuantity((current) => Math.min(current, maxQuantity));
+  }, [maxQuantity]);
 
   const openGcashCheckout = async (reservation: Pick<BackendReservation, "id" | "referenceCode">) => {
     if (!user?.accessToken) throw new Error("Please sign in again to continue.");
@@ -207,8 +230,12 @@ export function StudentCheckoutModal({
       return;
     }
     if (!product) return;
-    if (unavailable) {
+    if (stockUnavailable) {
       setError("This item is currently out of stock. Return to the shop and add it to your wishlist for a restock alert.");
+      return;
+    }
+    if (!selectionsComplete) {
+      setError("Select all required item options before continuing.");
       return;
     }
     if (!pickupDate) {
@@ -232,6 +259,7 @@ export function StudentCheckoutModal({
     const itemDetails = formatSelections(selectedOptions);
     const noteDetails = notes.trim();
     const variantSummary = [itemDetails, noteDetails ? `Note: ${noteDetails}` : ""].filter(Boolean).join(" | ");
+    const skuId = selectedProductSkuId(product, selectedOptions);
 
     const payload = {
       paymentMethod,
@@ -239,6 +267,7 @@ export function StudentCheckoutModal({
       items: [
         {
           productId: product.id,
+          ...(skuId ? { skuId } : {}),
           variantSummary,
           quantity
         }
@@ -254,7 +283,7 @@ export function StudentCheckoutModal({
       upsertCursorItem(reservationCacheKey(user.id), reservation, true);
       clearReservationRequestIdentity(user.id, requestIdentity);
       pendingRequestRef.current = null;
-      window.dispatchEvent(new Event("wescomm:products-refresh"));
+      requestProductsRefresh();
       if (paymentMethod === "PAYMONGO_GCASH") {
         setGcashRecovery({
           reservationId: reservation.id,
@@ -444,21 +473,32 @@ export function StudentCheckoutModal({
                       <fieldset key={option.name}>
                         <legend className="font-extrabold text-[#17211b]">{option.name}</legend>
                         <div className="mt-2 flex flex-wrap gap-2">
-                          {option.values.map((value) => (
-                            <button
-                              key={value}
-                              type="button"
-                              disabled={submitting}
-                              onClick={() => setSelectedOptions((current) => ({ ...current, [option.name]: value }))}
-                              className={`min-h-10 rounded-md border px-4 text-sm font-semibold ${
-                                selectedOptions[option.name] === value
-                                  ? "border-primary bg-[#e8f4e8] text-primary ring-1 ring-primary"
-                                  : "border-[#d5ded6] bg-white hover:border-[#a9bfab]"
-                              }`}
-                            >
-                              {value}
-                            </button>
-                          ))}
+                          {option.values.map((value) => {
+                            const valueStock = productOptionValueStock(product, option.name, value, selectedOptions);
+                            const valueUnavailable = valueStock === 0;
+                            return (
+                              <button
+                                key={value}
+                                type="button"
+                                disabled={submitting || valueUnavailable}
+                                onClick={() => setSelectedOptions((current) => {
+                                  if (current[option.name] === value) {
+                                    const next = { ...current };
+                                    delete next[option.name];
+                                    return next;
+                                  }
+                                  return { ...current, [option.name]: value };
+                                })}
+                                className={`min-h-10 rounded-md border px-4 text-sm font-semibold disabled:cursor-not-allowed disabled:border-[#e1e5e2] disabled:bg-[#f3f4f3] disabled:text-[#9aa29d] ${
+                                  selectedOptions[option.name] === value
+                                    ? "border-primary bg-[#e8f4e8] text-primary ring-1 ring-primary"
+                                    : "border-[#d5ded6] bg-white hover:border-[#a9bfab]"
+                                }`}
+                              >
+                                {value}{valueUnavailable ? " — Out of stock" : valueStock !== null ? ` (${valueStock} available)` : ""}
+                              </button>
+                            );
+                          })}
                         </div>
                       </fieldset>
                     ))}
@@ -491,7 +531,11 @@ export function StudentCheckoutModal({
                       <Plus className="size-4" />
                     </button>
                     <span className="text-xs text-[#69746e]">
-                      {unavailable ? "This item is currently unavailable" : `Maximum ${maxQuantity} per reservation`}
+                      {stockUnavailable
+                        ? "This item is currently unavailable"
+                        : !selectionsComplete
+                          ? "Choose the required item option first"
+                          : `${selectedAvailability} available · ${Math.max(0, selectedAvailability - quantity)} remaining after reservation`}
                     </span>
                   </div>
                 </section>
@@ -612,8 +656,10 @@ export function StudentCheckoutModal({
                   <AssetIcon src="/assets/verified.svg" className="size-6" />
                   {submitting
                     ? "Submitting reservation..."
-                    : unavailable
+                    : stockUnavailable
                       ? "Out of Stock"
+                      : !selectionsComplete
+                        ? "Select Options"
                       : isReservationRestricted
                       ? "Reservation Access Paused"
                       : user

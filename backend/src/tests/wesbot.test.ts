@@ -4,6 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import {
   createWesbotConcernKey,
+  detectHighConfidenceWesbotIntent,
   detectWesbotIntent,
   extractReceiptCode,
   extractReservationReference,
@@ -11,7 +12,11 @@ import {
   scoreWesbotTextMatch,
   shouldRecommendStaff
 } from "../domain/wesbot.js";
-import { isSafeAiRewrite } from "../services/wesbot.service.js";
+import {
+  classifyWesbotMessage,
+  sanitizeWesbotRecordReference
+} from "../services/wesbot-classifier.service.js";
+import { isSafeAiRewrite, productAnswer, productCandidateTerms } from "../services/wesbot.service.js";
 
 test("WesBot recognizes common Taglish commissary intents", () => {
   assert.equal(detectWesbotIntent("May stock ba ng WUP polo medium?"), "PRODUCT_INQUIRY");
@@ -35,6 +40,69 @@ test("explicit human requests are detected without treating normal bot questions
   assert.equal(requestsHumanSupport("Ano ang commissary hours?"), false);
 });
 
+test("high-confidence routing covers semantic handoff phrases and exact account references", () => {
+  for (const message of [
+    "Please put me through to commissary personnel.",
+    "I need a person, not an automated reply.",
+    "Pwede tao na lang ang sumagot?",
+    "Escalate this conversation to staff.",
+    "Can someone from the commissary handle this?"
+  ]) {
+    assert.equal(detectHighConfidenceWesbotIntent(message)?.intent, "HUMAN_HANDOFF", message);
+  }
+  assert.equal(detectHighConfidenceWesbotIntent("Check WES-2026-A1B2C3D4")?.intent, "RESERVATION_STATUS");
+  assert.equal(detectHighConfidenceWesbotIntent("Check RCT-2026-A1B2C3D4E5")?.intent, "RECEIPT_STATUS");
+});
+
+test("semantic feature flag off preserves deterministic and legacy behavior without an AI call", async () => {
+  const deterministic = await classifyWesbotMessage({
+    studentId: "00000000-0000-0000-0000-000000000001",
+    message: "Talk to a real person please"
+  });
+  assert.equal(deterministic.source, "DETERMINISTIC");
+  assert.equal(deterministic.intent, "HUMAN_HANDOFF");
+  assert.equal(deterministic.usedAi, false);
+
+  const legacy = await classifyWesbotMessage({
+    studentId: "00000000-0000-0000-0000-000000000001",
+    message: "May stock ba ng WUP polo medium?"
+  });
+  assert.equal(legacy.source, "LEGACY");
+  assert.equal(legacy.intent, "PRODUCT_INQUIRY");
+  assert.equal(legacy.usedAi, false);
+});
+
+test("semantic record references must be present in the current message or recent context", () => {
+  const context = [{ role: "student" as const, text: "Please check WES-2026-A1B2C3D4" }];
+  assert.equal(sanitizeWesbotRecordReference({
+    message: "What is its status?",
+    context,
+    candidate: "WES-2026-A1B2C3D4",
+    type: "reservation"
+  }), "WES-2026-A1B2C3D4");
+  assert.equal(sanitizeWesbotRecordReference({
+    message: "What is its status?",
+    context,
+    candidate: "WES-2026-DEADBEEF",
+    type: "reservation"
+  }), "WES-2026-A1B2C3D4");
+  assert.equal(sanitizeWesbotRecordReference({
+    message: "What is its status?",
+    context: [
+      ...context,
+      { role: "student", text: "Also WES-2026-FFEEDDCC" }
+    ],
+    candidate: "WES-2026-DEADBEEF",
+    type: "reservation"
+  }), null);
+  assert.equal(sanitizeWesbotRecordReference({
+    message: "Check RCT-2026-A1B2C3D4E5",
+    context: [],
+    candidate: null,
+    type: "receipt"
+  }), "RCT-2026-A1B2C3D4E5");
+});
+
 test("reservation and receipt references are extracted exactly", () => {
   assert.equal(extractReservationReference("check wes-2026-a1b2c3d4 please"), "WES-2026-A1B2C3D4");
   assert.equal(extractReceiptCode("receipt: rct-2026-a1b2c3d4e5"), "RCT-2026-A1B2C3D4E5");
@@ -55,6 +123,85 @@ test("product matching favors relevant database names", () => {
   const relevant = scoreWesbotTextMatch("BSIT polo medium", "WUP BSIT Department Polo - medium");
   const unrelated = scoreWesbotTextMatch("BSIT polo medium", "College of Nursing skirt - small");
   assert.ok(relevant > unrelated);
+});
+
+test("WesBot product lookup sends only discriminating bounded terms to the database", () => {
+  const entities = {
+    productName: null,
+    department: null,
+    options: [],
+    quantity: null,
+    reservationReference: null,
+    receiptCode: null,
+    contextReference: null
+  };
+  assert.deepEqual(productCandidateTerms("BSBA women's uniform set large red", entities), ["bsba"]);
+  assert.deepEqual(productCandidateTerms("May red polo ba na medium?", entities), ["polo"]);
+  assert.deepEqual(productCandidateTerms("PE shirt XL", entities), ["pe", "shirt"]);
+  assert.deepEqual(productCandidateTerms("May large ba?", entities), []);
+});
+
+test("WesBot grounds option inventory by valid SKU combination and handles cloth-only items", () => {
+  const common = {
+    description: null,
+    imageUrl: null,
+    oldPrice: null,
+    status: "IN_STOCK" as const,
+    createdAt: "2026-08-24T00:00:00.000Z",
+    inventoryReconciledAt: "2026-08-24T00:00:00.000Z",
+    category: { id: "category", name: "Uniforms", slug: "uniforms", iconUrl: null },
+    aliases: []
+  };
+  const optionProduct = [{
+    ...common,
+    id: "options-product",
+    name: "Nursing Uniform",
+    price: "500.00",
+    stock: 3,
+    saleMode: "OPTIONS" as const,
+    skuInventoryEnabled: true,
+    inventorySetupRequired: false,
+    variants: [
+      { optionName: "Size", optionValue: "M", stock: 2 },
+      { optionName: "Color", optionValue: "Red", stock: 2 },
+      { optionName: "Color", optionValue: "Blue", stock: 1 }
+    ],
+    skus: [{
+      id: "sku-red-m",
+      stock: 2,
+      lowStockThreshold: 1,
+      options: [
+        { optionName: "Size", optionValue: "M" },
+        { optionName: "Color", optionValue: "Red" }
+      ]
+    }]
+  }] as Parameters<typeof productAnswer>[0];
+  const entities = {
+    productName: "Nursing Uniform",
+    department: null,
+    options: [],
+    quantity: null,
+    reservationReference: null,
+    receiptCode: null,
+    contextReference: null
+  };
+
+  assert.match(productAnswer(optionProduct, "Nursing Uniform M Red", entities).draft, /Size M \+ Color Red: 2 pieces/);
+  assert.match(productAnswer(optionProduct, "Nursing Uniform M Blue", entities).draft, /no configured Size M \+ Color Blue combination/);
+
+  const clothProduct = [{
+    ...common,
+    id: "cloth-product",
+    name: "Uniform Cloth",
+    price: "125.00",
+    stock: 8,
+    saleMode: "CLOTH_ONLY" as const,
+    skuInventoryEnabled: false,
+    inventorySetupRequired: false,
+    variants: [],
+    skus: []
+  }] as Parameters<typeof productAnswer>[0];
+  assert.match(productAnswer(clothProduct, "Uniform Cloth medium blue", entities).draft, /8 cloth units.*no selectable size or color combination/);
 });
 
 test("optional AI polish cannot change or omit grounded facts", () => {
@@ -91,8 +238,22 @@ test("WesBot replies are gated to bot-active conversations", () => {
   assert.match(service, /conversation\.mode !== "BOT_ACTIVE"/);
   assert.match(service, /conversation\.mode === "BOT_ACTIVE" && env\.WESBOT_ENABLED/);
   assert.match(service, /mode: "WAITING_FOR_STAFF"/);
-  assert.match(service, /conversation\.botReplyCount : 0/);
-  assert.match(wesbotService, /const repeatCount = input\.repeatCount \+ 1/);
+  assert.match(service, /previousConcernKey: conversation\.lastConcernKey/);
+  assert.match(service, /previousReplyCount: conversation\.botReplyCount/);
+  assert.match(wesbotService, /concernKey === input\.previousConcernKey \? input\.previousReplyCount \+ 1 : 1/);
+});
+
+test("semantic knowledge migration is server-only and indexed for lookup", () => {
+  const migration = readFileSync(
+    new URL("../../prisma/migrations/20260829000000_add_wesbot_semantic_knowledge/migration.sql", import.meta.url),
+    "utf8"
+  );
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS "product_aliases"/);
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS "faq_variants"/);
+  assert.match(migration, /product_aliases_normalized_alias_trgm_idx/);
+  assert.match(migration, /faq_variants_normalized_text_trgm_idx/);
+  assert.match(migration, /REVOKE ALL PRIVILEGES ON TABLE "product_aliases" FROM PUBLIC/);
+  assert.match(migration, /REVOKE ALL PRIVILEGES ON TABLE "faq_variants" FROM %I/);
 });
 
 test("Staff takeover is atomic and only the current handler can reply", () => {

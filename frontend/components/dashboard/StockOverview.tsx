@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useMemo } from "react";
 import { useDashboardProducts, type DashboardProducts } from "@/components/dashboard/DashboardProductsProvider";
 import { AssetIcon } from "@/components/ui/AssetIcon";
+import { isProductUnavailable } from "@/lib/product-display";
 
 type StockStat = {
   label: string;
@@ -12,17 +13,13 @@ type StockStat = {
   href: string;
 };
 
-function statusCount(products: DashboardProducts, status: string) {
-  return products.filter((product) => product.status === status).length;
-}
-
 export function StockOverview() {
   const { products, status } = useDashboardProducts();
   const stats = useMemo<StockStat[]>(() => [
-    { label: "Available", value: statusCount(products, "In Stock"), image: "/assets/in-stock.svg", href: "/student/shop?status=in-stock" },
-    { label: "Restock Soon", value: statusCount(products, "Restock Soon"), image: "/assets/restock-soon.svg", href: "/student/shop?status=restock-soon" },
-    { label: "Unavailable", value: statusCount(products, "Out of Stock"), image: "/assets/out-of-stock.svg", href: "/student/shop?status=out-of-stock" },
-    { label: "On Sale", value: statusCount(products, "On Sale"), image: "/assets/on-sale.svg", href: "/student/shop?status=on-sale" }
+    { label: "Available", value: products.filter((product) => !isProductUnavailable(product) && product.status === "In Stock").length, image: "/assets/in-stock.svg", href: "/student/shop?status=in-stock" },
+    { label: "Restock Soon", value: products.filter((product) => !isProductUnavailable(product) && product.status === "Restock Soon").length, image: "/assets/restock-soon.svg", href: "/student/shop?status=restock-soon" },
+    { label: "Unavailable", value: products.filter(isProductUnavailable).length, image: "/assets/out-of-stock.svg", href: "/student/shop?status=out-of-stock" },
+    { label: "On Sale", value: products.filter((product) => !isProductUnavailable(product) && product.status === "On Sale").length, image: "/assets/on-sale.svg", href: "/student/shop?status=on-sale" }
   ], [products]);
 
   return (

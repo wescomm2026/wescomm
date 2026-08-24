@@ -245,7 +245,7 @@ export function StudentProfileExperience() {
     const refreshWhenVisible = () => {
       if (document.visibilityState === "visible") void loadSummary();
     };
-    const timer = window.setInterval(refreshWhenVisible, 30_000);
+    const timer = window.setInterval(refreshWhenVisible, 5 * 60_000);
     window.addEventListener("focus", refreshWhenVisible);
     document.addEventListener("visibilitychange", refreshWhenVisible);
     void loadSummary();

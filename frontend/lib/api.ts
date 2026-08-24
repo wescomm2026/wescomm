@@ -1,9 +1,11 @@
 import type { CartProduct } from "@/components/cart/StudentCartProvider";
 import { resolveShopProductAsset } from "@/lib/shop-assets";
+import { isUniformClothOnly, sortProductOptionValues } from "@/lib/product-display";
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "/api/backend";
 export const COOKIE_SESSION_TOKEN = "cookie-session";
 export const AUTH_UNAUTHORIZED_EVENT = "wescomm:auth-unauthorized";
+export const PRODUCTS_REFRESH_EVENT = "wescomm:products-refresh";
 
 export type BackendAuthProfile = {
   id: string;
@@ -39,6 +41,15 @@ export type BackendVariant = {
   stock: number;
 };
 
+export type BackendSku = {
+  id: string;
+  stock: number;
+  lowStockThreshold?: number;
+  options: Array<{ optionName: string; optionValue: string }>;
+};
+
+export type ProductSaleMode = "SIMPLE" | "CLOTH_ONLY" | "OPTIONS";
+
 export type BackendProduct = {
   id: string;
   name: string;
@@ -48,8 +59,13 @@ export type BackendProduct = {
   oldPrice?: string | number | null;
   status: "IN_STOCK" | "RESTOCK_SOON" | "OUT_OF_STOCK" | "ON_SALE";
   stock: number;
+  saleMode?: ProductSaleMode;
   category?: BackendCategory | null;
   variants?: BackendVariant[];
+  skuInventoryEnabled?: boolean;
+  inventoryReconciledAt?: string | null;
+  inventorySetupRequired?: boolean;
+  skus?: BackendSku[];
 };
 
 export type BackendFaq = {
@@ -146,10 +162,11 @@ export type BackendReservation = {
 
 export type CreateReservationPayload = {
   paymentMethod: BackendPaymentMethod;
-  pickupStart?: string;
-  pickupEnd?: string;
+  pickupStart: string;
+  pickupEnd: string;
   items: Array<{
     productId: string;
+    skuId?: string;
     variantSummary?: string;
     quantity: number;
   }>;
@@ -212,6 +229,7 @@ export type BackendCollectionOptions = {
   query?: string;
   dateFrom?: string;
   dateTo?: string;
+  signal?: AbortSignal;
 };
 
 export type BackendPublicReceiptVerification = {
@@ -355,15 +373,64 @@ export class BackendApiError extends Error {
 export const OFFLINE_API_MESSAGE =
   "You are offline. Connect to the internet, then try again.";
 
+const READ_REQUEST_TIMEOUT_MS = 15_000;
+const WRITE_REQUEST_TIMEOUT_MS = 30_000;
+const UPLOAD_REQUEST_TIMEOUT_MS = 60_000;
+
+function requestTimeoutMs(input: RequestInfo | URL, init?: RequestInit) {
+  const method = (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
+  const url = typeof input === "string"
+    ? input
+    : input instanceof URL
+      ? input.toString()
+      : input.url;
+
+  if (/\/uploads\//.test(url)) return UPLOAD_REQUEST_TIMEOUT_MS;
+  return method === "GET" || method === "HEAD"
+    ? READ_REQUEST_TIMEOUT_MS
+    : WRITE_REQUEST_TIMEOUT_MS;
+}
+
+export function isRequestAbortError(error: unknown) {
+  return error instanceof DOMException && error.name === "AbortError";
+}
+
 export async function onlineFetch(input: RequestInfo | URL, init?: RequestInit) {
   if (typeof navigator !== "undefined" && !navigator.onLine) {
     throw new BackendApiError(0, OFFLINE_API_MESSAGE, "OFFLINE");
   }
 
+  const requestController = new AbortController();
+  const callerSignal = init?.signal;
+  let timedOut = false;
+  const abortFromCaller = () => requestController.abort(callerSignal?.reason);
+
+  if (callerSignal?.aborted) {
+    abortFromCaller();
+  } else {
+    callerSignal?.addEventListener("abort", abortFromCaller, { once: true });
+  }
+
+  const timeout = globalThis.setTimeout(() => {
+    timedOut = true;
+    requestController.abort();
+  }, requestTimeoutMs(input, init));
+
   try {
-    return await fetch(input, { ...init, cache: init?.cache ?? "no-store" });
+    return await fetch(input, {
+      ...init,
+      cache: init?.cache ?? "no-store",
+      signal: requestController.signal
+    });
   } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") throw error;
+    if (timedOut) {
+      throw new BackendApiError(
+        408,
+        "This request took too long. Please try again.",
+        "REQUEST_TIMEOUT"
+      );
+    }
+    if (callerSignal?.aborted || isRequestAbortError(error)) throw error;
     throw new BackendApiError(
       0,
       typeof navigator !== "undefined" && !navigator.onLine
@@ -371,6 +438,9 @@ export async function onlineFetch(input: RequestInfo | URL, init?: RequestInit) 
         : "Unable to reach WESCOMM services. Check your connection and try again.",
       "NETWORK_UNAVAILABLE"
     );
+  } finally {
+    globalThis.clearTimeout(timeout);
+    callerSignal?.removeEventListener("abort", abortFromCaller);
   }
 }
 
@@ -543,31 +613,51 @@ function formatStatus(status: BackendProduct["status"]) {
 }
 
 function groupOptions(variants: BackendVariant[] = []) {
-  const grouped = new Map<string, string[]>();
+  const grouped = new Map<string, Map<string, number>>();
 
   variants.forEach((variant) => {
-    const values = grouped.get(variant.optionName) ?? [];
-    if (!values.includes(variant.optionValue)) values.push(variant.optionValue);
+    const values = grouped.get(variant.optionName) ?? new Map<string, number>();
+    values.set(variant.optionValue, Math.max(0, Math.floor(Number(variant.stock) || 0)));
     grouped.set(variant.optionName, values);
   });
 
-  return Array.from(grouped.entries()).map(([name, values]) => ({ name, values }));
+  return Array.from(grouped.entries()).map(([name, values]) => ({
+    name,
+    values: sortProductOptionValues(name, Array.from(values.keys())),
+    stockByValue: Object.fromEntries(values)
+  }));
 }
 
 export function mapBackendProduct(product: BackendProduct): CartProduct {
-  const asset = resolveShopProductAsset(product.name, product.imageUrl);
+  const asset = resolveShopProductAsset(product.name, product.imageUrl, product.category?.name);
+  const categoryName = product.category?.name ?? "Others";
+  const saleMode: ProductSaleMode = product.saleMode
+    ?? (isUniformClothOnly({ name: product.name, category: categoryName })
+      ? "CLOTH_ONLY"
+      : (product.variants?.length ?? 0) > 0
+        ? "OPTIONS"
+        : "SIMPLE");
 
   return {
     id: product.id,
     name: asset.name,
-    category: product.category?.name ?? "Others",
+    category: categoryName,
     detail: product.description ?? "",
     price: formatPrice(product.price),
     oldPrice: formatPrice(product.oldPrice),
     status: formatStatus(product.status),
     count: String(product.stock),
     image: asset.image,
-    options: groupOptions(product.variants)
+    saleMode,
+    inventorySetupRequired: saleMode === "OPTIONS" && Boolean(product.inventorySetupRequired),
+    options: saleMode === "OPTIONS" ? groupOptions(product.variants) : [],
+    skus: saleMode === "OPTIONS" && product.skuInventoryEnabled
+      ? (product.skus ?? []).map((sku) => ({
+          id: sku.id,
+          stock: Math.max(0, Math.floor(Number(sku.stock) || 0)),
+          options: Object.fromEntries(sku.options.map((option) => [option.optionName, option.optionValue]))
+        }))
+      : []
   };
 }
 
@@ -623,28 +713,75 @@ export async function updateMyProfileFromApi(token: string, payload: UpdateMyPro
 const PRODUCT_CACHE_TTL_MS = 30_000;
 const FAQ_CACHE_TTL_MS = 60_000;
 type MappedProducts = ReturnType<typeof mapBackendProduct>[];
+type PendingProductsRequest = {
+  promise: Promise<MappedProducts>;
+  fresh: boolean;
+  generation: number;
+  requestSequence: number;
+};
 
 let cachedProducts: { value: MappedProducts; expiresAt: number } | null = null;
-let pendingProducts: Promise<MappedProducts> | null = null;
+let pendingProducts: PendingProductsRequest | null = null;
+let productCacheGeneration = 0;
+let productRequestSequence = 0;
+let latestAppliedProductRequest = 0;
 let cachedFaqs: { value: BackendFaq[]; expiresAt: number } | null = null;
 let pendingFaqs: Promise<BackendFaq[]> | null = null;
 
+export function invalidateProductsCache() {
+  productCacheGeneration += 1;
+  cachedProducts = null;
+}
+
+export function requestProductsRefresh(detail?: unknown) {
+  invalidateProductsCache();
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(
+    detail === undefined
+      ? new Event(PRODUCTS_REFRESH_EVENT)
+      : new CustomEvent(PRODUCTS_REFRESH_EVENT, { detail })
+  );
+}
+
 export async function getProductsFromApi(options: { fresh?: boolean } = {}) {
-  if (!options.fresh && cachedProducts && cachedProducts.expiresAt > Date.now()) {
+  const fresh = options.fresh === true;
+  const generation = productCacheGeneration;
+
+  if (!fresh && cachedProducts && cachedProducts.expiresAt > Date.now()) {
     return cachedProducts.value;
   }
-  if (pendingProducts) return pendingProducts;
+  if (
+    pendingProducts
+    && pendingProducts.generation === generation
+    && (!fresh || pendingProducts.fresh)
+  ) {
+    return pendingProducts.promise;
+  }
 
-  pendingProducts = apiFetch<{ products: BackendProduct[] }>("/products", { cache: "default" })
+  const requestSequence = ++productRequestSequence;
+  const path = fresh
+    ? `/products?fresh=${encodeURIComponent(`${generation}-${requestSequence}`)}`
+    : "/products";
+  const promise = apiFetch<{ products: BackendProduct[] }>(path, {
+    cache: fresh ? "no-store" : "default"
+  })
     .then((data) => {
       const value = data.products.map(mapBackendProduct);
-      cachedProducts = { value, expiresAt: Date.now() + PRODUCT_CACHE_TTL_MS };
+      if (
+        generation === productCacheGeneration
+        && requestSequence >= latestAppliedProductRequest
+      ) {
+        latestAppliedProductRequest = requestSequence;
+        cachedProducts = { value, expiresAt: Date.now() + PRODUCT_CACHE_TTL_MS };
+      }
       return value;
     })
     .finally(() => {
-      pendingProducts = null;
+      if (pendingProducts?.requestSequence === requestSequence) pendingProducts = null;
     });
-  return pendingProducts;
+
+  pendingProducts = { promise, fresh, generation, requestSequence };
+  return promise;
 }
 
 export async function getWishlistFromApi(token: string) {
@@ -769,7 +906,8 @@ export async function getReservationPageFromApi(token: string, options: BackendC
   const query = params.toString();
   const data = await authApiFetch<BackendCursorPage<BackendReservation> & { reservations?: BackendReservation[] }>(
     `/reservations${query ? `?${query}` : ""}`,
-    token
+    token,
+    { signal: options.signal }
   );
   return {
     items: Array.isArray(data.items) ? data.items : data.reservations ?? [],
@@ -896,7 +1034,8 @@ export async function getReceiptPageFromApi(token: string, options: BackendColle
   const query = params.toString();
   const data = await authApiFetch<BackendCursorPage<BackendReceipt> & { receipts?: BackendReceipt[] }>(
     `/receipts${query ? `?${query}` : ""}`,
-    token
+    token,
+    { signal: options.signal }
   );
   return {
     items: Array.isArray(data.items) ? data.items : data.receipts ?? [],
@@ -988,15 +1127,19 @@ export async function markAllNotificationsReadFromApi(token: string) {
   return data.updatedCount;
 }
 
-export async function getConversationsFromApi(token: string) {
-  const data = await authApiFetch<{ conversations: BackendConversation[] }>("/conversations?limit=50", token);
+export async function getConversationsFromApi(token: string, signal?: AbortSignal) {
+  const data = await authApiFetch<{ conversations: BackendConversation[] }>(
+    "/conversations?limit=50",
+    token,
+    { signal }
+  );
   return data.conversations;
 }
 
 export async function getConversationMessagesFromApi(
   token: string,
   conversationId: string,
-  options: { limit?: number; before?: string; after?: string } = {}
+  options: { limit?: number; before?: string; after?: string; signal?: AbortSignal } = {}
 ) {
   const params = new URLSearchParams();
   if (options.limit) params.set("limit", String(options.limit));
@@ -1007,7 +1150,9 @@ export async function getConversationMessagesFromApi(
     messages: BackendConversationMessage[];
     nextCursor: string | null;
     typingUsers: BackendTypingUser[];
-  }>(`/conversations/${conversationId}/messages${query ? `?${query}` : ""}`, token);
+  }>(`/conversations/${conversationId}/messages${query ? `?${query}` : ""}`, token, {
+    signal: options.signal
+  });
 }
 
 export async function createConversationFromApi(token: string, payload: { subject: string; message: string }) {
@@ -1091,26 +1236,32 @@ export async function updateConversationStatusFromApi(
   return data.conversation;
 }
 
-export async function getAdminReportSummaryFromApi(token: string) {
-  const data = await authApiFetch<{ summary: BackendReportSummary }>("/admin/reports/summary", token);
+export async function getAdminReportSummaryFromApi(token: string, signal?: AbortSignal) {
+  const data = await authApiFetch<{ summary: BackendReportSummary }>("/admin/reports/summary", token, { signal });
   return data.summary;
 }
 
-export async function getStaffReportSummaryFromApi(token: string) {
-  const data = await authApiFetch<{ summary: BackendReportSummary }>("/staff/reports/summary", token);
+export async function getStaffReportSummaryFromApi(token: string, signal?: AbortSignal) {
+  const data = await authApiFetch<{ summary: BackendReportSummary }>("/staff/reports/summary", token, { signal });
   return data.summary;
 }
 
-export async function getStaffDashboardSummaryFromApi(token: string) {
-  const data = await authApiFetch<{ dashboard: BackendStaffDashboard }>("/staff/dashboard/summary", token);
+export async function getStaffDashboardSummaryFromApi(token: string, signal?: AbortSignal) {
+  const data = await authApiFetch<{ dashboard: BackendStaffDashboard }>("/staff/dashboard/summary", token, { signal });
   return data.dashboard;
 }
 
-export async function searchStaffWorkspaceFromApi(token: string, query: string, role: "STAFF" | "ADMIN") {
+export async function searchStaffWorkspaceFromApi(
+  token: string,
+  query: string,
+  role: "STAFF" | "ADMIN",
+  signal?: AbortSignal
+) {
   const routeBase = role === "ADMIN" ? "/admin" : "/staff";
   const data = await authApiFetch<{ results: BackendGlobalSearchResult[] }>(
     `${routeBase}/search?query=${encodeURIComponent(query)}`,
-    token
+    token,
+    { signal }
   );
   return data.results;
 }
@@ -1128,7 +1279,7 @@ export async function getAdminUsersPageFromApi(
   const data = await authApiFetch<BackendCursorPage<BackendAdminUser> & {
     users?: BackendAdminUser[];
     roleCounts?: { students: number; staff: number; admins: number };
-  }>(`/admin/users${query ? `?${query}` : ""}`, token);
+  }>(`/admin/users${query ? `?${query}` : ""}`, token, { signal: options.signal });
   return {
     items: Array.isArray(data.items) ? data.items : data.users ?? [],
     nextCursor: data.nextCursor ?? null,
@@ -1140,8 +1291,8 @@ export async function getAdminUsersFromApi(token: string) {
   return (await getAdminUsersPageFromApi(token)).items;
 }
 
-export async function getStaffUsersFromApi(token: string) {
-  const data = await authApiFetch<{ users: BackendAdminUser[] }>("/staff/users", token);
+export async function getStaffUsersFromApi(token: string, signal?: AbortSignal) {
+  const data = await authApiFetch<{ users: BackendAdminUser[] }>("/staff/users", token, { signal });
   return data.users;
 }
 
@@ -1155,7 +1306,7 @@ export async function updateAdminUserRoleFromApi(token: string, userId: string, 
 
 export async function getAdminAuditLogsFromApi(
   token: string,
-  filters: { action?: string; entityType?: string; query?: string; cursor?: string; limit?: number } = {}
+  filters: { action?: string; entityType?: string; query?: string; cursor?: string; limit?: number; signal?: AbortSignal } = {}
 ) {
   const params = new URLSearchParams();
   if (filters.action) params.set("action", filters.action);
@@ -1166,7 +1317,8 @@ export async function getAdminAuditLogsFromApi(
   const query = params.toString();
   const data = await authApiFetch<BackendCursorPage<BackendAuditLog> & { auditLogs?: BackendAuditLog[] }>(
     `/admin/audit-logs${query ? `?${query}` : ""}`,
-    token
+    token,
+    { signal: filters.signal }
   );
   return {
     items: Array.isArray(data.items) ? data.items : data.auditLogs ?? [],

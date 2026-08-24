@@ -7,12 +7,17 @@ import { listInventory, restockProduct } from "../services/inventory.service.js"
 import { PRODUCT_STATUSES } from "../types/app.js";
 import { asyncHandler } from "../utils/async-handler.js";
 import { publishRealtimeEventsBestEffort, REALTIME_TOPICS } from "../services/realtime-event.service.js";
+import { invalidateOperationalReadCaches } from "../services/operational-cache.service.js";
 
 export const inventoryRoutes = Router();
 
 const restockSchema = z.object({
   mode: z.enum(["add", "set"]).default("add"),
   quantity: z.coerce.number().int().nonnegative().max(10_000_000),
+  variantQuantities: z.array(z.object({
+    variantId: z.string().uuid(),
+    quantity: z.coerce.number().int().nonnegative().max(10_000_000)
+  })).max(100).optional(),
   notes: z.string().trim().max(500).optional()
 }).superRefine((input, context) => {
   if (input.mode === "add" && input.quantity <= 0) {
@@ -59,13 +64,15 @@ inventoryRoutes.post(
       productId: productIdSchema.parse(request.params.id),
       quantity: input.quantity,
       mode: input.mode,
+      variantQuantities: input.variantQuantities,
       notes: input.notes,
       performedById: request.auth!.id
     });
+    await invalidateOperationalReadCaches();
     await publishRealtimeEventsBestEffort([{
       topic: REALTIME_TOPICS.inventory,
       entityId: product.id,
-      audienceRoles: ["STAFF", "ADMIN"],
+      audienceRoles: ["STUDENT", "STAFF", "ADMIN"],
       payload: { action: "restocked" }
     }, {
       topic: REALTIME_TOPICS.dashboard,

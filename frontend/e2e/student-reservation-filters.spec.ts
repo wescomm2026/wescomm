@@ -121,6 +121,14 @@ test("student reservation status filters work on desktop and mobile", async ({ p
       await json(route, { notifications: [] });
       return;
     }
+    if (path === "/api/backend/notifications/unread-count") {
+      await json(route, { unreadCount: 0 });
+      return;
+    }
+    if (path === "/api/backend/realtime/events") {
+      await route.fulfill({ status: 200, contentType: "text/event-stream", body: "" });
+      return;
+    }
     if (path === "/api/backend/push/public-key") {
       await json(route, { enabled: false, publicKey: "" });
       return;

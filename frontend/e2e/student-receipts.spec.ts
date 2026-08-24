@@ -132,8 +132,29 @@ async function mockReceiptApis(page: Page) {
       return;
     }
 
+    const receiptDetailMatch = path.match(/^\/api\/backend\/receipts\/([^/]+)$/);
+    if (receiptDetailMatch) {
+      const receipt = receipts.find((item) => item.id === decodeURIComponent(receiptDetailMatch[1]));
+      await json(
+        route,
+        receipt ? { receipt } : { error: "Receipt not found." },
+        receipt ? 200 : 404
+      );
+      return;
+    }
+
     if (path === "/api/backend/notifications") {
       await json(route, { notifications: [] });
+      return;
+    }
+
+    if (path === "/api/backend/notifications/unread-count") {
+      await json(route, { unreadCount: 0 });
+      return;
+    }
+
+    if (path === "/api/backend/realtime/events") {
+      await route.fulfill({ status: 200, contentType: "text/event-stream", body: "" });
       return;
     }
 

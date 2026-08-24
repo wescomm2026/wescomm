@@ -115,6 +115,27 @@ test("database-grounded WesBot works without an AI Gateway credential", () => {
   assert.equal(result.status, 0, result.stderr);
 });
 
+test("semantic routing and AI rewrites stay fail-closed behind the AI feature boundary", () => {
+  const semanticWithoutAi = loadConfig({
+    WESBOT_ENABLED: "true",
+    WESBOT_AI_ENABLED: "false",
+    WESBOT_SEMANTIC_MODE: "active"
+  });
+  assert.notEqual(semanticWithoutAi.status, 0);
+  assert.match(`${semanticWithoutAi.stdout}\n${semanticWithoutAi.stderr}`, /WESBOT_SEMANTIC_MODE/);
+
+  const rewriteWithoutAi = loadConfig({
+    WESBOT_ENABLED: "true",
+    WESBOT_AI_ENABLED: "false",
+    WESBOT_AI_REWRITE_ENABLED: "true"
+  });
+  assert.notEqual(rewriteWithoutAi.status, 0);
+  assert.match(`${rewriteWithoutAi.stdout}\n${rewriteWithoutAi.stderr}`, /WESBOT_AI_REWRITE_ENABLED/);
+
+  const boundedTimeout = loadConfig({ WESBOT_AI_TIMEOUT_MS: "999" });
+  assert.notEqual(boundedTimeout.status, 0);
+});
+
 test("optional WesBot AI polish fails closed without Gateway authentication", () => {
   const botDisabled = loadConfig({
     WESBOT_ENABLED: "false",

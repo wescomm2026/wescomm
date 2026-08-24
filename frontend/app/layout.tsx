@@ -1,9 +1,7 @@
 import type { Metadata, Viewport } from "next";
-import { StudentAuthProvider } from "@/components/auth/StudentAuthProvider";
-import { StudentCartProvider } from "@/components/cart/StudentCartProvider";
+import { WelcomeGateOverlay } from "@/components/auth/WelcomeGateOverlay";
 import { PwaLifecycle } from "@/components/pwa/PwaLifecycle";
-import { StudentRestrictionProvider } from "@/components/restrictions/StudentRestrictionProvider";
-import { RealtimeProvider } from "@/components/realtime/RealtimeProvider";
+import { welcomeIntroBootstrapScript } from "@/lib/welcome-intro";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -41,28 +39,20 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   const enableRuntimeCaching = process.env.NODE_ENV === "production";
 
   return (
-    <html lang="en">
-      <head>
-        <link
-          rel="preload"
-          href="/assets/wescomm-logo-intro.mp4"
-          as="video"
-          type="video/mp4"
-          media="(prefers-reduced-motion: no-preference)"
-        />
-      </head>
+    <html lang="en" suppressHydrationWarning>
       <body>
+        {/* This first-party bootstrap must execute while HTML is parsed so a
+            reload never paints or downloads the already-seen intro. */}
+        <script
+          id="wescomm-welcome-intro"
+          dangerouslySetInnerHTML={{ __html: welcomeIntroBootstrapScript() }}
+        />
+        <WelcomeGateOverlay />
         <PwaLifecycle
           enableServiceWorker={enableServiceWorker}
           enableRuntimeCaching={enableRuntimeCaching}
         />
-        <StudentAuthProvider>
-          <RealtimeProvider>
-            <StudentRestrictionProvider>
-              <StudentCartProvider>{children}</StudentCartProvider>
-            </StudentRestrictionProvider>
-          </RealtimeProvider>
-        </StudentAuthProvider>
+        {children}
       </body>
     </html>
   );

@@ -1,5 +1,5 @@
-import { ShopPage } from "@/components/ui/ModulePages";
+import { StudentShopPage } from "@/components/student/StudentShopPage";
 
 export default function Page() {
-  return <ShopPage />;
+  return <StudentShopPage />;
 }

@@ -1,0 +1,51 @@
+{
+  "version": "2.0",
+  "purpose": "Semantic, context-aware WesBot routing. Dataset teaches meaning; live WESCOMM data provides facts.",
+  "allowed_intents": [
+    "PRODUCT_INQUIRY",
+    "RESERVATION_STATUS",
+    "CANCELLATION_ELIGIBILITY",
+    "PAYMENT_STATUS",
+    "RECEIPT_STATUS",
+    "PICKUP_INFORMATION",
+    "POLICY_QUESTION",
+    "HUMAN_HANDOFF",
+    "GENERAL_SUPPORT"
+  ],
+  "classifier_output": {
+    "intent": "one allowed intent",
+    "confidence": "number 0..1",
+    "needsClarification": "boolean",
+    "entities": {
+      "productName": "string|null",
+      "department": "string|null",
+      "size": "string|null",
+      "reservationReference": "string|null",
+      "receiptCode": "string|null",
+      "contextReference": "string|null"
+    }
+  },
+  "confidence_policy": {
+    "high": {
+      "min": 0.8,
+      "behavior": "route to existing grounded service"
+    },
+    "medium": {
+      "min": 0.55,
+      "max": 0.79,
+      "behavior": "ask one specific clarification question"
+    },
+    "low": {
+      "max": 0.54,
+      "behavior": "safe fallback; do not guess; offer staff assistance when appropriate"
+    }
+  },
+  "grounding_rules": [
+    "Never answer stock or price from the dataset; query live catalog/inventory.",
+    "Never answer reservation, payment, receipt, or pickup status from the dataset; query the authenticated student's live records.",
+    "Policy answers must come from published/verified FAQs or authoritative policy records.",
+    "Use the last 4-6 relevant conversation messages for follow-up questions.",
+    "A semantic match is valid even when the student's exact sentence never appears in the dataset.",
+    "If multiple records could match a pronoun or vague reference, clarify instead of guessing."
+  ]
+}
