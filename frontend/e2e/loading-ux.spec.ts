@@ -23,12 +23,38 @@ test("fresh app session shows the responsive welcome animation while dashboard d
   const gate = page.locator(".welcome-gate-overlay");
   await expect(gate).toBeVisible();
   await expect(gate).toHaveCSS("position", "fixed");
-  await expect(gate).toHaveCSS("background-color", "rgb(255, 255, 255)");
+  await expect(gate).toHaveCSS("background-color", "rgb(251, 251, 251)");
   await expect(page.getByTestId("welcome-logo-animation")).toHaveJSProperty("muted", false);
   await expect(page.getByTestId("welcome-logo-animation")).toHaveJSProperty("volume", 1);
   await expect.poll(() => animationRequests).toBeGreaterThan(0);
   await expect(page.getByRole("heading", { name: "Stock Status Overview" })).toBeVisible();
   await dismissWelcomeGate(page);
+});
+
+test("blocked audible autoplay waits for the user instead of auto-skipping", async ({ page }) => {
+  await page.addInitScript(() => {
+    const originalPlay = HTMLMediaElement.prototype.play;
+    let blockNextAudiblePlay = true;
+    HTMLMediaElement.prototype.play = function patchedPlay() {
+      if (blockNextAudiblePlay && !this.muted) {
+        blockNextAudiblePlay = false;
+        return Promise.reject(new DOMException("User interaction is required.", "NotAllowedError"));
+      }
+      return originalPlay.call(this);
+    };
+  });
+
+  await page.goto("/student/dashboard", { waitUntil: "domcontentloaded" });
+
+  const gate = page.locator(".welcome-gate-overlay");
+  const playWithSound = gate.getByRole("button", { name: "Play welcome animation with sound" });
+  await expect(playWithSound).toBeVisible();
+  await page.waitForTimeout(2_500);
+  await expect(gate).toBeVisible();
+  await expect(gate).toHaveAttribute("data-media-failed", "false");
+
+  await playWithSound.click();
+  await expect(gate).toBeHidden({ timeout: 5_000 });
 });
 
 test("reload and same-tab navigation stay free of the welcome gate", async ({ page }) => {

@@ -52,7 +52,7 @@ html {
 .welcome-gate-overlay {
   isolation: isolate;
   opacity: 1;
-  background: #fff;
+  background: #fbfbfb;
 }
 
 html:not([data-wescomm-intro="pending"]) .welcome-gate-overlay {
@@ -66,7 +66,7 @@ html:not([data-wescomm-intro="pending"]) .welcome-gate-overlay {
   width: 100%;
   height: 100%;
   object-fit: contain;
-  background: #fff;
+  background: #fbfbfb;
   opacity: 0;
 }
 
@@ -118,7 +118,7 @@ html:not([data-wescomm-intro="pending"]) .welcome-gate-overlay {
   }
 
   .welcome-gate-overlay {
-    background: #fff url("/assets/wescomm-logo.png") center / min(82vw, 900px) auto no-repeat;
+    background: #fbfbfb url("/assets/wescomm-logo.png") center / min(82vw, 900px) auto no-repeat;
   }
 }
 

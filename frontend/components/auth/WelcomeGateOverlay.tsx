@@ -23,7 +23,7 @@ const E2E_TEST_ENABLED = process.env.NEXT_PUBLIC_E2E_TEST === "true";
 const LOGO_ANIMATION_PLAYBACK_RATE = E2E_TEST_ENABLED ? 16 : 1;
 const MEDIA_STARTUP_TIMEOUT_MS = E2E_TEST_ENABLED ? 2_000 : 8_000;
 const PLAYBACK_TIMEOUT_BUFFER_MS = 1_500;
-const LOADING_BACKGROUND = "#ffffff";
+const LOADING_BACKGROUND = "#fbfbfb";
 
 export function WelcomeGateOverlay() {
   const [visible, setVisible] = useState(true);
@@ -65,8 +65,8 @@ export function WelcomeGateOverlay() {
     document.body.style.overflow = "hidden";
     setShouldLoadAnimation(true);
     startupTimeoutRef.current = window.setTimeout(() => {
-      setMediaFailed(true);
-      beginExit();
+      startupTimeoutRef.current = null;
+      setSoundStartRequired(true);
     }, MEDIA_STARTUP_TIMEOUT_MS);
 
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -145,6 +145,7 @@ export function WelcomeGateOverlay() {
     const video = videoRef.current;
     if (!video) return;
 
+    clearStartupTimeout();
     video.currentTime = 0;
     video.muted = false;
     video.volume = 1;
@@ -207,7 +208,7 @@ export function WelcomeGateOverlay() {
         <button
           type="button"
           onClick={handlePlayWithSound}
-          className="absolute z-20 inline-flex min-h-12 items-center gap-2 rounded-full bg-[#08743f] px-6 py-3 text-base font-bold text-white shadow-[0_12px_32px_rgba(0,68,36,0.24)] transition hover:bg-[#075c32] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#08743f] focus-visible:ring-offset-4 focus-visible:ring-offset-white active:scale-[0.98]"
+          className="absolute z-20 inline-flex min-h-12 items-center gap-2 rounded-full bg-[#08743f] px-6 py-3 text-base font-bold text-white shadow-[0_12px_32px_rgba(0,68,36,0.24)] transition hover:bg-[#075c32] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#08743f] focus-visible:ring-offset-4 focus-visible:ring-offset-[#fbfbfb] active:scale-[0.98]"
           aria-label="Play welcome animation with sound"
         >
           <Volume2 className="size-5" aria-hidden="true" />
@@ -229,7 +230,6 @@ export function WelcomeGateOverlay() {
         ref={videoRef}
         className={`welcome-gate-video${mediaFailed ? " welcome-gate-video-failed" : ""}`}
         data-testid="welcome-logo-animation"
-        autoPlay
         playsInline
         preload={shouldLoadAnimation ? "auto" : "none"}
         src={shouldLoadAnimation ? WELCOME_INTRO_VIDEO_SRC : undefined}
