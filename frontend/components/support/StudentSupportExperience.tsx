@@ -22,6 +22,7 @@ import {
 import { cn } from "@/lib/utils";
 
 const quickQuestions = [
+  { label: "Browse FAQs", message: "FAQ" },
   { label: "Product availability", message: "Available ba ang item na ito? Pangalan ng item: " },
   { label: "My reservation", message: "Ano na ang status ng reservation ko? Reservation code: " },
   { label: "GCash payment", message: "Paki-check ang status ng GCash payment ko. Reservation code: " },
@@ -29,6 +30,26 @@ const quickQuestions = [
   { label: "Pickup schedule", message: "Kailan ko puwedeng i-pick up ang reservation ko? Reservation code: " },
   { label: "Cancellation", message: "Puwede ko pa bang i-cancel ang reservation ko? Reservation code: " }
 ];
+
+type WesbotSuggestedAction = {
+  id: string;
+  label: string;
+  message: string;
+};
+
+function messageSuggestedActions(message: BackendConversationMessage): WesbotSuggestedAction[] {
+  const actions = message.metadata?.suggestedActions;
+  if (!Array.isArray(actions)) return [];
+  return actions.flatMap((action) => {
+    if (!action || typeof action !== "object" || Array.isArray(action)) return [];
+    const record = action as Record<string, unknown>;
+    const id = typeof record.id === "string" ? record.id.trim() : "";
+    const label = typeof record.label === "string" ? record.label.trim() : "";
+    const actionMessage = typeof record.message === "string" ? record.message.trim() : "";
+    if (!id || !label || !actionMessage || label.length > 40 || actionMessage.length > 240) return [];
+    return [{ id, label, message: actionMessage }];
+  }).slice(0, 4);
+}
 
 function mergeSupportMessages(
   current: BackendConversationMessage[],
@@ -753,6 +774,7 @@ export function StudentSupportExperience() {
               }
 
               const botMessage = message.senderType === "BOT";
+              const suggestedActions = botMessage ? messageSuggestedActions(message) : [];
               return (
                 <div key={message.id}>
                   {showDay ? <p className="mb-3 text-center text-[11px] font-bold text-[#879089]">{day}</p> : null}
@@ -777,6 +799,20 @@ export function StudentSupportExperience() {
                       <p className={cn("mt-1 px-1 text-[10px] font-semibold", mine ? "text-[#718078]" : "text-[#7b867f]")}>
                         {mine ? "You" : botMessage ? "WesBot" : "Staff"} · {formatSupportTime(message.createdAt)}
                       </p>
+                      {suggestedActions.length ? (
+                        <div className="mt-2 flex max-w-full flex-wrap gap-1.5" aria-label="Suggested WesBot replies">
+                          {suggestedActions.map((action) => (
+                            <button
+                              key={`${message.id}-${action.id}`}
+                              type="button"
+                              onClick={() => chooseQuickQuestion(action.message)}
+                              className="rounded-full border border-[#bcd5bf] bg-white px-3 py-1.5 text-[11px] font-extrabold text-primary transition hover:bg-[#eef7ef] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+                            >
+                              {action.label}
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
                     </div>
                   </div>
                 </div>

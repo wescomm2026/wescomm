@@ -1,13 +1,17 @@
-import { createGoogle } from "@ai-sdk/google";
 import { env } from "../config/env.js";
 
-let googleProvider: ReturnType<typeof createGoogle> | null = null;
+async function loadGoogleProvider() {
+  const { createGoogle } = await import("@ai-sdk/google");
+  return createGoogle({ apiKey: env.GEMINI_API_KEY });
+}
 
-export function getWesbotModel() {
+let googleProviderPromise: ReturnType<typeof loadGoogleProvider> | null = null;
+
+export async function getWesbotModel() {
   if (!env.GEMINI_API_KEY) {
     throw new Error("GEMINI_API_KEY is required for WesBot AI.");
   }
 
-  googleProvider ??= createGoogle({ apiKey: env.GEMINI_API_KEY });
-  return googleProvider(env.WESBOT_MODEL);
+  googleProviderPromise ??= loadGoogleProvider();
+  return (await googleProviderPromise)(env.WESBOT_MODEL);
 }

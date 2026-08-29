@@ -62,6 +62,7 @@ const envSchema = z.object({
   WESBOT_ENABLED: booleanEnv.default(false),
   WESBOT_AI_ENABLED: booleanEnv.default(false),
   WESBOT_AI_REWRITE_ENABLED: booleanEnv.default(false),
+  WESBOT_CONVERSATIONAL_MODE: booleanEnv.default(true),
   WESBOT_SEMANTIC_MODE: z.enum(["off", "shadow", "active"]).default("off"),
   WESBOT_AI_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(15_000).default(12_000),
   WESBOT_MODEL: z.string().trim().min(3).default("gemini-3.5-flash-lite"),

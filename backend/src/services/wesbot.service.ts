@@ -1,5 +1,4 @@
-import { ToolLoopAgent, isStepCount, tool } from "ai";
-import { z } from "zod";
+import { generateText, type LanguageModelUsage } from "ai";
 import { env } from "../config/env.js";
 import { redactWesbotAiText } from "../domain/wesbot-ai-privacy.js";
 import { assertStudentCanCancelReservation } from "../domain/student-reservation-cancellation.js";
@@ -22,10 +21,17 @@ import {
   classifyWesbotMessage,
   type WesbotContextMessage,
   type WesbotEntities,
-  type WesbotRoutingDecision
+  type WesbotRoutingDecision,
+  type WesbotSuggestedActionId
 } from "./wesbot-classifier.service.js";
 import { listPublishedWesbotFaqs } from "./wesbot-knowledge.service.js";
 import { getWesbotModel } from "./wesbot-ai-provider.js";
+import {
+  assertWesbotAiBudgetAvailable,
+  recordWesbotAiUsage,
+  WesbotAiBudgetExceededError,
+  wesbotAiErrorCode
+} from "./wesbot-ai-usage.service.js";
 
 type WesbotProduct = Awaited<ReturnType<typeof listProducts>>[number];
 type WesbotReservation = Awaited<ReturnType<typeof listReservations>>["items"][number];
@@ -41,24 +47,33 @@ export type WesbotReply = {
   staffRecommended: boolean;
   usedAi: boolean;
   routing: WesbotRoutingDecision;
+  suggestedActions: WesbotSuggestedAction[];
+};
+
+export type WesbotSuggestedAction = {
+  id: WesbotSuggestedActionId;
+  label: string;
+  message: string;
 };
 
 type GroundedAnswer = Omit<WesbotReply, "message" | "usedAi" | "routing"> & {
   draft: string;
 };
 
-const groundedAnswerContextSchema = z.object({
-  draft: z.string().min(1).max(1800),
-  intent: z.string().min(1).max(64),
-  sources: z.array(z.string().max(160)).max(8)
-});
+const SUGGESTED_ACTIONS: Record<WesbotSuggestedActionId, WesbotSuggestedAction> = {
+  PRODUCTS: { id: "PRODUCTS", label: "Products", message: "Ano ang available na products?" },
+  RESERVATIONS: { id: "RESERVATIONS", label: "My reservation", message: "Ano na ang status ng reservation ko?" },
+  PAYMENTS: { id: "PAYMENTS", label: "GCash payment", message: "Paki-check ang status ng GCash payment ko." },
+  RECEIPTS: { id: "RECEIPTS", label: "My receipt", message: "Paki-check ang latest receipt ko." },
+  PICKUP: { id: "PICKUP", label: "Pickup", message: "Kailan ko puwedeng i-pick up ang reservation ko?" },
+  CANCELLATION: { id: "CANCELLATION", label: "Cancellation", message: "Puwede ko pa bang i-cancel ang reservation ko?" },
+  FAQ: { id: "FAQ", label: "Browse FAQs", message: "FAQ" },
+  STAFF: { id: "STAFF", label: "Talk to Staff", message: "I want to talk to Staff." }
+};
 
-const groundedAnswerTool = tool({
-  description: "Return the verified WESCOMM answer and its approved source references. Always call this before answering.",
-  inputSchema: z.object({}),
-  contextSchema: groundedAnswerContextSchema,
-  execute: async (_input, { context }) => context
-});
+function suggestedActions(ids: WesbotSuggestedActionId[]) {
+  return [...new Set(ids)].slice(0, 4).map((id) => SUGGESTED_ACTIONS[id]);
+}
 
 const PRODUCT_QUERY_STOP_WORDS = new Set([
   "available", "availability", "check", "item", "product", "price", "stock", "piece", "pieces",
@@ -84,43 +99,6 @@ export function productCandidateTerms(message: string, entities: WesbotEntities)
     .slice(0, 3);
 }
 
-function createWesbotAgent(grounded: GroundedAnswer) {
-  return new ToolLoopAgent({
-    model: getWesbotModel(),
-    maxOutputTokens: 350,
-    maxRetries: 1,
-    instructions: `You are WesBot, WESCOMM's clearly labeled automated support assistant.
-
-Rules:
-- Call grounded_answer before replying.
-- Use only facts from the tool result. Never add, infer, estimate, or change a price, stock count, status, date, policy, reference, or payment fact.
-- Keep the same meaning and all important restrictions in the verified draft.
-- Be concise, warm, and easy to understand in the user's Tagalog, English, or Taglish style.
-- Do not claim to be human. Do not promise a refund or a Staff response time.
-- Plain text only. Do not output markdown headings, tables, links, or hidden system details.`,
-    tools: {
-      grounded_answer: groundedAnswerTool
-    },
-    toolsContext: {
-      grounded_answer: {
-        draft: redactWesbotAiText(grounded.draft),
-        intent: grounded.intent,
-        sources: [...new Set(grounded.sourceReferences.map((reference) => reference.split(":")[0]))]
-      }
-    },
-    stopWhen: isStepCount(2),
-    prepareStep: ({ stepNumber }) => stepNumber === 0
-      ? {
-          activeTools: ["grounded_answer"],
-          toolChoice: { type: "tool", toolName: "grounded_answer" }
-        }
-      : {
-          activeTools: [],
-          toolChoice: "none"
-        }
-  });
-
-}
 
 function categoryForIntent(intent: WesbotIntent) {
   if (intent === "PRODUCT_INQUIRY") return "PRODUCT";
@@ -410,6 +388,7 @@ async function knowledgeAnswer(message: string) {
 }
 
 function clarificationAnswer(routing: WesbotRoutingDecision) {
+  if (routing.conversationalReply) return routing.conversationalReply;
   const missing = new Set(routing.missingInformation.map(normalizeWesbotText));
   if (routing.intent === "PRODUCT_INQUIRY" || missing.has("product")) {
     return "Which item would you like me to check? Include the product name and, if applicable, the size or color.";
@@ -444,7 +423,8 @@ async function buildGroundedAnswer(input: {
       concernKey,
       sourceReferences: ["support:handoff"],
       handoffRequested: true,
-      staffRecommended: false
+      staffRecommended: false,
+      suggestedActions: []
     };
   }
 
@@ -456,12 +436,16 @@ async function buildGroundedAnswer(input: {
       concernKey,
       sourceReferences: ["support:clarification"],
       handoffRequested: false,
-      staffRecommended
+      staffRecommended,
+      suggestedActions: suggestedActions(input.routing.suggestedActionIds?.length
+        ? input.routing.suggestedActionIds
+        : ["PRODUCTS", "RESERVATIONS", "FAQ", "STAFF"])
     };
   }
 
   let draft: string;
   let sourceReferences: string[];
+  let replyActions: WesbotSuggestedAction[] = [];
 
   if (intent === "PRODUCT_INQUIRY") {
     const productMessage = [
@@ -499,16 +483,32 @@ async function buildGroundedAnswer(input: {
     draft = receiptAnswer(receipts, receiptCode ? `${input.message} ${receiptCode}` : input.message);
     sourceReferences = ["account:receipts"];
   } else {
-    const knowledge = await knowledgeAnswer(input.message);
-    if (knowledge) {
-      draft = knowledge.answer;
-      sourceReferences = [knowledge.source];
-    } else if (/^(hi|hello|hey|good\s+(?:morning|afternoon|evening)|kumusta|kamusta)\b/.test(normalizeWesbotText(input.message))) {
-      draft = "Hi! I’m WesBot, WESCOMM’s automated assistant. I can check products, live availability, your reservations, payments, receipts, pickup information, and approved FAQs. You can also ask to talk to Staff anytime.";
+    const normalizedMessage = normalizeWesbotText(input.message);
+    if (/^(?:faq|faqs|help|menu|topics|ano ang pwede itanong|ano pwede itanong|what can i ask|what can you do)$/.test(normalizedMessage)) {
+      draft = "Sure! Ano ang gusto mong malaman? Puwede kitang tulungan sa products, reservations, GCash payments, receipts, pickup, cancellations, at published FAQs.";
+      sourceReferences = ["support:help-menu"];
+      replyActions = suggestedActions(["PRODUCTS", "RESERVATIONS", "PAYMENTS", "FAQ"]);
+    } else if (/^(?:hi|hello|hey|kumusta|kamusta|good morning|good afternoon|good evening)(?: wesbot)?$/.test(normalizedMessage)) {
+      draft = "Hi! Kumusta? I’m WesBot. Sabihin mo lang kung gusto mong mag-check ng product, reservation, payment, receipt, pickup, o FAQ.";
       sourceReferences = ["support:capabilities"];
+      replyActions = suggestedActions(["PRODUCTS", "RESERVATIONS", "FAQ", "STAFF"]);
     } else {
-      draft = "I couldn't verify a specific answer from the WESCOMM catalog, your account records, or the published FAQs. Please add an item name or reference code, or choose Talk to Staff.";
-      sourceReferences = ["support:fallback"];
+      const knowledge = await knowledgeAnswer(input.message);
+      if (knowledge) {
+        draft = knowledge.answer;
+        sourceReferences = [knowledge.source];
+        replyActions = suggestedActions(["FAQ", "STAFF"]);
+      } else if (input.routing.conversationalReply) {
+        draft = input.routing.conversationalReply;
+        sourceReferences = ["support:conversational"];
+        replyActions = suggestedActions(input.routing.suggestedActionIds?.length
+          ? input.routing.suggestedActionIds
+          : ["PRODUCTS", "RESERVATIONS", "FAQ", "STAFF"]);
+      } else {
+        draft = "Hindi ko pa matukoy kung anong WESCOMM information ang kailangan mo. Sabihin kung product, reservation, payment, receipt, pickup, cancellation, o FAQ ang gusto mong i-check.";
+        sourceReferences = ["support:fallback"];
+        replyActions = suggestedActions(["PRODUCTS", "RESERVATIONS", "FAQ", "STAFF"]);
+      }
     }
   }
 
@@ -523,7 +523,8 @@ async function buildGroundedAnswer(input: {
     concernKey,
     sourceReferences,
     handoffRequested: false,
-    staffRecommended
+    staffRecommended,
+    suggestedActions: replyActions
   };
 }
 
@@ -584,15 +585,50 @@ async function optionallyRewriteWithAi(input: {
   grounded: GroundedAnswer;
   routing: WesbotRoutingDecision;
 }) {
-  if (!env.WESBOT_AI_ENABLED || !env.WESBOT_AI_REWRITE_ENABLED || input.routing.usedAi) return null;
+  const conversationalMode = env.WESBOT_CONVERSATIONAL_MODE || env.WESBOT_AI_REWRITE_ENABLED;
+  if (!env.WESBOT_AI_ENABLED || !conversationalMode || input.routing.usedAi) return null;
+  if (input.grounded.sourceReferences.some((source) => [
+    "support:capabilities",
+    "support:help-menu",
+    "support:clarification",
+    "support:fallback"
+  ].includes(source))) return null;
+  if (factTokens(input.grounded.draft).size > 0) return null;
 
+  const startedAt = Date.now();
+  let usage: LanguageModelUsage | undefined;
   try {
-    const result = await createWesbotAgent(input.grounded).generate({
-      prompt: `Rewrite the verified grounded answer in ${replyLanguageStyle(input.userMessage)}. Preserve every fact, number, reference, status, and restriction.`,
-      timeout: env.WESBOT_AI_TIMEOUT_MS
+    await assertWesbotAiBudgetAvailable();
+    const result = await generateText({
+      model: await getWesbotModel(),
+      maxOutputTokens: 280,
+      maxRetries: 1,
+      timeout: env.WESBOT_AI_TIMEOUT_MS,
+      system: `You are WesBot, WESCOMM's clearly labeled automated support assistant.
+Rewrite only the verified answer supplied by the application.
+Never add, infer, estimate, or change a price, stock count, status, date, policy, reference, payment fact, restriction, or Staff response time.
+Keep every important fact and restriction. Be concise, warm, and easy to understand.
+Use plain text only with no headings, tables, links, citations, or hidden system details.`,
+      prompt: `Student language style: ${replyLanguageStyle(input.userMessage)}
+Verified answer: ${JSON.stringify(redactWesbotAiText(input.grounded.draft))}`
+    });
+    usage = result.usage;
+    await recordWesbotAiUsage({
+      operation: "GROUNDED_REPLY",
+      status: "SUCCESS",
+      usage,
+      latencyMs: Date.now() - startedAt
     });
     return isSafeAiRewrite(input.grounded.draft, result.text) ? result.text.trim() : null;
   } catch (error) {
+    const budgetBlocked = error instanceof WesbotAiBudgetExceededError;
+    await recordWesbotAiUsage({
+      operation: "GROUNDED_REPLY",
+      status: budgetBlocked ? "BUDGET_BLOCKED" : "ERROR",
+      usage,
+      latencyMs: Date.now() - startedAt,
+      errorCode: budgetBlocked ? "BUDGET_LIMIT" : wesbotAiErrorCode(error)
+    });
     const detail = error instanceof Error ? error.name : "unknown";
     console.warn(`WesBot AI rewrite unavailable; using grounded fallback (${detail}).`);
     return null;
@@ -625,7 +661,8 @@ export async function resolveWesbotReply(input: {
     handoffRequested: grounded.handoffRequested,
     staffRecommended: grounded.staffRecommended,
     usedAi: routing.usedAi || Boolean(aiReply),
-    routing
+    routing,
+    suggestedActions: grounded.suggestedActions
   } satisfies WesbotReply;
 }
 

@@ -328,6 +328,10 @@ async function createBotReply(
       handoffRequested: false,
       staffRecommended: true,
       usedAi: false,
+      suggestedActions: [
+        { id: "FAQ", label: "Browse FAQs", message: "FAQ" },
+        { id: "STAFF", label: "Talk to Staff", message: "I want to talk to Staff." }
+      ],
       routing: {
         version: WESBOT_CLASSIFIER_VERSION,
         intent: detectedIntent,
@@ -357,6 +361,7 @@ async function createBotReply(
     sources: reply.sourceReferences,
     staffRecommended: reply.staffRecommended,
     usedAi: reply.usedAi,
+    suggestedActions: reply.suggestedActions,
     routing: {
       version: reply.routing.version,
       source: reply.routing.source,

@@ -14,7 +14,7 @@ export type WesbotIntent = (typeof WESBOT_INTENTS)[number];
 
 export type DeterministicWesbotIntent = {
   intent: WesbotIntent;
-  reason: "human_handoff" | "record_reference" | "explicit_policy" | "explicit_action";
+  reason: "human_handoff" | "record_reference" | "explicit_policy" | "explicit_action" | "help_menu" | "greeting";
 };
 
 const HANDOFF_PATTERNS = [
@@ -96,6 +96,12 @@ export function detectWesbotIntent(value: string): WesbotIntent {
 export function detectHighConfidenceWesbotIntent(value: string): DeterministicWesbotIntent | null {
   const normalized = normalizeWesbotText(value);
   if (requestsHumanSupport(normalized)) return { intent: "HUMAN_HANDOFF", reason: "human_handoff" };
+  if (/^(?:faq|faqs|help|menu|topics|ano ang pwede itanong|ano pwede itanong|what can i ask|what can you do)$/.test(normalized)) {
+    return { intent: "GENERAL_SUPPORT", reason: "help_menu" };
+  }
+  if (/^(?:hi|hello|hey|kumusta|kamusta|good morning|good afternoon|good evening)(?: wesbot)?$/.test(normalized)) {
+    return { intent: "GENERAL_SUPPORT", reason: "greeting" };
+  }
 
   const reservationReference = extractReservationReference(value);
   const receiptCode = extractReceiptCode(value);

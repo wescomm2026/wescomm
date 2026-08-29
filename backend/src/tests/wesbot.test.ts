@@ -15,6 +15,7 @@ import {
 import { redactWesbotAiContext, redactWesbotAiText } from "../domain/wesbot-ai-privacy.js";
 import {
   classifyWesbotMessage,
+  sanitizeWesbotConversationalReply,
   sanitizeWesbotRecordReference
 } from "../services/wesbot-classifier.service.js";
 import { isSafeAiRewrite, productAnswer, productCandidateTerms } from "../services/wesbot.service.js";
@@ -53,6 +54,38 @@ test("high-confidence routing covers semantic handoff phrases and exact account 
   }
   assert.equal(detectHighConfidenceWesbotIntent("Check WES-2026-A1B2C3D4")?.intent, "RESERVATION_STATUS");
   assert.equal(detectHighConfidenceWesbotIntent("Check RCT-2026-A1B2C3D4E5")?.intent, "RECEIPT_STATUS");
+});
+
+test("greetings and FAQ menus use the free deterministic path", async () => {
+  for (const message of ["hello", "FAQ", "ano pwede itanong", "what can you do"]) {
+    const detected = detectHighConfidenceWesbotIntent(message);
+    assert.equal(detected?.intent, "GENERAL_SUPPORT", message);
+
+    const routed = await classifyWesbotMessage({
+      studentId: "00000000-0000-0000-0000-000000000001",
+      message
+    });
+    assert.equal(routed.source, "DETERMINISTIC", message);
+    assert.equal(routed.usedAi, false, message);
+  }
+});
+
+test("AI conversational suggestions cannot introduce factual WESCOMM claims", () => {
+  assert.equal(sanitizeWesbotConversationalReply({
+    value: "Hi! I can help you check products, reservations, payments, receipts, pickup, or FAQs.",
+    intent: "GENERAL_SUPPORT",
+    needsClarification: false
+  }), "Hi! I can help you check products, reservations, payments, receipts, pickup, or FAQs.");
+  assert.equal(sanitizeWesbotConversationalReply({
+    value: "The commissary opens at 8 and your payment is confirmed.",
+    intent: "GENERAL_SUPPORT",
+    needsClarification: false
+  }), null);
+  assert.equal(sanitizeWesbotConversationalReply({
+    value: "Your order is ready for pickup.",
+    intent: "RESERVATION_STATUS",
+    needsClarification: false
+  }), null);
 });
 
 test("semantic feature flag off preserves deterministic and legacy behavior without an AI call", async () => {
@@ -238,6 +271,16 @@ test("optional AI polish cannot change or omit grounded facts", () => {
   );
 });
 
+test("Gemini loads lazily and grounded polish stays to one provider call", () => {
+  const provider = readFileSync(path.resolve(process.cwd(), "src/services/wesbot-ai-provider.ts"), "utf8");
+  const service = readFileSync(path.resolve(process.cwd(), "src/services/wesbot.service.ts"), "utf8");
+  assert.doesNotMatch(provider, /^import .*@ai-sdk\/google/m);
+  assert.match(provider, /await import\("@ai-sdk\/google"\)/);
+  assert.match(service, /generateText\(/);
+  assert.doesNotMatch(service, /ToolLoopAgent|isStepCount\(2\)/);
+  assert.match(service, /operation: "GROUNDED_REPLY"/);
+});
+
 test("WesBot migration preserves old conversations in staff-managed states and enforces sender identity", () => {
   const migration = readFileSync(
     new URL("../../prisma/migrations/20260814000000_add_wesbot_support/migration.sql", import.meta.url),
@@ -254,6 +297,7 @@ test("WesBot replies are gated to bot-active conversations", () => {
   const wesbotService = readFileSync(path.resolve(process.cwd(), "src/services/wesbot.service.ts"), "utf8");
   assert.match(service, /conversation\.mode !== "BOT_ACTIVE"/);
   assert.match(service, /conversation\.mode === "BOT_ACTIVE" && env\.WESBOT_ENABLED/);
+  assert.match(service, /suggestedActions: reply\.suggestedActions/);
   assert.match(service, /mode: "WAITING_FOR_STAFF"/);
   assert.match(service, /previousConcernKey: conversation\.lastConcernKey/);
   assert.match(service, /previousReplyCount: conversation\.botReplyCount/);

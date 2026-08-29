@@ -7,12 +7,14 @@ const DAY_MS = 24 * 60 * 60 * 1_000;
 
 export type WesbotAiUsageStatus = "SUCCESS" | "ERROR" | "BUDGET_BLOCKED";
 export type WesbotBudgetHealth = "HEALTHY" | "WATCH" | "CRITICAL" | "PAUSED" | "DISABLED";
+export type WesbotAiOperation = "SEMANTIC_ROUTING" | "GROUNDED_REPLY";
 
 type UsageRecordInput = {
   status: WesbotAiUsageStatus;
   latencyMs: number;
   usage?: LanguageModelUsage;
   errorCode?: string | null;
+  operation?: WesbotAiOperation;
 };
 
 type DailyUsageRow = {
@@ -159,7 +161,7 @@ export async function recordWesbotAiUsage(input: UsageRecordInput) {
     await prisma.wesbotAiUsage.create({
       data: {
         model: env.WESBOT_MODEL,
-        operation: "SEMANTIC_ROUTING",
+        operation: input.operation ?? "SEMANTIC_ROUTING",
         status: input.status,
         errorCode: input.errorCode ?? null,
         inputTokens,
