@@ -19,7 +19,7 @@ export function StockOverview() {
     { label: "Available", value: products.filter((product) => !isProductUnavailable(product) && product.status === "In Stock").length, image: "/assets/in-stock.svg", href: "/student/shop?status=in-stock" },
     { label: "Restock Soon", value: products.filter((product) => !isProductUnavailable(product) && product.status === "Restock Soon").length, image: "/assets/restock-soon.svg", href: "/student/shop?status=restock-soon" },
     { label: "Unavailable", value: products.filter(isProductUnavailable).length, image: "/assets/out-of-stock.svg", href: "/student/shop?status=out-of-stock" },
-    { label: "On Sale", value: products.filter((product) => !isProductUnavailable(product) && product.status === "On Sale").length, image: "/assets/on-sale.svg", href: "/student/shop?status=on-sale" }
+    { label: "On Sale", value: products.filter((product) => !isProductUnavailable(product) && product.isOnSale).length, image: "/assets/on-sale.svg", href: "/student/shop?status=on-sale" }
   ], [products]);
 
   return (

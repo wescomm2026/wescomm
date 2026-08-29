@@ -1,6 +1,6 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
 import type { BackendAuthProfile, BackendConversation } from "../lib/api";
-import { dismissWelcomeGate } from "./helpers";
+import { authorizeMockedWorkspace, dismissWelcomeGate } from "./helpers";
 
 const staffId = "00000000-0000-4000-8000-000000000021";
 const otherStaffId = "00000000-0000-4000-8000-000000000022";
@@ -72,6 +72,7 @@ function json(route: Route, body: unknown, status = 200) {
 }
 
 async function mockStaffSupport(page: Page, initialMode: "BOT_ACTIVE" | "STAFF_ACTIVE") {
+  await authorizeMockedWorkspace(page, "STAFF");
   let conversation = supportConversation(initialMode);
   const unhandled: string[] = [];
 

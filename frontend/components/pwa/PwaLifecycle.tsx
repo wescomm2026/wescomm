@@ -23,7 +23,6 @@ type NavigatorWithStandalone = Navigator & {
 const INSTALL_DISMISSED_KEY = "wescomm:pwa-install-dismissed:v1";
 const INSTALL_PROMPT_SNOOZE_MS = 14 * 24 * 60 * 60 * 1000;
 const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
-const PRODUCT_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 const UPDATE_ACTIVATION_TIMEOUT_MS = 10 * 1000;
 
 function isStandaloneDisplay() {
@@ -71,15 +70,10 @@ export function PwaLifecycle({
 
   useEffect(() => {
     const displayMode = window.matchMedia("(display-mode: standalone)");
-    const requestFreshProducts = () => window.dispatchEvent(new Event("wescomm:products-refresh"));
-    const onOnline = () => {
-      setIsOnline(true);
-      requestFreshProducts();
-    };
+    const onOnline = () => setIsOnline(true);
     const onOffline = () => setIsOnline(false);
     const onVisibilityChange = () => {
       if (document.visibilityState === "visible" && navigator.onLine) {
-        requestFreshProducts();
         void registrationRef.current?.update().catch(() => undefined);
       }
     };
@@ -110,12 +104,7 @@ export function PwaLifecycle({
     window.addEventListener("appinstalled", onAppInstalled);
     document.addEventListener("visibilitychange", onVisibilityChange);
     displayMode.addEventListener("change", syncDisplayMode);
-    const productRefreshInterval = window.setInterval(() => {
-      if (document.visibilityState === "visible" && navigator.onLine) requestFreshProducts();
-    }, PRODUCT_REFRESH_INTERVAL_MS);
-
     return () => {
-      window.clearInterval(productRefreshInterval);
       window.removeEventListener("online", onOnline);
       window.removeEventListener("offline", onOffline);
       window.removeEventListener("beforeinstallprompt", onBeforeInstallPrompt);

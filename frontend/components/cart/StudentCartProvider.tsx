@@ -21,6 +21,7 @@ export type CartProduct = {
   detail: string;
   price: string;
   oldPrice: string;
+  isOnSale?: boolean;
   status: string;
   count: string;
   image: string;

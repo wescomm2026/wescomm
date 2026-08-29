@@ -6,7 +6,7 @@ import type {
   BackendReservation
 } from "../lib/api";
 import type { StaffProduct } from "../lib/staff-api";
-import { dismissWelcomeGate } from "./helpers";
+import { authorizeMockedWorkspace, dismissWelcomeGate } from "./helpers";
 
 const staffProfile: BackendAuthProfile = {
   id: "91000000-0000-4000-8000-000000000001",
@@ -95,14 +95,15 @@ test("staff policy activation previews impact without silently rescheduling exis
   let previewPayload: Record<string, unknown> | null = null;
   let activationPayload: Record<string, unknown> | null = null;
   const unhandled: string[] = [];
+  await authorizeMockedWorkspace(page, "STAFF");
 
   await page.route("**/api/backend/**", async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
     if (await handleShellRequest(route, staffProfile)) return;
 
-    if (path === "/api/backend/pickup/policies" && request.method() === "GET") {
-      return json(route, { policies });
+    if (path === "/api/backend/pickup/policies/current" && request.method() === "GET") {
+      return json(route, { policy: policies[0] });
     }
     if (path === "/api/backend/pickup/policies/preview" && request.method() === "POST") {
       previewPayload = request.postDataJSON();
@@ -195,6 +196,7 @@ test("authorized reschedule submits the selected policy version and schedule rev
   };
   let reschedulePayload: Record<string, unknown> | null = null;
   const unhandled: string[] = [];
+  await authorizeMockedWorkspace(page, "STAFF");
 
   await page.route("**/api/backend/**", async (route) => {
     const request = route.request();
@@ -255,6 +257,7 @@ test("receipt status and payment method filters are combined server-side", async
   test.skip(testInfo.project.name !== "desktop-chromium", "One server-filter contract is sufficient.");
   const receiptQueries: string[] = [];
   const unhandled: string[] = [];
+  await authorizeMockedWorkspace(page, "STAFF");
 
   await page.route("**/api/backend/**", async (route) => {
     const requestUrl = new URL(route.request().url());
@@ -317,6 +320,7 @@ test("historical reports request the selected range and render payment-method re
   test.skip(testInfo.project.name !== "desktop-chromium", "One historical report contract is sufficient.");
   const presets: string[] = [];
   const unhandled: string[] = [];
+  await authorizeMockedWorkspace(page, "ADMIN");
 
   await page.route("**/api/backend/**", async (route) => {
     const requestUrl = new URL(route.request().url());
@@ -373,6 +377,7 @@ test("Admin can permanently delete an eligible archived product with exact confi
   let deletePayload: Record<string, unknown> | null = null;
   let deleted = false;
   const unhandled: string[] = [];
+  await authorizeMockedWorkspace(page, "ADMIN");
 
   await page.route("**/api/backend/**", async (route) => {
     const request = route.request();

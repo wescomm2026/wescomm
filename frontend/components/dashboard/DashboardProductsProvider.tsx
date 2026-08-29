@@ -23,7 +23,7 @@ export function DashboardProductsProvider({ children }: { children: ReactNode })
     let requestSequence = 0;
     let latestAppliedSequence = 0;
 
-    const refreshProducts = (background = false) => {
+    const refreshProducts = (background = false, fresh = false) => {
       if (!navigator.onLine) {
         if (!background) {
           setStatus("error");
@@ -33,7 +33,7 @@ export function DashboardProductsProvider({ children }: { children: ReactNode })
       }
 
       const currentRequest = ++requestSequence;
-      void getProductsFromApi({ fresh: background })
+      void getProductsFromApi({ fresh })
         .then((nextProducts) => {
           if (cancelled || currentRequest < latestAppliedSequence) return;
           latestAppliedSequence = currentRequest;
@@ -50,23 +50,24 @@ export function DashboardProductsProvider({ children }: { children: ReactNode })
         });
     };
 
-    const onProductsRefresh = () => refreshProducts(true);
+    const onProductsRefresh = () => refreshProducts(true, true);
+    const refreshFromLifecycle = () => refreshProducts(true, false);
     const refreshWhenVisible = () => {
-      if (document.visibilityState === "visible") refreshProducts(true);
+      if (document.visibilityState === "visible") refreshFromLifecycle();
     };
     refreshProducts();
     const fallbackRefresh = window.setInterval(refreshWhenVisible, 5 * 60_000);
     window.addEventListener(PRODUCTS_REFRESH_EVENT, onProductsRefresh);
-    window.addEventListener("focus", onProductsRefresh);
-    window.addEventListener("online", onProductsRefresh);
+    window.addEventListener("focus", refreshFromLifecycle);
+    window.addEventListener("online", refreshFromLifecycle);
     document.addEventListener("visibilitychange", refreshWhenVisible);
 
     return () => {
       cancelled = true;
       window.clearInterval(fallbackRefresh);
       window.removeEventListener(PRODUCTS_REFRESH_EVENT, onProductsRefresh);
-      window.removeEventListener("focus", onProductsRefresh);
-      window.removeEventListener("online", onProductsRefresh);
+      window.removeEventListener("focus", refreshFromLifecycle);
+      window.removeEventListener("online", refreshFromLifecycle);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
   }, []);

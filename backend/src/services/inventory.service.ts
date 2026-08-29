@@ -15,6 +15,7 @@ import {
   optionGroupsHaveAvailableStock,
   validateVariantGroupTotals
 } from "../domain/variant-stock.js";
+import { availabilityStatus, isProductOnSale } from "../domain/product-pricing.js";
 
 type RawCategory = {
   id: string;
@@ -151,7 +152,8 @@ function mapInventoryRecord(row: InventoryRecord) {
     imageStoragePath: row.imageStoragePath,
     price: row.price,
     oldPrice: row.oldPrice,
-    status: row.status,
+    status: availabilityStatus(row.stock, row.lowStockThreshold, row.status),
+    isOnSale: isProductOnSale(row.price, row.oldPrice),
     stock: row.stock,
     lowStockThreshold: row.lowStockThreshold,
     isActive: row.isActive,
@@ -391,7 +393,7 @@ export async function listInventory(input: InventoryListOptions = {}) {
       isActive: input.visibility === "ARCHIVED" ? false : true,
       ...(input.productId ? { id: input.productId } : {}),
       ...(input.categoryId ? { categoryId: input.categoryId } : {}),
-      ...(input.status ? { status: input.status } : {}),
+      ...(input.status === "ON_SALE" ? { oldPrice: { not: null } } : input.status ? { status: input.status } : {}),
       ...(query ? {
         OR: [
           { name: { contains: query, mode: "insensitive" } },
@@ -407,7 +409,10 @@ export async function listInventory(input: InventoryListOptions = {}) {
     take: limit + 1
   });
 
-  return createPage(rows.map(mapInventoryRecord), limit);
+  const mappedRows = rows
+    .map(mapInventoryRecord)
+    .filter((product) => input.status !== "ON_SALE" || product.isOnSale);
+  return createPage(mappedRows, limit);
 }
 
 export async function getInventoryProduct(productId: string) {
@@ -420,6 +425,9 @@ export async function getInventoryProduct(productId: string) {
 }
 
 export async function createProduct(input: ProductCreateInput, performedById: string) {
+  if (input.oldPrice !== null && input.oldPrice !== undefined && input.oldPrice <= input.price) {
+    throw new HttpError(400, "Old price must be greater than the selling price to mark a product on sale.", "INVALID_SALE_PRICE");
+  }
   const category = await resolveCategory(input);
   await assertUniqueActiveProductName(input.name);
 
@@ -665,6 +673,7 @@ export async function updateProduct(productId: string, input: ProductUpdateInput
           id: true,
           name: true,
           price: true,
+          oldPrice: true,
           status: true,
           stock: true,
           lowStockThreshold: true,
@@ -673,6 +682,13 @@ export async function updateProduct(productId: string, input: ProductUpdateInput
         }
       });
       if (!current) throw new HttpError(404, "Product not found.");
+      const nextPrice = input.price ?? Number(current.price);
+      const nextOldPrice = input.oldPrice === undefined
+        ? (current.oldPrice === null ? null : Number(current.oldPrice))
+        : input.oldPrice;
+      if (nextOldPrice !== null && nextOldPrice <= nextPrice) {
+        throw new HttpError(400, "Old price must be greater than the selling price to mark a product on sale.", "INVALID_SALE_PRICE");
+      }
       if (input.stock !== undefined && current.variants.length) {
         throw new HttpError(
           400,

@@ -57,6 +57,7 @@ export type BackendProduct = {
   imageUrl?: string | null;
   price: string | number;
   oldPrice?: string | number | null;
+  isOnSale?: boolean;
   status: "IN_STOCK" | "RESTOCK_SOON" | "OUT_OF_STOCK" | "ON_SALE";
   stock: number;
   saleMode?: ProductSaleMode;
@@ -265,7 +266,7 @@ export type BackendPickupTimeSlot = {
 };
 
 export type BackendPickupPolicy = {
-  id: string;
+  id?: string;
   version: number;
   timezone: "Asia/Manila" | string;
   minAdvanceDays: number;
@@ -273,16 +274,16 @@ export type BackendPickupPolicy = {
   minDate: string;
   maxDate: string;
   serverDate: string;
-  effectiveAt: string;
+  effectiveAt?: string;
   isActive: boolean;
-  reason: string;
-  createdById: string | null;
+  reason?: string;
+  createdById?: string | null;
   createdBy?: BackendProfileSummary | null;
-  createdAt: string;
-  updatedAt: string;
+  createdAt?: string;
+  updatedAt?: string;
   days: Array<{ weekday: number; enabled: boolean }>;
   timeSlots: BackendPickupTimeSlot[];
-  closures: Array<{ id: string; date: string; reason: string }>;
+  closures: Array<{ id?: string; date: string; reason: string }>;
 };
 
 export type PickupPolicyPayload = {
@@ -619,6 +620,43 @@ export type BackendReportSummary = {
   }>;
 };
 
+export type BackendWesbotUsageSummary = {
+  model: string;
+  aiEnabled: boolean;
+  semanticMode: "off" | "shadow" | "active";
+  budgetEnforced: boolean;
+  budgetUsd: number;
+  estimatedSpendUsd: number;
+  remainingUsd: number;
+  budgetPercent: number;
+  budgetHealth: "HEALTHY" | "WATCH" | "CRITICAL" | "PAUSED" | "DISABLED";
+  monthStart: string;
+  monthEnd: string;
+  totalCalls: number;
+  successfulCalls: number;
+  fallbackCalls: number;
+  budgetBlockedCalls: number;
+  rateLimitedCalls: number;
+  timeoutCalls: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  averageLatencyMs: number;
+  lastSuccessAt: string | null;
+  today: BackendWesbotUsageDay;
+  daily: BackendWesbotUsageDay[];
+};
+
+export type BackendWesbotUsageDay = {
+  day: string;
+  calls: number;
+  successfulCalls: number;
+  fallbackCalls: number;
+  inputTokens: number;
+  outputTokens: number;
+  estimatedSpendUsd: number;
+};
+
 export type ReportRangePreset = "TODAY" | "LAST_7_DAYS" | "LAST_30_DAYS" | "THIS_MONTH" | "LAST_MONTH" | "CUSTOM" | "ALL_TIME";
 export type ReportRangeOptions = {
   preset?: ReportRangePreset;
@@ -635,6 +673,7 @@ export type BackendDashboardProduct = {
   imageUrl?: string | null;
   price: string | number;
   oldPrice?: string | number | null;
+  isOnSale?: boolean;
   status: "IN_STOCK" | "RESTOCK_SOON" | "OUT_OF_STOCK" | "ON_SALE";
   stock: number;
   lowStockThreshold: number;
@@ -729,6 +768,11 @@ export function mapBackendProduct(product: BackendProduct): CartProduct {
     detail: product.description ?? "",
     price: formatPrice(product.price),
     oldPrice: formatPrice(product.oldPrice),
+    isOnSale: product.isOnSale ?? (
+      product.oldPrice !== null
+      && product.oldPrice !== undefined
+      && Number(product.oldPrice) > Number(product.price)
+    ),
     status: formatStatus(product.status),
     count: String(product.stock),
     image: asset.image,
@@ -809,6 +853,8 @@ let pendingProducts: PendingProductsRequest | null = null;
 let productCacheGeneration = 0;
 let productRequestSequence = 0;
 let latestAppliedProductRequest = 0;
+let productRefreshTimer: number | null = null;
+let pendingProductRefreshDetail: unknown;
 let cachedFaqs: { value: BackendFaq[]; expiresAt: number } | null = null;
 let pendingFaqs: Promise<BackendFaq[]> | null = null;
 
@@ -820,11 +866,18 @@ export function invalidateProductsCache() {
 export function requestProductsRefresh(detail?: unknown) {
   invalidateProductsCache();
   if (typeof window === "undefined") return;
-  window.dispatchEvent(
-    detail === undefined
-      ? new Event(PRODUCTS_REFRESH_EVENT)
-      : new CustomEvent(PRODUCTS_REFRESH_EVENT, { detail })
-  );
+  pendingProductRefreshDetail = detail;
+  if (productRefreshTimer) return;
+  productRefreshTimer = window.setTimeout(() => {
+    productRefreshTimer = null;
+    const nextDetail = pendingProductRefreshDetail;
+    pendingProductRefreshDetail = undefined;
+    window.dispatchEvent(
+      nextDetail === undefined
+        ? new Event(PRODUCTS_REFRESH_EVENT)
+        : new CustomEvent(PRODUCTS_REFRESH_EVENT, { detail: nextDetail })
+    );
+  }, 100);
 }
 
 export async function getProductsFromApi(options: { fresh?: boolean } = {}) {
@@ -955,6 +1008,11 @@ export async function getPickupAvailabilityFromApi() {
 export async function getPickupPoliciesFromApi(token: string) {
   const data = await authApiFetch<{ policies: BackendPickupPolicy[] }>("/pickup/policies", token);
   return data.policies;
+}
+
+export async function getCurrentPickupPolicyFromApi(token: string) {
+  const data = await authApiFetch<{ policy: BackendPickupPolicy }>("/pickup/policies/current", token);
+  return data.policy;
 }
 
 export async function previewPickupPolicyFromApi(token: string, payload: PickupPolicyPayload) {
@@ -1390,6 +1448,11 @@ function reportQuery(options: ReportRangeOptions = {}) {
 export async function getAdminReportSummaryFromApi(token: string, options: ReportRangeOptions = {}, signal?: AbortSignal) {
   const data = await authApiFetch<{ summary: BackendReportSummary }>(`/admin/reports/summary${reportQuery(options)}`, token, { signal });
   return data.summary;
+}
+
+export async function getAdminWesbotUsageFromApi(token: string, signal?: AbortSignal) {
+  const data = await authApiFetch<{ usage: BackendWesbotUsageSummary }>("/admin/wesbot/usage", token, { signal });
+  return data.usage;
 }
 
 export async function getStaffReportSummaryFromApi(token: string, options: ReportRangeOptions = {}, signal?: AbortSignal) {

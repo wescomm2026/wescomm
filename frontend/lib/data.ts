@@ -29,6 +29,7 @@ export const adminNav = [
   { href: "/admin/student-access", label: "Student Access", iconSrc: "/assets/cancelled.svg" },
   { href: "/admin/receipt-verification", label: "Receipt Verification", iconSrc: "/assets/scan-receipt.svg" },
   { href: "/admin/messages", label: "Messages", iconSrc: "/assets/messages.svg" },
+  { href: "/admin/wesbot-usage", label: "WesBot Usage", iconSrc: "/assets/chat-with-wesbot.svg" },
   { href: "/admin/faq-management", label: "FAQ Management", iconSrc: "/assets/faq.svg" },
   { href: "/admin/reports", label: "Reports", iconSrc: "/assets/orders.svg" },
   { href: "/admin/users", label: "Users", iconSrc: "/assets/my-profile.svg" },

@@ -1,7 +1,7 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
 import type { BackendAuthProfile } from "../lib/api";
 import type { StaffCategory, StaffProduct } from "../lib/staff-api";
-import { dismissWelcomeGate } from "./helpers";
+import { authorizeMockedWorkspace, dismissWelcomeGate } from "./helpers";
 
 const category: StaffCategory = {
   id: "00000000-0000-4000-8000-000000000201",
@@ -129,6 +129,7 @@ function json(route: Route, body: unknown, status = 200) {
 }
 
 async function mockInventory(page: Page) {
+  await authorizeMockedWorkspace(page, "STAFF");
   const unhandled: string[] = [];
   const restoredRequests: string[] = [];
   let archivedProducts = [archivedProduct];

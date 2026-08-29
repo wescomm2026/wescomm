@@ -151,7 +151,7 @@ export function numericValue(value: StaffProduct["price"]) {
 
 export function staffStatusLabel(product: StaffProduct) {
   if (product.status === "OUT_OF_STOCK") return "Out of Stock";
-  if (product.status === "ON_SALE") return "On Sale";
+  if (product.isOnSale) return "On Sale";
   if (product.status === "RESTOCK_SOON" || product.stock <= product.lowStockThreshold) return "Needs Restock";
   return "Available";
 }

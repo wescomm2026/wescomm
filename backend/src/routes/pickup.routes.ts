@@ -5,6 +5,7 @@ import { createRateLimiter, userRateLimitKey } from "../middleware/rate-limit.js
 import { requireRole } from "../middleware/require-role.js";
 import {
   createPickupPolicyVersion,
+  getCurrentPickupPolicy,
   getPickupAvailability,
   listPickupPolicyVersions,
   previewPickupPolicy
@@ -72,6 +73,16 @@ pickupRoutes.get(
   asyncHandler(async (_request, response) => {
     response.setHeader("Cache-Control", "private, max-age=30, stale-while-revalidate=30");
     response.json({ policy: await getPickupAvailability() });
+  })
+);
+
+pickupRoutes.get(
+  "/policies/current",
+  requireAuth,
+  requireRole("STAFF", "ADMIN"),
+  asyncHandler(async (_request, response) => {
+    response.setHeader("Cache-Control", "no-store");
+    response.json({ policy: await getCurrentPickupPolicy() });
   })
 );
 

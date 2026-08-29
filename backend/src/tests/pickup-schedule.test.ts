@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { HttpError } from "../utils/http-error.js";
 import { pickupInstant, scheduleReviewReason, validatePickupSelection, type PickupPolicySnapshot } from "../domain/pickup-schedule.js";
+import { serializePublicPolicy } from "../services/pickup-policy.service.js";
 
 const policy: PickupPolicySnapshot = {
   version: 4,
@@ -42,4 +43,37 @@ test("policy impact review flags incompatible existing schedules without rewriti
   assert.equal(scheduleReviewReason({ policy, pickupStart: originalStart, pickupEnd: originalEnd, now }), "Pickup date is closed: University holiday");
   assert.equal(originalStart.toISOString(), "2026-09-01T00:00:00.000Z");
   assert.equal(originalEnd.toISOString(), "2026-09-01T02:00:00.000Z");
+});
+
+test("public pickup availability excludes staff metadata and inactive windows", () => {
+  const serialized = serializePublicPolicy({
+    id: "00000000-0000-4000-8000-000000000001",
+    version: 4,
+    timezone: "Asia/Manila",
+    minAdvanceDays: 1,
+    maxAdvanceDays: 30,
+    effectiveAt: new Date("2026-08-01T00:00:00.000Z"),
+    isActive: true,
+    reason: "Internal schedule change note",
+    createdById: "00000000-0000-4000-8000-000000000002",
+    createdAt: new Date("2026-08-01T00:00:00.000Z"),
+    updatedAt: new Date("2026-08-01T00:00:00.000Z"),
+    createdBy: {
+      id: "00000000-0000-4000-8000-000000000002",
+      fullName: "Private Staff Name",
+      email: "private.staff@wesleyan.edu.ph"
+    },
+    days: policy.days,
+    timeSlots: [
+      { id: "active", label: "Morning", startMinute: 480, endMinute: 600, isActive: true, sortOrder: 0 },
+      { id: "inactive", label: "Internal retired slot", startMinute: 600, endMinute: 720, isActive: false, sortOrder: 1 }
+    ],
+    closures: [{ id: "closure", date: new Date("2026-09-01T00:00:00.000Z"), reason: "University holiday" }]
+  }, now);
+
+  assert.equal("createdBy" in serialized, false);
+  assert.equal("createdById" in serialized, false);
+  assert.equal("reason" in serialized, false);
+  assert.equal("createdAt" in serialized, false);
+  assert.deepEqual(serialized.timeSlots.map((slot) => slot.id), ["active"]);
 });

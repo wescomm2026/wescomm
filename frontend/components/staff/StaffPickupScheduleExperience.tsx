@@ -37,7 +37,7 @@ import { Surface } from "@/components/ui/Surface";
 import { useAccessibleDialog } from "@/components/ui/useAccessibleDialog";
 import {
   createPickupPolicyFromApi,
-  getPickupPoliciesFromApi,
+  getCurrentPickupPolicyFromApi,
   previewPickupPolicyFromApi,
   type BackendPickupPolicy,
   type PickupPolicyPayload
@@ -184,9 +184,8 @@ export function StaffPickupScheduleExperience() {
     setLoading(true);
     setError("");
     try {
-      const nextPolicies = await getPickupPoliciesFromApi(user.accessToken);
-      const activePolicy = nextPolicies.find((policy) => policy.isActive) ?? nextPolicies[0];
-      setPolicies(nextPolicies);
+      const activePolicy = await getCurrentPickupPolicyFromApi(user.accessToken);
+      setPolicies([activePolicy]);
       if (activePolicy) {
         const nextDraft = draftFromPolicy(activePolicy);
         setSavedDraft(nextDraft);

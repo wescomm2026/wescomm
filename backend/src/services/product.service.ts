@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client";
 import { getCache, invalidateByTag } from "@vercel/functions";
 import { prisma } from "../lib/prisma.js";
 import type { ProductStatus } from "../types/app.js";
+import { availabilityStatus, isProductOnSale } from "../domain/product-pricing.js";
 
 export type ProductFilters = {
   query?: string;
@@ -29,6 +30,7 @@ const publicProductSelect = Prisma.validator<Prisma.ProductSelect>()({
   oldPrice: true,
   status: true,
   stock: true,
+  lowStockThreshold: true,
   createdAt: true,
   saleMode: true,
   skuInventoryEnabled: true,
@@ -86,7 +88,8 @@ function mapProduct(product: PublicProductRecord) {
     imageUrl: product.imageUrl,
     price: product.price.toString(),
     oldPrice: product.oldPrice?.toString() ?? null,
-    status: product.status,
+    status: availabilityStatus(product.stock, product.lowStockThreshold, product.status),
+    isOnSale: isProductOnSale(product.price, product.oldPrice),
     stock: product.stock,
     createdAt: product.createdAt.toISOString(),
     saleMode: product.saleMode,
@@ -153,7 +156,6 @@ async function queryProducts(filters: ProductFilters) {
     ]);
   }
   if (filters.category) where.category = { slug: filters.category };
-  if (filters.status) where.status = filters.status;
 
   const orderBy: Prisma.ProductOrderByWithRelationInput[] = filters.sort === "price-low"
     ? [{ price: "asc" }, { id: "asc" }]
@@ -168,10 +170,14 @@ async function queryProducts(filters: ProductFilters) {
     select: publicProductSelect,
     relationLoadStrategy: "join",
     orderBy,
-    ...(filters.limit ? { take: Math.min(Math.max(filters.limit, 1), 50) } : {})
+    ...(filters.limit && !filters.status ? { take: Math.min(Math.max(filters.limit, 1), 50) } : {})
   });
 
-  return rows.map(mapProduct);
+  const mapped = rows.map(mapProduct).filter((product) => {
+    if (!filters.status) return true;
+    return filters.status === "ON_SALE" ? product.isOnSale : product.status === filters.status;
+  });
+  return filters.limit ? mapped.slice(0, Math.min(Math.max(filters.limit, 1), 50)) : mapped;
 }
 
 export async function listProducts(filters: ProductFilters, options: ProductListOptions = {}) {

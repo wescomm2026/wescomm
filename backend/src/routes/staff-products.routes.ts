@@ -113,6 +113,13 @@ const createProductSchema = z
         path: ["variants"]
       });
     }
+    if (input.status === "ON_SALE") {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "On Sale is derived automatically when old price is greater than selling price.",
+        path: ["status"]
+      });
+    }
   });
 
 const updateProductSchema = z.object({
@@ -128,6 +135,14 @@ const updateProductSchema = z.object({
   lowStockThreshold: inventoryIntegerSchema.optional(),
   isActive: z.boolean().optional(),
   notes: z.string().trim().max(500).optional()
+}).superRefine((input, context) => {
+  if (input.status === "ON_SALE") {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "On Sale is derived automatically when old price is greater than selling price.",
+      path: ["status"]
+    });
+  }
 });
 
 const restockSchema = z

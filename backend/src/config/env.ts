@@ -63,10 +63,13 @@ const envSchema = z.object({
   WESBOT_AI_ENABLED: booleanEnv.default(false),
   WESBOT_AI_REWRITE_ENABLED: booleanEnv.default(false),
   WESBOT_SEMANTIC_MODE: z.enum(["off", "shadow", "active"]).default("off"),
-  WESBOT_AI_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(15_000).default(5_000),
-  WESBOT_MODEL: z.string().trim().min(3).default("openai/gpt-5.6-luna"),
-  AI_GATEWAY_API_KEY: optionalTrimmedString,
-  VERCEL_OIDC_TOKEN: optionalTrimmedString,
+  WESBOT_AI_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(15_000).default(12_000),
+  WESBOT_MODEL: z.string().trim().min(3).default("gemini-3.5-flash-lite"),
+  WESBOT_BUDGET_ENFORCEMENT_ENABLED: booleanEnv.default(true),
+  WESBOT_MONTHLY_BUDGET_USD: z.coerce.number().min(0.5).max(10_000).default(5),
+  WESBOT_INPUT_USD_PER_1M_TOKENS: z.coerce.number().min(0).max(1_000).default(0.3),
+  WESBOT_OUTPUT_USD_PER_1M_TOKENS: z.coerce.number().min(0).max(1_000).default(2.5),
+  GEMINI_API_KEY: optionalTrimmedString,
   PAYMONGO_ENABLED: booleanEnv.default(false),
   PAYMONGO_SECRET_KEY: optionalTrimmedString,
   PAYMONGO_WEBHOOK_SECRET: optionalTrimmedString,
@@ -145,11 +148,11 @@ if (parsedEnv.WESBOT_AI_ENABLED) {
   if (!parsedEnv.WESBOT_ENABLED) {
     throw new Error("WESBOT_AI_ENABLED requires WESBOT_ENABLED to be true.");
   }
-  if (!parsedEnv.WESBOT_MODEL.includes("/")) {
-    throw new Error("WESBOT_MODEL must use the AI Gateway provider/model format.");
+  if (!/^gemini-[a-z0-9.-]+$/i.test(parsedEnv.WESBOT_MODEL)) {
+    throw new Error("WESBOT_MODEL must be a Gemini model identifier such as gemini-3.5-flash-lite.");
   }
-  if (!parsedEnv.AI_GATEWAY_API_KEY && !parsedEnv.VERCEL_OIDC_TOKEN) {
-    throw new Error("WesBot AI requires Vercel OIDC or an AI Gateway API key.");
+  if (!parsedEnv.GEMINI_API_KEY) {
+    throw new Error("GEMINI_API_KEY is required when WesBot AI is enabled.");
   }
 }
 

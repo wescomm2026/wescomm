@@ -81,13 +81,11 @@ async function mapLimited(rows, worker) {
   return output;
 }
 
-const hasGatewayCredential = Boolean(
-  process.env.AI_GATEWAY_API_KEY?.trim() || process.env.VERCEL_OIDC_TOKEN?.trim()
-);
-if (!hasGatewayCredential) {
+const hasGeminiCredential = Boolean(process.env.GEMINI_API_KEY?.trim());
+if (!hasGeminiCredential) {
   console.log(JSON.stringify({
     status: "skipped",
-    reason: "No AI Gateway credential is configured.",
+    reason: "No Gemini API credential is configured.",
     productionDataUsed: false,
     callsMade: 0
   }, null, 2));
@@ -128,7 +126,7 @@ try {
 } catch (error) {
   console.log(JSON.stringify({
     status: "blocked",
-    reason: "AI Gateway preflight failed; the dataset evaluation was stopped after one call.",
+    reason: "Gemini preflight failed; the dataset evaluation was stopped after one call.",
     productionDataUsed: false,
     callsAttempted: 1,
     diagnostic: safeErrorDetail(error)

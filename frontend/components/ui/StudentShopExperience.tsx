@@ -53,7 +53,8 @@ function availabilityText(product: Product) {
 }
 
 function effectiveProductStatus(product: Product) {
-  return isProductUnavailable(product) ? "Out of Stock" : product.status;
+  if (isProductUnavailable(product)) return "Out of Stock";
+  return product.isOnSale ? "On Sale" : product.status;
 }
 
 function optionAvailabilityText(product: Product) {
@@ -426,7 +427,7 @@ export function StudentShopExperience() {
     ? products.find((product) => product.id === checkoutProduct.id) ?? null
     : null;
 
-  const loadProducts = useCallback(({ background = false }: { background?: boolean } = {}) => {
+  const loadProducts = useCallback(({ background = false, fresh = false }: { background?: boolean; fresh?: boolean } = {}) => {
     const requestSequence = ++productRequestSequenceRef.current;
     let cancelled = false;
 
@@ -435,7 +436,7 @@ export function StudentShopExperience() {
       setError("");
     }
 
-    getProductsFromApi({ fresh: background })
+    getProductsFromApi({ fresh })
       .then((apiProducts) => {
         if (!cancelled && requestSequence >= latestSuccessfulProductRequestRef.current) {
           latestSuccessfulProductRequestRef.current = requestSequence;
@@ -467,24 +468,26 @@ export function StudentShopExperience() {
   }, [loadProducts]);
 
   useEffect(() => {
-    const refreshProducts = () => {
+    const refreshProducts = (fresh = false) => {
       if (!navigator.onLine) return;
-      loadProducts({ background: true });
+      loadProducts({ background: true, fresh });
     };
+    const refreshFromEvent = () => refreshProducts(true);
+    const refreshFromLifecycle = () => refreshProducts(false);
     const refreshWhenVisible = () => {
-      if (document.visibilityState === "visible") refreshProducts();
+      if (document.visibilityState === "visible") refreshFromLifecycle();
     };
 
     const fallbackRefresh = window.setInterval(refreshWhenVisible, 5 * 60_000);
-    window.addEventListener(PRODUCTS_REFRESH_EVENT, refreshProducts);
-    window.addEventListener("focus", refreshProducts);
-    window.addEventListener("online", refreshProducts);
+    window.addEventListener(PRODUCTS_REFRESH_EVENT, refreshFromEvent);
+    window.addEventListener("focus", refreshFromLifecycle);
+    window.addEventListener("online", refreshFromLifecycle);
     document.addEventListener("visibilitychange", refreshWhenVisible);
     return () => {
       window.clearInterval(fallbackRefresh);
-      window.removeEventListener(PRODUCTS_REFRESH_EVENT, refreshProducts);
-      window.removeEventListener("focus", refreshProducts);
-      window.removeEventListener("online", refreshProducts);
+      window.removeEventListener(PRODUCTS_REFRESH_EVENT, refreshFromEvent);
+      window.removeEventListener("focus", refreshFromLifecycle);
+      window.removeEventListener("online", refreshFromLifecycle);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
   }, [loadProducts]);
@@ -512,7 +515,7 @@ export function StudentShopExperience() {
     const restockLinkKey = `${highlightedProductId}:${searchParams.toString()}`;
     if (processedRestockLinkRef.current === restockLinkKey) return;
     processedRestockLinkRef.current = restockLinkKey;
-    loadProducts({ background: true });
+    loadProducts({ background: true, fresh: true });
   }, [highlightedProductId, loadProducts, loading, searchParams, wishlistRequested]);
 
   useEffect(() => {

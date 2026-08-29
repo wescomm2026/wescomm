@@ -1,6 +1,6 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
 import type { BackendAuthProfile, BackendReservation } from "../lib/api";
-import { dismissWelcomeGate } from "./helpers";
+import { authorizeMockedWorkspace, dismissWelcomeGate } from "./helpers";
 
 const staffProfile: BackendAuthProfile = {
   id: "00000000-0000-4000-8000-000000000301",
@@ -55,6 +55,7 @@ function json(route: Route, body: unknown, status = 200) {
 }
 
 async function mockReservations(page: Page) {
+  await authorizeMockedWorkspace(page, "STAFF");
   let reservations = [
     reservation("00000000-0000-4000-8000-000000000304", "WES-CONFIRM-0304", "PENDING"),
     reservation("00000000-0000-4000-8000-000000000305", "WES-CANCEL-0305", "CONFIRMED")

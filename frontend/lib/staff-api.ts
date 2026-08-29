@@ -41,6 +41,7 @@ export type StaffProduct = {
   imageStoragePath?: string | null;
   price: string | number;
   oldPrice?: string | number | null;
+  isOnSale?: boolean;
   status: "IN_STOCK" | "RESTOCK_SOON" | "OUT_OF_STOCK" | "ON_SALE";
   stock: number;
   lowStockThreshold: number;

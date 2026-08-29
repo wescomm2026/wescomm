@@ -12,6 +12,7 @@ import {
   scoreWesbotTextMatch,
   shouldRecommendStaff
 } from "../domain/wesbot.js";
+import { redactWesbotAiContext, redactWesbotAiText } from "../domain/wesbot-ai-privacy.js";
 import {
   classifyWesbotMessage,
   sanitizeWesbotRecordReference
@@ -110,6 +111,21 @@ test("reservation and receipt references are extracted exactly", () => {
   assert.equal(extractReceiptCode("RCT-2026-123"), null);
 });
 
+test("Gemini-bound WesBot text removes direct identifiers while preserving intent", () => {
+  const redacted = redactWesbotAiText(
+    "Email me at student@wesleyan.edu.ph or 09171234567 about WES-2026-A1B2C3D4 and RCT-2026-A1B2C3D4E5."
+  );
+  assert.equal(
+    redacted,
+    "Email me at [EMAIL] or [PHONE] about [RESERVATION_REFERENCE] and [RECEIPT_CODE]."
+  );
+  assert.deepEqual(redactWesbotAiContext([
+    { role: "student" as const, text: "My number is 2026123456" }
+  ]), [
+    { role: "student", text: "My number is [LONG_NUMBER]" }
+  ]);
+});
+
 test("equivalent repeated questions share a concern key and recommend staff on the third occurrence", () => {
   const first = createWesbotConcernKey("PRODUCT_INQUIRY", "Available ba ang polo medium?");
   const second = createWesbotConcernKey("PRODUCT_INQUIRY", "Polo medium available?");
@@ -146,6 +162,7 @@ test("WesBot grounds option inventory by valid SKU combination and handles cloth
     description: null,
     imageUrl: null,
     oldPrice: null,
+    isOnSale: false,
     status: "IN_STOCK" as const,
     createdAt: "2026-08-24T00:00:00.000Z",
     inventoryReconciledAt: "2026-08-24T00:00:00.000Z",

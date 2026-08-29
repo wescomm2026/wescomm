@@ -32,6 +32,8 @@ type Receipt = {
   time: string;
   status: string;
   paymentMethod: string;
+  pickupSchedule: string | null;
+  reservationReference: string | null;
   transactionReference: string;
   verificationUrl: string | null;
   verifiedBy: string;
@@ -112,6 +114,12 @@ function mapBackendReceipt(receipt: BackendReceipt): Receipt {
     time: issued.time,
     status: formatReceiptStatus(receipt.status),
     paymentMethod: paymentMethodLabel(receipt.paymentMethod),
+    pickupSchedule: receipt.reservation?.pickupStart
+      ? formatReceiptDateTime(receipt.reservation.pickupStart).date + (receipt.reservation.pickupEnd
+        ? `, ${formatReceiptDateTime(receipt.reservation.pickupStart).time}–${formatReceiptDateTime(receipt.reservation.pickupEnd).time}`
+        : "")
+      : null,
+    reservationReference: receipt.reservation?.referenceCode ?? null,
     transactionReference: receipt.receiptCode,
     verificationUrl: receipt.publicVerificationUrl,
     verifiedBy: receipt.status === "VERIFIED" ? receipt.issuedBy?.fullName ?? "" : "",
@@ -245,7 +253,9 @@ async function downloadReceiptPng(receipt: Receipt) {
   const details = [
     ["Date", receipt.date],
     ["Time", receipt.time],
-    ["Student", receipt.student]
+    ["Student", receipt.student],
+    ["Payment", receipt.paymentMethod],
+    ...(receipt.pickupSchedule ? [["Pickup", receipt.pickupSchedule]] : [])
   ];
   details.forEach(([label, value]) => {
     context.textAlign = "left";
@@ -425,6 +435,20 @@ function ReceiptPaper({
         <dd className="text-right font-semibold">{receipt.time}</dd>
         <dt className="text-[#68746d]">Student</dt>
         <dd className="text-right font-semibold">{receipt.student}</dd>
+        <dt className="text-[#68746d]">Payment</dt>
+        <dd className="text-right font-semibold">{receipt.paymentMethod}</dd>
+        {receipt.pickupSchedule ? (
+          <>
+            <dt className="text-[#68746d]">Pickup</dt>
+            <dd className="text-right font-semibold">{receipt.pickupSchedule}</dd>
+          </>
+        ) : null}
+        {receipt.reservationReference ? (
+          <>
+            <dt className="text-[#68746d]">Reservation</dt>
+            <dd className="break-all text-right font-mono text-xs font-bold">{receipt.reservationReference}</dd>
+          </>
+        ) : null}
       </dl>
 
       <div className="my-4 border-t border-dashed border-[#bfc9c1]" />

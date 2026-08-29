@@ -64,8 +64,8 @@ function createReceipt({
       id: reservationId,
       referenceCode: `RSV-${code}`,
       status: "COMPLETED",
-      pickupStart: null,
-      pickupEnd: null,
+      pickupStart: "2026-07-16T02:00:00.000Z",
+      pickupEnd: "2026-07-16T04:00:00.000Z",
       items: [
         {
           id: `${reservationId}-item`,
@@ -199,6 +199,9 @@ test("View Receipt isolates the transaction selected by its unique receipt id", 
   await expect(page.getByRole("dialog")).toHaveCount(1);
   await expect(dialog.getByRole("heading", { name: `Digital receipt ${SECOND_RECEIPT_CODE}` })).toBeVisible();
   await expect(dialog.getByText("1 x Second Receipt Item", { exact: true })).toBeVisible();
+  await expect(dialog.getByText("Pay at Commissary", { exact: true })).toBeVisible();
+  await expect(dialog.getByText("July 16, 2026, 10:00 AM–12:00 PM", { exact: true })).toBeVisible();
+  await expect(dialog.getByText(`RSV-${SECOND_RECEIPT_CODE}`, { exact: true })).toBeVisible();
   await expect(dialog.getByText(/First Receipt Item/)).toHaveCount(0);
   await expect(dialog.getByText(new RegExp(FIRST_RECEIPT_CODE))).toHaveCount(0);
 

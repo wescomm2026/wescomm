@@ -1,7 +1,7 @@
-import { createHash } from "node:crypto";
 import { ToolLoopAgent, isStepCount, tool } from "ai";
 import { z } from "zod";
 import { env } from "../config/env.js";
+import { redactWesbotAiText } from "../domain/wesbot-ai-privacy.js";
 import { assertStudentCanCancelReservation } from "../domain/student-reservation-cancellation.js";
 import {
   createWesbotConcernKey,
@@ -25,6 +25,7 @@ import {
   type WesbotRoutingDecision
 } from "./wesbot-classifier.service.js";
 import { listPublishedWesbotFaqs } from "./wesbot-knowledge.service.js";
+import { getWesbotModel } from "./wesbot-ai-provider.js";
 
 type WesbotProduct = Awaited<ReturnType<typeof listProducts>>[number];
 type WesbotReservation = Awaited<ReturnType<typeof listReservations>>["items"][number];
@@ -83,15 +84,11 @@ export function productCandidateTerms(message: string, entities: WesbotEntities)
     .slice(0, 3);
 }
 
-function createWesbotAgent(grounded: GroundedAnswer, studentId: string) {
+function createWesbotAgent(grounded: GroundedAnswer) {
   return new ToolLoopAgent({
-    model: env.WESBOT_MODEL,
-    providerOptions: {
-      gateway: {
-        user: createHash("sha256").update(`wesbot:${studentId}`).digest("hex").slice(0, 32),
-        tags: ["feature:wesbot", `intent:${grounded.intent.toLowerCase()}`]
-      }
-    },
+    model: getWesbotModel(),
+    maxOutputTokens: 350,
+    maxRetries: 1,
     instructions: `You are WesBot, WESCOMM's clearly labeled automated support assistant.
 
 Rules:
@@ -106,7 +103,7 @@ Rules:
     },
     toolsContext: {
       grounded_answer: {
-        draft: grounded.draft,
+        draft: redactWesbotAiText(grounded.draft),
         intent: grounded.intent,
         sources: [...new Set(grounded.sourceReferences.map((reference) => reference.split(":")[0]))]
       }
@@ -583,7 +580,6 @@ function replyLanguageStyle(message: string) {
 }
 
 async function optionallyRewriteWithAi(input: {
-  studentId: string;
   userMessage: string;
   grounded: GroundedAnswer;
   routing: WesbotRoutingDecision;
@@ -591,7 +587,7 @@ async function optionallyRewriteWithAi(input: {
   if (!env.WESBOT_AI_ENABLED || !env.WESBOT_AI_REWRITE_ENABLED || input.routing.usedAi) return null;
 
   try {
-    const result = await createWesbotAgent(input.grounded, input.studentId).generate({
+    const result = await createWesbotAgent(input.grounded).generate({
       prompt: `Rewrite the verified grounded answer in ${replyLanguageStyle(input.userMessage)}. Preserve every fact, number, reference, status, and restriction.`,
       timeout: env.WESBOT_AI_TIMEOUT_MS
     });
@@ -618,7 +614,7 @@ export async function resolveWesbotReply(input: {
   const grounded = await buildGroundedAnswer({ ...input, routing });
   const aiReply = grounded.handoffRequested
     ? null
-    : await optionallyRewriteWithAi({ studentId: input.studentId, userMessage: input.message, grounded, routing });
+    : await optionallyRewriteWithAi({ userMessage: input.message, grounded, routing });
 
   return {
     message: aiReply ?? grounded.draft,

@@ -41,6 +41,7 @@ async function buildStaffDashboardSummary() {
             p.image_url AS "imageUrl",
             p.price::text AS price,
             p.old_price::text AS "oldPrice",
+            (p.old_price IS NOT NULL AND p.old_price > p.price) AS "isOnSale",
             p.status::text AS status,
             p.stock,
             p.low_stock_threshold AS "lowStockThreshold",
@@ -60,7 +61,7 @@ async function buildStaffDashboardSummary() {
             CASE
               WHEN p.stock <= 0 OR p.status = 'OUT_OF_STOCK' THEN 0
               WHEN p.stock <= p.low_stock_threshold OR p.status = 'RESTOCK_SOON' THEN 1
-              WHEN p.status = 'ON_SALE' THEN 2
+              WHEN p.old_price IS NOT NULL AND p.old_price > p.price THEN 2
               ELSE 3
             END,
             p.name ASC

@@ -1,7 +1,9 @@
 import { StaffShell } from "@/components/staff/StaffShell";
 import { adminNav } from "@/lib/data";
+import { requireWorkspaceRole } from "@/lib/server-auth";
 
-export default function AdminLayout({ children }: { children: React.ReactNode }) {
+export default async function AdminLayout({ children }: { children: React.ReactNode }) {
+  await requireWorkspaceRole("ADMIN");
   return (
     <StudentAuthProvider>
       <RealtimeProvider>

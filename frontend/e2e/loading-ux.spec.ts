@@ -193,6 +193,21 @@ test("student dashboard shares one products request across its loading cards", a
   await expect(page.getByRole("heading", { name: "Stock Status Overview" })).toBeVisible();
   await expect(page.getByText("Loading live stock status.")).toBeHidden();
   await expect.poll(() => productsRequestCount).toBe(1);
+
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event("focus"));
+    document.dispatchEvent(new Event("visibilitychange"));
+    window.dispatchEvent(new Event("online"));
+  });
+  await page.waitForTimeout(300);
+  expect(productsRequestCount).toBe(1);
+
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event("wescomm:products-refresh"));
+    window.dispatchEvent(new Event("wescomm:products-refresh"));
+    window.dispatchEvent(new Event("wescomm:products-refresh"));
+  });
+  await expect.poll(() => productsRequestCount).toBe(2);
 });
 
 test("email OTP uses the delayed compact action loader", async ({ page }) => {

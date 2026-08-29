@@ -265,7 +265,7 @@ previous backend remains compatible throughout the release:
 3. Deploy the backend and frontend together through the root Vercel Services project.
 4. Verify `/api/health/ready`, student Support, and the Staff Message Center.
 5. Set `WESBOT_ENABLED=true` and redeploy. This enables deterministic,
-   database-grounded replies without any model or Gateway cost.
+   database-grounded replies without any model cost.
 
 WesBot v2 semantic routing and wording polish are separate release toggles.
 The reviewed v2 dataset is versioned under `datasets/wesbot/v2`; validate and
@@ -285,25 +285,25 @@ it never hard-deletes those records.
 
 Keep `WESBOT_SEMANTIC_MODE=off` and `WESBOT_AI_REWRITE_ENABLED=false` for the
 fast deterministic/database-grounded path. To evaluate semantic routing,
-enable Vercel AI Gateway/OIDC (or configure `AI_GATEWAY_API_KEY` server-side),
-keep `WESBOT_MODEL` in `provider/model` form, and run
+enable direct Gemini access (configure `GEMINI_API_KEY` server-side),
+set `WESBOT_MODEL` to a Gemini model identifier, and run
 `npm run wesbot:eval:semantic`. The evaluator is hard-capped at 300 calls and
 uses only the versioned dataset. Use `shadow` in Preview first; promote to
 `active` only after the holdout, context, clarification, and latency gates pass.
 `WESBOT_AI_REWRITE_ENABLED` should remain false when semantic routing is active
-so an ambiguous message needs at most one model call. Never expose a Gateway
-credential to the frontend. If the classifier, Gateway, or grounding lookup
+so an ambiguous message needs at most one model call. Never expose a Gemini
+credential to the frontend. If the classifier, Gemini API, or grounding lookup
 fails, WesBot returns a safe clarification/fallback instead of inventing facts.
 
-For a local evaluation without writing a Gateway credential to disk, run this
+For a local evaluation without writing a Gemini credential to disk, run this
 from the repository root after linking the project with Vercel:
 
 ```powershell
 npx vercel env run -e development -- npm --prefix backend run wesbot:eval:semantic
 ```
 
-This injects a short-lived Development OIDC token into the evaluator process.
-The evaluator performs one Gateway preflight first and stops immediately with a
+This injects the configured Development environment variables into the evaluator process.
+The evaluator performs one Gemini preflight first and stops immediately with a
 sanitized diagnostic if authentication, billing, or model access is unavailable;
 only a successful preflight proceeds through the full 81 dataset-only cases.
 

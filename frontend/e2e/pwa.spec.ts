@@ -107,7 +107,7 @@ test("serves the safe fallback page for an offline navigation in production", as
   await context.setOffline(true);
   try {
     await page.goto(`/student/shop?offline-check=${Date.now()}`, { waitUntil: "domcontentloaded" });
-    await expect(page.getByRole("heading", { name: "Internet connection required" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "You’re offline" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Try again" })).toBeVisible();
   } finally {
     await context.setOffline(false);

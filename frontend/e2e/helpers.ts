@@ -2,6 +2,17 @@ import { expect, type Page } from "@playwright/test";
 
 export const TEST_PASSWORD = process.env.E2E_TEST_PASSWORD?.trim() ?? "";
 
+export async function authorizeMockedWorkspace(page: Page, role: "STAFF" | "ADMIN") {
+  const frontendPort = Number(process.env.E2E_FRONTEND_PORT ?? 3100);
+  const baseURL = process.env.E2E_BASE_URL ?? `http://127.0.0.1:${frontendPort}`;
+  await page.context().addCookies([{
+    name: "wescomm_e2e_workspace_role",
+    value: role,
+    url: baseURL,
+    sameSite: "Lax"
+  }]);
+}
+
 export async function dismissWelcomeGate(page: Page) {
   const gate = page.locator(".welcome-gate-overlay");
   const appeared = await gate.waitFor({ state: "visible", timeout: 4_000 }).then(() => true).catch(() => false);

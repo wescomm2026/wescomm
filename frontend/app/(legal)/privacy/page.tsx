@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { Bot, Database, LockKeyhole, ShieldCheck } from "lucide-react";
 import { LegalDocument, LegalList, LegalNote, LegalSection } from "@/components/legal/LegalDocument";
 
 export const metadata: Metadata = {
@@ -7,14 +8,43 @@ export const metadata: Metadata = {
   description: "How WESCOMM collects, uses, protects, and shares personal and transaction information."
 };
 
+const privacyNavigation = [
+  { id: "information", label: "Information handled" },
+  { id: "uses", label: "Why it is used" },
+  { id: "providers", label: "Providers and access" },
+  { id: "storage", label: "Cookies and storage" },
+  { id: "retention", label: "Retention" },
+  { id: "security", label: "Security" },
+  { id: "choices", label: "Your choices" },
+  { id: "contact", label: "Updates and contact" }
+];
+
 export default function PrivacyPage() {
   return (
     <LegalDocument
       eyebrow="Data privacy notice"
       title="Privacy Policy"
       summary="This notice explains what information WESCOMM handles, why it is needed, and the choices available to users."
+      icon={<ShieldCheck className="size-6" />}
+      navigation={privacyNavigation}
     >
-      <LegalSection title="1. Information WESCOMM handles">
+      <section className="border-b py-6 sm:py-8">
+        <div className="grid gap-3 sm:grid-cols-3">
+          {[
+            { Icon: Database, title: "Operational use", detail: "Data supports accounts, reservations, payments, receipts, and support." },
+            { Icon: LockKeyhole, title: "Restricted access", detail: "Authorized roles and providers receive only the access needed for their work." },
+            { Icon: Bot, title: "AI privacy boundary", detail: "Recognized identifiers are removed before optional Gemini-assisted routing." }
+          ].map(({ Icon, title, detail }) => (
+            <article key={title} className="rounded-lg border bg-[#f7faf7] p-4">
+              <Icon className="size-5 text-primary" />
+              <h2 className="mt-3 text-sm font-extrabold text-foreground">{title}</h2>
+              <p className="mt-1 text-xs leading-5 text-muted-foreground">{detail}</p>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <LegalSection id="information" title="1. Information WESCOMM handles">
         <LegalList>
           <li>Account information such as name, Wesleyan email address, student number, department, phone number, address, and profile image when provided.</li>
           <li>Reservation and purchase information, including selected products, variants, quantities, pickup schedules, status, receipts, and support records.</li>
@@ -27,7 +57,7 @@ export default function PrivacyPage() {
         </LegalNote>
       </LegalSection>
 
-      <LegalSection title="2. Why the information is used">
+      <LegalSection id="uses" title="2. Why the information is used">
         <LegalList>
           <li>Verify identity and protect student, staff, and administrator access.</li>
           <li>Manage products, inventory, reservations, pickup, payments, receipts, and customer support.</li>
@@ -38,22 +68,25 @@ export default function PrivacyPage() {
         </LegalList>
       </LegalSection>
 
-      <LegalSection title="3. Service providers and authorized access">
+      <LegalSection id="providers" title="3. Service providers and authorized access">
         <p>
-          Information is available only to authorized University personnel and service providers that need it to operate WESCOMM. Depending on the feature used, these providers include Supabase for authentication and data services, Vercel for application hosting, Brevo for verification email delivery, and PayMongo for online payments.
+          Information is available only to authorized University personnel and service providers that need it to operate WESCOMM. Depending on the feature used, these providers include Supabase for authentication and data services, Vercel for application hosting, Brevo for verification email delivery, PayMongo for online payments, and Google Gemini for optional AI-assisted WesBot routing or wording.
+        </p>
+        <p>
+          Before optional WesBot text is sent to Gemini, WESCOMM removes recognized email addresses, phone numbers, student-number-like values, reservation references, receipt codes, and internal record identifiers. WesBot still uses WESCOMM database records and deterministic checks as the source of factual answers.
         </p>
         <p>
           Each provider handles information under its own terms, security controls, and privacy obligations. WESCOMM does not sell personal information or share it for unrelated advertising.
         </p>
       </LegalSection>
 
-      <LegalSection title="4. Cookies and local device storage">
+      <LegalSection id="storage" title="4. Cookies and local device storage">
         <p>
           WESCOMM uses essential cookies and browser storage for authentication sessions, remembered sign-in preferences, cart state, security controls, and progressive web app functions. Disabling required storage may prevent login, checkout, or other core functions from working correctly.
         </p>
       </LegalSection>
 
-      <LegalSection title="5. Retention">
+      <LegalSection id="retention" title="5. Retention">
         <p>
           Account, reservation, payment, receipt, support, and audit records are retained only as long as reasonably necessary for the service, University recordkeeping, dispute handling, security, accounting, and applicable legal requirements. Retention periods may differ by record type.
         </p>
@@ -62,7 +95,7 @@ export default function PrivacyPage() {
         </p>
       </LegalSection>
 
-      <LegalSection title="6. Security">
+      <LegalSection id="security" title="6. Security">
         <p>
           WESCOMM uses access controls, encrypted connections, server-side authorization, payment signature verification, audit records, and restricted secret handling. No online service can guarantee absolute security, so users should also protect their email account, verification codes, and devices.
         </p>
@@ -71,7 +104,7 @@ export default function PrivacyPage() {
         </p>
       </LegalSection>
 
-      <LegalSection title="7. Your privacy choices">
+      <LegalSection id="choices" title="7. Your privacy choices">
         <p>Subject to applicable University rules and law, you may request to:</p>
         <LegalList>
           <li>Access or correct personal information associated with your WESCOMM profile.</li>
@@ -85,7 +118,7 @@ export default function PrivacyPage() {
         </p>
       </LegalSection>
 
-      <LegalSection title="8. Updates and contact">
+      <LegalSection id="contact" title="8. Updates and contact">
         <p>
           This notice may be updated when WESCOMM features, providers, University procedures, or legal requirements change. Material updates will be reflected by the effective date shown above.
         </p>

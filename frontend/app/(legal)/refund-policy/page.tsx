@@ -14,6 +14,22 @@ export default function RefundPolicyPage() {
       title="Refund & Cancellation Policy"
       summary="This policy explains how to request a cancellation, return, or refund for a WESCOMM commissary reservation."
     >
+      <div className="border-b py-6 sm:py-8">
+        <p className="text-sm font-extrabold uppercase tracking-wide text-primary">Request flow</p>
+        <ol className="mt-4 grid gap-3 sm:grid-cols-3">
+          {[
+            ["1", "Submit", "Send the reservation reference and reason."],
+            ["2", "Review", "Staff checks order, payment, and item records."],
+            ["3", "Resolve", "You receive the approved cancellation, return, or refund outcome."]
+          ].map(([number, title, detail]) => (
+            <li key={number} className="rounded-lg border border-border bg-primary/5 p-4">
+              <span className="grid size-8 place-items-center rounded-full bg-primary text-sm font-extrabold text-white">{number}</span>
+              <p className="mt-3 font-extrabold text-foreground">{title}</p>
+              <p className="mt-1 text-sm leading-6 text-muted-foreground">{detail}</p>
+            </li>
+          ))}
+        </ol>
+      </div>
       <LegalSection title="1. Requesting a cancellation">
         <p>
           Cancellation depends on the reservation, payment, and fulfillment status. Student self-cancellation is available only under the limited pending-reservation rule below.

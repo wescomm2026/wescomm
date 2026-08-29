@@ -4,7 +4,7 @@ import type {
   BackendConversation,
   BackendConversationMessage
 } from "../lib/api";
-import { dismissWelcomeGate } from "./helpers";
+import { authorizeMockedWorkspace, dismissWelcomeGate } from "./helpers";
 
 const staffId = "00000000-0000-4000-8000-000000000011";
 const studentId = "00000000-0000-4000-8000-000000000012";
@@ -74,6 +74,7 @@ function initialConversation(): BackendConversation {
 }
 
 test("staff send and resolve actions show immediate progress instead of appearing frozen", async ({ page }) => {
+  await authorizeMockedWorkspace(page, "STAFF");
   let conversation = initialConversation();
   const unhandledApiPaths: string[] = [];
 

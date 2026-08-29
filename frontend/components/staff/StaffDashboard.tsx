@@ -80,7 +80,7 @@ function formatDateTime(value: string | null | undefined) {
 
 function stockStatus(product: BackendDashboardProduct) {
   if (product.status === "OUT_OF_STOCK" || product.stock <= 0) return "Out of Stock";
-  if (product.status === "ON_SALE") return "On Sale";
+  if (product.isOnSale) return "On Sale";
   if (product.status === "RESTOCK_SOON" || product.stock <= product.lowStockThreshold) return "Needs Restock";
   return "Available";
 }

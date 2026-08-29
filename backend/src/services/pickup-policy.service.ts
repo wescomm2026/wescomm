@@ -95,6 +95,35 @@ function serializePolicy(policy: PickupPolicyRecord, now = new Date()) {
   };
 }
 
+export function serializePublicPolicy(policy: PickupPolicyRecord, now = new Date()) {
+  const today = manilaDateKey(now);
+  return {
+    version: policy.version,
+    timezone: policy.timezone,
+    minAdvanceDays: policy.minAdvanceDays,
+    maxAdvanceDays: policy.maxAdvanceDays,
+    minDate: addCalendarDays(today, policy.minAdvanceDays),
+    maxDate: addCalendarDays(today, policy.maxAdvanceDays),
+    serverDate: today,
+    isActive: policy.isActive,
+    days: policy.days,
+    timeSlots: policy.timeSlots
+      .filter((slot) => slot.isActive)
+      .map((slot) => ({
+        id: slot.id,
+        label: slot.label,
+        startMinute: slot.startMinute,
+        endMinute: slot.endMinute,
+        isActive: true,
+        sortOrder: slot.sortOrder
+      })),
+    closures: policy.closures.map((closure) => ({
+      date: pickupDateColumnKey(closure.date),
+      reason: closure.reason
+    }))
+  };
+}
+
 async function requireCurrentPolicy(client: Prisma.TransactionClient | typeof prisma = prisma) {
   const policy = await client.pickupPolicyVersion.findFirst({
     where: { isActive: true, effectiveAt: { lte: new Date() } },
@@ -106,6 +135,10 @@ async function requireCurrentPolicy(client: Prisma.TransactionClient | typeof pr
 }
 
 export async function getPickupAvailability() {
+  return serializePublicPolicy(await requireCurrentPolicy());
+}
+
+export async function getCurrentPickupPolicy() {
   return serializePolicy(await requireCurrentPolicy());
 }
 

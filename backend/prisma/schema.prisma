@@ -852,6 +852,25 @@ model ConversationMessage {
   @@map("conversation_messages")
 }
 
+model WesbotAiUsage {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  model            String
+  operation        String   @default("SEMANTIC_ROUTING")
+  status           String
+  errorCode        String?  @map("error_code")
+  inputTokens      Int      @default(0) @map("input_tokens")
+  outputTokens     Int      @default(0) @map("output_tokens")
+  totalTokens      Int      @default(0) @map("total_tokens")
+  estimatedCostUsd Decimal  @default(0) @map("estimated_cost_usd") @db.Decimal(14, 8)
+  latencyMs        Int      @default(0) @map("latency_ms")
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([createdAt(sort: Desc)])
+  @@index([status, createdAt(sort: Desc)])
+  @@index([model, createdAt(sort: Desc)])
+  @@map("wesbot_ai_usage")
+}
+
 model Faq {
   id            String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   question      String       @unique

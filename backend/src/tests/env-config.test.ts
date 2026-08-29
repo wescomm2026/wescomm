@@ -104,12 +104,11 @@ test("disabled PayMongo configuration does not require provider secrets", () => 
   assert.equal(result.status, 0, result.stderr);
 });
 
-test("database-grounded WesBot works without an AI Gateway credential", () => {
+test("database-grounded WesBot works without a Gemini credential", () => {
   const result = loadConfig({
     WESBOT_ENABLED: "true",
     WESBOT_AI_ENABLED: "false",
-    AI_GATEWAY_API_KEY: "",
-    VERCEL_OIDC_TOKEN: ""
+    GEMINI_API_KEY: ""
   });
 
   assert.equal(result.status, 0, result.stderr);
@@ -136,38 +135,37 @@ test("semantic routing and AI rewrites stay fail-closed behind the AI feature bo
   assert.notEqual(boundedTimeout.status, 0);
 });
 
-test("optional WesBot AI polish fails closed without Gateway authentication", () => {
+test("optional WesBot AI polish fails closed without Gemini authentication", () => {
   const botDisabled = loadConfig({
     WESBOT_ENABLED: "false",
     WESBOT_AI_ENABLED: "true",
-    AI_GATEWAY_API_KEY: "wesbot-test-gateway-key"
+    GEMINI_API_KEY: "wesbot-test-key"
   });
   assert.notEqual(botDisabled.status, 0);
   assert.match(`${botDisabled.stdout}\n${botDisabled.stderr}`, /requires WESBOT_ENABLED/);
 
-  const missingGateway = loadConfig({
+  const missingGemini = loadConfig({
     WESBOT_ENABLED: "true",
     WESBOT_AI_ENABLED: "true",
-    AI_GATEWAY_API_KEY: "",
-    VERCEL_OIDC_TOKEN: ""
+    GEMINI_API_KEY: ""
   });
-  assert.notEqual(missingGateway.status, 0);
-  assert.match(`${missingGateway.stdout}\n${missingGateway.stderr}`, /requires Vercel OIDC or an AI Gateway API key/);
+  assert.notEqual(missingGemini.status, 0);
+  assert.match(`${missingGemini.stdout}\n${missingGemini.stderr}`, /GEMINI_API_KEY is required/);
 
   const invalidModel = loadConfig({
     WESBOT_ENABLED: "true",
     WESBOT_AI_ENABLED: "true",
     WESBOT_MODEL: "invalid-model",
-    AI_GATEWAY_API_KEY: "wesbot-test-gateway-key"
+    GEMINI_API_KEY: "wesbot-test-key"
   });
   assert.notEqual(invalidModel.status, 0);
-  assert.match(`${invalidModel.stdout}\n${invalidModel.stderr}`, /provider\/model format/);
+  assert.match(`${invalidModel.stdout}\n${invalidModel.stderr}`, /Gemini model identifier/);
 
   const authenticated = loadConfig({
     WESBOT_ENABLED: "true",
     WESBOT_AI_ENABLED: "true",
-    WESBOT_MODEL: "openai/gpt-5.6-luna",
-    AI_GATEWAY_API_KEY: "wesbot-test-gateway-key"
+    WESBOT_MODEL: "gemini-3.5-flash-lite",
+    GEMINI_API_KEY: "wesbot-test-key"
   });
   assert.equal(authenticated.status, 0, authenticated.stderr);
 });
