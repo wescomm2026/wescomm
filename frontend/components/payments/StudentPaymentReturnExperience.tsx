@@ -23,7 +23,6 @@ const POLL_DELAYS_MS = [0, 2_000, 3_000, 5_000, 7_000, 10_000, 10_000, 8_000] as
 const pollingStatuses = new Set<BackendPaymentStatus>([
   "INITIALIZING",
   "AWAITING_PAYMENT",
-  "PROCESSING",
   "REFUND_REVIEW_REQUIRED"
 ]);
 
@@ -54,13 +53,6 @@ function paymentDisplay(status: BackendPaymentStatus) {
       badge: "Initializing",
       title: "Preparing payment confirmation",
       detail: "WESCOMM is preparing the secure payment record. This usually takes only a moment."
-    };
-  }
-  if (status === "PROCESSING") {
-    return {
-      badge: "Processing",
-      title: "Confirming your GCash payment",
-      detail: "Do not pay again while confirmation is pending. WESCOMM will update only from the secure server record."
     };
   }
   if (status === "REFUND_REVIEW_REQUIRED") {

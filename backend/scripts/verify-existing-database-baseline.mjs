@@ -72,6 +72,7 @@ const requiredColumns = verifyAppliedMigration
       paymongo_webhook_events: "id provider_event_id dedupe_key event_type livemode resource_id payload_hash status reason_code online_payment_id received_at processed_at",
       audit_logs: "id actor_id action entity_type entity_id dedupe_key summary metadata created_at",
       outbox_events: "id type entity_id payload created_at available_at locked_at processed_at attempt_count last_error",
+      rate_limit_counters: "key_hash count reset_at updated_at",
       realtime_events: "id topic dedupe_key audience_user_id audience_role entity_id payload created_at expires_at",
     }
   : baselineRequiredColumns;
@@ -362,6 +363,7 @@ try {
               'paymongo_webhook_events',
               'audit_logs',
               'outbox_events',
+              'rate_limit_counters',
               'realtime_events'
             )
             AND payment_table.relkind IN ('r', 'p')
@@ -378,6 +380,7 @@ try {
               'paymongo_webhook_events',
               'audit_logs',
               'outbox_events',
+              'rate_limit_counters',
               'realtime_events'
             )
         ) AS payment_policies,
@@ -401,6 +404,15 @@ try {
             AND UPPER(indexdef) LIKE 'CREATE UNIQUE INDEX%'
             AND indexdef ILIKE '%WHERE%status%CREATING%CREATE_UNKNOWN%ACTIVE%EXPIRY_REQUESTED%'
         ) AS payment_open_attempt_indexes,
+        (
+          SELECT COUNT(*)::integer
+          FROM pg_indexes
+          WHERE schemaname = 'public'
+            AND tablename = 'receipts'
+            AND indexname = 'receipts_reservation_id_key'
+            AND UPPER(indexdef) LIKE 'CREATE UNIQUE INDEX%'
+            AND REPLACE(indexdef, '"', '') ILIKE '%(reservation_id)%'
+        ) AS reservation_receipt_unique_indexes,
         (
           SELECT COUNT(*)::integer
           FROM pg_constraint AS wishlist_constraint
@@ -571,17 +583,20 @@ try {
     } else if (verifyAppliedMigration && authBoundary.wesbot_knowledge_trigram_indexes !== 2) {
       console.error("WesBot knowledge trigram indexes are missing or malformed.");
       process.exitCode = 1;
-    } else if (verifyAppliedMigration && authBoundary.payment_rls_tables !== 6) {
-      console.error("RLS must be enabled, but not forced, on all server-only payment, audit, outbox, and realtime tables.");
+    } else if (verifyAppliedMigration && authBoundary.payment_rls_tables !== 7) {
+      console.error("RLS must be enabled, but not forced, on all server-only payment, audit, outbox, rate-limit, and realtime tables.");
       process.exitCode = 1;
     } else if (verifyAppliedMigration && authBoundary.payment_policies !== 0) {
-      console.error("Server-only payment, audit, outbox, and realtime tables must not expose direct browser database policies.");
+      console.error("Server-only payment, audit, outbox, rate-limit, and realtime tables must not expose direct browser database policies.");
       process.exitCode = 1;
     } else if (verifyAppliedMigration && authBoundary.payment_identity_triggers !== 1) {
       console.error("The online payment attempt identity-protection trigger is missing or disabled.");
       process.exitCode = 1;
     } else if (verifyAppliedMigration && authBoundary.payment_open_attempt_indexes !== 1) {
       console.error("The one-open-payment-attempt partial unique index is missing or malformed.");
+      process.exitCode = 1;
+    } else if (verifyAppliedMigration && authBoundary.reservation_receipt_unique_indexes !== 1) {
+      console.error("The one-receipt-per-reservation unique index is missing or malformed.");
       process.exitCode = 1;
     } else if (verifyAppliedMigration && authBoundary.wishlist_primary_keys !== 1) {
       console.error("The wishlist user/product primary key is missing.");

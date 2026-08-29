@@ -18,6 +18,7 @@ const tones: Record<string, string> = {
   "Partially refunded": "bg-indigo-50 text-indigo-700 ring-indigo-200",
   Refunded: "bg-slate-50 text-slate-700 ring-slate-200",
   Confirmed: "bg-sky-50 text-sky-700 ring-sky-200",
+  Completed: "bg-emerald-50 text-emerald-700 ring-emerald-200",
   Verified: "bg-emerald-50 text-emerald-700 ring-emerald-200",
   Voided: "bg-rose-50 text-rose-700 ring-rose-200",
   Cancelled: "bg-rose-50 text-rose-700 ring-rose-200",
@@ -45,10 +46,24 @@ const tones: Record<string, string> = {
   "Ready for Pickup": "bg-indigo-50 text-indigo-700 ring-indigo-200"
 };
 
-export function StatusBadge({ status }: { status: string }) {
+export type DomainStatus =
+  | "IN_STOCK" | "RESTOCK_SOON" | "OUT_OF_STOCK" | "ON_SALE"
+  | "PENDING" | "CONFIRMED" | "READY_FOR_PICKUP" | "COMPLETED" | "CANCELLED" | "NO_SHOW"
+  | "VERIFIED" | "VOIDED" | "ACTIVE" | "EXPIRED" | "LIFTED"
+  | "INITIALIZING" | "AWAITING_PAYMENT" | "PAID" | "REFUND_REVIEW_REQUIRED" | "PARTIALLY_REFUNDED" | "REFUNDED";
+
+const domainDisplay: Record<DomainStatus, string> = {
+  IN_STOCK: "In Stock", RESTOCK_SOON: "Needs Restock", OUT_OF_STOCK: "Out of Stock", ON_SALE: "On Sale",
+  PENDING: "Pending", CONFIRMED: "Confirmed", READY_FOR_PICKUP: "Ready for Pick-up", COMPLETED: "Completed", CANCELLED: "Cancelled", NO_SHOW: "No-show",
+  VERIFIED: "Verified", VOIDED: "Voided", ACTIVE: "Restricted", EXPIRED: "Expired", LIFTED: "Lifted",
+  INITIALIZING: "Initializing", AWAITING_PAYMENT: "Awaiting payment", PAID: "Paid", REFUND_REVIEW_REQUIRED: "Refund review required", PARTIALLY_REFUNDED: "Partially refunded", REFUNDED: "Refunded"
+};
+
+export function StatusBadge({ status, statusKey }: { status?: string; statusKey?: DomainStatus }) {
+  const display = statusKey ? domainDisplay[statusKey] : status ?? "Unknown";
   return (
-    <span className={cn("inline-flex rounded-full px-2.5 py-1 text-xs font-medium ring-1", tones[status] ?? "bg-muted text-muted-foreground ring-border")}>
-      {status}
+    <span className={cn("inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ring-1", tones[display] ?? "bg-muted text-muted-foreground ring-border")}>
+      {display}
     </span>
   );
 }

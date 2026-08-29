@@ -19,12 +19,12 @@ import {
   mergeUniqueById
 } from "@/components/admin/AdminExperienceShared";
 
-export function AdminAuditLogsExperience() {
+export function AdminAuditLogsExperience({ initialEntityType }: { initialEntityType?: string }) {
   const { user, ready, openAuth } = useStudentAuth();
   const [logs, setLogs] = useState<BackendAuditLog[]>([]);
   const [search, setSearch] = useState("");
   const [action, setAction] = useState("All");
-  const [entityType, setEntityType] = useState("All");
+  const [entityType, setEntityType] = useState(initialEntityType?.trim() || "All");
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [nextCursor, setNextCursor] = useState<string | null>(null);

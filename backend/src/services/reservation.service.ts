@@ -20,8 +20,8 @@ import {
 import { resolveReservationVariantSelections } from "../domain/variant-stock.js";
 import { sameSkuVariantSelection } from "../domain/sku-inventory.js";
 import { prisma } from "../lib/prisma.js";
-import { safelyRecordAuditLog } from "./audit-log.service.js";
-import { createReceiptForReservation } from "./receipt.service.js";
+import { ensureReceiptForCompletedReservationInTransaction } from "./receipt.service.js";
+import { validatePickupSelectionInTransaction } from "./pickup-policy.service.js";
 import { expireCheckoutAttemptBestEffort } from "./paymongo-reconciliation.service.js";
 import {
   assertReservationAccessInTransaction,
@@ -229,12 +229,37 @@ const reservationRecordSelect = Prisma.validator<Prisma.ReservationSelect>()({
   status: true,
   pickupStart: true,
   pickupEnd: true,
+  pickupReviewStatus: true,
+  pickupReviewReason: true,
+  scheduleRevision: true,
+  pickupPolicyVersion: { select: { id: true, version: true } },
+  pickupTimeSlot: { select: { id: true, label: true, startMinute: true, endMinute: true } },
   paymentMethod: true,
   totalAmount: true,
   staffNotes: true,
   createdAt: true,
   updatedAt: true,
   student: { select: { id: true, fullName: true, email: true, studentNumber: true } },
+  scheduleChanges: {
+    orderBy: { createdAt: "desc" },
+    take: 20,
+    select: {
+      id: true,
+      reason: true,
+      previousPickupStart: true,
+      previousPickupEnd: true,
+      previousPolicyVersion: true,
+      previousSlotLabel: true,
+      newPickupStart: true,
+      newPickupEnd: true,
+      newPolicyVersion: true,
+      newSlotLabel: true,
+      previousScheduleRevision: true,
+      newScheduleRevision: true,
+      createdAt: true,
+      actor: { select: { id: true, fullName: true, email: true } }
+    }
+  },
   onlinePayment: {
     select: {
       id: true,
@@ -290,6 +315,11 @@ function mapPrismaReservation(reservation: ReservationRecord) {
     status: reservation.status,
     pickupStart: reservation.pickupStart?.toISOString() ?? null,
     pickupEnd: reservation.pickupEnd?.toISOString() ?? null,
+    pickupReviewStatus: reservation.pickupReviewStatus,
+    pickupReviewReason: reservation.pickupReviewReason,
+    scheduleRevision: reservation.scheduleRevision,
+    pickupPolicyVersion: reservation.pickupPolicyVersion?.version ?? null,
+    pickupSlot: reservation.pickupTimeSlot,
     paymentMethod: reservation.paymentMethod,
     totalAmount: reservation.totalAmount.toString(),
     staffNotes: reservation.staffNotes,
@@ -301,6 +331,14 @@ function mapPrismaReservation(reservation: ReservationRecord) {
       email: reservation.student.email,
       studentNumber: reservation.student.studentNumber
     },
+    scheduleChanges: reservation.scheduleChanges.map((change) => ({
+      ...change,
+      previousPickupStart: change.previousPickupStart?.toISOString() ?? null,
+      previousPickupEnd: change.previousPickupEnd?.toISOString() ?? null,
+      newPickupStart: change.newPickupStart.toISOString(),
+      newPickupEnd: change.newPickupEnd.toISOString(),
+      createdAt: change.createdAt.toISOString()
+    })),
     payment: payment
       ? {
           id: payment.id,
@@ -348,6 +386,11 @@ const staffReservationListSelect = Prisma.validator<Prisma.ReservationSelect>()(
   status: true,
   pickupStart: true,
   pickupEnd: true,
+  pickupReviewStatus: true,
+  pickupReviewReason: true,
+  scheduleRevision: true,
+  pickupPolicyVersion: { select: { id: true, version: true } },
+  pickupTimeSlot: { select: { id: true, label: true, startMinute: true, endMinute: true } },
   paymentMethod: true,
   totalAmount: true,
   staffNotes: true,
@@ -398,6 +441,11 @@ function mapStaffReservationList(reservation: StaffReservationListRecord) {
     status: reservation.status,
     pickupStart: reservation.pickupStart?.toISOString() ?? null,
     pickupEnd: reservation.pickupEnd?.toISOString() ?? null,
+    pickupReviewStatus: reservation.pickupReviewStatus,
+    pickupReviewReason: reservation.pickupReviewReason,
+    scheduleRevision: reservation.scheduleRevision,
+    pickupPolicyVersion: reservation.pickupPolicyVersion?.version ?? null,
+    pickupSlot: reservation.pickupTimeSlot,
     paymentMethod: reservation.paymentMethod,
     totalAmount: reservation.totalAmount.toString(),
     staffNotes: reservation.staffNotes,
@@ -541,8 +589,9 @@ export async function createReservation(input: {
   studentId: string;
   idempotencyKey: string;
   paymentMethod: PaymentMethod;
-  pickupStart?: Date;
-  pickupEnd?: Date;
+  pickupDate: string;
+  pickupSlotId: string;
+  pickupPolicyVersion: number;
   items: Array<{
     productId: string;
     skuId?: string;
@@ -612,6 +661,7 @@ export async function createReservation(input: {
         });
 
         await assertReservationAccessInTransaction(tx, input.studentId);
+        const pickup = await validatePickupSelectionInTransaction(tx, input);
 
         const products = await tx.product.findMany({
           where: { id: { in: productIds } },
@@ -718,8 +768,10 @@ export async function createReservation(input: {
             studentId: input.studentId,
             referenceCode,
             paymentMethod: input.paymentMethod,
-            pickupStart: input.pickupStart ?? null,
-            pickupEnd: input.pickupEnd ?? null,
+            pickupStart: pickup.pickupStart,
+            pickupEnd: pickup.pickupEnd,
+            pickupPolicyVersionId: pickup.policy.id,
+            pickupTimeSlotId: pickup.slot.id,
             totalAmount
           },
           select: {
@@ -729,6 +781,9 @@ export async function createReservation(input: {
             status: true,
             pickupStart: true,
             pickupEnd: true,
+            pickupReviewStatus: true,
+            pickupReviewReason: true,
+            scheduleRevision: true,
             paymentMethod: true,
             totalAmount: true,
             createdAt: true,
@@ -961,6 +1016,11 @@ export async function createReservation(input: {
           status: reservation.status,
           pickupStart: reservation.pickupStart?.toISOString() ?? null,
           pickupEnd: reservation.pickupEnd?.toISOString() ?? null,
+          pickupReviewStatus: reservation.pickupReviewStatus,
+          pickupReviewReason: reservation.pickupReviewReason,
+          scheduleRevision: reservation.scheduleRevision,
+          pickupPolicyVersion: pickup.policy.version,
+          pickupSlot: pickup.slot,
           paymentMethod: reservation.paymentMethod,
           totalAmount: reservation.totalAmount.toString(),
           staffNotes: null,
@@ -1068,6 +1128,7 @@ export async function updateReservationStatus(
             referenceCode: true,
             status: true,
             paymentMethod: true,
+            totalAmount: true,
             pickupEnd: true,
             onlinePayment: {
               select: {
@@ -1103,6 +1164,10 @@ export async function updateReservationStatus(
             paymentMethod: existingReservation.paymentMethod as PaymentMethod,
             paymentStatus: existingReservation.onlinePayment?.status as OnlinePaymentStatus | undefined
           });
+        }
+
+        if (status === "COMPLETED" && !performedById) {
+          throw new HttpError(401, "A staff account is required to complete a reservation.");
         }
 
         assertReservationTransition(existingReservation.status as ReservationStatus, status);
@@ -1412,6 +1477,24 @@ export async function updateReservationStatus(
           }
         }
 
+        let generatedReceipt: Awaited<ReturnType<typeof ensureReceiptForCompletedReservationInTransaction>>["receipt"] | null = null;
+        let receiptCreated = false;
+        if (status === "COMPLETED") {
+          const ensuredReceipt = await ensureReceiptForCompletedReservationInTransaction(tx, {
+            reservation: {
+              id: existingReservation.id,
+              studentId: existingReservation.studentId,
+              referenceCode: existingReservation.referenceCode,
+              status: "COMPLETED",
+              paymentMethod: existingReservation.paymentMethod as PaymentMethod,
+              totalAmount: existingReservation.totalAmount
+            },
+            issuedById: performedById!
+          });
+          generatedReceipt = ensuredReceipt.receipt;
+          receiptCreated = ensuredReceipt.created;
+        }
+
         let policyOutcome: NoShowPolicyOutcome | null = null;
 
         if (statusChanged && status === "NO_SHOW") {
@@ -1486,7 +1569,9 @@ export async function updateReservationStatus(
           nextStatus: status,
           referenceCode: existingReservation.referenceCode,
           policyOutcome,
-          paymentCleanupAttemptIds
+          paymentCleanupAttemptIds,
+          generatedReceipt,
+          receiptCreated
         };
       },
       {
@@ -1511,7 +1596,7 @@ export async function updateReservationStatus(
       throw error;
     });
 
-  if (result.previousStatus !== result.nextStatus) wakeRealtimeBroker();
+  if (result.previousStatus !== result.nextStatus || result.receiptCreated) wakeRealtimeBroker();
 
   if (result.paymentCleanupAttemptIds.length) {
     await Promise.allSettled(
@@ -1520,28 +1605,9 @@ export async function updateReservationStatus(
       )
     );
   }
-  let generatedReceipt: Awaited<ReturnType<typeof createReceiptForReservation>> | null = null;
-
-  if (result.nextStatus === "COMPLETED" && result.previousStatus !== "COMPLETED" && performedById) {
-    generatedReceipt = await createReceiptForReservation(reservationId, performedById);
-
-    await safelyRecordAuditLog({
-      actorId: performedById,
-      action: "RESERVATION_COMPLETED_RECEIPT_GENERATED",
-      entityType: "reservation",
-      entityId: reservationId,
-      summary: `Completed reservation ${result.referenceCode} and generated receipt ${generatedReceipt.receiptCode}.`,
-      metadata: {
-        referenceCode: result.referenceCode,
-        receiptCode: generatedReceipt.receiptCode,
-        receiptId: generatedReceipt.id
-      }
-    });
-  }
-
   const reservation = await loadReservationCommandResult(reservationId);
 
-  return { reservation, receipt: generatedReceipt, policyOutcome: result.policyOutcome };
+  return { reservation, receipt: result.generatedReceipt, policyOutcome: result.policyOutcome };
 }
 
 export function cancelStudentReservation(reservationId: string, studentId: string) {

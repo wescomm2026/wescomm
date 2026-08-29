@@ -24,6 +24,8 @@ import { HttpError } from "../utils/http-error.js";
 import { publishRealtimeEventsBestEffort, REALTIME_TOPICS } from "../services/realtime-event.service.js";
 import { reconcileProductSkuInventory, restockProductSkus } from "../services/sku-inventory.service.js";
 import { invalidateOperationalReadCaches } from "../services/operational-cache.service.js";
+import { getProductDeletionEligibility, permanentlyDeleteProduct } from "../services/product-deletion.service.js";
+import { scheduleOutboxProcessing } from "../services/outbox.service.js";
 
 export const staffProductsRoutes = Router();
 
@@ -39,6 +41,14 @@ const optionalMoneySchema = z.preprocess(
   (value) => (value === "" ? null : value),
   z.coerce.number().nonnegative().max(10_000_000).nullable().optional()
 );
+
+const optionalImageStoragePathSchema = z
+  .string()
+  .trim()
+  .max(300)
+  .regex(/^products\/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}-[a-z0-9._-]+\.(?:jpg|png|webp)$/)
+  .nullable()
+  .optional();
 
 const categorySchema = {
   categoryId: z.string().uuid().optional(),
@@ -74,6 +84,7 @@ const createProductSchema = z
     name: z.string().trim().min(2).max(160),
     description: optionalTextSchema,
     imageUrl: optionalTextSchema,
+    imageStoragePath: optionalImageStoragePathSchema,
     price: z.coerce.number().nonnegative().max(10_000_000),
     oldPrice: optionalMoneySchema,
     status: z.enum(PRODUCT_STATUSES).optional(),
@@ -109,6 +120,7 @@ const updateProductSchema = z.object({
   name: z.string().trim().min(2).max(160).optional(),
   description: optionalTextSchema,
   imageUrl: optionalTextSchema,
+  imageStoragePath: optionalImageStoragePathSchema,
   price: z.coerce.number().nonnegative().max(10_000_000).optional(),
   oldPrice: optionalMoneySchema,
   status: z.enum(PRODUCT_STATUSES).optional(),
@@ -210,6 +222,10 @@ const inventoryListQuerySchema = z.object({
   status: z.enum(PRODUCT_STATUSES).optional(),
   visibility: z.enum(["ACTIVE", "ARCHIVED"]).default("ACTIVE"),
   includeCategories: z.literal("1").optional()
+});
+const permanentDeleteSchema = z.object({
+  confirmation: z.string().trim().min(1).max(160),
+  reason: z.string().trim().min(10).max(500)
 });
 const inventoryWriteLimiter = createRateLimiter({
   namespace: "inventory-write",
@@ -319,6 +335,32 @@ staffProductsRoutes.post(
     const product = await restoreProduct(productIdSchema.parse(request.params.id), request.auth!.id);
     await publishInventoryChange(product.id, "restored");
     response.json({ product });
+  })
+);
+
+staffProductsRoutes.get(
+  "/:id/deletion-eligibility",
+  requireRole("ADMIN"),
+  asyncHandler(async (request, response) => {
+    const eligibility = await getProductDeletionEligibility(productIdSchema.parse(request.params.id));
+    response.json({ eligibility });
+  })
+);
+
+staffProductsRoutes.delete(
+  "/:id/permanent",
+  requireRole("ADMIN"),
+  inventoryWriteLimiter,
+  asyncHandler(async (request: AuthenticatedRequest, response) => {
+    const input = permanentDeleteSchema.parse(request.body);
+    const deletedProduct = await permanentlyDeleteProduct({
+      productId: productIdSchema.parse(request.params.id),
+      actorId: request.auth!.id,
+      ...input
+    });
+    await publishInventoryChange(deletedProduct.id, "permanently-deleted");
+    scheduleOutboxProcessing();
+    response.json({ deletedProduct });
   })
 );
 

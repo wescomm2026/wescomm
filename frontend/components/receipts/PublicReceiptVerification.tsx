@@ -7,9 +7,10 @@ import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import {
   verifyReceiptFromApi,
-  type BackendPaymentMethod,
+  verifyReceiptTokenFromApi,
   type BackendPublicReceiptVerification
 } from "@/lib/api";
+import { paymentMethodLabel } from "@/lib/payment-method";
 
 function formatMoney(value: string | number) {
   const numericValue = Number(value);
@@ -31,14 +32,6 @@ function formatDate(value: string) {
       });
 }
 
-function formatPaymentMethod(value: BackendPaymentMethod) {
-  if (value === "PAYMONGO_GCASH") return "GCash (Online)";
-  if (value === "E_WALLET_AT_PICKUP") return "E-wallet at Pickup";
-  if (value === "GCASH") return "GCash";
-  if (value === "CASH") return "Cash";
-  return "Pay at Commissary";
-}
-
 function formatReceiptStatus(value: BackendPublicReceiptVerification["status"]) {
   if (value === "VERIFIED") return "Verified";
   if (value === "VOIDED") return "Voided";
@@ -58,6 +51,25 @@ export function PublicReceiptVerification() {
     if (error) errorRef.current?.focus();
     else if (receipt) resultRef.current?.focus();
   }, [error, receipt]);
+
+  useEffect(() => {
+    const parameters = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+    const token = parameters.get("v")?.trim();
+    if (!token) return;
+
+    window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+    setLoading(true);
+    setError("");
+    void verifyReceiptTokenFromApi(token)
+      .then((result) => {
+        setReceipt(result);
+        setSubmittedCode(result.receiptCode);
+      })
+      .catch((verificationError) => {
+        setError(verificationError instanceof Error ? verificationError.message : "Unable to verify this receipt right now.");
+      })
+      .finally(() => setLoading(false));
+  }, []);
 
   const verifyReceipt = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -169,7 +181,7 @@ export function PublicReceiptVerification() {
             <div>
               <p className="text-xs font-bold uppercase tracking-wide text-[#718078]">Issued</p>
               <p className="mt-1 font-extrabold text-[#17211b]">{formatDate(receipt.issuedAt)}</p>
-              <p className="mt-1 text-sm font-semibold text-[#657169]">{formatPaymentMethod(receipt.paymentMethod)}</p>
+              <p className="mt-1 text-sm font-semibold text-[#657169]">{paymentMethodLabel(receipt.paymentMethod)}</p>
             </div>
             <div>
               <p className="text-xs font-bold uppercase tracking-wide text-[#718078]">Receipt total</p>

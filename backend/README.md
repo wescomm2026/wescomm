@@ -153,7 +153,7 @@ For Vercel Preview/QA, enable access to Vercel System Environment Variables, kee
 
 If the project owner explicitly authorizes short public-Production staff testing, use the separate `AUTH_ENABLE_TEMP_PRODUCTION_STAFF_LOGIN` flow. It is hardcoded to `staff@wesleyan.edu.ph`, rechecks that the database role is still `STAFF` on every temporary-session request, requires matching frontend/backend UTC expiry values no more than 24 hours ahead, and caps each issued session at 30 minutes or the configured deadline. Store `AUTH_TEMP_PRODUCTION_STAFF_LOGIN_PASSWORD` as a new Vercel Production Sensitive value of at least 20 characters. Keep student/admin on OTP, stage a narrow Vercel WAF rate-limit rule for `POST /api/auth/temporary-staff-login`, and audit successful temporary logins. To stop early, publish a project WAF block for that route, disable both temporary flags, remove the secret/expiry, redeploy, make every previously enabled immutable deployment URL inaccessible, and revoke the staff account sessions. Old Vercel deployments retain their original environment values until they are blocked or removed; the absolute expiry remains the final fail-safe.
 
-The API applies request IDs, strict CORS, CSRF origin checks, security headers, no-store caching for authenticated data, action-specific rate limits, bounded request schemas, image signature validation, encrypted sensitive fields, revocable hashed sessions, privacy-safe push notifications, and privacy-safe public receipt verification. For a multi-instance deployment, replace the in-memory rate-limit store with a shared rate-limit store.
+The API applies request IDs, strict CORS, CSRF origin checks, security headers, no-store caching for authenticated data, action-specific rate limits, bounded request schemas, image signature validation, encrypted sensitive fields, revocable hashed sessions, privacy-safe push notifications, and privacy-safe public receipt verification. Production and Vercel runtimes use atomic PostgreSQL rate-limit counters shared by every instance; local development and unit tests use the in-memory store. Expired database counters are pruned by the existing payment-maintenance job.
 
 Never commit `.env`. Rotate any service-role, database, SMTP, or private VAPID credential that has been pasted into chat, screenshots, issues, or shared documents.
 
@@ -167,7 +167,7 @@ PayMongo lifecycle audit writes are part of the same database transaction as the
 
 `POST /api/reservations` now uses a Prisma database transaction. The backend checks stock, creates the reservation, writes reservation items, deducts inventory, records inventory movement, and creates reservation/low-stock notifications as one atomic flow. If stock changes while a student is reserving, the API returns `409` and the reservation is not saved.
 
-`PATCH /api/reservations/:id/status` also handles cancellation stock restoration inside a transaction, so cancelling a reservation restores stock and records the inventory movement together with the status change.
+`PATCH /api/reservations/:id/status` also handles cancellation stock restoration inside a transaction, so cancelling a reservation restores stock and records the inventory movement together with the status change. Completing a reservation creates or repairs its single server-derived receipt in the same serializable transaction. Receipt notifications and audit delivery are written to the outbox in that transaction and can be retried safely.
 
 ## Free-plan database resilience
 
@@ -212,6 +212,8 @@ cd backend
 npm run prisma:migrate:baseline:existing
 npm run prisma:migrate:deploy
 npm run prisma:migrate:verify
+npm run receipts:tokens:backfill
+npm run receipts:integrity:audit
 ```
 
 The baseline command first performs a read-only schema preflight. It refuses to
@@ -224,6 +226,33 @@ For every later release, do not baseline again. Run only:
 npm run prisma:migrate:deploy
 npm run prisma:migrate:verify
 ```
+
+### Receipt-integrity and distributed-rate-limit rollout
+
+Before deploying `20260830000000_enforce_reservation_receipt_integrity`, run the
+read-only invariant audit against a backup-restorable database:
+
+```powershell
+npm run receipts:integrity:audit
+```
+
+The audit exits non-zero whenever it finds any issue. Before deployment, the
+`duplicateReservationReceipts` and `inconsistentReservationReceipts` arrays
+must both be empty; resolve those financial records with an auditable business
+decision. `completedWithoutReceipt` may remain for the guarded post-migration
+repair described below. The migration refuses to continue while duplicate or
+inconsistent linked receipts remain. Rerun the audit to confirm those two
+blocking arrays are empty, then use the standard `prisma:migrate:deploy` and
+`prisma:migrate:verify` commands. The following
+`20260830010000_add_distributed_rate_limits` migration creates the server-only,
+RLS-protected shared counter table used by production instances.
+
+The deploy makes future completions atomic and lets an idempotent `COMPLETED`
+replay repair an older missing receipt. To repair all audited legacy rows, first
+run the repair command without flags to review its dry-run output. Apply mode is
+guarded and requires both a real Staff/Admin actor UUID and the exact confirmation
+value printed by the script; never point it at Production without a current
+backup and an approved maintenance window.
 
 ### WesBot rollout
 

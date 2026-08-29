@@ -2,17 +2,20 @@
 
 import Link from "next/link";
 import { useCallback, useDeferredValue, useEffect, useRef, useState } from "react";
-import { Ban } from "lucide-react";
+import { Ban, CalendarClock, X } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import { useRealtimeRefresh } from "@/components/realtime/RealtimeProvider";
 import { ActionLoadingOverlay } from "@/components/ui/ActionLoadingOverlay";
 import { Button } from "@/components/ui/button";
 import { useConfirmationDialog } from "@/components/ui/ConfirmationDialogProvider";
 import { StatusBadge } from "@/components/ui/StatusBadge";
+import { PickupSchedulePicker, type PickupSelection } from "@/components/pickup/PickupSchedulePicker";
+import { useAccessibleDialog } from "@/components/ui/useAccessibleDialog";
 import {
   getReservationFromApi,
   getReservationPageFromApi,
   updateReservationStatusFromApi,
+  rescheduleReservationFromApi,
   type BackendReservationStatus
 } from "@/lib/api";
 import { getStoredStaffSession } from "@/lib/staff-api";
@@ -40,6 +43,10 @@ export function StaffReservationsExperience() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [submittingId, setSubmittingId] = useState("");
+  const [rescheduleRow, setRescheduleRow] = useState<StaffReservationRow | null>(null);
+  const [pickupSelection, setPickupSelection] = useState<PickupSelection | null>(null);
+  const [rescheduleReason, setRescheduleReason] = useState("");
+  const rescheduleDialog = useAccessibleDialog<HTMLElement>(Boolean(rescheduleRow), () => setRescheduleRow(null));
   const deferredSearch = useDeferredValue(search);
   const requestSequenceRef = useRef(0);
   const requestAbortRef = useRef<AbortController | null>(null);
@@ -203,6 +210,38 @@ export function StaffReservationsExperience() {
     }
   };
 
+  const openReschedule = (row: StaffReservationRow) => {
+    setRescheduleRow(row);
+    setPickupSelection(null);
+    setRescheduleReason(row.pickupReviewReason ? `Schedule review: ${row.pickupReviewReason}` : "");
+    setError("");
+  };
+
+  const saveReschedule = async () => {
+    if (!rescheduleRow || !pickupSelection || rescheduleReason.trim().length < 5) return;
+    const session = getStoredStaffSession();
+    if (!session.token) return;
+    setSubmittingId(rescheduleRow.id);
+    setError("");
+    try {
+      const reservation = await rescheduleReservationFromApi(session.token, rescheduleRow.id, {
+        expectedScheduleRevision: rescheduleRow.scheduleRevision,
+        ...pickupSelection,
+        reason: rescheduleReason.trim()
+      });
+      const mapped = mapStaffReservation(reservation);
+      setRows((current) => current.map((item) => item.id === mapped.id ? mapped : item));
+      setRescheduleRow(null);
+      setPickupSelection(null);
+      setRescheduleReason("");
+      setNotice(`${mapped.reference} pickup rescheduled. The student was notified and the previous schedule remains in history.`);
+    } catch (rescheduleError) {
+      setError(rescheduleError instanceof Error ? rescheduleError.message : "Unable to reschedule pickup.");
+    } finally {
+      setSubmittingId("");
+    }
+  };
+
   return (
     <div className="relative space-y-5">
       <PageHeading
@@ -229,7 +268,7 @@ export function StaffReservationsExperience() {
               />
               <div><p className="font-extrabold">{row.reference}</p><p className="text-xs text-[#68746d]">{row.student}</p></div>
               <div><p className="text-sm font-bold">{row.item}</p><p className="text-xs text-[#68746d]">Quantity: {row.quantity}</p></div>
-              <p className="text-sm"><span className="font-bold text-primary">Pickup:</span> {row.pickup}</p>
+              <div><p className="text-sm"><span className="font-bold text-primary">Pickup:</span> {row.pickup}</p>{row.pickupReviewStatus === "NEEDS_REVIEW" ? <p className="mt-1 text-xs font-bold text-amber-800">Needs review: {row.pickupReviewReason}</p> : null}</div>
               <div className="text-sm">
                 <p><span className="font-bold text-primary">Payment:</span> {row.payment}</p>
                 {row.onlineGcash ? <span className="mt-1 inline-flex"><StatusBadge status={row.paymentStatus} /></span> : null}
@@ -266,6 +305,11 @@ export function StaffReservationsExperience() {
                   </Link>
                 ) : null}
                 {row.backendStatus !== "COMPLETED" && row.backendStatus !== "CANCELLED" && row.backendStatus !== "NO_SHOW" ? (
+                  <Button variant="secondary" className="h-10" disabled={Boolean(submittingId)} onClick={() => openReschedule(row)}>
+                    <CalendarClock className="size-4" />{row.pickupReviewStatus === "NEEDS_REVIEW" ? "Review schedule" : "Reschedule"}
+                  </Button>
+                ) : null}
+                {row.backendStatus !== "COMPLETED" && row.backendStatus !== "CANCELLED" && row.backendStatus !== "NO_SHOW" ? (
                   <Button variant="ghost" className="h-10 text-red-600" disabled={Boolean(submittingId)} onClick={() => void updateStatus(row, "CANCELLED")}>
                     Cancel
                   </Button>
@@ -290,6 +334,24 @@ export function StaffReservationsExperience() {
         </div>
       ) : null}
       {notice ? <Notice text={notice} onClose={() => setNotice("")} /> : null}
+      {rescheduleRow ? (
+        <div className="fixed inset-0 z-[10000] grid place-items-center overflow-y-auto bg-[#101820]/55 p-3" onMouseDown={(event) => { if (!submittingId && event.target === event.currentTarget) setRescheduleRow(null); }}>
+          <section ref={rescheduleDialog.dialogRef} {...rescheduleDialog.dialogProps} className="relative my-4 w-full max-w-4xl overflow-hidden rounded-lg bg-white shadow-2xl">
+            <ActionLoadingOverlay active={submittingId === rescheduleRow.id} title="Rescheduling pickup" detail="Saving the schedule history and notifying the student." />
+            <header className="flex items-start gap-3 border-b border-[#e3eae4] p-5 sm:p-6">
+              <span className="grid size-11 shrink-0 place-items-center rounded-md bg-[#e8f4e8] text-primary"><CalendarClock className="size-6" /></span>
+              <div><p className="text-xs font-bold uppercase text-primary">Authorized schedule change</p><h2 id={rescheduleDialog.titleId} className="mt-1 text-xl font-extrabold text-[#17211b]">Reschedule {rescheduleRow.reference}</h2><p className="mt-1 text-sm text-[#68746d]">Current: {rescheduleRow.pickup} · revision {rescheduleRow.scheduleRevision}</p></div>
+              <button type="button" data-dialog-autofocus aria-label="Close reschedule dialog" onClick={() => setRescheduleRow(null)} disabled={Boolean(submittingId)} className="ml-auto grid size-10 place-items-center rounded-md hover:bg-[#f1f5f1]"><X className="size-5" /></button>
+            </header>
+            <div className="max-h-[calc(100svh-190px)] space-y-5 overflow-y-auto p-5 sm:p-6">
+              {rescheduleRow.pickupReviewReason ? <p className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900">Review reason: {rescheduleRow.pickupReviewReason}</p> : null}
+              <PickupSchedulePicker selection={pickupSelection} onChange={setPickupSelection} disabled={Boolean(submittingId)} initialDate={rescheduleRow.reservation.pickupStart?.slice(0, 10)} title="Choose the new pickup date" />
+              <label className="grid gap-1.5 text-sm font-bold">Reason for rescheduling<textarea required minLength={5} maxLength={500} value={rescheduleReason} onChange={(event) => setRescheduleReason(event.target.value)} className="min-h-24 rounded-md border border-[#d3ddd4] px-3 py-2 font-normal outline-none focus:border-primary" placeholder="Explain the student-approved or operational reason." /></label>
+              <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end"><Button variant="secondary" onClick={() => setRescheduleRow(null)} disabled={Boolean(submittingId)}>Cancel</Button><Button onClick={() => void saveReschedule()} disabled={Boolean(submittingId) || !pickupSelection || rescheduleReason.trim().length < 5}>Save and notify student</Button></div>
+            </div>
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 }

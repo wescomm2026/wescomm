@@ -4,7 +4,7 @@ on:
   schedule:
     # GitHub schedules can be delayed. The backend uses its own timestamps and
     # bounded batches, so reruns are safe and no exact hourly timing is assumed.
-    - cron: "17 * * * *"
+    - cron: "7,22,37,52 * * * *"
   workflow_dispatch:
 
 permissions:

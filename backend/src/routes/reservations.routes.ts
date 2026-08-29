@@ -10,6 +10,7 @@ import {
   listReservations,
   updateReservationStatus
 } from "../services/reservation.service.js";
+import { rescheduleReservation } from "../services/pickup-policy.service.js";
 import { PAYMENT_METHODS, RESERVATION_STATUSES } from "../types/app.js";
 import { asyncHandler } from "../utils/async-handler.js";
 import { measureRequestPhase } from "../middleware/request-timing.js";
@@ -18,26 +19,11 @@ import { invalidateOperationalReadCaches } from "../services/operational-cache.s
 
 export const reservationsRoutes = Router();
 
-function manilaDateKey(date: Date) {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Manila",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit"
-  }).formatToParts(date);
-  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  return `${values.year}-${values.month}-${values.day}`;
-}
-
-function tomorrowInManilaKey() {
-  return manilaDateKey(new Date(Date.now() + 24 * 60 * 60 * 1000));
-}
-
-const createReservationSchema = z
-  .object({
+const createReservationSchema = z.object({
     paymentMethod: z.enum(PAYMENT_METHODS).default("PAY_AT_COMMISSARY"),
-    pickupStart: z.coerce.date(),
-    pickupEnd: z.coerce.date(),
+    pickupDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Pickup date must use YYYY-MM-DD."),
+    pickupSlotId: z.string().uuid(),
+    pickupPolicyVersion: z.number().int().positive(),
     items: z
       .array(
         z.object({
@@ -49,34 +35,17 @@ const createReservationSchema = z
       )
       .min(1)
       .max(25)
-  })
-  .superRefine((input, context) => {
-    if (input.pickupEnd <= input.pickupStart) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "Pickup end must be later than pickup start.",
-        path: ["pickupEnd"]
-      });
-    }
-    const pickupDate = manilaDateKey(input.pickupStart);
-    if (pickupDate < tomorrowInManilaKey()) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "Pickup must be scheduled at least one day in advance.",
-        path: ["pickupStart"]
-      });
-    }
-    if (pickupDate !== manilaDateKey(input.pickupEnd)) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "Pickup start and end must be on the same Manila calendar date.",
-        path: ["pickupEnd"]
-      });
-    }
   });
 
 const updateStatusSchema = z.object({
   status: z.enum(RESERVATION_STATUSES)
+});
+const rescheduleSchema = z.object({
+  expectedScheduleRevision: z.number().int().positive(),
+  pickupDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Pickup date must use YYYY-MM-DD."),
+  pickupSlotId: z.string().uuid(),
+  pickupPolicyVersion: z.number().int().positive(),
+  reason: z.string().trim().min(5).max(500)
 });
 
 const reservationIdSchema = z.string().uuid();
@@ -180,6 +149,25 @@ reservationsRoutes.patch(
     await invalidateOperationalReadCaches();
     scheduleOutboxProcessing();
     response.json(result);
+  })
+);
+
+reservationsRoutes.patch(
+  "/:id/pickup",
+  requireAuth,
+  requireRole("STAFF", "ADMIN"),
+  reservationStatusLimiter,
+  asyncHandler(async (request: AuthenticatedRequest, response) => {
+    const input = rescheduleSchema.parse(request.body);
+    const reservationId = await rescheduleReservation({
+      reservationId: reservationIdSchema.parse(request.params.id),
+      actorId: request.auth!.id,
+      ...input
+    });
+    const reservation = await getReservation(request.auth!.id, request.auth!.role, reservationId);
+    await invalidateOperationalReadCaches();
+    scheduleOutboxProcessing();
+    response.json({ reservation });
   })
 );
 

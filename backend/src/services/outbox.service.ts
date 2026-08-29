@@ -8,11 +8,16 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
 import { sendPushToUser } from "./push.service.js";
 import { publishRealtimeEvents, REALTIME_TOPICS } from "./realtime-event.service.js";
+import { deleteProductImage } from "./upload.service.js";
 
 export const OUTBOX_EVENT_TYPES = {
   reservationCreated: "RESERVATION_CREATED",
   reservationStatusChanged: "RESERVATION_STATUS_CHANGED",
-  receiptStatusChanged: "RECEIPT_STATUS_CHANGED"
+  reservationRescheduled: "RESERVATION_RESCHEDULED",
+  receiptCreated: "RECEIPT_CREATED",
+  receiptStatusChanged: "RECEIPT_STATUS_CHANGED",
+  restrictionExpired: "RESTRICTION_EXPIRED",
+  productImageDelete: "PRODUCT_IMAGE_DELETE"
 } as const;
 
 const reservationCreatedPayloadSchema = z.object({
@@ -46,6 +51,24 @@ const reservationStatusChangedPayloadSchema = z.object({
   notificationType: z.enum(["RESERVATION", "SYSTEM"])
 });
 
+const reservationRescheduledPayloadSchema = z.object({
+  actorId: z.string().uuid(),
+  studentId: z.string().uuid(),
+  referenceCode: z.string().min(1).max(80),
+  pickupStart: z.string().datetime(),
+  pickupEnd: z.string().datetime(),
+  reason: z.string().min(1).max(500)
+});
+
+const restrictionExpiredPayloadSchema = z.object({
+  studentId: z.string().uuid(),
+  endedAt: z.string().datetime()
+});
+
+const productImageDeletePayloadSchema = z.object({
+  path: z.string().min(1).max(300)
+});
+
 const receiptStatusChangedPayloadSchema = z.object({
   actorId: z.string().uuid(),
   studentId: z.string().uuid(),
@@ -55,6 +78,16 @@ const receiptStatusChangedPayloadSchema = z.object({
   previousStatus: z.string().min(1).max(80),
   nextStatus: z.enum(["VERIFIED", "VOIDED"]),
   reason: z.string().max(500).nullable()
+});
+
+const receiptCreatedPayloadSchema = z.object({
+  actorId: z.string().uuid(),
+  studentId: z.string().uuid(),
+  receiptCode: z.string().min(1).max(80),
+  reservationId: z.string().uuid(),
+  referenceCode: z.string().min(1).max(80),
+  totalAmount: z.string().min(1).max(80),
+  status: z.literal("PENDING")
 });
 
 type ClaimedOutboxEvent = {
@@ -234,6 +267,59 @@ async function processReservationStatusChanged(event: ClaimedOutboxEvent) {
   });
 }
 
+async function processReservationRescheduled(event: ClaimedOutboxEvent) {
+  if (!event.entityId) throw new Error("RESERVATION_RESCHEDULED requires an entity ID.");
+  const payload = reservationRescheduledPayloadSchema.parse(event.payload);
+  const pickupStart = new Date(payload.pickupStart);
+  const schedule = pickupStart.toLocaleString("en-PH", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: "Asia/Manila"
+  });
+  await createNotificationAndPush({
+    userId: payload.studentId,
+    role: "STUDENT",
+    type: "RESERVATION",
+    title: "Pickup schedule updated",
+    message: `${payload.referenceCode} was rescheduled to ${schedule}.`,
+    actionUrl: "/student/reservations",
+    dedupeKey: `${event.id}:student-rescheduled`
+  });
+}
+
+async function processRestrictionExpired(event: ClaimedOutboxEvent) {
+  if (!event.entityId) throw new Error("RESTRICTION_EXPIRED requires an entity ID.");
+  const payload = restrictionExpiredPayloadSchema.parse(event.payload);
+  await createNotificationAndPush({
+    userId: payload.studentId,
+    role: "STUDENT",
+    type: "SYSTEM",
+    title: "Reservation access restored",
+    message: "Your temporary reservation restriction expired. You can reserve available items again.",
+    actionUrl: "/student/shop",
+    dedupeKey: `restriction-expired:${event.entityId}`
+  });
+  await createAuditOnce(event, {
+    actorId: null,
+    action: "STUDENT_RESTRICTION_EXPIRED",
+    entityType: "account_restriction",
+    summary: `Automatically expired reservation restriction ${event.entityId}.`,
+    metadata: {
+      studentId: payload.studentId,
+      endedAt: payload.endedAt,
+      outboxEventId: event.id
+    }
+  });
+}
+
+async function processProductImageDelete(event: ClaimedOutboxEvent) {
+  const payload = productImageDeletePayloadSchema.parse(event.payload);
+  await deleteProductImage(payload.path);
+}
+
 async function processReceiptStatusChanged(event: ClaimedOutboxEvent) {
   if (!event.entityId) throw new Error("RECEIPT_STATUS_CHANGED requires an entity ID.");
   const payload = receiptStatusChangedPayloadSchema.parse(event.payload);
@@ -271,6 +357,52 @@ async function processReceiptStatusChanged(event: ClaimedOutboxEvent) {
   });
 }
 
+async function processReceiptCreated(event: ClaimedOutboxEvent) {
+  if (!event.entityId) throw new Error("RECEIPT_CREATED requires an entity ID.");
+  const payload = receiptCreatedPayloadSchema.parse(event.payload);
+  const staffAndAdmins = await prisma.profile.findMany({
+    where: { role: { in: ["STAFF", "ADMIN"] } },
+    select: { id: true, role: true }
+  });
+
+  const deliveries: NotificationDelivery[] = [
+    {
+      userId: payload.studentId,
+      role: "STUDENT",
+      type: "RECEIPT",
+      title: "Digital receipt generated",
+      message: `${payload.receiptCode} was created for ${payload.referenceCode} and is waiting for verification.`,
+      actionUrl: "/student/receipts",
+      dedupeKey: `${event.id}:student-receipt-created`
+    },
+    ...staffAndAdmins.map((profile) => ({
+      userId: profile.id,
+      role: profile.role,
+      type: "RECEIPT" as const,
+      title: "Receipt needs verification",
+      message: `${payload.receiptCode} was generated for ${payload.referenceCode}.`,
+      actionUrl: `/staff/receipt-verification?receiptId=${encodeURIComponent(event.entityId!)}`,
+      dedupeKey: `${event.id}:staff-receipt-created:${profile.id}`
+    }))
+  ];
+
+  for (const delivery of deliveries) await createNotificationAndPush(delivery);
+
+  await createAuditOnce(event, {
+    actorId: payload.actorId,
+    action: "RECEIPT_GENERATED",
+    entityType: "receipt",
+    summary: `Generated receipt ${payload.receiptCode} for ${payload.referenceCode}.`,
+    metadata: {
+      receiptCode: payload.receiptCode,
+      reservationId: payload.reservationId,
+      referenceCode: payload.referenceCode,
+      totalAmount: payload.totalAmount,
+      outboxEventId: event.id
+    }
+  });
+}
+
 async function processEvent(event: ClaimedOutboxEvent) {
   if (event.type === OUTBOX_EVENT_TYPES.reservationCreated) {
     await processReservationCreated(event);
@@ -280,8 +412,24 @@ async function processEvent(event: ClaimedOutboxEvent) {
     await processReservationStatusChanged(event);
     return;
   }
+  if (event.type === OUTBOX_EVENT_TYPES.reservationRescheduled) {
+    await processReservationRescheduled(event);
+    return;
+  }
+  if (event.type === OUTBOX_EVENT_TYPES.restrictionExpired) {
+    await processRestrictionExpired(event);
+    return;
+  }
+  if (event.type === OUTBOX_EVENT_TYPES.receiptCreated) {
+    await processReceiptCreated(event);
+    return;
+  }
   if (event.type === OUTBOX_EVENT_TYPES.receiptStatusChanged) {
     await processReceiptStatusChanged(event);
+    return;
+  }
+  if (event.type === OUTBOX_EVENT_TYPES.productImageDelete) {
+    await processProductImageDelete(event);
     return;
   }
   throw new Error(`Unsupported outbox event type: ${event.type}`);

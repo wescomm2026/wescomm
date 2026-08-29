@@ -30,6 +30,9 @@
     "prisma:migrate:verify:ci": "node scripts/verify-existing-database-baseline.mjs --after-deploy --allow-missing-supabase-auth && node scripts/verify-prisma-migration-status.mjs",
     "prisma:studio": "prisma studio",
     "prisma:pull": "prisma db pull",
+    "receipts:integrity:audit": "node scripts/audit-receipt-invariants.mjs",
+    "receipts:integrity:repair": "npm run build && node scripts/repair-missing-completed-receipts.mjs",
+    "receipts:tokens:backfill": "npm run build && node scripts/backfill-receipt-public-tokens.mjs",
     "push:keys": "web-push generate-vapid-keys",
     "security:encrypt-existing": "tsx src/scripts/encrypt-existing-sensitive-data.ts",
     "seed:wup-catalog": "tsx src/scripts/seed-new-uniform-products.ts"

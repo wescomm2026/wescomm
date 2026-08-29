@@ -4,8 +4,9 @@ export const RESERVATION_IDEMPOTENCY_TTL_HOURS = 24;
 
 type ReservationRequestForHash = {
   paymentMethod: string;
-  pickupStart?: Date;
-  pickupEnd?: Date;
+  pickupDate: string;
+  pickupSlotId: string;
+  pickupPolicyVersion: number;
   items: Array<{
     productId: string;
     skuId?: string;
@@ -32,8 +33,9 @@ function canonicalItems(items: ReservationRequestForHash["items"]) {
 export function hashReservationRequest(input: ReservationRequestForHash) {
   const canonicalRequest = JSON.stringify({
     paymentMethod: input.paymentMethod,
-    pickupStart: input.pickupStart?.toISOString() ?? null,
-    pickupEnd: input.pickupEnd?.toISOString() ?? null,
+    pickupDate: input.pickupDate,
+    pickupSlotId: input.pickupSlotId,
+    pickupPolicyVersion: input.pickupPolicyVersion,
     items: canonicalItems(input.items)
   });
 

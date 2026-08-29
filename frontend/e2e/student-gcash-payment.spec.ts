@@ -15,6 +15,7 @@ const student = {
 const productId = "82000000-0000-4000-8000-000000000001";
 const reservationId = "83000000-0000-4000-8000-000000000001";
 const paymentId = "84000000-0000-4000-8000-000000000001";
+const pickupSlotId = "85000000-0000-4000-8000-000000000001";
 
 function json(route: Route, body: unknown, status = 200) {
   return route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
@@ -36,6 +37,32 @@ function commonApiResponse(route: Route) {
   if (path === "/api/backend/notifications") return json(route, { notifications: [] });
   if (path === "/api/backend/push/public-key") return json(route, { enabled: false, publicKey: "" });
   if (path === "/api/backend/wishlist") return json(route, { wishlist: [] });
+  if (path === "/api/backend/pickup/availability") {
+    return json(route, {
+      policy: {
+        id: "85000000-0000-4000-8000-000000000099",
+        version: 7,
+        timezone: "Asia/Manila",
+        minAdvanceDays: 1,
+        maxAdvanceDays: 14,
+        minDate: "2026-08-03",
+        maxDate: "2026-08-17",
+        serverDate: "2026-08-02",
+        effectiveAt: "2026-08-02T00:00:00.000Z",
+        isActive: true,
+        reason: "QA pickup policy",
+        createdById: null,
+        createdAt: "2026-08-02T00:00:00.000Z",
+        updatedAt: "2026-08-02T00:00:00.000Z",
+        days: Array.from({ length: 7 }, (_, weekday) => ({ weekday, enabled: weekday >= 1 && weekday <= 5 })),
+        timeSlots: [
+          { id: pickupSlotId, label: "Morning pickup", startMinute: 600, endMinute: 720, isActive: true, sortOrder: 0 },
+          { id: "85000000-0000-4000-8000-000000000002", label: "Inactive slot", startMinute: 780, endMinute: 840, isActive: false, sortOrder: 1 }
+        ],
+        closures: [{ id: "85000000-0000-4000-8000-000000000003", date: "2026-08-05", reason: "Campus holiday" }]
+      }
+    });
+  }
   return null;
 }
 
@@ -124,14 +151,24 @@ test("cart checkout sends only server-owned GCash identifiers before trusted red
   await page.getByRole("button", { name: /Open cart with 1 item/ }).click();
   await page.getByRole("button", { name: "Checkout Cart" }).click();
 
-  const checkout = page.getByRole("dialog", { name: "Cart Checkout" });
+  let checkout = page.getByRole("dialog", { name: "Review Items & Pickup" });
+  await checkout.getByRole("button", { name: "2026-08-03, available" }).click();
+  await checkout.getByRole("button", { name: "Next: Payment" }).click();
+  expect(reservationBody).toBeNull();
+
+  checkout = page.getByRole("dialog", { name: "Payment & Review" });
   await expect(checkout.getByText("Test mode", { exact: true })).toBeVisible();
   await expect(checkout.getByText("No real money will be charged.", { exact: true })).toBeVisible();
   await checkout.getByRole("radio", { name: /Pay Online via GCash/ }).check();
   await checkout.getByRole("button", { name: "Continue to GCash" }).click();
   await page.waitForURL(`https://checkout.paymongo.com/test/${paymentId}`);
 
-  expect(reservationBody).toMatchObject({ paymentMethod: "PAYMONGO_GCASH" });
+  expect(reservationBody).toMatchObject({
+    paymentMethod: "PAYMONGO_GCASH",
+    pickupDate: "2026-08-03",
+    pickupSlotId,
+    pickupPolicyVersion: 7
+  });
   expect(reservationBody).not.toHaveProperty("amount");
   expect(reservationBody).not.toHaveProperty("status");
   expect(paymentBody).toEqual({ reservationId });

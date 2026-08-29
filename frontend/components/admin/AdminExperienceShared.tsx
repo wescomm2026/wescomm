@@ -9,12 +9,17 @@ import { Button } from "@/components/ui/button";
 import {
   getAdminReportSummaryFromApi,
   isRequestAbortError,
-  type BackendReportSummary
+  type BackendReportSummary,
+  type ReportRangeOptions
 } from "@/lib/api";
 import { markWelcomeContentReady } from "@/lib/welcome-readiness";
 
 export const emptySummary: BackendReportSummary = {
+  range: { preset: "LAST_30_DAYS", from: null, to: "", granularity: "DAILY", label: "Last 30 Days" },
   totalSales: 0,
+  onlineGcashRevenue: 0,
+  payAtCommissaryRevenue: 0,
+  paymentMethodBreakdown: { onlineGcash: { amount: 0, receipts: 0 }, payAtCommissary: { amount: 0, receipts: 0 } },
   totalReservations: 0,
   pendingReservations: 0,
   lowStockItems: 0,
@@ -69,7 +74,9 @@ export function formatAuditAction(value: string) {
     .join(" ");
 }
 
-export function useAdminSummary() {
+const DEFAULT_REPORT_RANGE: ReportRangeOptions = {};
+
+export function useAdminSummary(options: ReportRangeOptions = DEFAULT_REPORT_RANGE) {
   const { user, ready, openAuth } = useStudentAuth();
   const [summary, setSummary] = useState<BackendReportSummary>(emptySummary);
   const [loading, setLoading] = useState(true);
@@ -102,7 +109,7 @@ export function useAdminSummary() {
     }
 
     try {
-      const data = await getAdminReportSummaryFromApi(user.accessToken, requestController.signal);
+      const data = await getAdminReportSummaryFromApi(user.accessToken, options, requestController.signal);
       if (requestId !== requestSequenceRef.current) return;
       setSummary(data);
     } catch (summaryError) {
@@ -116,7 +123,7 @@ export function useAdminSummary() {
         markWelcomeContentReady(window.location.pathname);
       }
     }
-  }, [ready, user?.accessToken]);
+  }, [options, ready, user?.accessToken]);
 
   useRealtimeRefresh(["dashboard", "reports", "inventory", "reservations", "receipts", "conversations", "users"], () => {
     void loadSummary({ background: true });

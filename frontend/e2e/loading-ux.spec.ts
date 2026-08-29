@@ -74,6 +74,7 @@ test("blocked audible autoplay falls back to visible muted playback", async ({ p
   await page.goto("/student/dashboard", { waitUntil: "domcontentloaded" });
 
   const gate = page.locator(".welcome-gate-overlay");
+  await expect(gate).toHaveAttribute("data-media-state", "playing-muted", { timeout: 20_000 });
   const restartWithSound = gate.getByRole("button", { name: "Restart welcome animation with sound" });
   await expect(restartWithSound).toBeVisible();
   await expect(gate).toHaveAttribute("data-media-ready", "true");

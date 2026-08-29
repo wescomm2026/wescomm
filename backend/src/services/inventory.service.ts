@@ -56,6 +56,7 @@ export type ProductCreateInput = CategoryInput & {
   name: string;
   description?: string | null;
   imageUrl?: string | null;
+  imageStoragePath?: string | null;
   price: number;
   oldPrice?: number | null;
   status?: ProductStatus;
@@ -77,6 +78,7 @@ const inventoryRecordSelect = Prisma.validator<Prisma.ProductSelect>()({
   name: true,
   description: true,
   imageUrl: true,
+  imageStoragePath: true,
   price: true,
   oldPrice: true,
   status: true,
@@ -146,6 +148,7 @@ function mapInventoryRecord(row: InventoryRecord) {
     name: row.name,
     description: row.description,
     imageUrl: row.imageUrl,
+    imageStoragePath: row.imageStoragePath,
     price: row.price,
     oldPrice: row.oldPrice,
     status: row.status,
@@ -477,6 +480,7 @@ export async function createProduct(input: ProductCreateInput, performedById: st
         name: input.name.trim(),
         description: input.description ?? null,
         imageUrl: input.imageUrl ?? null,
+        imageStoragePath: input.imageStoragePath ?? null,
         price: input.price,
         oldPrice: input.oldPrice ?? null,
         status,
@@ -627,6 +631,7 @@ export async function updateProduct(productId: string, input: ProductUpdateInput
     input.name !== undefined ||
     input.description !== undefined ||
     input.imageUrl !== undefined ||
+    input.imageStoragePath !== undefined ||
     input.price !== undefined ||
     input.oldPrice !== undefined ||
     input.status !== undefined ||
@@ -640,6 +645,7 @@ export async function updateProduct(productId: string, input: ProductUpdateInput
     input.name !== undefined ? "name" : null,
     input.description !== undefined ? "description" : null,
     input.imageUrl !== undefined ? "image_url" : null,
+    input.imageStoragePath !== undefined ? "image_storage_path" : null,
     input.price !== undefined ? "price" : null,
     input.oldPrice !== undefined ? "old_price" : null,
     input.status !== undefined || input.stock !== undefined || input.lowStockThreshold !== undefined ? "status" : null,
@@ -690,6 +696,7 @@ export async function updateProduct(productId: string, input: ProductUpdateInput
       if (input.name !== undefined) updates.name = input.name.trim();
       if (input.description !== undefined) updates.description = input.description;
       if (input.imageUrl !== undefined) updates.imageUrl = input.imageUrl;
+      if (input.imageStoragePath !== undefined) updates.imageStoragePath = input.imageStoragePath;
       if (input.price !== undefined) updates.price = input.price;
       if (input.oldPrice !== undefined) updates.oldPrice = input.oldPrice;
       if (input.status !== undefined || input.stock !== undefined || input.lowStockThreshold !== undefined) {

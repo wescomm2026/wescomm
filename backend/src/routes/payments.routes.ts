@@ -3,7 +3,7 @@ import { Router, type NextFunction, type Request, type Response } from "express"
 import { z } from "zod";
 import { env } from "../config/env.js";
 import { requireAuth, type AuthenticatedRequest } from "../middleware/auth.js";
-import { createRateLimiter, userRateLimitKey } from "../middleware/rate-limit.js";
+import { createRateLimiter, deleteExpiredRateLimitCounters, userRateLimitKey } from "../middleware/rate-limit.js";
 import { requireRole } from "../middleware/require-role.js";
 import {
   createOrResumeGcashCheckout,
@@ -19,6 +19,8 @@ import {
 import { runOutboxBatch } from "../services/outbox.service.js";
 import { deleteExpiredRealtimeEvents } from "../services/realtime-event.service.js";
 import { invalidateOperationalReadCaches } from "../services/operational-cache.service.js";
+import { runRestrictionExpiryBatch } from "../services/restriction.service.js";
+import { backfillReceiptPublicVerificationTokens } from "../services/receipt.service.js";
 
 const paymentIdSchema = z.string().uuid();
 const checkoutSchema = z.object({
@@ -87,13 +89,23 @@ paymentsRoutes.post(
   maintenanceLimiter,
   asyncHandler(async (request, response) => {
     const { limit } = maintenanceSchema.parse(request.body ?? {});
-    const [paymentMaintenance, outbox, deletedRealtimeEvents] = await Promise.all([
+    const restrictionExpiry = await runRestrictionExpiryBatch({ limit });
+    const [paymentMaintenance, receiptTokenBackfill, outbox, deletedRealtimeEvents, deletedRateLimitCounters] = await Promise.all([
       runPaymongoMaintenance({ actorId: null, limit }),
+      backfillReceiptPublicVerificationTokens({ limit }),
       runOutboxBatch({ limit }),
-      deleteExpiredRealtimeEvents()
+      deleteExpiredRealtimeEvents(),
+      deleteExpiredRateLimitCounters()
     ]);
     await invalidateOperationalReadCaches();
-    response.json({ maintenance: paymentMaintenance, outbox, deletedRealtimeEvents });
+    response.json({
+      maintenance: paymentMaintenance,
+      restrictionExpiry,
+      receiptTokenBackfill,
+      outbox,
+      deletedRealtimeEvents,
+      deletedRateLimitCounters
+    });
   })
 );
 

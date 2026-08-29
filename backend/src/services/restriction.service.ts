@@ -14,6 +14,7 @@ import {
 import { createPage, decodeCursor, normalizePageLimit } from "../utils/cursor-pagination.js";
 import { safelyRecordAuditLog } from "./audit-log.service.js";
 import { createNotification } from "./notification.service.js";
+import { OUTBOX_EVENT_TYPES } from "./outbox.service.js";
 
 export { RESERVATION_RESTRICTION_POLICY } from "../domain/reservation-policy.js";
 
@@ -107,22 +108,7 @@ function mapOffense(row: {
   };
 }
 
-async function expireRestrictions(tx: Prisma.TransactionClient, studentId?: string, now = new Date()) {
-  await tx.accountRestriction.updateMany({
-    where: {
-      ...(studentId ? { studentId } : {}),
-      status: "ACTIVE",
-      endsAt: { lte: now }
-    },
-    data: {
-      status: "EXPIRED",
-      updatedAt: now
-    }
-  });
-}
-
 async function findActiveRestriction(tx: Prisma.TransactionClient, studentId: string, now = new Date()) {
-  await expireRestrictions(tx, studentId, now);
   return tx.accountRestriction.findFirst({
     where: {
       studentId,
@@ -334,7 +320,7 @@ export async function getStudentRestrictionSummary(studentId: string) {
 
 export async function listRestrictionOverview(filters: {
   query?: string;
-  status?: "ALL" | "RESTRICTED" | "CLEAR";
+  status?: "ACTIONABLE" | "ALL" | "RESTRICTED" | "WARNING" | "REVIEW";
   cursor?: string;
   limit?: number;
 } = {}) {
@@ -342,15 +328,52 @@ export async function listRestrictionOverview(filters: {
     const now = new Date();
     const limit = normalizePageLimit(filters.limit);
     const cursorId = decodeCursor(filters.cursor);
-    await expireRestrictions(tx, undefined, now);
     const activeRestrictionWhere: Prisma.AccountRestrictionWhereInput = {
       status: "ACTIVE",
       OR: [{ endsAt: null }, { endsAt: { gt: now } }]
     };
-    const restrictionStatusWhere: Prisma.ProfileWhereInput = filters.status === "RESTRICTED"
+    const requestedStatus = filters.status ?? "ACTIONABLE";
+    const actionabilityRows = await tx.$queryRaw<Array<{ id: string; hasRestriction: boolean; hasWarning: boolean; needsReview: boolean }>>`
+      SELECT
+        profile."id",
+        EXISTS (
+          SELECT 1 FROM "account_restrictions" restriction
+          WHERE restriction."student_id" = profile."id"
+            AND restriction."status" = 'ACTIVE'
+            AND (restriction."ends_at" IS NULL OR restriction."ends_at" > ${now})
+        ) AS "hasRestriction",
+        EXISTS (
+          SELECT 1 FROM "student_offenses" offense
+          WHERE offense."student_id" = profile."id"
+            AND offense."type" = 'NO_SHOW'
+            AND offense."status" = 'ACTIVE'
+            AND offense."occurred_at" > COALESCE((
+              SELECT MAX(reservation."updated_at")
+              FROM "reservations" reservation
+              WHERE reservation."student_id" = profile."id"
+                AND reservation."status" = 'COMPLETED'
+            ), '-infinity'::timestamptz)
+        ) AS "hasWarning",
+        EXISTS (
+          SELECT 1 FROM "account_restrictions" restriction
+          WHERE restriction."student_id" = profile."id"
+            AND restriction."status" = 'ACTIVE'
+            AND restriction."ends_at" IS NULL
+        ) AS "needsReview"
+      FROM "profiles" profile
+      WHERE profile."role" = 'STUDENT'
+    `;
+    const actionableIds = actionabilityRows.flatMap((row) => row.hasRestriction || row.hasWarning ? [row.id] : []);
+    const warningIds = actionabilityRows.flatMap((row) => !row.hasRestriction && row.hasWarning ? [row.id] : []);
+    const reviewIds = actionabilityRows.flatMap((row) => row.needsReview ? [row.id] : []);
+    const restrictionStatusWhere: Prisma.ProfileWhereInput = requestedStatus === "RESTRICTED"
       ? { restrictions: { some: activeRestrictionWhere } }
-      : filters.status === "CLEAR"
-        ? { restrictions: { none: activeRestrictionWhere } }
+      : requestedStatus === "WARNING"
+        ? { id: { in: warningIds } }
+        : requestedStatus === "REVIEW"
+          ? { id: { in: reviewIds } }
+          : requestedStatus === "ACTIONABLE" && !filters.query?.trim()
+            ? { id: { in: actionableIds } }
         : {};
     const students = await tx.profile.findMany({
       where: {
@@ -464,6 +487,13 @@ export async function listRestrictionOverview(filters: {
         department: student.department,
         activeRestriction: student.restrictions[0] ? mapRestriction(student.restrictions[0]) : null,
         consecutiveOffenses: consecutiveOffenseCountByStudent.get(student.id) ?? 0,
+        caseType: student.restrictions[0]?.endsAt === null
+          ? "REVIEW"
+          : student.restrictions[0]
+            ? "RESTRICTED"
+            : (consecutiveOffenseCountByStudent.get(student.id) ?? 0) > 0
+              ? "WARNING"
+              : "CLEAR",
         offenses: student.studentOffenses.map(mapOffense)
       };
     });
@@ -478,6 +508,43 @@ export async function listRestrictionOverview(filters: {
         warningStudents: Number(warningRows[0]?.count ?? 0n)
       }
     };
+  });
+}
+
+export async function runRestrictionExpiryBatch(input: { limit?: number; now?: Date } = {}) {
+  const limit = Math.min(Math.max(input.limit ?? 50, 1), 100);
+  const now = input.now ?? new Date();
+  return prisma.$transaction(async (tx) => {
+    const due = await tx.$queryRaw<Array<{ id: string; studentId: string; endsAt: Date }>>`
+      SELECT
+        restriction."id",
+        restriction."student_id" AS "studentId",
+        restriction."ends_at" AS "endsAt"
+      FROM "account_restrictions" restriction
+      WHERE restriction."status" = 'ACTIVE'
+        AND restriction."ends_at" IS NOT NULL
+        AND restriction."ends_at" <= ${now}
+      ORDER BY restriction."ends_at" ASC, restriction."id" ASC
+      FOR UPDATE SKIP LOCKED
+      LIMIT ${limit}
+    `;
+    if (!due.length) return { expired: 0 };
+
+    await tx.accountRestriction.updateMany({
+      where: { id: { in: due.map((restriction) => restriction.id) }, status: "ACTIVE" },
+      data: { status: "EXPIRED", updatedAt: now }
+    });
+    await tx.outboxEvent.createMany({
+      data: due.map((restriction) => ({
+        type: OUTBOX_EVENT_TYPES.restrictionExpired,
+        entityId: restriction.id,
+        payload: {
+          studentId: restriction.studentId,
+          endedAt: restriction.endsAt.toISOString()
+        }
+      }))
+    });
+    return { expired: due.length };
   });
 }
 

@@ -77,7 +77,7 @@ export function StaffRestrictionManagement({ role }: { role: "STAFF" | "ADMIN" }
   const [submitting, setSubmitting] = useState(false);
   const [search, setSearch] = useState("");
   const [noShowSearch, setNoShowSearch] = useState("");
-  const [status, setStatus] = useState<"ALL" | "RESTRICTED" | "CLEAR">("ALL");
+  const [status, setStatus] = useState<"ACTIONABLE" | "ALL" | "RESTRICTED" | "WARNING" | "REVIEW">("ACTIONABLE");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [selectedStudent, setSelectedStudent] = useState<BackendRestrictionStudent | null>(null);
@@ -363,7 +363,7 @@ export function StaffRestrictionManagement({ role }: { role: "STAFF" | "ADMIN" }
             <input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search student name, email, number, or department" className="min-w-0 flex-1 bg-transparent text-sm outline-none" />
           </label>
           <select value={status} onChange={(event) => setStatus(event.target.value as typeof status)} className="h-11 rounded-md border border-[#d7e1d8] bg-white px-3 text-sm font-semibold outline-none focus:border-primary">
-            <option value="ALL">All students</option><option value="RESTRICTED">Access paused</option><option value="CLEAR">No active restriction</option>
+            <option value="ACTIONABLE">Needs attention</option><option value="RESTRICTED">Access paused</option><option value="WARNING">Warnings</option><option value="REVIEW">Review cases</option><option value="ALL">All students</option>
           </select>
         </div>
 

@@ -19,7 +19,7 @@ const identifierSchema = z.string().uuid();
 const reasonSchema = z.string().trim().min(5).max(500);
 const overviewQuerySchema = z.object({
   query: z.string().trim().max(120).optional(),
-  status: z.enum(["ALL", "RESTRICTED", "CLEAR"]).default("ALL"),
+  status: z.enum(["ACTIONABLE", "ALL", "RESTRICTED", "WARNING", "REVIEW"]).default("ACTIONABLE"),
   cursor: z.string().trim().min(1).max(512).optional(),
   limit: z.coerce.number().int().min(1).max(50).optional()
 });

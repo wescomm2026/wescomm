@@ -86,6 +86,15 @@ enum RestrictionSource {
   @@map("restriction_source")
 }
 
+enum PickupReviewStatus {
+  NONE
+  NEEDS_REVIEW
+  RESCHEDULED
+  WAIVED
+
+  @@map("pickup_review_status")
+}
+
 enum PaymentMethod {
   PAY_AT_COMMISSARY
   E_WALLET_AT_PICKUP
@@ -210,6 +219,8 @@ model Profile {
   wishlistItems         WishlistItem[]
   auditLogs             AuditLog[]                  @relation("AuditActor")
   realtimeEvents        RealtimeEvent[]             @relation("RealtimeAudienceUser")
+  createdPickupPolicies PickupPolicyVersion[]       @relation("PickupPolicyCreatedBy")
+  pickupScheduleChanges ReservationScheduleChange[] @relation("PickupScheduleChangedBy")
 
   @@index([createdAt(sort: Desc), id(sort: Desc)])
   @@index([role, createdAt(sort: Desc), id(sort: Desc)])
@@ -247,29 +258,30 @@ model Category {
 }
 
 model Product {
-  id                String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  categoryId        String              @map("category_id") @db.Uuid
-  name              String              @unique
-  description       String?
-  imageUrl          String?             @map("image_url")
-  price             Decimal             @default(0) @db.Decimal(12, 2)
-  oldPrice          Decimal?            @map("old_price") @db.Decimal(12, 2)
-  status            ProductStatus       @default(IN_STOCK)
-  stock             Int                 @default(0)
-  lowStockThreshold Int                 @default(10) @map("low_stock_threshold")
-  isActive          Boolean             @default(true) @map("is_active")
-  saleMode          ProductSaleMode     @default(SIMPLE) @map("sale_mode")
-  skuInventoryEnabled Boolean           @default(false) @map("sku_inventory_enabled")
-  inventoryReconciledAt DateTime?       @map("inventory_reconciled_at") @db.Timestamptz(6)
-  createdAt         DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt         DateTime            @default(now()) @map("updated_at") @db.Timestamptz(6)
-  category          Category            @relation(fields: [categoryId], references: [id], onDelete: Restrict)
-  variants          ProductVariant[]
-  aliases           ProductAlias[]
-  skus              ProductSku[]
-  inventoryMoves    InventoryMovement[]
-  reservationItems  ReservationItem[]
-  wishlistItems     WishlistItem[]
+  id                    String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  categoryId            String              @map("category_id") @db.Uuid
+  name                  String              @unique
+  description           String?
+  imageUrl              String?             @map("image_url")
+  imageStoragePath      String?             @map("image_storage_path")
+  price                 Decimal             @default(0) @db.Decimal(12, 2)
+  oldPrice              Decimal?            @map("old_price") @db.Decimal(12, 2)
+  status                ProductStatus       @default(IN_STOCK)
+  stock                 Int                 @default(0)
+  lowStockThreshold     Int                 @default(10) @map("low_stock_threshold")
+  isActive              Boolean             @default(true) @map("is_active")
+  saleMode              ProductSaleMode     @default(SIMPLE) @map("sale_mode")
+  skuInventoryEnabled   Boolean             @default(false) @map("sku_inventory_enabled")
+  inventoryReconciledAt DateTime?           @map("inventory_reconciled_at") @db.Timestamptz(6)
+  createdAt             DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime            @default(now()) @map("updated_at") @db.Timestamptz(6)
+  category              Category            @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  variants              ProductVariant[]
+  aliases               ProductAlias[]
+  skus                  ProductSku[]
+  inventoryMoves        InventoryMovement[]
+  reservationItems      ReservationItem[]
+  wishlistItems         WishlistItem[]
 
   @@index([isActive, status])
   @@index([isActive, saleMode], map: "products_active_sale_mode_idx")
@@ -294,17 +306,17 @@ model ProductAlias {
 }
 
 model ProductVariant {
-  id             String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  productId      String              @map("product_id") @db.Uuid
-  optionName     String              @map("option_name")
-  optionValue    String              @map("option_value")
-  stock          Int                 @default(0)
-  lowStockThreshold Int              @default(2) @map("low_stock_threshold")
-  createdAt      DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt      DateTime            @default(now()) @map("updated_at") @db.Timestamptz(6)
-  product        Product             @relation(fields: [productId], references: [id], onDelete: Cascade)
-  inventoryMoves InventoryMovement[]
-  skuLinks       ProductSkuVariant[]
+  id                String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  productId         String              @map("product_id") @db.Uuid
+  optionName        String              @map("option_name")
+  optionValue       String              @map("option_value")
+  stock             Int                 @default(0)
+  lowStockThreshold Int                 @default(2) @map("low_stock_threshold")
+  createdAt         DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime            @default(now()) @map("updated_at") @db.Timestamptz(6)
+  product           Product             @relation(fields: [productId], references: [id], onDelete: Cascade)
+  inventoryMoves    InventoryMovement[]
+  skuLinks          ProductSkuVariant[]
 
   @@unique([productId, optionName, optionValue])
   @@map("product_variants")
@@ -365,28 +377,124 @@ model InventoryMovement {
 }
 
 model Reservation {
-  id                 String                     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  studentId          String                     @map("student_id") @db.Uuid
-  referenceCode      String                     @unique @map("reference_code")
-  status             ReservationStatus          @default(PENDING)
-  pickupStart        DateTime?                  @map("pickup_start") @db.Timestamptz(6)
-  pickupEnd          DateTime?                  @map("pickup_end") @db.Timestamptz(6)
-  paymentMethod      PaymentMethod              @default(PAY_AT_COMMISSARY) @map("payment_method")
-  totalAmount        Decimal                    @default(0) @map("total_amount") @db.Decimal(12, 2)
-  staffNotes         String?                    @map("staff_notes")
-  createdAt          DateTime                   @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt          DateTime                   @default(now()) @map("updated_at") @db.Timestamptz(6)
-  student            Profile                    @relation("StudentReservations", fields: [studentId], references: [id], onDelete: Cascade)
-  items              ReservationItem[]
-  receipts           Receipt[]
-  offenses           StudentOffense[]
-  idempotencyRequest ReservationIdempotencyKey?
-  onlinePayment      OnlinePayment?
+  id                    String                      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  studentId             String                      @map("student_id") @db.Uuid
+  referenceCode         String                      @unique @map("reference_code")
+  status                ReservationStatus           @default(PENDING)
+  pickupStart           DateTime?                   @map("pickup_start") @db.Timestamptz(6)
+  pickupEnd             DateTime?                   @map("pickup_end") @db.Timestamptz(6)
+  pickupPolicyVersionId String?                     @map("pickup_policy_version_id") @db.Uuid
+  pickupTimeSlotId      String?                     @map("pickup_time_slot_id") @db.Uuid
+  pickupReviewStatus    PickupReviewStatus          @default(NONE) @map("pickup_review_status")
+  pickupReviewReason    String?                     @map("pickup_review_reason")
+  scheduleRevision      Int                         @default(1) @map("schedule_revision")
+  paymentMethod         PaymentMethod               @default(PAY_AT_COMMISSARY) @map("payment_method")
+  totalAmount           Decimal                     @default(0) @map("total_amount") @db.Decimal(12, 2)
+  staffNotes            String?                     @map("staff_notes")
+  createdAt             DateTime                    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime                    @default(now()) @map("updated_at") @db.Timestamptz(6)
+  student               Profile                     @relation("StudentReservations", fields: [studentId], references: [id], onDelete: Cascade)
+  pickupPolicyVersion   PickupPolicyVersion?        @relation(fields: [pickupPolicyVersionId], references: [id], onDelete: Restrict)
+  pickupTimeSlot        PickupTimeSlot?             @relation(fields: [pickupTimeSlotId], references: [id], onDelete: Restrict)
+  scheduleChanges       ReservationScheduleChange[]
+  items                 ReservationItem[]
+  receipt               Receipt?
+  offenses              StudentOffense[]
+  idempotencyRequest    ReservationIdempotencyKey?
+  onlinePayment         OnlinePayment?
 
   @@index([studentId, createdAt(sort: Desc), id(sort: Desc)])
   @@index([status, createdAt(sort: Desc), id(sort: Desc)])
   @@index([status, pickupEnd, id])
+  @@index([pickupReviewStatus, pickupStart, id])
+  @@index([pickupPolicyVersionId])
+  @@index([pickupTimeSlotId])
   @@map("reservations")
+}
+
+model PickupPolicyVersion {
+  id             String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  version        Int               @unique
+  timezone       String            @default("Asia/Manila")
+  minAdvanceDays Int               @map("min_advance_days")
+  maxAdvanceDays Int               @map("max_advance_days")
+  effectiveAt    DateTime          @default(now()) @map("effective_at") @db.Timestamptz(6)
+  isActive       Boolean           @default(false) @map("is_active")
+  reason         String
+  createdById    String?           @map("created_by_id") @db.Uuid
+  createdAt      DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime          @default(now()) @map("updated_at") @db.Timestamptz(6)
+  createdBy      Profile?          @relation("PickupPolicyCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  days           PickupPolicyDay[]
+  timeSlots      PickupTimeSlot[]
+  closures       PickupClosure[]
+  reservations   Reservation[]
+
+  @@index([isActive, effectiveAt(sort: Desc)])
+  @@map("pickup_policy_versions")
+}
+
+model PickupPolicyDay {
+  id              String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  policyVersionId String              @map("policy_version_id") @db.Uuid
+  weekday         Int
+  enabled         Boolean             @default(true)
+  policyVersion   PickupPolicyVersion @relation(fields: [policyVersionId], references: [id], onDelete: Cascade)
+
+  @@unique([policyVersionId, weekday])
+  @@map("pickup_policy_days")
+}
+
+model PickupTimeSlot {
+  id              String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  policyVersionId String              @map("policy_version_id") @db.Uuid
+  label           String
+  startMinute     Int                 @map("start_minute")
+  endMinute       Int                 @map("end_minute")
+  isActive        Boolean             @default(true) @map("is_active")
+  sortOrder       Int                 @default(0) @map("sort_order")
+  policyVersion   PickupPolicyVersion @relation(fields: [policyVersionId], references: [id], onDelete: Cascade)
+  reservations    Reservation[]
+
+  @@unique([policyVersionId, startMinute, endMinute])
+  @@index([policyVersionId, isActive, sortOrder])
+  @@map("pickup_time_slots")
+}
+
+model PickupClosure {
+  id              String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  policyVersionId String              @map("policy_version_id") @db.Uuid
+  date            DateTime            @db.Date
+  reason          String
+  policyVersion   PickupPolicyVersion @relation(fields: [policyVersionId], references: [id], onDelete: Cascade)
+
+  @@unique([policyVersionId, date])
+  @@index([date])
+  @@map("pickup_closures")
+}
+
+model ReservationScheduleChange {
+  id                       String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  reservationId            String      @map("reservation_id") @db.Uuid
+  actorId                  String?     @map("actor_id") @db.Uuid
+  reason                   String
+  previousPickupStart      DateTime?   @map("previous_pickup_start") @db.Timestamptz(6)
+  previousPickupEnd        DateTime?   @map("previous_pickup_end") @db.Timestamptz(6)
+  previousPolicyVersion    Int?        @map("previous_policy_version")
+  previousSlotLabel        String?     @map("previous_slot_label")
+  newPickupStart           DateTime    @map("new_pickup_start") @db.Timestamptz(6)
+  newPickupEnd             DateTime    @map("new_pickup_end") @db.Timestamptz(6)
+  newPolicyVersion         Int         @map("new_policy_version")
+  newSlotLabel             String      @map("new_slot_label")
+  previousScheduleRevision Int         @map("previous_schedule_revision")
+  newScheduleRevision      Int         @map("new_schedule_revision")
+  createdAt                DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  reservation              Reservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+  actor                    Profile?    @relation("PickupScheduleChangedBy", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([reservationId, createdAt(sort: Desc)])
+  @@index([actorId, createdAt(sort: Desc)])
+  @@map("reservation_schedule_changes")
 }
 
 model OnlinePayment {
@@ -560,27 +668,32 @@ model ReservationItem {
 }
 
 model Receipt {
-  id               String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  receiptCode      String        @unique @map("receipt_code")
-  studentId        String        @map("student_id") @db.Uuid
-  reservationId    String?       @map("reservation_id") @db.Uuid
-  totalAmount      Decimal       @default(0) @map("total_amount") @db.Decimal(12, 2)
-  paymentMethod    PaymentMethod @default(CASH) @map("payment_method")
-  status           ReceiptStatus @default(PENDING)
-  verificationHash String        @unique @map("verification_hash")
-  receiptImageUrl  String?       @map("receipt_image_url")
-  receiptPdfUrl    String?       @map("receipt_pdf_url")
-  issuedById       String?       @map("issued_by_id") @db.Uuid
-  issuedAt         DateTime      @default(now()) @map("issued_at") @db.Timestamptz(6)
-  createdAt        DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt        DateTime      @default(now()) @map("updated_at") @db.Timestamptz(6)
-  student          Profile       @relation("StudentReceipts", fields: [studentId], references: [id], onDelete: Cascade)
-  reservation      Reservation?  @relation(fields: [reservationId], references: [id], onDelete: SetNull)
-  issuedBy         Profile?      @relation("IssuedReceipts", fields: [issuedById], references: [id], onDelete: SetNull)
+  id                               String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  receiptCode                      String        @unique @map("receipt_code")
+  studentId                        String        @map("student_id") @db.Uuid
+  reservationId                    String?       @unique @map("reservation_id") @db.Uuid
+  totalAmount                      Decimal       @default(0) @map("total_amount") @db.Decimal(12, 2)
+  paymentMethod                    PaymentMethod @default(CASH) @map("payment_method")
+  status                           ReceiptStatus @default(PENDING)
+  verificationHash                 String        @unique @map("verification_hash")
+  publicVerificationTokenEncrypted String?       @map("public_verification_token_encrypted")
+  publicVerificationTokenHash      String?       @unique @map("public_verification_token_hash") @db.Char(64)
+  receiptImageUrl                  String?       @map("receipt_image_url")
+  receiptPdfUrl                    String?       @map("receipt_pdf_url")
+  issuedById                       String?       @map("issued_by_id") @db.Uuid
+  issuedAt                         DateTime      @default(now()) @map("issued_at") @db.Timestamptz(6)
+  verifiedAt                       DateTime?     @map("verified_at") @db.Timestamptz(6)
+  voidedAt                         DateTime?     @map("voided_at") @db.Timestamptz(6)
+  createdAt                        DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                        DateTime      @default(now()) @map("updated_at") @db.Timestamptz(6)
+  student                          Profile       @relation("StudentReceipts", fields: [studentId], references: [id], onDelete: Cascade)
+  reservation                      Reservation?  @relation(fields: [reservationId], references: [id], onDelete: SetNull)
+  issuedBy                         Profile?      @relation("IssuedReceipts", fields: [issuedById], references: [id], onDelete: SetNull)
 
   @@index([studentId, issuedAt(sort: Desc), id(sort: Desc)])
   @@index([status, issuedAt(sort: Desc), id(sort: Desc)])
-  @@index([reservationId])
+  @@index([status, verifiedAt(sort: Desc), id(sort: Desc)])
+  @@index([paymentMethod, status, verifiedAt(sort: Desc), id(sort: Desc)])
   @@map("receipts")
 }
 
@@ -637,17 +750,27 @@ model OutboxEvent {
   @@map("outbox_events")
 }
 
+model RateLimitCounter {
+  keyHash   String   @id @map("key_hash") @db.Char(64)
+  count     Int
+  resetAt   DateTime @map("reset_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@index([resetAt])
+  @@map("rate_limit_counters")
+}
+
 model RealtimeEvent {
-  id             BigInt    @id @default(autoincrement())
-  topic          String    @db.VarChar(80)
-  dedupeKey      String?   @unique @map("dedupe_key")
-  audienceUserId String?   @map("audience_user_id") @db.Uuid
-  audienceRole   AppRole?  @map("audience_role")
-  entityId       String?   @map("entity_id") @db.Uuid
-  payload        Json      @default("{}")
-  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  expiresAt      DateTime  @map("expires_at") @db.Timestamptz(6)
-  audienceUser   Profile?  @relation("RealtimeAudienceUser", fields: [audienceUserId], references: [id], onDelete: Cascade)
+  id             BigInt   @id @default(autoincrement())
+  topic          String   @db.VarChar(80)
+  dedupeKey      String?  @unique @map("dedupe_key")
+  audienceUserId String?  @map("audience_user_id") @db.Uuid
+  audienceRole   AppRole? @map("audience_role")
+  entityId       String?  @map("entity_id") @db.Uuid
+  payload        Json     @default("{}")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  expiresAt      DateTime @map("expires_at") @db.Timestamptz(6)
+  audienceUser   Profile? @relation("RealtimeAudienceUser", fields: [audienceUserId], references: [id], onDelete: Cascade)
 
   @@index([audienceUserId, id])
   @@index([audienceRole, id])
@@ -730,18 +853,18 @@ model ConversationMessage {
 }
 
 model Faq {
-  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  question    String   @unique
-  answer      String
-  category    String?
-  isPublished Boolean  @default(true) @map("is_published")
-  source      String?
-  sourceVersion String? @map("source_version")
-  updatedById String?  @map("updated_by_id") @db.Uuid
-  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt   DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
-  updatedBy   Profile? @relation("FaqUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
-  variants    FaqVariant[]
+  id            String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  question      String       @unique
+  answer        String
+  category      String?
+  isPublished   Boolean      @default(true) @map("is_published")
+  source        String?
+  sourceVersion String?      @map("source_version")
+  updatedById   String?      @map("updated_by_id") @db.Uuid
+  createdAt     DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime     @default(now()) @map("updated_at") @db.Timestamptz(6)
+  updatedBy     Profile?     @relation("FaqUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  variants      FaqVariant[]
 
   @@map("faqs")
 }

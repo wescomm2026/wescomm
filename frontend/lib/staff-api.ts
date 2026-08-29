@@ -38,6 +38,7 @@ export type StaffProduct = {
   name: string;
   description?: string | null;
   imageUrl?: string | null;
+  imageStoragePath?: string | null;
   price: string | number;
   oldPrice?: string | number | null;
   status: "IN_STOCK" | "RESTOCK_SOON" | "OUT_OF_STOCK" | "ON_SALE";
@@ -57,6 +58,7 @@ export type StaffProductPayload = {
   categoryName: string;
   description?: string | null;
   imageUrl?: string | null;
+  imageStoragePath?: string | null;
   price: number;
   oldPrice?: number | null;
   saleMode?: ProductSaleMode;
@@ -249,6 +251,31 @@ export async function restoreStaffProduct(token: string, productId: string) {
     method: "POST"
   });
   return data.product;
+}
+
+export type StaffProductDeletionEligibility = {
+  productId: string;
+  productName: string;
+  eligible: boolean;
+  dependencies: { reservationItems: number; transactionalMovements: number };
+  reasons: string[];
+};
+
+export async function getStaffProductDeletionEligibility(token: string, productId: string) {
+  const data = await staffFetch<{ eligibility: StaffProductDeletionEligibility }>(
+    `/staff/products/${productId}/deletion-eligibility`,
+    token
+  );
+  return data.eligibility;
+}
+
+export async function permanentlyDeleteStaffProduct(token: string, productId: string, payload: { confirmation: string; reason: string }) {
+  const data = await staffFetch<{ deletedProduct: { id: string; name: string; imageCleanupQueued: boolean } }>(
+    `/staff/products/${productId}/permanent`,
+    token,
+    { method: "DELETE", body: JSON.stringify(payload) }
+  );
+  return data.deletedProduct;
 }
 
 export async function createStaffProduct(token: string, payload: StaffProductPayload) {

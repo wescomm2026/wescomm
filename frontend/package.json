@@ -8,10 +8,11 @@
   "scripts": {
     "dev": "next dev",
     "start": "next start",
-    "prebuild": "npm run pwa:prepare",
+    "prebuild": "npm run style:guard && npm run pwa:prepare",
     "build": "next build",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
+    "style:guard": "node scripts/check-style-guard.mjs",
     "test:config": "node scripts/check-next-config.mjs",
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed",
@@ -24,7 +25,6 @@
     "icons:vectorize": "node scripts/vectorize-icons.cjs"
   },
   "dependencies": {
-    "@prisma/client": "^5.22.0",
     "@radix-ui/react-slot": "^1.1.0",
     "@supabase/ssr": "^0.5.2",
     "@supabase/supabase-js": "^2.45.4",
@@ -32,6 +32,7 @@
     "clsx": "^2.1.1",
     "lucide-react": "^0.468.0",
     "next": "^14.2.18",
+    "qrcode": "^1.5.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "recharts": "^2.13.3",
@@ -41,13 +42,13 @@
     "@neplex/vectorizer": "^0.1.0",
     "@playwright/test": "^1.61.1",
     "@types/node": "^20.17.6",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "autoprefixer": "^10.4.20",
     "eslint": "^8.57.1",
     "eslint-config-next": "14.2.18",
     "postcss": "^8.4.49",
-    "prisma": "^5.22.0",
     "sharp": "^0.35.2",
     "tailwindcss": "^3.4.15",
     "typescript": "^5.6.3"

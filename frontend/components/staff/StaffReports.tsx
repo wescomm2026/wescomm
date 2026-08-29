@@ -10,12 +10,16 @@ import { SiteFooterLinks } from "@/components/layout/SiteFooterLinks";
 import { AssetIcon } from "@/components/ui/AssetIcon";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
-import { getStaffReportSummaryFromApi, isRequestAbortError, type BackendReportSummary } from "@/lib/api";
+import { getStaffReportSummaryFromApi, isRequestAbortError, type BackendReportSummary, type ReportRangeOptions, type ReportRangePreset } from "@/lib/api";
 import { exportStyledExcelWorkbook } from "@/lib/excel-export";
 import { getStoredStaffSession } from "@/lib/staff-api";
 
 const emptySummary: BackendReportSummary = {
+  range: { preset: "LAST_30_DAYS", from: null, to: "", granularity: "DAILY", label: "Last 30 Days" },
   totalSales: 0,
+  onlineGcashRevenue: 0,
+  payAtCommissaryRevenue: 0,
+  paymentMethodBreakdown: { onlineGcash: { amount: 0, receipts: 0 }, payAtCommissary: { amount: 0, receipts: 0 } },
   totalReservations: 0,
   pendingReservations: 0,
   lowStockItems: 0,
@@ -69,7 +73,7 @@ function formatExportDate() {
   });
 }
 
-function useStaffReportsSummary() {
+function useStaffReportsSummary(options: ReportRangeOptions) {
   const { user, ready, openAuth } = useStudentAuth();
   const [summary, setSummary] = useState<BackendReportSummary>(emptySummary);
   const [loading, setLoading] = useState(true);
@@ -103,7 +107,7 @@ function useStaffReportsSummary() {
     }
 
     try {
-      const data = await getStaffReportSummaryFromApi(token, requestController.signal);
+      const data = await getStaffReportSummaryFromApi(token, options, requestController.signal);
       if (requestId !== requestSequenceRef.current) return;
       setSummary(data);
     } catch (summaryError) {
@@ -113,7 +117,7 @@ function useStaffReportsSummary() {
     } finally {
       if (requestId === requestSequenceRef.current && !background) setLoading(false);
     }
-  }, [ready, user]);
+  }, [options, ready, user]);
 
   useRealtimeRefresh(["reports"], () => {
     void loadSummary({ background: true });
@@ -215,9 +219,15 @@ function insightIcon(insight: BackendReportSummary["inventoryInsights"][number])
 }
 
 export function StaffReports() {
-  const { user, ready, openAuth, summary, loading, error, hasCredential, reload } = useStaffReportsSummary();
   const [exports, setExports] = useState<ReportExport[]>([]);
   const [showAllExports, setShowAllExports] = useState(false);
+  const [rangePreset, setRangePreset] = useState<ReportRangePreset>("LAST_30_DAYS");
+  const [customFrom, setCustomFrom] = useState("");
+  const [customTo, setCustomTo] = useState("");
+  const reportOptions = useMemo<ReportRangeOptions>(() => rangePreset === "CUSTOM" && (!customFrom || !customTo)
+    ? { preset: "LAST_30_DAYS" }
+    : { preset: rangePreset, ...(rangePreset === "CUSTOM" ? { from: customFrom, to: customTo } : {}) }, [customFrom, customTo, rangePreset]);
+  const { user, ready, openAuth, summary, loading, error, hasCredential, reload } = useStaffReportsSummary(reportOptions);
 
   const accessState = (
     <StaffReportAccessState
@@ -230,9 +240,7 @@ export function StaffReports() {
   );
 
   const reportOwner = user?.fullName || getStoredStaffSession().email || "Staff";
-  const reportRange = summary.salesTrend.length
-    ? `${summary.salesTrend[0].day} - ${summary.salesTrend[summary.salesTrend.length - 1].day}`
-    : "Live database summary";
+  const reportRange = summary.range.label;
 
   const reservationStatus = useMemo(
     () =>
@@ -275,6 +283,8 @@ export function StaffReports() {
           headers: ["Metric", "Value", "Operational Note"],
           rows: [
             ["Total Sales", formatCurrency(summary.totalSales), `${formatNumber(summary.totalReceipts)} verified receipt records`],
+            ["GCash – Online Revenue", formatCurrency(summary.onlineGcashRevenue), `${formatNumber(summary.paymentMethodBreakdown.onlineGcash.receipts)} verified receipts`],
+            ["Pay at Commissary Revenue", formatCurrency(summary.payAtCommissaryRevenue), `${formatNumber(summary.paymentMethodBreakdown.payAtCommissary.receipts)} verified receipts`],
             ["Total Reservations", formatNumber(summary.totalReservations), `${formatNumber(summary.pendingReservations)} pending staff review`],
             ["Inventory Value", formatCurrency(summary.inventoryValue), `${formatNumber(summary.totalProducts)} active products`],
             ["Items Needing Restock", formatNumber(summary.lowStockItems), "Products at or below the staff restock alert count"],
@@ -367,6 +377,23 @@ export function StaffReports() {
         </div>
       </header>
 
+      <section className="grid gap-3 rounded-lg border border-[#dce5dd] bg-white p-4 shadow-sm sm:grid-cols-[minmax(200px,1fr)_minmax(160px,0.7fr)_minmax(160px,0.7fr)]">
+        <label className="grid gap-1.5 text-sm font-bold">Revenue period
+          <select value={rangePreset} onChange={(event) => {
+            const next = event.target.value as ReportRangePreset;
+            setRangePreset(next);
+            if (next === "CUSTOM") {
+              const fallback = summary.range.to || new Date().toISOString().slice(0, 10);
+              setCustomFrom((current) => current || summary.range.from || fallback);
+              setCustomTo((current) => current || fallback);
+            }
+          }} className="h-11 rounded-md border border-[#d2dcd3] bg-white px-3 outline-none focus:border-primary">
+            <option value="TODAY">Today</option><option value="LAST_7_DAYS">Last 7 Days</option><option value="LAST_30_DAYS">Last 30 Days</option><option value="THIS_MONTH">This Month</option><option value="LAST_MONTH">Last Month</option><option value="CUSTOM">Custom Range</option><option value="ALL_TIME">All Time</option>
+          </select>
+        </label>
+        {rangePreset === "CUSTOM" ? <><label className="grid gap-1.5 text-sm font-bold">From<input type="date" value={customFrom} onChange={(event) => setCustomFrom(event.target.value)} className="h-11 rounded-md border border-[#d2dcd3] px-3 outline-none focus:border-primary" /></label><label className="grid gap-1.5 text-sm font-bold">To<input type="date" value={customTo} min={customFrom} onChange={(event) => setCustomTo(event.target.value)} className="h-11 rounded-md border border-[#d2dcd3] px-3 outline-none focus:border-primary" /></label></> : <div className="sm:col-span-2 sm:self-end"><p className="rounded-md bg-[#f3f7f3] px-4 py-3 text-sm font-semibold text-[#4f5c54]">Official revenue counts verified receipts within Manila calendar boundaries.</p></div>}
+      </section>
+
       <div className="w-fit rounded-md border border-[#d7e0d8] bg-white px-3 py-2 text-sm font-semibold text-[#344139]">
         Report range: <span className="text-primary">{reportRange}</span>
       </div>
@@ -379,6 +406,12 @@ export function StaffReports() {
         <ReportStat title="Total Reservations" value={formatNumber(summary.totalReservations)} detail={`${formatNumber(summary.pendingReservations)} pending staff review`} iconSrc="/assets/reservations.svg" />
         <ReportStat title="Inventory Value" value={formatCurrency(summary.inventoryValue)} detail={`${formatNumber(summary.totalProducts)} active products`} iconSrc="/assets/all-items.svg" />
         <ReportStat title="Items to Restock" value={formatNumber(summary.lowStockItems)} detail="Reached the restock alert count" iconSrc="/assets/low-stock.svg" warning={summary.lowStockItems > 0} />
+      </section>
+
+      <section className="grid gap-4 sm:grid-cols-3">
+        <ReportStat title="GCash – Online" value={formatCurrency(summary.onlineGcashRevenue)} detail={`${formatNumber(summary.paymentMethodBreakdown.onlineGcash.receipts)} verified receipts`} iconSrc="/assets/e-wallet.svg" />
+        <ReportStat title="Pay at Commissary" value={formatCurrency(summary.payAtCommissaryRevenue)} detail={`${formatNumber(summary.paymentMethodBreakdown.payAtCommissary.receipts)} verified receipts`} iconSrc="/assets/cash.svg" />
+        <ReportStat title="Total Revenue" value={formatCurrency(summary.totalSales)} detail={summary.range.label} iconSrc="/assets/orders.svg" />
       </section>
 
       <StaffReportCharts summary={summary} />

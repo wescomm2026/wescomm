@@ -1,33 +1,11 @@
 import { getCache } from "@vercel/functions";
+import { resolveReportRange, type ReportRangeInput, type ResolvedReportRange } from "../domain/report-range.js";
 import { prisma } from "../lib/prisma.js";
 import { withTransientPrismaReadRetry } from "../utils/prisma-retry.js";
 
 function toNumber(value: unknown) {
   const numericValue = Number(value ?? 0);
   return Number.isFinite(numericValue) ? numericValue : 0;
-}
-
-function subDays(value: Date, days: number) {
-  const date = new Date(value);
-  date.setDate(date.getDate() - days);
-  return date;
-}
-
-function dayKey(value: Date) {
-  return new Intl.DateTimeFormat("en-CA", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    timeZone: "Asia/Manila"
-  }).format(value);
-}
-
-function formatTrendLabel(value: Date) {
-  return value.toLocaleDateString("en-PH", {
-    month: "short",
-    day: "numeric",
-    timeZone: "Asia/Manila"
-  });
 }
 
 function reservationStatusLabel(status: string) {
@@ -38,39 +16,67 @@ function reservationStatusLabel(status: string) {
     COMPLETED: "Completed",
     CANCELLED: "Cancelled"
   };
-
   return labels[status] ?? status;
 }
 
-async function buildReportSummary() {
-  const today = new Date();
-  const trendStart = subDays(today, 6);
+function trendLabel(key: string, granularity: ResolvedReportRange["granularity"]) {
+  const value = granularity === "MONTHLY" ? `${key}-01T00:00:00+08:00` : `${key}T00:00:00+08:00`;
+  return new Date(value).toLocaleDateString("en-PH", granularity === "MONTHLY"
+    ? { month: "short", year: "numeric", timeZone: "Asia/Manila" }
+    : { month: "short", day: "numeric", timeZone: "Asia/Manila" });
+}
 
-  type ProductMetricsRow = {
-    totalProducts: number;
-    lowStockItems: number;
-    outOfStockItems: number;
-    inventoryValue: string | number | null;
-  };
-  type SalesTrendRow = {
-    key: string;
-    sales: string | number;
-    receipts: number;
-  };
-  type CategorySalesRow = {
-    category: string;
-    amount: string | number;
-  };
+function nextTrendKey(key: string, granularity: ResolvedReportRange["granularity"]) {
+  const value = new Date(`${granularity === "MONTHLY" ? `${key}-01` : key}T00:00:00Z`);
+  if (granularity === "MONTHLY") value.setUTCMonth(value.getUTCMonth() + 1);
+  else value.setUTCDate(value.getUTCDate() + 1);
+  return value.toISOString().slice(0, granularity === "MONTHLY" ? 7 : 10);
+}
+
+function buildTrendRows(
+  rows: Array<{ key: string; sales: string | number; receipts: number }>,
+  range: ResolvedReportRange
+) {
+  const actual = new Map(rows.map((row) => [row.key, {
+    key: row.key,
+    day: trendLabel(row.key, range.granularity),
+    sales: toNumber(row.sales),
+    receipts: row.receipts
+  }]));
+  if (!range.from) return [...actual.values()];
+
+  const first = range.granularity === "MONTHLY" ? range.from.slice(0, 7) : range.from;
+  const last = range.granularity === "MONTHLY" ? range.to.slice(0, 7) : range.to;
+  const result = [];
+  for (let key = first; key <= last; key = nextTrendKey(key, range.granularity)) {
+    result.push(actual.get(key) ?? {
+      key,
+      day: trendLabel(key, range.granularity),
+      sales: 0,
+      receipts: 0
+    });
+  }
+  return result;
+}
+
+async function buildReportSummary(options: ReportRangeInput = {}) {
+  const range = resolveReportRange(options);
 
   type ReportPayloadRow = {
-    productMetrics: ProductMetricsRow;
+    productMetrics: {
+      totalProducts: number;
+      lowStockItems: number;
+      outOfStockItems: number;
+      inventoryValue: string | number | null;
+    };
     reservationGroups: Array<{ status: string; count: number }>;
     receiptAggregate: { totalAmount: string | number | null; count: number };
+    receiptPaymentGroups: Array<{ channel: string; amount: string | number; count: number }>;
     pendingReceiptCount: number;
     userGroups: Array<{ role: string; count: number }>;
     activeConversations: number;
-    salesTrendRows: SalesTrendRow[];
-    categorySalesRows: CategorySalesRow[];
+    salesTrendRows: Array<{ key: string; sales: string | number; receipts: number }>;
+    categorySalesRows: Array<{ category: string; amount: string | number }>;
   };
 
   const rows = await withTransientPrismaReadRetry(() => prisma.$queryRaw<ReportPayloadRow[]>`
@@ -99,8 +105,25 @@ async function buildReportSummary() {
           'count', COUNT(*)::integer
         )
         FROM receipts
-        WHERE status <> 'VOIDED'
+        WHERE status = 'VERIFIED'
+          AND (${range.fromInclusive}::timestamptz IS NULL OR COALESCE(verified_at, issued_at) >= ${range.fromInclusive})
+          AND COALESCE(verified_at, issued_at) < ${range.toExclusive}
       ) AS "receiptAggregate",
+      COALESCE((
+        SELECT jsonb_agg(to_jsonb(payment_row))
+        FROM (
+          SELECT
+            CASE WHEN payment_method = 'PAYMONGO_GCASH' THEN 'ONLINE_GCASH' ELSE 'AT_COMMISSARY' END AS channel,
+            COALESCE(SUM(total_amount), 0)::text AS amount,
+            COUNT(*)::integer AS count
+          FROM receipts
+          WHERE status = 'VERIFIED'
+            AND (${range.fromInclusive}::timestamptz IS NULL OR COALESCE(verified_at, issued_at) >= ${range.fromInclusive})
+            AND COALESCE(verified_at, issued_at) < ${range.toExclusive}
+          GROUP BY channel
+          ORDER BY channel
+        ) payment_row
+      ), '[]'::jsonb) AS "receiptPaymentGroups",
       (SELECT COUNT(*)::integer FROM receipts WHERE status = 'PENDING') AS "pendingReceiptCount",
       COALESCE((
         SELECT jsonb_agg(jsonb_build_object('role', grouped.role, 'count', grouped.count))
@@ -115,29 +138,32 @@ async function buildReportSummary() {
         SELECT jsonb_agg(to_jsonb(trend_row))
         FROM (
           SELECT
-            TO_CHAR(issued_at AT TIME ZONE 'Asia/Manila', 'YYYY-MM-DD') AS key,
+            CASE WHEN ${range.granularity}::text = 'MONTHLY'
+              THEN TO_CHAR(COALESCE(verified_at, issued_at) AT TIME ZONE 'Asia/Manila', 'YYYY-MM')
+              ELSE TO_CHAR(COALESCE(verified_at, issued_at) AT TIME ZONE 'Asia/Manila', 'YYYY-MM-DD')
+            END AS key,
             COALESCE(SUM(total_amount), 0)::text AS sales,
             COUNT(*)::integer AS receipts
           FROM receipts
-          WHERE status <> 'VOIDED'
-            AND issued_at >= ${trendStart}
-          GROUP BY TO_CHAR(issued_at AT TIME ZONE 'Asia/Manila', 'YYYY-MM-DD')
+          WHERE status = 'VERIFIED'
+            AND (${range.fromInclusive}::timestamptz IS NULL OR COALESCE(verified_at, issued_at) >= ${range.fromInclusive})
+            AND COALESCE(verified_at, issued_at) < ${range.toExclusive}
+          GROUP BY key
           ORDER BY key ASC
         ) trend_row
       ), '[]'::jsonb) AS "salesTrendRows",
       COALESCE((
         SELECT jsonb_agg(to_jsonb(category_row))
         FROM (
-          SELECT
-            categories.name AS category,
-            COALESCE(SUM(reservation_items.subtotal), 0)::text AS amount
+          SELECT categories.name AS category, COALESCE(SUM(reservation_items.subtotal), 0)::text AS amount
           FROM receipts
           INNER JOIN reservations ON reservations.id = receipts.reservation_id
           INNER JOIN reservation_items ON reservation_items.reservation_id = reservations.id
           INNER JOIN products ON products.id = reservation_items.product_id
           INNER JOIN categories ON categories.id = products.category_id
-          WHERE receipts.status <> 'VOIDED'
-            AND receipts.issued_at >= ${trendStart}
+          WHERE receipts.status = 'VERIFIED'
+            AND (${range.fromInclusive}::timestamptz IS NULL OR COALESCE(receipts.verified_at, receipts.issued_at) >= ${range.fromInclusive})
+            AND COALESCE(receipts.verified_at, receipts.issued_at) < ${range.toExclusive}
           GROUP BY categories.name
           ORDER BY SUM(reservation_items.subtotal) DESC
           LIMIT 6
@@ -149,88 +175,53 @@ async function buildReportSummary() {
     productMetrics: { totalProducts: 0, lowStockItems: 0, outOfStockItems: 0, inventoryValue: 0 },
     reservationGroups: [],
     receiptAggregate: { totalAmount: 0, count: 0 },
+    receiptPaymentGroups: [],
     pendingReceiptCount: 0,
     userGroups: [],
     activeConversations: 0,
     salesTrendRows: [],
     categorySalesRows: []
   };
-  const productMetricRows = [payload.productMetrics];
-  const reservationGroups = payload.reservationGroups.map((group) => ({
-    status: group.status,
-    _count: { _all: group.count }
-  }));
-  const receiptAggregate = {
-    _sum: { totalAmount: payload.receiptAggregate.totalAmount },
-    _count: { _all: payload.receiptAggregate.count }
-  };
-  const pendingReceiptCount = payload.pendingReceiptCount;
-  const userGroups = payload.userGroups.map((group) => ({
-    role: group.role,
-    _count: { _all: group.count }
-  }));
-  const activeConversations = payload.activeConversations;
-  const salesTrendRows = payload.salesTrendRows;
-  const categorySalesRows = payload.categorySalesRows;
-
-  const productMetrics = productMetricRows[0];
-  const totalProducts = productMetrics?.totalProducts ?? 0;
-  const lowStockItems = productMetrics?.lowStockItems ?? 0;
-  const outOfStockItems = productMetrics?.outOfStockItems ?? 0;
-  const inventoryValue = toNumber(productMetrics?.inventoryValue);
-  const totalReservations = reservationGroups.reduce((sum, group) => sum + group._count._all, 0);
-  const pendingReservations = reservationGroups.find((group) => group.status === "PENDING")?._count._all ?? 0;
-  const activeUsers = userGroups.reduce((sum, group) => sum + group._count._all, 0);
-  const totalSales = toNumber(receiptAggregate._sum.totalAmount);
-  const totalReceipts = receiptAggregate._count._all;
-
-  const roleCounts = Object.fromEntries(userGroups.map((group) => [group.role, group._count._all]));
-  const reservationStatusDistribution = reservationGroups.map((group) => ({
-    status: group.status,
-    label: reservationStatusLabel(group.status),
-    value: group._count._all,
-    percent: totalReservations ? Math.round((group._count._all / totalReservations) * 1000) / 10 : 0
-  }));
-
-  const trendDays = Array.from({ length: 7 }, (_, index) => {
-    const date = subDays(today, 6 - index);
-    return {
-      key: dayKey(date),
-      day: formatTrendLabel(date),
-      sales: 0,
-      receipts: 0
-    };
-  });
-
-  const trendByDay = new Map(trendDays.map((day) => [day.key, day]));
-  salesTrendRows.forEach((row) => {
-    const trend = trendByDay.get(row.key);
-    if (trend) {
-      trend.sales = toNumber(row.sales);
-      trend.receipts = row.receipts;
-    }
-  });
+  const totalReservations = payload.reservationGroups.reduce((sum, group) => sum + group.count, 0);
+  const roleCounts = Object.fromEntries(payload.userGroups.map((group) => [group.role, group.count]));
+  const paymentCounts = Object.fromEntries(payload.receiptPaymentGroups.map((group) => [group.channel, group]));
+  const lowStockItems = payload.productMetrics.lowStockItems ?? 0;
+  const outOfStockItems = payload.productMetrics.outOfStockItems ?? 0;
 
   return {
-    totalSales,
+    range: {
+      preset: range.preset,
+      from: range.from,
+      to: range.to,
+      granularity: range.granularity,
+      label: range.label
+    },
+    totalSales: toNumber(payload.receiptAggregate.totalAmount),
+    onlineGcashRevenue: toNumber(paymentCounts.ONLINE_GCASH?.amount),
+    payAtCommissaryRevenue: toNumber(paymentCounts.AT_COMMISSARY?.amount),
+    paymentMethodBreakdown: {
+      onlineGcash: { amount: toNumber(paymentCounts.ONLINE_GCASH?.amount), receipts: paymentCounts.ONLINE_GCASH?.count ?? 0 },
+      payAtCommissary: { amount: toNumber(paymentCounts.AT_COMMISSARY?.amount), receipts: paymentCounts.AT_COMMISSARY?.count ?? 0 }
+    },
     totalReservations,
-    pendingReservations,
+    pendingReservations: payload.reservationGroups.find((group) => group.status === "PENDING")?.count ?? 0,
     lowStockItems,
     outOfStockItems,
-    totalProducts,
-    inventoryValue,
-    activeUsers,
-    roleCounts: {
-      students: roleCounts.STUDENT ?? 0,
-      staff: roleCounts.STAFF ?? 0,
-      admins: roleCounts.ADMIN ?? 0
-    },
-    receiptsToVerify: pendingReceiptCount,
-    totalReceipts,
-    activeConversations,
-    salesTrend: trendDays,
-    categorySales: categorySalesRows.map((row) => ({ category: row.category, amount: toNumber(row.amount) })),
-    reservationStatusDistribution,
+    totalProducts: payload.productMetrics.totalProducts ?? 0,
+    inventoryValue: toNumber(payload.productMetrics.inventoryValue),
+    activeUsers: payload.userGroups.reduce((sum, group) => sum + group.count, 0),
+    roleCounts: { students: roleCounts.STUDENT ?? 0, staff: roleCounts.STAFF ?? 0, admins: roleCounts.ADMIN ?? 0 },
+    receiptsToVerify: payload.pendingReceiptCount,
+    totalReceipts: payload.receiptAggregate.count,
+    activeConversations: payload.activeConversations,
+    salesTrend: buildTrendRows(payload.salesTrendRows, range),
+    categorySales: payload.categorySalesRows.map((row) => ({ category: row.category, amount: toNumber(row.amount) })),
+    reservationStatusDistribution: payload.reservationGroups.map((group) => ({
+      status: group.status,
+      label: reservationStatusLabel(group.status),
+      value: group.count,
+      percent: totalReservations ? Math.round((group.count / totalReservations) * 1000) / 10 : 0
+    })),
     inventoryInsights: [
       {
         insight: `${lowStockItems} items reached restock alert count`,
@@ -243,9 +234,9 @@ async function buildReportSummary() {
         recommendation: outOfStockItems ? "Coordinate immediate replenishment" : "No unavailable items at the moment"
       },
       {
-        insight: `${activeConversations} open support conversations`,
-        impact: activeConversations ? "Medium" : "Positive",
-        recommendation: activeConversations ? "Assign staff replies" : "Support queue is clear"
+        insight: `${payload.activeConversations} open support conversations`,
+        impact: payload.activeConversations ? "Medium" : "Positive",
+        recommendation: payload.activeConversations ? "Assign staff replies" : "Support queue is clear"
       }
     ]
   };
@@ -253,53 +244,48 @@ async function buildReportSummary() {
 
 const REPORT_CACHE_TTL_MS = 15_000;
 const REPORT_CACHE_TTL_SECONDS = REPORT_CACHE_TTL_MS / 1_000;
-const REPORT_CACHE_KEY = "summary:v2";
 type ReportSummary = Awaited<ReturnType<typeof buildReportSummary>>;
 
-let cachedReport: { value: ReportSummary; expiresAt: number } | null = null;
-let pendingReport: Promise<ReportSummary> | null = null;
+const cachedReports = new Map<string, { value: ReportSummary; expiresAt: number }>();
+const pendingReports = new Map<string, Promise<ReportSummary>>();
 const reportRuntimeCache = getCache({ namespace: "wescomm-reports" });
 
 function isReportSummary(value: unknown): value is ReportSummary {
-  return Boolean(
-    value
-    && typeof value === "object"
+  return Boolean(value && typeof value === "object"
     && typeof (value as Partial<ReportSummary>).totalSales === "number"
-    && Array.isArray((value as Partial<ReportSummary>).salesTrend)
-  );
+    && Array.isArray((value as Partial<ReportSummary>).salesTrend));
 }
 
 export async function invalidateReportSummaryCache() {
-  cachedReport = null;
-  await Promise.all([
-    reportRuntimeCache.delete(REPORT_CACHE_KEY),
-    reportRuntimeCache.expireTag("reports")
-  ]).catch(() => undefined);
+  cachedReports.clear();
+  await reportRuntimeCache.expireTag("reports").catch(() => undefined);
 }
 
-export async function getReportSummary() {
-  if (cachedReport && cachedReport.expiresAt > Date.now()) return cachedReport.value;
-  if (pendingReport) return pendingReport;
+export async function getReportSummary(options: ReportRangeInput = {}) {
+  const resolved = resolveReportRange(options);
+  const key = `summary:v3:${resolved.cacheKey}`;
+  const localValue = cachedReports.get(key);
+  if (localValue && localValue.expiresAt > Date.now()) return localValue.value;
+  const pendingValue = pendingReports.get(key);
+  if (pendingValue) return pendingValue;
 
-  pendingReport = (async () => {
-    const regionalValue = await reportRuntimeCache.get(REPORT_CACHE_KEY).catch(() => null);
+  const pending = (async () => {
+    const regionalValue = await reportRuntimeCache.get(key).catch(() => null);
     if (isReportSummary(regionalValue)) {
-      cachedReport = { value: regionalValue, expiresAt: Date.now() + REPORT_CACHE_TTL_MS };
+      cachedReports.set(key, { value: regionalValue, expiresAt: Date.now() + REPORT_CACHE_TTL_MS });
       return regionalValue;
     }
 
-    const value = await buildReportSummary();
-    cachedReport = { value, expiresAt: Date.now() + REPORT_CACHE_TTL_MS };
-    await reportRuntimeCache.set(REPORT_CACHE_KEY, value, {
+    const value = await buildReportSummary(options);
+    cachedReports.set(key, { value, expiresAt: Date.now() + REPORT_CACHE_TTL_MS });
+    await reportRuntimeCache.set(key, value, {
       ttl: REPORT_CACHE_TTL_SECONDS,
       tags: ["reports"],
       name: "WESCOMM report summary"
     }).catch(() => undefined);
     return value;
-  })()
-    .finally(() => {
-      pendingReport = null;
-    });
+  })().finally(() => pendingReports.delete(key));
 
-  return pendingReport;
+  pendingReports.set(key, pending);
+  return pending;
 }

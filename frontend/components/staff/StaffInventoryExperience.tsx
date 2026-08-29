@@ -17,9 +17,11 @@ import {
   clearStaffSession,
   createStaffProduct,
   getStaffProductsPage,
+  getStaffProductDeletionEligibility,
   getStoredStaffSession,
   restockStaffProduct,
   restoreStaffProduct,
+  permanentlyDeleteStaffProduct,
   syncStaffProductVariants,
   updateStaffProduct,
   updateStaffProductSaleMode,
@@ -80,6 +82,10 @@ export function StaffInventoryExperience() {
   const [submitting, setSubmitting] = useState(false);
   const [archivingProductId, setArchivingProductId] = useState("");
   const [restoringProductId, setRestoringProductId] = useState("");
+  const [permanentDeleteProduct, setPermanentDeleteProduct] = useState<Product | null>(null);
+  const [permanentDeleteConfirmation, setPermanentDeleteConfirmation] = useState("");
+  const [permanentDeleteReason, setPermanentDeleteReason] = useState("");
+  const [deletingProductId, setDeletingProductId] = useState("");
   const [adding, setAdding] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [manageSection, setManageSection] = useState<ManageSection>("menu");
@@ -545,6 +551,46 @@ export function StaffInventoryExperience() {
     }
   };
 
+  const reviewPermanentDelete = async (product: Product) => {
+    setError("");
+    setDeletingProductId(product.id);
+    try {
+      const eligibility = await getStaffProductDeletionEligibility(token, product.id);
+      if (!eligibility.eligible) {
+        setError(`${product.name} must remain archived. ${eligibility.reasons.join(" ")}`);
+        return;
+      }
+      setPermanentDeleteProduct(product);
+      setPermanentDeleteConfirmation("");
+      setPermanentDeleteReason("");
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : "Unable to check permanent deletion eligibility.");
+    } finally {
+      setDeletingProductId("");
+    }
+  };
+
+  const deleteProductPermanently = async () => {
+    if (!permanentDeleteProduct) return;
+    setSubmitting(true);
+    setDeletingProductId(permanentDeleteProduct.id);
+    setError("");
+    try {
+      const deleted = await permanentlyDeleteStaffProduct(token, permanentDeleteProduct.id, {
+        confirmation: permanentDeleteConfirmation,
+        reason: permanentDeleteReason.trim()
+      });
+      setProducts((current) => current.filter((item) => item.id !== deleted.id));
+      setPermanentDeleteProduct(null);
+      setNotice(`${deleted.name} permanently deleted.${deleted.imageCleanupQueued ? " Its managed image was queued for secure storage cleanup." : ""}`);
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : "Unable to permanently delete this product.");
+    } finally {
+      setDeletingProductId("");
+      setSubmitting(false);
+    }
+  };
+
   const categoryOptions = categories.map((category) => category.name);
 
   const restockVariantGroups = restockingProduct?.saleMode === "OPTIONS"
@@ -746,9 +792,12 @@ export function StaffInventoryExperience() {
                 <StatusBadge status={product.status} />
                 <div className="flex flex-wrap gap-2 lg:w-[140px] lg:flex-col">
                   {visibility === "ARCHIVED" ? (
-                    <Button className="h-9 flex-1 px-3 lg:w-full" onClick={() => void restoreProduct(product)} disabled={submitting}>
-                      <RotateCcw className="size-4" /> Restore item
-                    </Button>
+                    <>
+                      <Button className="h-9 flex-1 px-3 lg:w-full" onClick={() => void restoreProduct(product)} disabled={submitting}>
+                        <RotateCcw className="size-4" /> Restore item
+                      </Button>
+                      {user?.role === "ADMIN" ? <Button variant="ghost" className="h-9 flex-1 border border-red-200 px-3 text-red-700 hover:bg-red-50 lg:w-full" onClick={() => void reviewPermanentDelete(product)} disabled={submitting || deletingProductId === product.id}><Trash2 className="size-4" />{deletingProductId === product.id ? "Checking..." : "Delete permanently"}</Button> : null}
+                    </>
                   ) : (<>
                     <Button className="h-9 flex-1 px-3 lg:w-full" onClick={() => openRestock(product)} disabled={submitting}>
                       <Plus className="size-4" />
@@ -797,9 +846,11 @@ export function StaffInventoryExperience() {
 
             try {
               let imageUrl = String(form.get("imageUrl") ?? "").trim() || null;
+              let imageStoragePath: string | null = null;
               if (addImageFile) {
                 const uploadedImage = await uploadStaffProductImage(token, addImageFile);
                 imageUrl = uploadedImage.url;
+                imageStoragePath = uploadedImage.path;
               }
 
               const sizeVariants = addHasSizeVariants
@@ -838,6 +889,7 @@ export function StaffInventoryExperience() {
                 categoryName: String(form.get("category")).trim(),
                 description: String(form.get("description") ?? "").trim() || null,
                 imageUrl,
+                imageStoragePath,
                 price: Number(form.get("price")),
                 oldPrice: String(form.get("oldPrice") ?? "").trim() ? Number(form.get("oldPrice")) : null,
                 saleMode: addSaleMode,
@@ -1242,11 +1294,13 @@ export function StaffInventoryExperience() {
                   setError("");
                   try {
                     let imageUrl = String(form.get("imageUrl") ?? "").trim() || null;
+                    let imageStoragePath = imageUrl === editingProduct.imageUrl ? editingProduct.imageStoragePath : null;
                     if (editImageFile) {
                       const uploadedImage = await uploadStaffProductImage(token, editImageFile);
                       imageUrl = uploadedImage.url;
+                      imageStoragePath = uploadedImage.path;
                     }
-                    const updatedProduct = await updateStaffProduct(token, editingProduct.id, { imageUrl, notes: "Product image updated from staff inventory page." });
+                    const updatedProduct = await updateStaffProduct(token, editingProduct.id, { imageUrl, imageStoragePath, notes: "Product image updated from staff inventory page." });
                     const mappedProduct = mapStaffProduct(updatedProduct);
                     setProducts((current) => current.map((product) => product.id === mappedProduct.id ? mappedProduct : product));
                     setEditingProduct(mappedProduct);
@@ -1472,6 +1526,17 @@ export function StaffInventoryExperience() {
               </Button>
             </footer>
           </form>
+        </div>
+      ) : null}
+      {permanentDeleteProduct ? (
+        <div className="fixed inset-0 z-[11000] grid place-items-center overflow-y-auto bg-[#101820]/60 p-3" onMouseDown={(event) => { if (!submitting && event.target === event.currentTarget) setPermanentDeleteProduct(null); }}>
+          <section role="alertdialog" aria-modal="true" aria-labelledby="permanent-product-delete-title" aria-describedby="permanent-product-delete-description" className="w-full max-w-lg rounded-lg bg-white p-5 shadow-2xl sm:p-6">
+            <div className="flex items-start gap-3"><span className="grid size-11 shrink-0 place-items-center rounded-md bg-red-50 text-red-700"><Trash2 className="size-6" /></span><div><p className="text-xs font-bold uppercase text-red-700">Admin only · irreversible</p><h2 id="permanent-product-delete-title" className="mt-1 text-xl font-extrabold text-[#17211b]">Delete {permanentDeleteProduct.name} permanently?</h2></div><button type="button" autoFocus aria-label="Close permanent deletion dialog" onClick={() => setPermanentDeleteProduct(null)} disabled={submitting} className="ml-auto grid size-9 place-items-center rounded-md hover:bg-[#f1f5f1]"><X className="size-5" /></button></div>
+            <p id="permanent-product-delete-description" className="mt-4 text-sm leading-6 text-[#59665e]">The backend confirmed that this archived product has no reservation or transactional history that must be retained. Its managed image will be deleted through a retryable cleanup job.</p>
+            <label className="mt-5 grid gap-1.5 text-sm font-bold">Deletion reason<textarea required minLength={10} maxLength={500} value={permanentDeleteReason} onChange={(event) => setPermanentDeleteReason(event.target.value)} placeholder="Document why this product and its files should be removed." className="min-h-24 rounded-md border border-[#dfc4c4] px-3 py-2 font-normal outline-none focus:border-red-600" /></label>
+            <label className="mt-4 grid gap-1.5 text-sm font-bold">Type the exact product name to confirm<input value={permanentDeleteConfirmation} onChange={(event) => setPermanentDeleteConfirmation(event.target.value)} placeholder={permanentDeleteProduct.name} autoComplete="off" className="h-11 rounded-md border border-[#dfc4c4] px-3 font-normal outline-none focus:border-red-600" /></label>
+            <div className="mt-6 grid grid-cols-2 gap-3"><Button variant="secondary" onClick={() => setPermanentDeleteProduct(null)} disabled={submitting}>Keep archived</Button><Button className="bg-red-700 hover:bg-red-800" onClick={() => void deleteProductPermanently()} disabled={submitting || permanentDeleteConfirmation !== permanentDeleteProduct.name || permanentDeleteReason.trim().length < 10}>{submitting ? "Deleting..." : "Delete permanently"}</Button></div>
+          </section>
         </div>
       ) : null}
       {notice ? <Notice text={notice} onClose={() => setNotice("")} /> : null}

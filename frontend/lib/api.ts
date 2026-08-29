@@ -84,9 +84,7 @@ export type BackendPaymentMethod = "PAY_AT_COMMISSARY" | "E_WALLET_AT_PICKUP" | 
 export type BackendPaymentStatus =
   | "INITIALIZING"
   | "AWAITING_PAYMENT"
-  | "PROCESSING"
   | "PAID"
-  | "FAILED"
   | "EXPIRED"
   | "CANCELLED"
   | "REFUND_REVIEW_REQUIRED"
@@ -142,6 +140,11 @@ export type BackendReservation = {
   status: BackendReservationStatus;
   pickupStart: string | null;
   pickupEnd: string | null;
+  pickupReviewStatus: "NONE" | "NEEDS_REVIEW" | "RESCHEDULED" | "WAIVED";
+  pickupReviewReason: string | null;
+  scheduleRevision: number;
+  pickupPolicyVersion: number | null;
+  pickupSlot: BackendPickupTimeSlot | null;
   paymentMethod: BackendPaymentMethod;
   totalAmount: string | number;
   staffNotes?: string | null;
@@ -158,12 +161,29 @@ export type BackendReservation = {
     subtotal: string | number;
     product?: BackendProduct | null;
   }>;
+  scheduleChanges?: Array<{
+    id: string;
+    reason: string;
+    previousPickupStart: string | null;
+    previousPickupEnd: string | null;
+    previousPolicyVersion: number | null;
+    previousSlotLabel: string | null;
+    newPickupStart: string;
+    newPickupEnd: string;
+    newPolicyVersion: number;
+    newSlotLabel: string;
+    previousScheduleRevision: number;
+    newScheduleRevision: number;
+    createdAt: string;
+    actor?: BackendProfileSummary | null;
+  }>;
 };
 
 export type CreateReservationPayload = {
   paymentMethod: BackendPaymentMethod;
-  pickupStart: string;
-  pickupEnd: string;
+  pickupDate: string;
+  pickupSlotId: string;
+  pickupPolicyVersion: number;
   items: Array<{
     productId: string;
     skuId?: string;
@@ -180,11 +200,13 @@ export type BackendReceipt = {
   totalAmount: string | number;
   paymentMethod: BackendPaymentMethod;
   status: BackendReceiptStatus;
-  verificationHash: string;
+  publicVerificationUrl: string | null;
   receiptImageUrl?: string | null;
   receiptPdfUrl?: string | null;
   issuedById?: string | null;
   issuedAt: string;
+  verifiedAt?: string | null;
+  voidedAt?: string | null;
   createdAt: string;
   updatedAt: string;
   student?: BackendProfileSummary | null;
@@ -229,7 +251,47 @@ export type BackendCollectionOptions = {
   query?: string;
   dateFrom?: string;
   dateTo?: string;
+  paymentChannel?: "ONLINE_GCASH" | "AT_COMMISSARY";
   signal?: AbortSignal;
+};
+
+export type BackendPickupTimeSlot = {
+  id: string;
+  label: string;
+  startMinute: number;
+  endMinute: number;
+  isActive: boolean;
+  sortOrder: number;
+};
+
+export type BackendPickupPolicy = {
+  id: string;
+  version: number;
+  timezone: "Asia/Manila" | string;
+  minAdvanceDays: number;
+  maxAdvanceDays: number;
+  minDate: string;
+  maxDate: string;
+  serverDate: string;
+  effectiveAt: string;
+  isActive: boolean;
+  reason: string;
+  createdById: string | null;
+  createdBy?: BackendProfileSummary | null;
+  createdAt: string;
+  updatedAt: string;
+  days: Array<{ weekday: number; enabled: boolean }>;
+  timeSlots: BackendPickupTimeSlot[];
+  closures: Array<{ id: string; date: string; reason: string }>;
+};
+
+export type PickupPolicyPayload = {
+  minAdvanceDays: number;
+  maxAdvanceDays: number;
+  reason: string;
+  days: Array<{ weekday: number; enabled: boolean }>;
+  timeSlots: Array<{ label: string; startMinute: number; endMinute: number; isActive: boolean }>;
+  closures: Array<{ date: string; reason: string }>;
 };
 
 export type BackendPublicReceiptVerification = {
@@ -322,6 +384,7 @@ export type BackendRestrictionStudent = BackendProfileSummary & {
   activeRestriction: BackendRestriction | null;
   consecutiveOffenses: number;
   offenses: BackendStudentOffense[];
+  caseType?: "RESTRICTION" | "WARNING" | "REVIEW" | "CLEAR";
 };
 
 export type BackendNoShowCandidate = {
@@ -504,7 +567,20 @@ export type BackendAdminUser = {
 };
 
 export type BackendReportSummary = {
+  range: {
+    preset: ReportRangePreset;
+    from: string | null;
+    to: string;
+    granularity: "DAILY" | "MONTHLY";
+    label: string;
+  };
   totalSales: number;
+  onlineGcashRevenue: number;
+  payAtCommissaryRevenue: number;
+  paymentMethodBreakdown: {
+    onlineGcash: { amount: number; receipts: number };
+    payAtCommissary: { amount: number; receipts: number };
+  };
   totalReservations: number;
   pendingReservations: number;
   lowStockItems: number;
@@ -541,6 +617,14 @@ export type BackendReportSummary = {
     impact: string;
     recommendation: string;
   }>;
+};
+
+export type ReportRangePreset = "TODAY" | "LAST_7_DAYS" | "LAST_30_DAYS" | "THIS_MONTH" | "LAST_MONTH" | "CUSTOM" | "ALL_TIME";
+export type ReportRangeOptions = {
+  preset?: ReportRangePreset;
+  from?: string;
+  to?: string;
+  granularity?: "AUTO" | "DAILY" | "MONTHLY";
 };
 
 export type BackendDashboardProduct = {
@@ -863,6 +947,55 @@ export async function createReservationFromApi(token: string, payload: CreateRes
   return data.reservation;
 }
 
+export async function getPickupAvailabilityFromApi() {
+  const data = await apiFetch<{ policy: BackendPickupPolicy }>("/pickup/availability");
+  return data.policy;
+}
+
+export async function getPickupPoliciesFromApi(token: string) {
+  const data = await authApiFetch<{ policies: BackendPickupPolicy[] }>("/pickup/policies", token);
+  return data.policies;
+}
+
+export async function previewPickupPolicyFromApi(token: string, payload: PickupPolicyPayload) {
+  const data = await authApiFetch<{
+    preview: {
+      nextVersion: number;
+      affectedCount: number;
+      affectedReservations: Array<{
+        id: string;
+        referenceCode: string;
+        pickupStart: string | null;
+        pickupEnd: string | null;
+        reason: string;
+      }>;
+      truncated: boolean;
+    };
+  }>("/pickup/policies/preview", token, { method: "POST", body: JSON.stringify(payload) });
+  return data.preview;
+}
+
+export async function createPickupPolicyFromApi(token: string, payload: PickupPolicyPayload) {
+  return authApiFetch<{ policy: BackendPickupPolicy; affectedCount: number }>("/pickup/policies", token, {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function rescheduleReservationFromApi(token: string, reservationId: string, payload: {
+  expectedScheduleRevision: number;
+  pickupDate: string;
+  pickupSlotId: string;
+  pickupPolicyVersion: number;
+  reason: string;
+}) {
+  const data = await authApiFetch<{ reservation: BackendReservation }>(`/reservations/${encodeURIComponent(reservationId)}/pickup`, token, {
+    method: "PATCH",
+    body: JSON.stringify(payload)
+  });
+  return data.reservation;
+}
+
 export async function getPaymentOptionsFromApi(): Promise<BackendPaymentOptions> {
   const data = await apiFetch<BackendPaymentOptions | { options: BackendPaymentOptions }>("/payments/options");
   const options = "options" in data ? data.options : data;
@@ -971,7 +1104,7 @@ export async function getMyRestrictionSummaryFromApi(token: string) {
 
 export async function getRestrictionOverviewFromApi(
   token: string,
-  filters: { query?: string; status?: "ALL" | "RESTRICTED" | "CLEAR"; cursor?: string; limit?: number } = {}
+  filters: { query?: string; status?: "ACTIONABLE" | "ALL" | "RESTRICTED" | "WARNING" | "REVIEW"; cursor?: string; limit?: number } = {}
 ) {
   const params = new URLSearchParams();
   if (filters.query?.trim()) params.set("query", filters.query.trim());
@@ -1031,6 +1164,7 @@ export async function getReceiptPageFromApi(token: string, options: BackendColle
   if (options.query?.trim()) params.set("query", options.query.trim());
   if (options.dateFrom) params.set("dateFrom", options.dateFrom);
   if (options.dateTo) params.set("dateTo", options.dateTo);
+  if (options.paymentChannel) params.set("paymentChannel", options.paymentChannel);
   const query = params.toString();
   const data = await authApiFetch<BackendCursorPage<BackendReceipt> & { receipts?: BackendReceipt[] }>(
     `/receipts${query ? `?${query}` : ""}`,
@@ -1054,6 +1188,14 @@ export async function getReceiptFromApi(token: string, receiptId: string) {
 
 export async function verifyReceiptFromApi(receiptCode: string) {
   const data = await apiFetch<{ receipt: BackendPublicReceiptVerification }>(`/receipts/verify/${encodeURIComponent(receiptCode)}`);
+  return data.receipt;
+}
+
+export async function verifyReceiptTokenFromApi(token: string) {
+  const data = await apiFetch<{ receipt: BackendPublicReceiptVerification }>("/receipts/verify-token", {
+    method: "POST",
+    body: JSON.stringify({ token })
+  });
   return data.receipt;
 }
 
@@ -1236,13 +1378,22 @@ export async function updateConversationStatusFromApi(
   return data.conversation;
 }
 
-export async function getAdminReportSummaryFromApi(token: string, signal?: AbortSignal) {
-  const data = await authApiFetch<{ summary: BackendReportSummary }>("/admin/reports/summary", token, { signal });
+function reportQuery(options: ReportRangeOptions = {}) {
+  const params = new URLSearchParams();
+  if (options.preset) params.set("preset", options.preset);
+  if (options.from) params.set("from", options.from);
+  if (options.to) params.set("to", options.to);
+  if (options.granularity) params.set("granularity", options.granularity);
+  return params.size ? `?${params.toString()}` : "";
+}
+
+export async function getAdminReportSummaryFromApi(token: string, options: ReportRangeOptions = {}, signal?: AbortSignal) {
+  const data = await authApiFetch<{ summary: BackendReportSummary }>(`/admin/reports/summary${reportQuery(options)}`, token, { signal });
   return data.summary;
 }
 
-export async function getStaffReportSummaryFromApi(token: string, signal?: AbortSignal) {
-  const data = await authApiFetch<{ summary: BackendReportSummary }>("/staff/reports/summary", token, { signal });
+export async function getStaffReportSummaryFromApi(token: string, options: ReportRangeOptions = {}, signal?: AbortSignal) {
+  const data = await authApiFetch<{ summary: BackendReportSummary }>(`/staff/reports/summary${reportQuery(options)}`, token, { signal });
   return data.summary;
 }
 

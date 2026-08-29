@@ -4,13 +4,15 @@ import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import { createPortal } from "react-dom";
+import QRCode from "qrcode";
 import { Download, Eye, ShieldCheck, X } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import { useRealtimeRefresh } from "@/components/realtime/RealtimeProvider";
 import { AssetIcon } from "@/components/ui/AssetIcon";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
-import { getReceiptFromApi, getReceiptPageFromApi, type BackendPaymentMethod, type BackendReceipt, type BackendReceiptStatus } from "@/lib/api";
+import { getReceiptFromApi, getReceiptPageFromApi, type BackendReceipt, type BackendReceiptStatus } from "@/lib/api";
+import { paymentMethodLabel } from "@/lib/payment-method";
 import {
   mergeCursorPage,
   readServerState,
@@ -31,6 +33,7 @@ type Receipt = {
   status: string;
   paymentMethod: string;
   transactionReference: string;
+  verificationUrl: string | null;
   verifiedBy: string;
   items: Array<{
     name: string;
@@ -48,14 +51,6 @@ function formatCurrency(value: number) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2
   })}`;
-}
-
-function formatPaymentMethod(value: BackendPaymentMethod) {
-  if (value === "E_WALLET_AT_PICKUP") return "E-wallet at Pickup";
-  if (value === "PAYMONGO_GCASH") return "GCash (Online)";
-  if (value === "GCASH") return "GCash";
-  if (value === "CASH") return "Cash";
-  return "Pay at Commissary";
 }
 
 function formatReceiptStatus(value: BackendReceiptStatus) {
@@ -116,8 +111,9 @@ function mapBackendReceipt(receipt: BackendReceipt): Receipt {
     date: issued.date,
     time: issued.time,
     status: formatReceiptStatus(receipt.status),
-    paymentMethod: formatPaymentMethod(receipt.paymentMethod),
-    transactionReference: receipt.verificationHash.slice(0, 24).toUpperCase(),
+    paymentMethod: paymentMethodLabel(receipt.paymentMethod),
+    transactionReference: receipt.receiptCode,
+    verificationUrl: receipt.publicVerificationUrl,
     verifiedBy: receipt.status === "VERIFIED" ? receipt.issuedBy?.fullName ?? "" : "",
     items,
     subtotal,
@@ -162,176 +158,26 @@ function loadImage(src: string) {
   });
 }
 
-async function downloadReceiptPngLegacy(receipt: Receipt) {
-  const width = 900;
-  const itemHeight = receipt.items.reduce((height) => height + 84, 0);
-  const height = 900 + itemHeight;
-  const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
-  const context = canvas.getContext("2d");
-  if (!context) return;
+function ReceiptQrCode({ value, label }: { value: string | null; label: string }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
 
-  context.fillStyle = "#f3f6f3";
-  context.fillRect(0, 0, width, height);
-  context.fillStyle = "#ffffff";
-  context.fillRect(65, 40, width - 130, height - 80);
+  useEffect(() => {
+    if (!value || !canvasRef.current) return;
+    void QRCode.toCanvas(canvasRef.current, value, {
+      width: 168,
+      margin: 1,
+      errorCorrectionLevel: "M",
+      color: { dark: "#17211b", light: "#ffffff" }
+    });
+  }, [value]);
 
-  try {
-    const logo = await loadImage("/assets/wescomm-logo.png");
-    context.drawImage(logo, 285, 75, 330, 115);
-  } catch {
-    context.fillStyle = "#00652f";
-    context.font = "700 42px Arial";
-    context.textAlign = "center";
-    context.fillText("WESCOMM", width / 2, 130);
-  }
-
-  context.textAlign = "center";
-  context.fillStyle = "#17211b";
-  context.font = "700 24px Arial";
-  context.fillText("Wesleyan University-Philippines", width / 2, 215);
-  context.font = "18px Arial";
-  context.fillStyle = "#5c6860";
-  context.fillText("Integrated Commissary Management System", width / 2, 246);
-  context.fillText("Cabanatuan City, Nueva Ecija", width / 2, 274);
-
-  context.strokeStyle = "#9eaaa2";
-  context.setLineDash([8, 8]);
-  context.beginPath();
-  context.moveTo(110, 305);
-  context.lineTo(790, 305);
-  context.stroke();
-  context.setLineDash([]);
-
-  context.fillStyle = "#17211b";
-  context.font = "700 30px Arial";
-  context.fillText("OFFICIAL DIGITAL RECEIPT", width / 2, 350);
-  context.font = "700 22px Arial";
-  context.fillStyle = "#00652f";
-  context.fillText(receipt.code, width / 2, 383);
-
-  context.textAlign = "left";
-  context.fillStyle = "#68746d";
-  context.font = "18px Arial";
-  context.fillText("Student", 120, 430);
-  context.fillText("Student Number", 120, 462);
-  context.fillText("Transaction Date", 120, 494);
-  context.fillText("Payment Method", 120, 526);
-  context.textAlign = "right";
-  context.fillStyle = "#17211b";
-  context.font = "700 18px Arial";
-  context.fillText(receipt.student, 780, 430);
-  context.fillText(receipt.studentNumber, 780, 462);
-  context.fillText(`${receipt.date} - ${receipt.time}`, 780, 494);
-  context.fillText(receipt.paymentMethod, 780, 526);
-
-  context.strokeStyle = "#d5ddd6";
-  context.beginPath();
-  context.moveTo(110, 555);
-  context.lineTo(790, 555);
-  context.stroke();
-
-  let y = 600;
-  context.textAlign = "left";
-  context.fillStyle = "#68746d";
-  context.font = "700 16px Arial";
-  context.fillText("ITEM", 120, y);
-  context.textAlign = "center";
-  context.fillText("QTY", 590, y);
-  context.textAlign = "right";
-  context.fillText("AMOUNT", 780, y);
-  y += 35;
-
-  receipt.items.forEach((item) => {
-    context.textAlign = "left";
-    context.fillStyle = "#17211b";
-    context.font = "700 19px Arial";
-    const lastTextY = drawWrappedText(context, item.name, 120, y, 400, 24);
-    context.font = "16px Arial";
-    context.fillStyle = "#68746d";
-    context.fillText(item.detail, 120, lastTextY + 24);
-    context.textAlign = "center";
-    context.fillStyle = "#17211b";
-    context.font = "18px Arial";
-    context.fillText(String(item.quantity), 590, y);
-    context.textAlign = "right";
-    context.font = "700 18px Arial";
-    context.fillText(formatCurrency(item.unitPrice * item.quantity), 780, y);
-    y += 84;
-  });
-
-  context.strokeStyle = "#d5ddd6";
-  context.beginPath();
-  context.moveTo(110, y);
-  context.lineTo(790, y);
-  context.stroke();
-  y += 40;
-
-  context.textAlign = "left";
-  context.fillStyle = "#68746d";
-  context.font = "18px Arial";
-  context.fillText("Subtotal", 480, y);
-  context.textAlign = "right";
-  context.fillStyle = "#17211b";
-  context.fillText(formatCurrency(receipt.subtotal), 780, y);
-  y += 34;
-  context.textAlign = "left";
-  context.fillStyle = "#68746d";
-  context.fillText("Discount", 480, y);
-  context.textAlign = "right";
-  context.fillStyle = "#17211b";
-  context.fillText(formatCurrency(receipt.discount), 780, y);
-  y += 45;
-
-  context.fillStyle = "#edf7ee";
-  context.fillRect(455, y - 28, 335, 64);
-  context.textAlign = "left";
-  context.fillStyle = "#00652f";
-  context.font = "700 22px Arial";
-  context.fillText("TOTAL", 480, y + 12);
-  context.textAlign = "right";
-  context.font = "700 27px Arial";
-  context.fillText(formatCurrency(receipt.total), 770, y + 12);
-  y += 90;
-
-  context.textAlign = "center";
-  const statusDisplay = receiptStatusDisplay(receipt.status);
-  context.fillStyle = statusDisplay.color;
-  context.font = "700 20px Arial";
-  context.fillText(statusDisplay.label, width / 2, y);
-  context.fillStyle = "#68746d";
-  context.font = "16px Arial";
-  context.fillText(`Verification reference: ${receipt.transactionReference}`, width / 2, y + 30);
-  if (receipt.verifiedBy) {
-    context.fillText(`Verified by: ${receipt.verifiedBy}`, width / 2, y + 56);
-  }
-
-  const barcodeY = y + 90;
-  context.fillStyle = "#17211b";
-  let barcodeX = 260;
-  Array.from(receipt.transactionReference).forEach((character, index) => {
-    const barWidth = ((character.charCodeAt(0) + index) % 4) + 2;
-    const barHeight = index % 3 === 0 ? 62 : 50;
-    context.fillRect(barcodeX, barcodeY, barWidth, barHeight);
-    barcodeX += barWidth + 4;
-  });
-
-  context.fillStyle = "#68746d";
-  context.font = "15px Arial";
-  context.fillText("Keep this receipt for commissary verification and record purposes.", width / 2, barcodeY + 95);
-  context.fillText("Thank you for using WESCOMM.", width / 2, barcodeY + 120);
-
-  canvas.toBlob((blob) => {
-    if (!blob) return;
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `WESCOMM-${receipt.code}.png`;
-    anchor.click();
-    URL.revokeObjectURL(url);
-  }, "image/png");
+  return value ? (
+    <canvas ref={canvasRef} role="img" aria-label={label} className="mx-auto mt-4 size-[168px] rounded-md bg-white" />
+  ) : (
+    <p className="mx-auto mt-4 max-w-xs rounded-md bg-[#f3f6f3] px-3 py-4 text-xs font-semibold text-[#68746d]">Secure QR verification is being prepared.</p>
+  );
 }
+
 
 async function downloadReceiptPng(receipt: Receipt) {
   const width = 640;
@@ -498,23 +344,17 @@ async function downloadReceiptPng(receipt: Receipt) {
     y += 22;
   }
 
-  const barcodeHeight = 58;
-  const barcodeGap = 4;
-  const barWidths = Array.from(receipt.transactionReference).map(
-    (character, index) => ((character.charCodeAt(0) + index) % 3) + 2
-  );
-  const barcodeWidth =
-    barWidths.reduce((total, barWidth) => total + barWidth, 0) +
-    Math.max(0, barWidths.length - 1) * barcodeGap;
-  let barcodeX = (width - barcodeWidth) / 2;
-  const barcodeY = y + 8;
-  context.fillStyle = "#17211b";
-  barWidths.forEach((barWidth, index) => {
-    const barHeight = index % 3 === 0 ? barcodeHeight : 44;
-    context.fillRect(barcodeX, barcodeY, barWidth, barHeight);
-    barcodeX += barWidth + barcodeGap;
-  });
-  y = barcodeY + barcodeHeight + 35;
+  if (receipt.verificationUrl) {
+    const qrDataUrl = await QRCode.toDataURL(receipt.verificationUrl, { width: 180, margin: 1, errorCorrectionLevel: "M" });
+    const qrImage = await loadImage(qrDataUrl);
+    context.drawImage(qrImage, (width - 150) / 2, y + 6, 150, 150);
+    y += 176;
+  } else {
+    context.fillStyle = "#68746d";
+    context.font = "13px Arial";
+    context.fillText("Secure QR verification is being prepared.", width / 2, y + 25);
+    y += 55;
+  }
 
   context.fillStyle = "#68746d";
   context.font = "13px Arial";
@@ -738,18 +578,7 @@ function ReceiptModal({
             <div className="border-t border-dashed border-[#bfc9c1] pt-5 text-center">
               <p className="text-xs font-bold uppercase text-[#68746d]">Verification Reference</p>
               <p className="mt-1 break-all text-sm font-extrabold text-primary">{receipt.transactionReference}</p>
-              <div className="mx-auto mt-4 flex h-14 max-w-[280px] items-end justify-center gap-[3px] overflow-hidden">
-                {Array.from(receipt.transactionReference).map((character, index) => (
-                  <span
-                    key={`${character}-${index}`}
-                    className="block bg-[#17211b]"
-                    style={{
-                      width: `${((character.charCodeAt(0) + index) % 3) + 2}px`,
-                      height: index % 3 === 0 ? "52px" : "40px"
-                    }}
-                  />
-                ))}
-              </div>
+              <ReceiptQrCode value={receipt.verificationUrl} label={`Secure verification QR for receipt ${receipt.code}`} />
               <p className="mt-4 text-xs leading-5 text-[#77817b]">Keep this digital receipt for verification and record purposes.</p>
             </div>
           </div>

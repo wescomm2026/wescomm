@@ -248,13 +248,11 @@ function paymentStatusDisplay(status?: BackendPaymentStatus) {
   if (status === "PAID") return "Paid";
   if (status === "AWAITING_PAYMENT") return "Awaiting payment";
   if (status === "INITIALIZING") return "Initializing";
-  if (status === "PROCESSING") return "Processing";
   if (status === "REFUND_REVIEW_REQUIRED") return "Refund review required";
   if (status === "PARTIALLY_REFUNDED") return "Partially refunded";
   if (status === "REFUNDED") return "Refunded";
   if (status === "EXPIRED") return "Expired";
   if (status === "CANCELLED") return "Cancelled";
-  if (status === "FAILED") return "Failed";
   return "Awaiting payment details";
 }
 

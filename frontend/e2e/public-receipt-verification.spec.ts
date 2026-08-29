@@ -66,3 +66,50 @@ test("visitor receipt navigation and search display only masked details", async 
   expect(requestedCode).toBe("RCT-2026-PUBLIC");
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 });
+
+test("opaque QR fragment is removed before masked token verification", async ({ page }) => {
+  const token = "A_veryOpaqueReceiptReference1234567890abcd";
+  let submittedToken = "";
+  let hashSeenAtRequest = "not-observed";
+
+  await page.route("**/api/backend/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+
+    if (path === "/api/backend/auth/me") {
+      return json(route, { error: "Authentication required." }, 401);
+    }
+    if (path === "/api/backend/receipts/verify-token" && request.method() === "POST") {
+      submittedToken = (request.postDataJSON() as { token: string }).token;
+      hashSeenAtRequest = await page.evaluate(() => window.location.hash);
+      return json(route, {
+        receipt: {
+          receiptCode: "RCT-2026-QR",
+          totalAmount: "925.00",
+          paymentMethod: "PAYMONGO_GCASH",
+          status: "VERIFIED",
+          issuedAt: "2026-08-20T02:00:00.000Z",
+          student: { displayName: "M*** S.", studentNumber: "*******7788" },
+          reservation: {
+            referenceCode: "***********Q778",
+            status: "COMPLETED",
+            itemCount: 1,
+            totalQuantity: 2
+          }
+        }
+      });
+    }
+    return json(route, { error: `Unexpected mocked request: ${request.method()} ${path}` }, 500);
+  });
+
+  await page.goto(`/verify-receipt#v=${encodeURIComponent(token)}`);
+  await dismissWelcomeGate(page);
+
+  await expect(page.getByRole("heading", { name: "RCT-2026-QR" })).toBeVisible();
+  await expect(page.getByText("GCash – Online", { exact: true })).toBeVisible();
+  await expect(page.getByText("M*** S.", { exact: true })).toBeVisible();
+  expect(submittedToken).toBe(token);
+  expect(hashSeenAtRequest).toBe("");
+  await expect(page).toHaveURL(/\/verify-receipt$/);
+  expect(await page.evaluate(() => window.location.hash)).toBe("");
+});

@@ -181,6 +181,9 @@ test("staff send and resolve actions show immediate progress instead of appearin
   await expect(page.getByText("Reply sent to student.", { exact: true })).toBeVisible();
 
   await page.getByRole("button", { name: "Resolve", exact: true }).click();
+  const resolveDialog = page.getByRole("alertdialog", { name: "Resolve this conversation?" });
+  await expect(resolveDialog).toBeVisible();
+  await resolveDialog.getByRole("button", { name: "Resolve conversation", exact: true }).click();
   const resolvingButton = page.getByRole("button", { name: "Resolving..." });
   await expect(resolvingButton).toBeDisabled();
   await expect(resolvingButton).toHaveAttribute("aria-busy", "true");

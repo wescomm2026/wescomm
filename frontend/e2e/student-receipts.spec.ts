@@ -22,7 +22,7 @@ function createReceipt({
   code,
   reservationId,
   itemName,
-  verificationHash,
+  verificationToken,
   totalAmount,
   issuedAt
 }: {
@@ -30,7 +30,7 @@ function createReceipt({
   code: string;
   reservationId: string;
   itemName: string;
-  verificationHash: string;
+  verificationToken: string;
   totalAmount: number;
   issuedAt: string;
 }): BackendReceipt {
@@ -42,7 +42,7 @@ function createReceipt({
     totalAmount,
     paymentMethod: "CASH",
     status: "VERIFIED",
-    verificationHash,
+    publicVerificationUrl: `http://127.0.0.1:3000/verify-receipt#v=${verificationToken}`,
     receiptImageUrl: null,
     receiptPdfUrl: null,
     issuedById: "20000000-0000-4000-8000-000000000099",
@@ -93,7 +93,7 @@ const receipts = [
     code: FIRST_RECEIPT_CODE,
     reservationId: "40000000-0000-4000-8000-000000000001",
     itemName: "First Receipt Item",
-    verificationHash: "11111111111111111111111111111111",
+    verificationToken: "11111111111111111111111111111111",
     totalAmount: 125,
     issuedAt: "2026-07-14T01:30:00.000Z"
   }),
@@ -102,7 +102,7 @@ const receipts = [
     code: SECOND_RECEIPT_CODE,
     reservationId: "40000000-0000-4000-8000-000000000002",
     itemName: "Second Receipt Item",
-    verificationHash: "22222222222222222222222222222222",
+    verificationToken: "22222222222222222222222222222222",
     totalAmount: 275,
     issuedAt: "2026-07-15T02:45:00.000Z"
   })

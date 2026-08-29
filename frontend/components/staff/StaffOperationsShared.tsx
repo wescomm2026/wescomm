@@ -12,12 +12,14 @@ import {
   type BackendConversationMessage,
   type BackendReceipt,
   type BackendReceiptStatus,
+  type BackendPaymentMethod,
   type BackendReservation,
   type BackendReservationStatus
 } from "@/lib/api";
 import { type ProductSaleMode, type StaffProduct } from "@/lib/staff-api";
 import { resolveShopProductAsset } from "@/lib/shop-assets";
 import { cn } from "@/lib/utils";
+import { paymentMethodLabel } from "@/lib/payment-method";
 
 export function mergeUniqueById<T extends { id: string }>(items: T[]) {
   const byId = new Map<string, T>();
@@ -33,6 +35,7 @@ export type Product = {
   category: string;
   description: string;
   imageUrl: string;
+  imageStoragePath: string | null;
   stock: number;
   minimum: number;
   price: number;
@@ -119,6 +122,10 @@ export type StaffReservationRow = {
   status: string;
   backendStatus: BackendReservationStatus;
   pickupEnd: string | null;
+  pickupReviewStatus: BackendReservation["pickupReviewStatus"];
+  pickupReviewReason: string | null;
+  scheduleRevision: number;
+  reservation: BackendReservation;
 };
 
 export type StaffReceiptRow = {
@@ -175,6 +182,7 @@ export function mapStaffProduct(product: StaffProduct): Product {
     category: categoryName,
     description: product.description ?? "",
     imageUrl: asset.image,
+    imageStoragePath: product.imageStoragePath ?? null,
     stock: product.stock,
     minimum: product.lowStockThreshold,
     price: numericValue(product.price),
@@ -251,24 +259,18 @@ export function formatStaffPickup(startValue: string | null, endValue: string | 
 }
 
 export function formatPaymentMethod(value: string) {
-  if (value === "E_WALLET_AT_PICKUP") return "E-wallet at Pickup";
-  if (value === "PAYMONGO_GCASH") return "GCash (Online)";
-  if (value === "GCASH") return "GCash";
-  if (value === "CASH") return "Cash";
-  return "Pay at Commissary";
+  return paymentMethodLabel(value as BackendPaymentMethod);
 }
 
 export function formatOnlinePaymentStatus(value?: string) {
   if (value === "PAID") return "Paid";
   if (value === "AWAITING_PAYMENT") return "Awaiting payment";
   if (value === "INITIALIZING") return "Initializing";
-  if (value === "PROCESSING") return "Processing";
   if (value === "REFUND_REVIEW_REQUIRED") return "Refund review required";
   if (value === "PARTIALLY_REFUNDED") return "Partially refunded";
   if (value === "REFUNDED") return "Refunded";
   if (value === "EXPIRED") return "Expired";
   if (value === "CANCELLED") return "Cancelled";
-  if (value === "FAILED") return "Failed";
   return "Awaiting payment details";
 }
 
@@ -302,7 +304,11 @@ export function mapStaffReservation(row: BackendReservation): StaffReservationRo
     total: Number(row.totalAmount),
     status: formatReservationStatus(row.status),
     backendStatus: row.status,
-    pickupEnd: row.pickupEnd
+    pickupEnd: row.pickupEnd,
+    pickupReviewStatus: row.pickupReviewStatus,
+    pickupReviewReason: row.pickupReviewReason,
+    scheduleRevision: row.scheduleRevision,
+    reservation: row
   };
 }
 
@@ -560,8 +566,8 @@ export function StaffReceiptPreviewModal({
           <div className="mt-5 rounded-lg bg-[#edf6ef] p-4">
             <div className="flex items-end justify-between gap-4">
               <div>
-                <p className="text-xs font-bold uppercase text-[#68746d]">Verification hash</p>
-                <p className="mt-1 break-all text-xs font-semibold text-[#405047]">{row.receipt.verificationHash}</p>
+                <p className="text-xs font-bold uppercase text-[#68746d]">Secure verification</p>
+                <p className="mt-1 text-xs font-semibold text-[#405047]">{row.receipt.publicVerificationUrl ? "QR verification link issued" : "Secure QR is being prepared"}</p>
               </div>
               <p className="text-right text-2xl font-extrabold text-primary">PHP {row.total.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
             </div>

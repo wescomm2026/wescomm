@@ -29,6 +29,7 @@ export function StaffReceiptsExperience() {
   const [rows, setRows] = useState<StaffReceiptRow[]>([]);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("All");
+  const [paymentChannel, setPaymentChannel] = useState<"ALL" | "ONLINE_GCASH" | "AT_COMMISSARY">("ALL");
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -69,6 +70,7 @@ export function StaffReceiptsExperience() {
         cursor,
         status: backendReceiptStatusFilter(status),
         query: deferredSearch,
+        paymentChannel: paymentChannel === "ALL" ? undefined : paymentChannel,
         signal: requestController.signal
       });
       if (requestId !== requestSequenceRef.current) return;
@@ -95,7 +97,7 @@ export function StaffReceiptsExperience() {
         if (!background) setLoading(false);
       }
     }
-  }, [deferredSearch, status]);
+  }, [deferredSearch, paymentChannel, status]);
 
   useRealtimeRefresh(["receipts"], () => {
     void loadReceipts({ background: true });
@@ -197,6 +199,19 @@ export function StaffReceiptsExperience() {
         action={<Button variant="secondary" onClick={() => void loadReceipts()} disabled={loading}>Refresh</Button>}
       />
       <Toolbar search={search} onSearch={setSearch} status={status} onStatus={setStatus} placeholder="Search receipt, student, reservation, or item" statuses={["Pending", "Verified", "Voided"]} />
+      <div className="flex flex-wrap items-center gap-3 rounded-lg border border-[#dce5dd] bg-white p-3 shadow-sm">
+        <span className="text-sm font-bold text-[#4f5c54]">Payment method</span>
+        <select
+          value={paymentChannel}
+          onChange={(event) => setPaymentChannel(event.target.value as typeof paymentChannel)}
+          className="h-11 min-w-[210px] rounded-md border border-[#d7e1d8] bg-white px-3 text-sm font-semibold outline-none focus:border-primary"
+        >
+          <option value="ALL">All Payments</option>
+          <option value="ONLINE_GCASH">GCash – Online</option>
+          <option value="AT_COMMISSARY">Pay at Commissary</option>
+        </select>
+        <p className="text-xs text-[#718078]">Combines with the selected receipt status and search.</p>
+      </div>
       {error ? <p className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p> : null}
       {loading ? (
         <div className="rounded-lg border border-[#dce5dd] bg-white p-6 text-sm font-semibold text-[#68746d] shadow-sm">Loading live receipt queue...</div>
