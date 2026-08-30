@@ -1,5 +1,7 @@
 "use client";
 
+import { userFacingErrorMessage } from "@/lib/user-facing-error";
+
 import Link from "next/link";
 import { useCallback, useDeferredValue, useEffect, useRef, useState } from "react";
 import { Ban, CalendarClock, X } from "lucide-react";
@@ -95,7 +97,7 @@ export function StaffReservationsExperience() {
       else if (reservationQuery) setSearch(reservationQuery);
     } catch (reservationError) {
       if (requestId === requestSequenceRef.current && !background) {
-        setError(reservationError instanceof Error ? reservationError.message : "Unable to load reservations.");
+        setError(userFacingErrorMessage(reservationError, "Unable to load reservations."));
       }
     } finally {
       if (requestId === requestSequenceRef.current) {
@@ -204,7 +206,7 @@ export function StaffReservationsExperience() {
         ? `${row.reference} completed. Receipt ${result.receipt.receiptCode} was generated for verification.`
         : `${row.reference} updated to ${mappedReservation.status}.`);
     } catch (reservationError) {
-      setError(reservationError instanceof Error ? reservationError.message : "Unable to update reservation.");
+      setError(userFacingErrorMessage(reservationError, "Unable to update the reservation."));
     } finally {
       setSubmittingId("");
     }
@@ -236,7 +238,7 @@ export function StaffReservationsExperience() {
       setRescheduleReason("");
       setNotice(`${mapped.reference} pickup rescheduled. The student was notified and the previous schedule remains in history.`);
     } catch (rescheduleError) {
-      setError(rescheduleError instanceof Error ? rescheduleError.message : "Unable to reschedule pickup.");
+      setError(userFacingErrorMessage(rescheduleError, "Unable to reschedule pickup."));
     } finally {
       setSubmittingId("");
     }

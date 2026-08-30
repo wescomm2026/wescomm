@@ -1,5 +1,7 @@
 "use client";
 
+import { userFacingErrorMessage } from "@/lib/user-facing-error";
+
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import {
@@ -106,7 +108,7 @@ export function useStudentWishlist() {
       })
       .catch((wishlistError) => {
         if (requestSequence !== requestSequenceRef.current) return;
-        setError(wishlistError instanceof Error ? wishlistError.message : "Unable to load your wishlist.");
+        setError(userFacingErrorMessage(wishlistError, "Unable to load your wishlist."));
       })
       .finally(() => {
         if (requestSequence === requestSequenceRef.current) setLoading(false);
@@ -178,7 +180,7 @@ export function useStudentWishlist() {
       return {
         ok: false,
         reason: "REQUEST_FAILED",
-        message: wishlistError instanceof Error ? wishlistError.message : "Unable to update your wishlist."
+        message: userFacingErrorMessage(wishlistError, "Unable to update your wishlist.")
       };
     }
   }, [

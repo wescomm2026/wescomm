@@ -1,5 +1,7 @@
 "use client";
 
+import { userFacingErrorMessage } from "@/lib/user-facing-error";
+
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
@@ -112,7 +114,7 @@ function useStaffReportsSummary(options: ReportRangeOptions) {
       setSummary(data);
     } catch (summaryError) {
       if (requestId === requestSequenceRef.current && !background && !isRequestAbortError(summaryError)) {
-        setError(summaryError instanceof Error ? summaryError.message : "Unable to load staff reports.");
+        setError(userFacingErrorMessage(summaryError, "Unable to load staff reports."));
       }
     } finally {
       if (requestId === requestSequenceRef.current && !background) setLoading(false);
@@ -275,7 +277,7 @@ export function StaffReports() {
         ["Date exported", formatExportDate()],
         ["Report range", reportRange],
         ["Exported by", reportOwner],
-        ["Data source", "Live WESCOMM database"]
+        ["Information source", "Current WESCOMM records"]
       ],
       sections: [
         {
@@ -359,7 +361,7 @@ export function StaffReports() {
       <header className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
         <div>
           <h1 className="text-3xl font-extrabold text-[#111a15] sm:text-4xl">Reports</h1>
-          <p className="mt-2 text-sm text-[#606c64] sm:text-base">Track performance, analyze trends, and export live backend insights.</p>
+          <p className="mt-2 text-sm text-[#606c64] sm:text-base">Track performance, review trends, and export current WESCOMM reports.</p>
         </div>
         <div className="flex flex-col gap-3 sm:flex-row">
           <Button variant="secondary" className="h-11" onClick={() => void reload()} disabled={loading}>

@@ -1,5 +1,7 @@
 "use client";
 
+import { userFacingErrorMessage } from "@/lib/user-facing-error";
+
 import { useCallback, useDeferredValue, useEffect, useRef, useState } from "react";
 import { RefreshCw, Search } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
@@ -74,7 +76,7 @@ export function AdminUsersExperience() {
       setRoleCounts(page.roleCounts);
     } catch (usersError) {
       if (requestId === requestSequenceRef.current && !background) {
-        setError(usersError instanceof Error ? usersError.message : "Unable to load users.");
+        setError(userFacingErrorMessage(usersError, "Unable to load users."));
       }
     } finally {
       if (requestId === requestSequenceRef.current) {
@@ -115,7 +117,7 @@ export function AdminUsersExperience() {
       });
       setNotice(`${updatedUser.email} role updated to ${updatedUser.role}.`);
     } catch (roleError) {
-      setError(roleError instanceof Error ? roleError.message : "Unable to update user role.");
+      setError(userFacingErrorMessage(roleError, "Unable to update user role."));
     } finally {
       setSubmittingId("");
     }
@@ -127,8 +129,8 @@ export function AdminUsersExperience() {
     <div className="space-y-5">
       <AdminHeader
         eyebrow="Users"
-        title="Role-based account management"
-        detail="Review students, staff, and admins connected to the WESCOMM backend."
+        title="Account access management"
+        detail="Review student, staff, and admin accounts with access to WESCOMM."
         action={<Button variant="secondary" onClick={() => void loadUsers()} disabled={loading}><RefreshCw className="size-4" /> Refresh</Button>}
       />
       <section className="grid gap-4 sm:grid-cols-3">

@@ -1,5 +1,7 @@
 "use client";
 
+import { userFacingErrorMessage } from "@/lib/user-facing-error";
+
 import Image from "next/image";
 import { useMemo, useState } from "react";
 import { AlertTriangle, Plus, RefreshCw, Trash2, X } from "lucide-react";
@@ -272,7 +274,7 @@ export function SkuInventoryDialog({
         };
       }));
     } catch (generateError) {
-      setError(generateError instanceof Error ? generateError.message : "Unable to generate combinations.");
+      setError(userFacingErrorMessage(generateError, "Unable to prepare the stock combinations."));
     }
   };
 
@@ -356,7 +358,7 @@ export function SkuInventoryDialog({
       );
       onSaved(updated);
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "Unable to save inventory combinations.");
+      setError(userFacingErrorMessage(saveError, "Unable to save the stock combinations."));
     } finally {
       setSubmitting(false);
     }
@@ -394,7 +396,7 @@ export function SkuInventoryDialog({
       });
       onSaved(updated);
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "Unable to update stock.");
+      setError(userFacingErrorMessage(saveError, "Unable to update stock."));
     } finally {
       setSubmitting(false);
     }

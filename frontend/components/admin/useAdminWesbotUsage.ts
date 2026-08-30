@@ -1,5 +1,7 @@
 "use client";
 
+import { userFacingErrorMessage } from "@/lib/user-facing-error";
+
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import { getAdminWesbotUsageFromApi, isRequestAbortError, type BackendWesbotUsageSummary } from "@/lib/api";
@@ -28,7 +30,7 @@ export function useAdminWesbotUsage() {
       setUsage(await getAdminWesbotUsageFromApi(user.accessToken, controller.signal));
     } catch (usageError) {
       if (!isRequestAbortError(usageError)) {
-        setError(usageError instanceof Error ? usageError.message : "Unable to load WesBot AI usage.");
+        setError(userFacingErrorMessage(usageError, "Unable to load WesBot usage."));
       }
     } finally {
       if (!controller.signal.aborted) setLoading(false);

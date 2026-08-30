@@ -131,6 +131,7 @@ test("shows a connection banner while offline and clears it after reconnecting",
 test("offers the browser install action when install criteria are met", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop-chromium", "Install prompt behavior only needs one Chromium project.");
 
+  await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/student/dashboard");
   const prompt = page.getByTestId("pwa-install-prompt");
   await expect.poll(async () => {

@@ -37,7 +37,7 @@ export default function TermsPage() {
           Product prices are displayed in Philippine pesos. Stock, variants, images, descriptions, and pickup availability may change. Submitting a reservation does not guarantee fulfillment until WESCOMM staff confirms it.
         </p>
         <p>
-          WESCOMM calculates the payable amount from the products and prices stored in its server. If a listing or total is clearly incorrect because of a technical or encoding error, staff may pause the reservation and contact you before fulfillment.
+          WESCOMM calculates the payable amount from its current product and price records. If a listing or total is clearly incorrect because of a display or pricing error, staff may pause the reservation and contact you before fulfillment.
         </p>
       </LegalSection>
 
@@ -60,7 +60,7 @@ export default function TermsPage() {
         <LegalList>
           <li>Review the final amount before leaving WESCOMM for the PayMongo-hosted checkout page.</li>
           <li>A browser redirect, screenshot, or success message alone is not proof of payment.</li>
-          <li>An online payment is confirmed only after WESCOMM validates the provider record on its server.</li>
+          <li>An online payment is confirmed only after WESCOMM receives and validates confirmation from the payment service.</li>
           <li>Do not pay again while a transaction is shown as processing or under review. Contact Support first.</li>
         </LegalList>
         <LegalNote>

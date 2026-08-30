@@ -1,5 +1,7 @@
 "use client";
 
+import { userFacingErrorMessage } from "@/lib/user-facing-error";
+
 import { useCallback, useDeferredValue, useEffect, useRef, useState } from "react";
 import { Check, Eye, Trash2 } from "lucide-react";
 import { useRealtimeRefresh } from "@/components/realtime/RealtimeProvider";
@@ -89,7 +91,7 @@ export function StaffReceiptsExperience() {
       }
     } catch (receiptError) {
       if (requestId === requestSequenceRef.current && !background) {
-        setError(receiptError instanceof Error ? receiptError.message : "Unable to load receipts.");
+        setError(userFacingErrorMessage(receiptError, "Unable to load receipts."));
       }
     } finally {
       if (requestId === requestSequenceRef.current) {
@@ -147,7 +149,7 @@ export function StaffReceiptsExperience() {
       applyReceiptUpdate(updatedReceipt);
       setNotice(`${row.code} verified.`);
     } catch (receiptError) {
-      setError(receiptError instanceof Error ? receiptError.message : "Unable to verify receipt.");
+      setError(userFacingErrorMessage(receiptError, "Unable to verify the receipt."));
     } finally {
       setSubmittingId("");
     }
@@ -165,7 +167,7 @@ export function StaffReceiptsExperience() {
       applyReceiptUpdate(updatedReceipt);
       setNotice(`${row.code} voided.`);
     } catch (receiptError) {
-      setError(receiptError instanceof Error ? receiptError.message : "Unable to void receipt.");
+      setError(userFacingErrorMessage(receiptError, "Unable to void the receipt."));
     } finally {
       setSubmittingId("");
     }

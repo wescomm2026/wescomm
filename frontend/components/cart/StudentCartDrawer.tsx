@@ -1,5 +1,7 @@
 "use client";
 
+import { userFacingErrorMessage } from "@/lib/user-facing-error";
+
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
@@ -166,7 +168,7 @@ export function StudentCartDrawer() {
     try {
       await openGcashCheckout({ id: gcashRecovery.reservationId, referenceCode: gcashRecovery.referenceCode });
     } catch (paymentError) {
-      setError(paymentError instanceof Error ? paymentError.message : "Unable to open GCash payment.");
+      setError(userFacingErrorMessage(paymentError, "Unable to open GCash payment."));
     } finally {
       setSubmitting(false);
     }
@@ -239,7 +241,7 @@ export function StudentCartDrawer() {
       return;
     }
     if (items.some((item) => !item.product.id)) {
-      setError("Refresh the shop so all cart items can be reserved from the live inventory.");
+      setError("Refresh the shop so the current availability of all cart items can be checked.");
       return;
     }
     if (hasUnavailableItems) {
@@ -293,7 +295,7 @@ export function StudentCartDrawer() {
           setGcashRecovery({
             reservationId: reservation.id,
             referenceCode: reservation.referenceCode,
-            message: paymentError instanceof Error ? paymentError.message : "Unable to open GCash payment."
+            message: userFacingErrorMessage(paymentError, "Unable to open GCash payment.")
           });
         }
       } else {
@@ -310,7 +312,7 @@ export function StudentCartDrawer() {
         setPickupRefreshKey((current) => current + 1);
         setError("Pickup availability changed. Please choose another date and time.");
       } else {
-        setError(reservationError instanceof Error ? reservationError.message : "Unable to submit cart reservation.");
+        setError(userFacingErrorMessage(reservationError, "Unable to submit cart reservation."));
       }
     } finally {
       setSubmitting(false);

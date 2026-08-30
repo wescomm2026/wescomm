@@ -11,6 +11,7 @@ import { apiRoutes } from "./routes/index.js";
 import { paymongoWebhookHandler } from "./routes/paymongo-webhook.routes.js";
 import { allowedFrontendOrigins } from "./utils/allowed-origins.js";
 import { HttpError } from "./utils/http-error.js";
+import { publicErrorDetails, publicErrorMessage } from "./utils/public-error.js";
 import {
   DATABASE_RETRY_AFTER_SECONDS,
   isTransientPrismaConnectionError
@@ -76,11 +77,19 @@ app.use((error: unknown, _request: express.Request, response: express.Response, 
   const requestId = String(response.locals.requestId ?? "");
 
   if (error instanceof SyntaxError && "body" in error) {
-    return response.status(400).json({ error: "Request body contains invalid JSON.", requestId });
+    return response.status(400).json({
+      error: "Some submitted information could not be read. Refresh the page and try again.",
+      code: "INVALID_REQUEST_BODY",
+      requestId
+    });
   }
 
   if (typeof error === "object" && error && "type" in error && error.type === "entity.too.large") {
-    return response.status(413).json({ error: "Request body is too large.", requestId });
+    return response.status(413).json({
+      error: "The selected file or submitted information is too large.",
+      code: "REQUEST_TOO_LARGE",
+      requestId
+    });
   }
 
   if (error instanceof HttpError) {
@@ -92,15 +101,15 @@ app.use((error: unknown, _request: express.Request, response: express.Response, 
     if (temporarilyUnavailable) {
       response.setHeader("Retry-After", String(DATABASE_RETRY_AFTER_SECONDS));
     }
-    const message = temporarilyUnavailable
-      ? "The service is temporarily unavailable. Please try again."
-      : error.status >= 500 && env.NODE_ENV === "production"
-        ? "Internal server error."
-        : error.message;
+    const message = publicErrorMessage({
+      status: error.status,
+      code: error.code,
+      message: error.message
+    });
     return response.status(error.status).json({
       error: message,
       code: error.code,
-      details: error.details,
+      details: publicErrorDetails(error.details),
       requestId
     });
   }
@@ -109,7 +118,7 @@ app.use((error: unknown, _request: express.Request, response: express.Response, 
     console.error(`[${requestId}] transient database failure`, error);
     response.setHeader("Retry-After", String(DATABASE_RETRY_AFTER_SECONDS));
     return response.status(503).json({
-      error: "The service is temporarily unavailable. Please try again.",
+      error: "WESCOMM is temporarily unavailable. Please try again in a moment.",
       code: "DATABASE_TEMPORARILY_UNAVAILABLE",
       details: { retryable: true },
       requestId
@@ -117,15 +126,20 @@ app.use((error: unknown, _request: express.Request, response: express.Response, 
   }
 
   if (error instanceof ZodError) {
+    console.warn(`[${requestId}] invalid request`, error.flatten());
     return response.status(400).json({
-      error: "Invalid request data.",
-      details: error.flatten(),
+      error: "Some information is missing or invalid. Review your entries and try again.",
+      code: "INVALID_REQUEST",
       requestId
     });
   }
 
   console.error(`[${requestId}]`, error);
-  return response.status(500).json({ error: "Internal server error.", requestId });
+  return response.status(500).json({
+    error: "WESCOMM could not complete this request right now. Please try again.",
+    code: "UNEXPECTED_ERROR",
+    requestId
+  });
 });
 
 export default app;

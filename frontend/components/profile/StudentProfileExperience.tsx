@@ -14,6 +14,7 @@ import {
   type StudentUser
 } from "@/components/auth/StudentAuthProvider";
 import { WebPushSettings } from "@/components/notifications/WebPushSettings";
+import { PwaInstallCard } from "@/components/pwa/PwaInstallCard";
 import { AssetIcon } from "@/components/ui/AssetIcon";
 import { Button } from "@/components/ui/button";
 import {
@@ -22,6 +23,7 @@ import {
   type BackendReceipt,
   type BackendReservation
 } from "@/lib/api";
+import { userFacingErrorMessage } from "@/lib/user-facing-error";
 
 type ProfileDraft = StudentProfileInput;
 
@@ -111,27 +113,27 @@ function InformationRow({
   onChange?: (value: string) => void;
 }) {
   return (
-    <div className="grid gap-2 border-b border-[#e7ece8] py-4 last:border-b-0 sm:grid-cols-[190px_1fr] sm:items-start">
-      <div className="flex items-center gap-3">
-        <AssetIcon src={iconSrc} className="size-7" />
-        <span className="text-sm font-bold text-[#253029]">{label}</span>
+    <div className="grid min-w-0 gap-2 border-b border-[#e7ece8] py-4 last:border-b-0 sm:grid-cols-[190px_minmax(0,1fr)] sm:items-start">
+      <div className="flex min-w-0 items-center gap-3">
+        <AssetIcon src={iconSrc} className="size-7 shrink-0" />
+        <span className="min-w-0 break-words text-sm font-bold text-[#253029]">{label}</span>
       </div>
       {editing && onChange ? (
         multiline ? (
           <textarea
             value={value}
             onChange={(event) => onChange(event.target.value)}
-            className="min-h-20 w-full rounded-md border border-[#ccd8cd] bg-white px-3 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
+            className="min-h-20 min-w-0 max-w-full rounded-md border border-[#ccd8cd] bg-white px-3 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
           />
         ) : (
           <input
             value={value}
             onChange={(event) => onChange(event.target.value)}
-            className="h-10 w-full rounded-md border border-[#ccd8cd] bg-white px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
+            className="h-10 min-w-0 max-w-full rounded-md border border-[#ccd8cd] bg-white px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
           />
         )
       ) : (
-        <p className="break-words pl-8 text-sm leading-6 text-[#4a554e] sm:pl-0">{value}</p>
+        <p className="min-w-0 break-words pl-8 text-sm leading-6 text-[#4a554e] [overflow-wrap:anywhere] sm:pl-0">{value}</p>
       )}
     </div>
   );
@@ -151,12 +153,12 @@ function SummaryLink({
   return (
     <Link
       href={href}
-      className="group rounded-lg border border-[#dce5dd] bg-white p-5 shadow-sm transition hover:border-[#aac5ad] hover:shadow-[0_12px_30px_rgba(0,91,43,0.07)]"
+      className="group min-w-0 overflow-hidden rounded-lg border border-[#dce5dd] bg-white p-5 shadow-sm transition hover:border-[#aac5ad] hover:shadow-[0_12px_30px_rgba(0,91,43,0.07)]"
     >
-      <div className="flex items-center gap-3">
-        <AssetIcon src={iconSrc} className="size-8" />
-        <h2 className="font-extrabold text-[#17211b]">{title}</h2>
-        <ChevronRight className="ml-auto size-5 transition group-hover:translate-x-0.5 group-hover:text-primary" />
+      <div className="flex min-w-0 items-center gap-3">
+        <AssetIcon src={iconSrc} className="size-8 shrink-0" />
+        <h2 className="min-w-0 break-words font-extrabold text-[#17211b]">{title}</h2>
+        <ChevronRight className="ml-auto size-5 shrink-0 transition group-hover:translate-x-0.5 group-hover:text-primary" />
       </div>
       <div className="mt-4">{children}</div>
     </Link>
@@ -238,7 +240,7 @@ export function StudentProfileExperience() {
           ownerId,
           data: current.ownerId === ownerId ? current.data : emptyAccountSummary,
           loading: false,
-          error: error instanceof Error ? error.message : "Unable to load live account totals."
+          error: userFacingErrorMessage(error, "Unable to load your account summary.")
         }));
       }
     };
@@ -330,14 +332,14 @@ export function StudentProfileExperience() {
     .toUpperCase();
 
   return (
-    <div className="space-y-5">
+    <div className="min-w-0 space-y-5">
       <div>
         <p className="text-sm font-bold uppercase text-primary">Student account</p>
         <h1 className="mt-1 text-3xl font-extrabold text-[#101820] sm:text-4xl">My Profile</h1>
         <p className="mt-2 text-sm text-[#667169]">View and manage your account information and preferences.</p>
       </div>
 
-      <section className="grid gap-6 rounded-lg border border-[#dce5dd] bg-white p-4 shadow-sm sm:p-7 lg:grid-cols-[auto_1fr_auto] lg:items-center">
+      <section className="grid min-w-0 gap-6 overflow-hidden rounded-lg border border-[#dce5dd] bg-white p-4 shadow-sm sm:p-7 lg:grid-cols-[auto_minmax(0,1fr)_auto] lg:items-center">
         <div className="relative mx-auto size-32 shrink-0 sm:size-36 lg:mx-0">
           <div className="relative size-full overflow-hidden rounded-full border-2 border-primary bg-[#e9f3e9]">
             {user.avatarDataUrl ? (
@@ -348,10 +350,10 @@ export function StudentProfileExperience() {
           </div>
         </div>
 
-        <div className="text-center lg:text-left">
-          <h2 className="text-2xl font-extrabold text-[#101820] sm:text-3xl">{user.fullName}</h2>
+        <div className="min-w-0 text-center lg:text-left">
+          <h2 className="break-words text-2xl font-extrabold text-[#101820] [overflow-wrap:anywhere] sm:text-3xl">{user.fullName}</h2>
           <p className="mt-2 font-semibold text-[#58645d]">Student</p>
-          <p className="mt-1 text-sm text-[#667169]">Student No. {user.studentNumber}</p>
+          <p className="mt-1 break-words text-sm text-[#667169] [overflow-wrap:anywhere]">Student No. {user.studentNumber}</p>
           <div className="mt-5 grid gap-2 sm:flex sm:flex-wrap sm:justify-center lg:justify-start">
             {editing ? (
               <>
@@ -382,11 +384,11 @@ export function StudentProfileExperience() {
         </div>
       </section>
 
-      <div className="grid gap-5 xl:grid-cols-[1.35fr_0.65fr]">
-        <section className="rounded-lg border border-[#dce5dd] bg-white p-5 shadow-sm sm:p-7">
-          <div className="flex items-center gap-3 border-b border-[#e7ece8] pb-4">
-            <AssetIcon src="/assets/my-profile.svg" className="size-8" />
-            <h2 className="text-xl font-extrabold text-[#17211b]">Account Information</h2>
+      <div className="grid min-w-0 gap-5 xl:grid-cols-[minmax(0,1.35fr)_minmax(0,0.65fr)]">
+        <section className="min-w-0 overflow-hidden rounded-lg border border-[#dce5dd] bg-white p-5 shadow-sm sm:p-7">
+          <div className="flex min-w-0 items-center gap-3 border-b border-[#e7ece8] pb-4">
+            <AssetIcon src="/assets/my-profile.svg" className="size-8 shrink-0" />
+            <h2 className="min-w-0 break-words text-xl font-extrabold text-[#17211b]">Account Information</h2>
           </div>
           <InformationRow iconSrc="/assets/my-profile.svg" label="Full Name" value={activeDraft.fullName} editing={editing} onChange={updateDraft("fullName")} />
           <InformationRow iconSrc="/assets/contact-us.svg" label="Phone Number" value={activeDraft.phone} editing={editing} onChange={updateDraft("phone")} />
@@ -396,20 +398,20 @@ export function StudentProfileExperience() {
           <InformationRow iconSrc="/assets/contact-us.svg" label="Address" value={activeDraft.address} editing={editing} multiline onChange={updateDraft("address")} />
         </section>
 
-        <div className="grid content-start gap-5">
+        <div className="grid min-w-0 content-start gap-5">
           <SummaryLink href="/student/reservations" iconSrc="/assets/my-reservations.svg" title="My Reservations Summary">
-            <div className="grid grid-cols-2 gap-3 text-sm">
-              <span className="flex items-center justify-between">Upcoming <strong className="rounded-md bg-[#fff0ce] px-2.5 py-1 text-[#b86d00]">{summaryLoading || summaryError ? "—" : accountSummary.upcoming}</strong></span>
-              <span className="flex items-center justify-between">Pending <strong className="rounded-md bg-[#fff0ce] px-2.5 py-1 text-[#b86d00]">{summaryLoading || summaryError ? "—" : accountSummary.pending}</strong></span>
-              <span className="flex items-center justify-between">Completed <strong className="rounded-md bg-[#e4f3e5] px-2.5 py-1 text-primary">{summaryLoading || summaryError ? "—" : accountSummary.completed}</strong></span>
-              <span className="flex items-center justify-between">Cancelled <strong className="rounded-md bg-[#edf0ee] px-2.5 py-1">{summaryLoading || summaryError ? "—" : accountSummary.cancelled}</strong></span>
+            <div className="grid grid-cols-1 gap-3 text-sm min-[380px]:grid-cols-2">
+              <span className="flex min-w-0 items-center justify-between gap-2">Upcoming <strong className="shrink-0 rounded-md bg-[#fff0ce] px-2.5 py-1 text-[#b86d00]">{summaryLoading || summaryError ? "—" : accountSummary.upcoming}</strong></span>
+              <span className="flex min-w-0 items-center justify-between gap-2">Pending <strong className="shrink-0 rounded-md bg-[#fff0ce] px-2.5 py-1 text-[#b86d00]">{summaryLoading || summaryError ? "—" : accountSummary.pending}</strong></span>
+              <span className="flex min-w-0 items-center justify-between gap-2">Completed <strong className="shrink-0 rounded-md bg-[#e4f3e5] px-2.5 py-1 text-primary">{summaryLoading || summaryError ? "—" : accountSummary.completed}</strong></span>
+              <span className="flex min-w-0 items-center justify-between gap-2">Cancelled <strong className="shrink-0 rounded-md bg-[#edf0ee] px-2.5 py-1">{summaryLoading || summaryError ? "—" : accountSummary.cancelled}</strong></span>
             </div>
           </SummaryLink>
 
           <SummaryLink href="/student/receipts" iconSrc="/assets/digital-receipts.svg" title="Digital Receipts Summary">
-            <div className="flex items-end justify-between gap-3">
+            <div className="flex min-w-0 flex-col items-start gap-2 min-[400px]:flex-row min-[400px]:items-end min-[400px]:justify-between">
               <span className="text-sm text-[#667169]">This month</span>
-              <strong className="text-2xl text-primary">{summaryLoading || summaryError ? "—" : formatPeso(accountSummary.monthlyReceiptTotal)}</strong>
+              <strong className="max-w-full break-all text-xl text-primary sm:text-2xl">{summaryLoading || summaryError ? "—" : formatPeso(accountSummary.monthlyReceiptTotal)}</strong>
             </div>
           </SummaryLink>
 
@@ -419,16 +421,17 @@ export function StudentProfileExperience() {
             </p>
           ) : null}
 
+          <PwaInstallCard />
           <WebPushSettings />
         </div>
       </div>
 
-      <section className="rounded-lg border border-[#dce5dd] bg-white p-5 shadow-sm">
-        <div className="flex items-start gap-4">
+      <section className="min-w-0 overflow-hidden rounded-lg border border-[#dce5dd] bg-white p-5 shadow-sm">
+        <div className="flex min-w-0 items-start gap-4">
           <span className="grid size-11 shrink-0 place-items-center rounded-md bg-[#eaf4ea] text-primary">
             <AssetIcon src="/assets/privacy.svg" className="size-8" />
           </span>
-          <div>
+          <div className="min-w-0">
             <h2 className="font-extrabold text-[#17211b]">School Account Security</h2>
             <p className="mt-1 text-sm leading-6 text-[#667169]">
               Access is verified through your official Wesleyan email inbox.
@@ -445,9 +448,9 @@ export function StudentProfileExperience() {
       </div>
 
       <footer className="flex flex-col gap-3 border-t border-[#e2e8e3] py-6 text-xs text-[#6e7872] sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-center gap-3">
-          <Image src="/assets/wescomm-logo.png" alt="WESCOMM" width={80} height={38} className="h-9 w-auto object-contain" />
-          <span>Wesleyan University-Philippines Integrated Commissary Management System</span>
+        <div className="flex min-w-0 items-center gap-3">
+          <Image src="/assets/wescomm-logo.png" alt="WESCOMM" width={80} height={38} className="h-9 w-auto shrink-0 object-contain" />
+          <span className="min-w-0 [overflow-wrap:anywhere]">Wesleyan University-Philippines Integrated Commissary Management System</span>
         </div>
         <span>School account secured by email verification</span>
       </footer>

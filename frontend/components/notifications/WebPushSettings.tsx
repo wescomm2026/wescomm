@@ -1,5 +1,7 @@
 "use client";
 
+import { userFacingErrorMessage } from "@/lib/user-facing-error";
+
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Bell, BellOff, Check, Send } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
@@ -19,7 +21,7 @@ import {
 function statusText(state: PushCapabilityState) {
   if (state === "granted") return "Enabled on this browser";
   if (state === "denied") return "Blocked in browser settings";
-  if (state === "not-configured") return "Waiting for backend push keys";
+  if (state === "not-configured") return "Phone notifications are not available yet";
   if (state === "unsupported") return "Not supported on this browser";
   return "Not enabled yet";
 }
@@ -99,7 +101,7 @@ export function WebPushSettings({ compact = false }: { compact?: boolean }) {
       if (activeOwnerRef.current !== ownerId) return;
       await refreshState();
       if (activeOwnerRef.current !== ownerId) return;
-      setMessage(error instanceof Error ? error.message : "Unable to enable phone notifications.");
+      setMessage(userFacingErrorMessage(error, "Unable to enable phone notifications."));
     } finally {
       if (activeOwnerRef.current === ownerId) setBusyAction("");
     }
@@ -119,7 +121,7 @@ export function WebPushSettings({ compact = false }: { compact?: boolean }) {
       setMessage("Phone notifications were disabled on this browser.");
     } catch (error) {
       if (activeOwnerRef.current !== ownerId) return;
-      setMessage(error instanceof Error ? error.message : "Unable to disable phone notifications.");
+      setMessage(userFacingErrorMessage(error, "Unable to disable phone notifications."));
     } finally {
       if (activeOwnerRef.current === ownerId) setBusyAction("");
     }
@@ -137,7 +139,7 @@ export function WebPushSettings({ compact = false }: { compact?: boolean }) {
       setMessage("Test notification sent.");
     } catch (error) {
       if (activeOwnerRef.current !== ownerId) return;
-      setMessage(error instanceof Error ? error.message : "Unable to send a test notification.");
+      setMessage(userFacingErrorMessage(error, "Unable to send a test notification."));
     } finally {
       if (activeOwnerRef.current === ownerId) setBusyAction("");
     }
@@ -164,7 +166,7 @@ export function WebPushSettings({ compact = false }: { compact?: boolean }) {
   const canSendTest = visibleState === "granted";
 
   return (
-    <section className={compact ? "relative rounded-lg border border-[#dce5dd] bg-white p-4 shadow-sm" : "relative rounded-lg border border-[#dce5dd] bg-white p-5 shadow-sm"}>
+    <section className={compact ? "relative min-w-0 overflow-hidden rounded-lg border border-[#dce5dd] bg-white p-4 shadow-sm" : "relative min-w-0 overflow-hidden rounded-lg border border-[#dce5dd] bg-white p-5 shadow-sm"}>
       <ActionLoadingOverlay
         active={busy}
         title={activeLoadingCopy?.title ?? ""}
@@ -183,24 +185,24 @@ export function WebPushSettings({ compact = false }: { compact?: boolean }) {
       </div>
 
       <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <span className={`inline-flex w-fit items-center gap-2 rounded-full px-3 py-1.5 text-xs font-extrabold ${statusClass(visibleState)}`}>
-          {visibleState === "granted" ? <Check className="size-4" /> : <Bell className="size-4" />}
+        <span className={`inline-flex max-w-full items-center gap-2 rounded-full px-3 py-1.5 text-xs font-extrabold whitespace-normal ${statusClass(visibleState)}`}>
+          {visibleState === "granted" ? <Check className="size-4 shrink-0" /> : <Bell className="size-4 shrink-0" />}
           {statusText(visibleState)}
         </span>
-        <div className="flex flex-col gap-2 sm:flex-row">
+        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
           {canSendTest ? (
-            <Button type="button" variant="secondary" className="h-10" onClick={sendTest} disabled={busy}>
+            <Button type="button" variant="secondary" className="h-10 w-full sm:w-auto" onClick={sendTest} disabled={busy}>
               <Send className="size-4" />
               Send test
             </Button>
           ) : null}
           {canDisable ? (
-            <Button type="button" variant="secondary" className="h-10 border-red-200 text-red-700 hover:bg-red-50" onClick={disable} disabled={busy}>
+            <Button type="button" variant="secondary" className="h-10 w-full border-red-200 text-red-700 hover:bg-red-50 sm:w-auto" onClick={disable} disabled={busy}>
               <BellOff className="size-4" />
               Disable
             </Button>
           ) : (
-            <Button type="button" className="h-10" onClick={enable} disabled={busy || !canEnable}>
+            <Button type="button" className="h-10 w-full sm:w-auto" onClick={enable} disabled={busy || !canEnable}>
               <Bell className="size-4" />
               Enable
             </Button>
@@ -208,7 +210,7 @@ export function WebPushSettings({ compact = false }: { compact?: boolean }) {
         </div>
       </div>
 
-      {message ? <p className="mt-3 rounded-md bg-[#f4f8f5] px-3 py-2 text-xs font-semibold leading-5 text-[#526058]">{message}</p> : null}
+      {message ? <p className="mt-3 break-words rounded-md bg-[#f4f8f5] px-3 py-2 text-xs font-semibold leading-5 text-[#526058] [overflow-wrap:anywhere]">{message}</p> : null}
       {visibleState === "unsupported" ? (
         <p className="mt-3 text-xs leading-5 text-[#68746d]">
           On iPhone, add WESCOMM to the Home Screen first, then open it from the Home Screen icon before enabling notifications.

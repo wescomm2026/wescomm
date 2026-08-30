@@ -49,7 +49,7 @@ export default function PrivacyPage() {
           <li>Account information such as name, Wesleyan email address, student number, department, phone number, address, and profile image when provided.</li>
           <li>Reservation and purchase information, including selected products, variants, quantities, pickup schedules, status, receipts, and support records.</li>
           <li>Online payment records such as internal references, PayMongo references, amount, fee, net amount, payment method, status, and timestamps.</li>
-          <li>Security and technical information such as authentication sessions, device or browser details, request identifiers, audit logs, notification preferences, and push-subscription information.</li>
+          <li>Security information such as sign-in activity, device or browser details, support reference numbers, activity records, notification preferences, and registered notification devices.</li>
           <li>Messages and other information you voluntarily provide when contacting WESCOMM Support.</li>
         </LegalList>
         <LegalNote>
@@ -73,7 +73,7 @@ export default function PrivacyPage() {
           Information is available only to authorized University personnel and service providers that need it to operate WESCOMM. Depending on the feature used, these providers include Supabase for authentication and data services, Vercel for application hosting, Brevo for verification email delivery, PayMongo for online payments, and Google Gemini for optional AI-assisted WesBot routing or wording.
         </p>
         <p>
-          Before optional WesBot text is sent to Gemini, WESCOMM removes recognized email addresses, phone numbers, student-number-like values, reservation references, receipt codes, and internal record identifiers. WesBot still uses WESCOMM database records and deterministic checks as the source of factual answers.
+          Before optional WesBot text is sent to Gemini, WESCOMM removes recognized email addresses, phone numbers, student-number-like values, reservation references, receipt codes, and system reference numbers. WesBot still uses verified WESCOMM information and business rules as the source of factual answers.
         </p>
         <p>
           Each provider handles information under its own terms, security controls, and privacy obligations. WESCOMM does not sell personal information or share it for unrelated advertising.

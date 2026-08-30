@@ -59,7 +59,7 @@ export function AdminReportsExperience() {
       <AdminHeader
         eyebrow="Reports"
         title="Sales, inventory value, and planning analytics"
-        detail="Use live backend data for resource planning, budget decisions, and commissary monitoring."
+        detail="Use current WESCOMM records for resource planning, budget decisions, and commissary monitoring."
         action={
           <div className="flex gap-2">
             <Button variant="secondary" onClick={() => void reload()} disabled={loading}><RefreshCw className="size-4" /> Refresh</Button>

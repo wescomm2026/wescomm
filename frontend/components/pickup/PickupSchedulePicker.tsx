@@ -1,5 +1,7 @@
 "use client";
 
+import { userFacingErrorMessage } from "@/lib/user-facing-error";
+
 import { useEffect, useMemo, useState } from "react";
 import { CalendarDays, ChevronLeft, ChevronRight } from "lucide-react";
 import { getPickupAvailabilityFromApi, type BackendPickupPolicy } from "@/lib/api";
@@ -145,7 +147,7 @@ export function PickupSchedulePicker({
         onSelectionSummary?.(selectionSummary(nextPolicy, nextSelection));
       })
       .catch((loadError) => {
-        if (active) setError(loadError instanceof Error ? loadError.message : "Unable to load pickup availability.");
+        if (active) setError(userFacingErrorMessage(loadError, "Unable to load pickup availability."));
       })
       .finally(() => {
         if (active) setLoading(false);

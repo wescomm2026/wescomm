@@ -1,5 +1,7 @@
 "use client";
 
+import { userFacingErrorMessage } from "@/lib/user-facing-error";
+
 import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
@@ -219,7 +221,7 @@ export function StaffShell({
       setNotificationOwnerId(accountId);
     } catch (notificationError) {
       if (requestSequence !== notificationRequestRef.current) return;
-      setNotificationsError(notificationError instanceof Error ? notificationError.message : "Unable to load notifications.");
+      setNotificationsError(userFacingErrorMessage(notificationError, "Unable to load notifications."));
     } finally {
       if (requestSequence === notificationRequestRef.current) setNotificationsLoading(false);
     }
@@ -348,7 +350,7 @@ export function StaffShell({
       await markAllNotificationsReadFromApi(user.accessToken);
       void loadUnreadCount();
     } catch (notificationError) {
-      setNotificationsError(notificationError instanceof Error ? notificationError.message : "Unable to update notifications.");
+      setNotificationsError(userFacingErrorMessage(notificationError, "Unable to update notifications."));
       void loadNotifications();
       void loadUnreadCount();
     }

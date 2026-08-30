@@ -1,4 +1,4 @@
-import { API_BASE_URL, COOKIE_SESSION_TOKEN, onlineFetch } from "@/lib/api";
+import { API_BASE_URL, BackendApiError, COOKIE_SESSION_TOKEN, onlineFetch } from "@/lib/api";
 
 const STAFF_TOKEN_KEY = "wescomm_staff_access_token";
 const STAFF_EMAIL_KEY = "wescomm_staff_email";
@@ -207,8 +207,13 @@ async function staffFetch<T>(path: string, token: string, init?: RequestInit) {
   const payload = await response.json().catch(() => null);
 
   if (!response.ok) {
-    const message = payload?.error ?? `Staff API request failed: ${response.status}`;
-    throw new Error(message);
+    throw new BackendApiError(
+      response.status,
+      payload?.error ?? "",
+      payload?.code,
+      payload?.details,
+      payload?.requestId ?? response.headers.get("X-Request-Id") ?? undefined
+    );
   }
 
   return payload as T;

@@ -1,5 +1,7 @@
 "use client";
 
+import { userFacingErrorMessage } from "@/lib/user-facing-error";
+
 import { useCallback, useEffect, useState } from "react";
 import { FaqManagementExperience } from "@/components/faq/FaqManagementExperience";
 import { AssetIcon } from "@/components/ui/AssetIcon";
@@ -22,7 +24,7 @@ export function FaqExperience({ manage = false }: { manage?: boolean }) {
     } catch (faqError) {
       if (!background) {
         setFaqs([]);
-        setError(faqError instanceof Error ? faqError.message : "Unable to load FAQs.");
+        setError(userFacingErrorMessage(faqError, "Unable to load FAQs."));
       }
     } finally {
       if (!background) setLoading(false);

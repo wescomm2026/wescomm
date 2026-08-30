@@ -18,7 +18,12 @@ import {
   sanitizeWesbotConversationalReply,
   sanitizeWesbotRecordReference
 } from "../services/wesbot-classifier.service.js";
-import { isSafeAiRewrite, productAnswer, productCandidateTerms } from "../services/wesbot.service.js";
+import {
+  isSafeAiRewrite,
+  productAnswer,
+  productCandidateTerms,
+  restoreWesbotGroundedPlaceholders
+} from "../services/wesbot.service.js";
 
 test("WesBot recognizes common Taglish commissary intents", () => {
   assert.equal(detectWesbotIntent("May stock ba ng WUP polo medium?"), "PRODUCT_INQUIRY");
@@ -66,6 +71,7 @@ test("greetings and FAQ menus use the free deterministic path", async () => {
       message
     });
     assert.equal(routed.source, "DETERMINISTIC", message);
+    assert.equal(routed.scope, "WESCOMM", message);
     assert.equal(routed.usedAi, false, message);
   }
 });
@@ -103,7 +109,14 @@ test("semantic feature flag off preserves deterministic and legacy behavior with
   });
   assert.equal(legacy.source, "LEGACY");
   assert.equal(legacy.intent, "PRODUCT_INQUIRY");
+  assert.equal(legacy.scope, "WESCOMM");
   assert.equal(legacy.usedAi, false);
+
+  const outside = await classifyWesbotMessage({
+    studentId: "00000000-0000-0000-0000-000000000001",
+    message: "Who won the basketball game?"
+  });
+  assert.equal(outside.scope, "OUT_OF_SCOPE");
 });
 
 test("semantic record references must be present in the current message or recent context", () => {
@@ -254,6 +267,45 @@ test("WesBot grounds option inventory by valid SKU combination and handles cloth
   assert.match(productAnswer(clothProduct, "Uniform Cloth medium blue", entities).draft, /8 cloth units.*no selectable size or color combination/);
 });
 
+test("WesBot handles catalog typos and missing products without inventing facts", () => {
+  const product = [{
+    id: "nursing-uniform",
+    name: "Nursing Uniform",
+    description: null,
+    imageUrl: null,
+    price: "500.00",
+    oldPrice: null,
+    stock: 4,
+    isOnSale: false,
+    status: "IN_STOCK" as const,
+    saleMode: "SIMPLE" as const,
+    skuInventoryEnabled: false,
+    inventorySetupRequired: false,
+    createdAt: "2026-08-24T00:00:00.000Z",
+    inventoryReconciledAt: "2026-08-24T00:00:00.000Z",
+    category: { id: "category", name: "Uniforms", slug: "uniforms", iconUrl: null },
+    aliases: [],
+    variants: [],
+    skus: []
+  }] as Parameters<typeof productAnswer>[0];
+  const entities = {
+    productName: null,
+    department: null,
+    options: [],
+    quantity: null,
+    reservationReference: null,
+    receiptCode: null,
+    contextReference: null
+  };
+
+  assert.match(productAnswer(product, "Magkano ang Nursng Uniform?", entities).draft, /Nursing Uniform is/);
+  assert.match(productAnswer(product, "Nursng", entities).draft, /possible catalog match: Nursing Uniform/);
+  const missing = productAnswer([], "Magkano ang iPhone?", entities);
+  assert.deepEqual(missing.sourceReferences, ["catalog:no-match"]);
+  assert.match(missing.draft, /don't have a verified WESCOMM price or stock/);
+  assert.doesNotMatch(missing.draft, /PHP|₱|\d+\.\d{2}/);
+});
+
 test("optional AI polish cannot change or omit grounded facts", () => {
   const grounded = "WES-2026-A1B2C3D4 payment status is Paid. Verified paid time: Aug 14, 2026, 2:30 PM.";
   assert.equal(
@@ -271,7 +323,20 @@ test("optional AI polish cannot change or omit grounded facts", () => {
   );
 });
 
-test("Gemini loads lazily and grounded polish stays to one provider call", () => {
+test("private account references use reversible single-use placeholders for AI wording", () => {
+  const reservationDraft = "WES-2026-A1B2C3D4 is currently Pending.";
+  assert.equal(
+    restoreWesbotGroundedPlaceholders(reservationDraft, "Ang [RESERVATION_REFERENCE] ay kasalukuyang Pending."),
+    "Ang WES-2026-A1B2C3D4 ay kasalukuyang Pending."
+  );
+  assert.equal(restoreWesbotGroundedPlaceholders(reservationDraft, "It is currently Pending."), null);
+  assert.equal(
+    restoreWesbotGroundedPlaceholders("No private reference here.", "Check [RESERVATION_REFERENCE]."),
+    null
+  );
+});
+
+test("Gemini loads lazily and grounded replies use the bounded generateText path", () => {
   const provider = readFileSync(path.resolve(process.cwd(), "src/services/wesbot-ai-provider.ts"), "utf8");
   const service = readFileSync(path.resolve(process.cwd(), "src/services/wesbot.service.ts"), "utf8");
   assert.doesNotMatch(provider, /^import .*@ai-sdk\/google/m);

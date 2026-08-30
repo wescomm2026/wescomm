@@ -12,7 +12,7 @@ wesbotUsageRoutes.get(
   "/usage",
   asyncHandler(async (_request, response) => {
     const usage = await getWesbotAiUsageSummary();
-    response.setHeader("Cache-Control", "private, max-age=15, stale-while-revalidate=15");
+    response.setHeader("Cache-Control", "private, no-store");
     response.json({ usage });
   })
 );

@@ -323,6 +323,7 @@ async function createBotReply(
       message: "I’m unable to verify the current WESCOMM information right now. Please try again or choose Talk to Staff.",
       intent: detectedIntent,
       category: "GENERAL",
+      responseMode: "CLARIFY",
       concernKey: candidateConcernKey,
       sourceReferences: ["support:lookup-failed"],
       handoffRequested: false,
@@ -335,6 +336,7 @@ async function createBotReply(
       routing: {
         version: WESBOT_CLASSIFIER_VERSION,
         intent: detectedIntent,
+        scope: "WESCOMM",
         source: "SAFE_FALLBACK",
         confidence: 0,
         confidenceBand: "LOW",
@@ -359,6 +361,7 @@ async function createBotReply(
     automated: true,
     ...(replyToMessageId ? { replyToMessageId } : {}),
     sources: reply.sourceReferences,
+    responseMode: reply.responseMode,
     staffRecommended: reply.staffRecommended,
     usedAi: reply.usedAi,
     suggestedActions: reply.suggestedActions,

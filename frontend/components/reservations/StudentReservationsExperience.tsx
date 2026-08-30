@@ -1,5 +1,7 @@
 "use client";
 
+import { userFacingErrorMessage } from "@/lib/user-facing-error";
+
 import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
@@ -550,7 +552,7 @@ function ReservationDetails({
       }
       openTrustedPaymongoCheckout(checkout.checkoutUrl);
     } catch (error) {
-      setPaymentError(error instanceof Error ? error.message : "Unable to continue this payment.");
+      setPaymentError(userFacingErrorMessage(error, "Unable to continue this payment."));
     } finally {
       setOpeningPayment(false);
     }
@@ -566,7 +568,7 @@ function ReservationDetails({
       setConfirmingCancellation(false);
       onCancelled(updatedReservation);
     } catch (error) {
-      setCancellationError(error instanceof Error ? error.message : "Unable to cancel this reservation.");
+      setCancellationError(userFacingErrorMessage(error, "Unable to cancel this reservation."));
     } finally {
       setCancelling(false);
     }
@@ -814,7 +816,7 @@ export function StudentReservationsExperience() {
         );
       } catch (reservationError) {
         if (requestSequence === requestSequenceRef.current && !background) {
-          setError(reservationError instanceof Error ? reservationError.message : "Unable to load reservations.");
+          setError(userFacingErrorMessage(reservationError, "Unable to load reservations."));
         }
       } finally {
         if (requestSequence === requestSequenceRef.current && cursor) setLoadingMore(false);

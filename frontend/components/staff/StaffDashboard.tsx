@@ -1,5 +1,7 @@
 "use client";
 
+import { userFacingErrorMessage } from "@/lib/user-facing-error";
+
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ArrowRight, ChevronDown, Megaphone, RefreshCw } from "lucide-react";
@@ -158,7 +160,7 @@ function useStaffDashboardData() {
       setData(nextData);
     } catch (dashboardError) {
       if (requestId === requestSequenceRef.current && !background && !isRequestAbortError(dashboardError)) {
-        setError(dashboardError instanceof Error ? dashboardError.message : "Unable to load staff dashboard.");
+        setError(userFacingErrorMessage(dashboardError, "Unable to load the staff dashboard."));
       }
     } finally {
       if (requestId === requestSequenceRef.current && !background) {
@@ -505,7 +507,7 @@ export function StaffDashboard() {
             </table>
           </div>
         ) : (
-          <EmptyPanel>No active products found in the database yet.</EmptyPanel>
+          <EmptyPanel>No active products are available yet.</EmptyPanel>
         )}
       </section>
 

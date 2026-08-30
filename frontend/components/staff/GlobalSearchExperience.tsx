@@ -1,5 +1,7 @@
 "use client";
 
+import { userFacingErrorMessage } from "@/lib/user-facing-error";
+
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -60,7 +62,7 @@ export function GlobalSearchExperience({ routeBase }: { routeBase: "/staff" | "/
       })
       .catch((searchError) => {
         if (requestId === requestSequenceRef.current && !isRequestAbortError(searchError)) {
-          setError(searchError instanceof Error ? searchError.message : "Unable to search the workspace.");
+          setError(userFacingErrorMessage(searchError, "Unable to search WESCOMM."));
         }
       })
       .finally(() => {

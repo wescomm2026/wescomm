@@ -1,5 +1,7 @@
 "use client";
 
+import { userFacingErrorMessage } from "@/lib/user-facing-error";
+
 import Image from "next/image";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Headphones, MessageCircleMore, Plus, RefreshCw, Send } from "lucide-react";
@@ -206,7 +208,7 @@ export function StudentSupportExperience() {
       if (!background) setThreadOpen(true);
     } catch (supportError) {
       if (!background) {
-        setError(supportError instanceof Error ? supportError.message : "Unable to load support conversations.");
+        setError(userFacingErrorMessage(supportError, "Unable to load support conversations."));
       }
     } finally {
       if (!background) setLoading(false);
@@ -240,7 +242,7 @@ export function StudentSupportExperience() {
       }));
       loadedThreadIdsRef.current.add(conversationId);
     } catch (supportError) {
-      if (!after) setError(supportError instanceof Error ? supportError.message : "Unable to load this conversation.");
+      if (!after) setError(userFacingErrorMessage(supportError, "Unable to load this conversation."));
     }
   }, [user?.accessToken]);
 
@@ -468,9 +470,8 @@ export function StudentSupportExperience() {
         ? { ...conversation, messages: mergeSupportMessages(conversation.messages, [botMessage]) }
         : conversation));
     } catch (replyError) {
-      setError(replyError instanceof Error
-        ? `Your message was sent, but WesBot could not reply: ${replyError.message}`
-        : "Your message was sent, but WesBot could not reply.");
+      const replyMessage = userFacingErrorMessage(replyError, "Please try again or ask Staff for help.");
+      setError(`Your message was sent, but WesBot could not reply. ${replyMessage}`);
       void loadThreadMessages(conversationId, latestMessageAtRef.current || undefined);
     } finally {
       setBotReplyPending(false);
@@ -515,7 +516,7 @@ export function StudentSupportExperience() {
       }
     } catch (supportError) {
       setComposer(message);
-      setError(supportError instanceof Error ? supportError.message : "Unable to send message.");
+      setError(userFacingErrorMessage(supportError, "Unable to send your message."));
     } finally {
       setPendingMessage("");
       setSubmitting(false);
@@ -539,7 +540,7 @@ export function StudentSupportExperience() {
         : item));
       void loadThreadMessages(conversation.id, latestMessageAtRef.current || undefined);
     } catch (supportError) {
-      setError(supportError instanceof Error ? supportError.message : "Unable to connect you with staff.");
+      setError(userFacingErrorMessage(supportError, "Unable to connect you with staff."));
     } finally {
       setSubmitting(false);
     }

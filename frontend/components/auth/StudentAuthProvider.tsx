@@ -23,6 +23,7 @@ import {
 } from "@/lib/api";
 import { describeOtpSendError } from "@/lib/auth-errors";
 import { EMAIL_OTP_LENGTH, isCompleteEmailOtp, normalizeEmailOtp } from "@/lib/auth-otp";
+import { userFacingErrorMessage } from "@/lib/user-facing-error";
 import { unsubscribeWebPushFromBrowser } from "@/lib/push-notifications";
 import {
   passwordLoginTarget,
@@ -162,7 +163,8 @@ async function loadProfileSession(accessToken?: string): Promise<StudentUser> {
       profileResponse.status,
       profilePayload?.error ?? "Unable to load account profile.",
       profilePayload?.code,
-      profilePayload?.details
+      profilePayload?.details,
+      profilePayload?.requestId ?? profileResponse.headers.get("X-Request-Id") ?? undefined
     );
   }
 
@@ -178,7 +180,15 @@ async function establishBackendSession(accessToken: string): Promise<StudentUser
     }
   });
   const payload = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(payload?.error ?? "Unable to establish a secure session.");
+  if (!response.ok) {
+    throw new BackendApiError(
+      response.status,
+      payload?.error ?? "",
+      payload?.code,
+      payload?.details,
+      payload?.requestId ?? response.headers.get("X-Request-Id") ?? undefined
+    );
+  }
   return mapProfileToSession(payload.profile as BackendAuthProfile);
 }
 
@@ -191,16 +201,7 @@ function isAllowedEmail(email: string) {
 }
 
 function getAuthErrorMessage(error: unknown, fallback: string) {
-  if (error instanceof Error && error.message.trim() && error.message.trim() !== "{}") {
-    return error.message;
-  }
-
-  if (typeof error === "object" && error && "message" in error) {
-    const message = String((error as { message?: unknown }).message ?? "").trim();
-    if (message && message !== "{}") return message;
-  }
-
-  return fallback;
+  return userFacingErrorMessage(error, fallback);
 }
 
 function clearLegacyBrowserAuthTokens() {
@@ -650,7 +651,14 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
 
       const payload = await response.json().catch(() => null);
       if (!response.ok) {
-        return { success: false, error: payload?.error ?? "Unable to sign in with this account." };
+        const loginError = new BackendApiError(
+          response.status,
+          payload?.error ?? "",
+          payload?.code,
+          payload?.details,
+          payload?.requestId ?? response.headers.get("X-Request-Id") ?? undefined
+        );
+        return { success: false, error: loginError.message };
       }
 
       const session = mapProfileToSession(payload.profile as BackendAuthProfile);

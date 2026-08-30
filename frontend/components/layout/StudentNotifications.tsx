@@ -1,5 +1,7 @@
 "use client";
 
+import { userFacingErrorMessage } from "@/lib/user-facing-error";
+
 import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -88,7 +90,7 @@ export function StudentNotifications({ onRequireAuth }: { onRequireAuth?: () => 
       setNotificationOwnerId(accountId);
     } catch (notificationError) {
       if (requestSequence !== requestSequenceRef.current) return;
-      setError(notificationError instanceof Error ? notificationError.message : "Unable to load notifications.");
+      setError(userFacingErrorMessage(notificationError, "Unable to load notifications."));
     } finally {
       if (requestSequence === requestSequenceRef.current) setLoading(false);
     }
@@ -180,7 +182,7 @@ export function StudentNotifications({ onRequireAuth }: { onRequireAuth?: () => 
       await markAllNotificationsReadFromApi(user.accessToken);
       void loadUnreadCount();
     } catch (notificationError) {
-      setError(notificationError instanceof Error ? notificationError.message : "Unable to update notifications.");
+      setError(userFacingErrorMessage(notificationError, "Unable to update notifications."));
       void loadNotifications();
       void loadUnreadCount();
     }

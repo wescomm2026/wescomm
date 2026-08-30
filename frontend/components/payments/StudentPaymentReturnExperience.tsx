@@ -1,5 +1,7 @@
 "use client";
 
+import { userFacingErrorMessage } from "@/lib/user-facing-error";
+
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CheckCircle2, Clock3, RefreshCw, ShieldCheck, WalletCards } from "lucide-react";
@@ -126,7 +128,7 @@ export function StudentPaymentReturnExperience({ paymentId }: { paymentId: strin
       return nextPayment;
     } catch (paymentError) {
       if (requestSequence === requestSequenceRef.current) {
-        setError(paymentError instanceof Error ? paymentError.message : "Unable to check this payment.");
+        setError(userFacingErrorMessage(paymentError, "Unable to check this payment."));
       }
       return null;
     } finally {
@@ -208,7 +210,7 @@ export function StudentPaymentReturnExperience({ paymentId }: { paymentId: strin
       }
       openTrustedPaymongoCheckout(checkout.checkoutUrl);
     } catch (paymentError) {
-      setError(paymentError instanceof Error ? paymentError.message : "Unable to continue this payment.");
+      setError(userFacingErrorMessage(paymentError, "Unable to continue this payment."));
     } finally {
       setContinuing(false);
     }
@@ -225,7 +227,7 @@ export function StudentPaymentReturnExperience({ paymentId }: { paymentId: strin
           GCash payment status
         </h1>
         <p className="mt-2 text-sm leading-6 text-[#657169]">
-          WESCOMM checks the server record directly. A browser return page or screenshot never marks a payment as paid.
+          WESCOMM confirms the payment with the payment service. Returning to this page or showing a screenshot does not mark a payment as paid.
         </p>
       </header>
 

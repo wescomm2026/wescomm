@@ -1,5 +1,7 @@
 "use client";
 
+import { userFacingErrorMessage } from "@/lib/user-facing-error";
+
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Bot, Check, Filter, Headphones, LoaderCircle, RefreshCw, Search, Send } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
@@ -129,7 +131,7 @@ export function StaffMessagesExperience() {
       if (conversationId && rows.some((conversation) => conversation.id === conversationId)) setThreadOpen(true);
     } catch (messageError) {
       if (requestId === conversationRequestRef.current && !background && !isRequestAbortError(messageError)) {
-        setError(messageError instanceof Error ? messageError.message : "Unable to load student messages.");
+        setError(userFacingErrorMessage(messageError, "Unable to load student messages."));
       }
     } finally {
       if (requestId === conversationRequestRef.current && !background) setLoading(false);
@@ -165,7 +167,7 @@ export function StaffMessagesExperience() {
         && !after
         && !isRequestAbortError(messageError)
       ) {
-        setError(messageError instanceof Error ? messageError.message : "Unable to load this conversation.");
+        setError(userFacingErrorMessage(messageError, "Unable to load this conversation."));
       }
     } finally {
       if (threadAbortRef.current.get(conversationId) === requestController) {
@@ -381,7 +383,7 @@ export function StaffMessagesExperience() {
       if (replyComposerRef.current) replyComposerRef.current.style.height = "auto";
       setNotice("Reply sent to student.");
     } catch (messageError) {
-      setError(messageError instanceof Error ? messageError.message : "Unable to send reply.");
+      setError(userFacingErrorMessage(messageError, "Unable to send the reply."));
     } finally {
       setPendingReply("");
       setPendingAction(null);
@@ -415,7 +417,7 @@ export function StaffMessagesExperience() {
       focusLatestMessage();
       setNotice(`You are now handling ${conversation.student?.fullName || "this student"}'s concern.`);
     } catch (messageError) {
-      setError(messageError instanceof Error ? messageError.message : "Unable to take over conversation.");
+      setError(userFacingErrorMessage(messageError, "Unable to take over the conversation."));
       void loadConversations({ background: true });
     } finally {
       setPendingAction(null);
@@ -445,7 +447,7 @@ export function StaffMessagesExperience() {
       setReply("");
       setNotice("Conversation returned to WesBot.");
     } catch (messageError) {
-      setError(messageError instanceof Error ? messageError.message : "Unable to return conversation to WesBot.");
+      setError(userFacingErrorMessage(messageError, "Unable to return the conversation to WesBot."));
     } finally {
       setPendingAction(null);
     }
@@ -477,7 +479,7 @@ export function StaffMessagesExperience() {
         : item));
       setNotice(`${conversation.subject} marked as ${nextStatus === "RESOLVED" ? "resolved" : "open"}.`);
     } catch (messageError) {
-      setError(messageError instanceof Error ? messageError.message : "Unable to update conversation.");
+      setError(userFacingErrorMessage(messageError, "Unable to update the conversation."));
     } finally {
       setPendingAction(null);
     }

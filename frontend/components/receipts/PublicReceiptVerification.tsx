@@ -1,5 +1,7 @@
 "use client";
 
+import { userFacingErrorMessage } from "@/lib/user-facing-error";
+
 import Link from "next/link";
 import { ArrowRight, Ban, Check, Clock3, LockKeyhole, QrCode, ReceiptText, Search, ShieldCheck } from "lucide-react";
 import { type FormEvent, useEffect, useRef, useState } from "react";
@@ -98,7 +100,7 @@ export function PublicReceiptVerification() {
         if (verificationError instanceof BackendApiError && verificationError.status === 404) {
           setNotFoundCode("Secure receipt link");
         } else {
-          setError(verificationError instanceof Error ? verificationError.message : "Unable to verify this receipt right now.");
+          setError(userFacingErrorMessage(verificationError, "Unable to verify this receipt right now."));
         }
       })
       .finally(() => setLoading(false));
@@ -127,9 +129,7 @@ export function PublicReceiptVerification() {
       if (verificationError instanceof BackendApiError && verificationError.status === 404) {
         setNotFoundCode(normalizedCode);
       } else {
-        setError(verificationError instanceof Error
-          ? verificationError.message
-          : "Unable to verify this receipt right now.");
+        setError(userFacingErrorMessage(verificationError, "Unable to verify this receipt right now."));
       }
     } finally {
       setLoading(false);

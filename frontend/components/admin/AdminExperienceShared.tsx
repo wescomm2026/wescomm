@@ -1,5 +1,7 @@
 "use client";
 
+import { userFacingErrorMessage } from "@/lib/user-facing-error";
+
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
@@ -114,7 +116,7 @@ export function useAdminSummary(options: ReportRangeOptions = DEFAULT_REPORT_RAN
       setSummary(data);
     } catch (summaryError) {
       if (requestId === requestSequenceRef.current && !background && !isRequestAbortError(summaryError)) {
-        setError(summaryError instanceof Error ? summaryError.message : "Unable to load admin summary.");
+        setError(userFacingErrorMessage(summaryError, "Unable to load the admin overview."));
       }
     } finally {
       if (requestId === requestSequenceRef.current && !background) {

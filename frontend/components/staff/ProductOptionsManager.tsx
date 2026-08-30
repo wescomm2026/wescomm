@@ -1,5 +1,7 @@
 "use client";
 
+import { userFacingErrorMessage } from "@/lib/user-facing-error";
+
 import { useMemo, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -167,7 +169,7 @@ export function ProductOptionsManager({
       onSaved(updated);
       onDone();
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "Unable to save product options.");
+      setError(userFacingErrorMessage(saveError, "Unable to save product options."));
     } finally {
       setSaving(false);
     }
@@ -189,7 +191,7 @@ export function ProductOptionsManager({
       onSaved(updated);
       onDone();
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "Unable to remove this option group.");
+      setError(userFacingErrorMessage(saveError, "Unable to remove this option group."));
     } finally {
       setSaving(false);
     }

@@ -1,5 +1,7 @@
 "use client";
 
+import { userFacingErrorMessage } from "@/lib/user-facing-error";
+
 import Image from "next/image";
 import dynamic from "next/dynamic";
 import { useDeferredValue, useEffect, useRef, useState } from "react";
@@ -158,7 +160,7 @@ export function StaffInventoryExperience() {
       if (targetedProduct) setSearch(targetedProduct.name);
     } catch (loadError) {
       if (requestId !== inventoryRequestRef.current || isRequestAbortError(loadError)) return;
-      const message = loadError instanceof Error ? loadError.message : "Unable to load staff inventory.";
+      const message = userFacingErrorMessage(loadError, "Unable to load inventory.");
       setError(message);
       if (message.toLowerCase().includes("token") || message.toLowerCase().includes("access")) {
         clearStaffSession();
@@ -356,7 +358,7 @@ export function StaffInventoryExperience() {
       })));
       setNotice(`${mapped.name} size settings updated.`);
     } catch (variantError) {
-      setError(variantError instanceof Error ? variantError.message : "Unable to update size settings.");
+      setError(userFacingErrorMessage(variantError, "Unable to update size settings."));
     } finally {
       setSavingVariants(false);
     }
@@ -495,7 +497,7 @@ export function StaffInventoryExperience() {
           : `${mappedProduct.name} stock corrected to ${mappedProduct.stock} pcs.`
       );
     } catch (restockError) {
-      setError(restockError instanceof Error ? restockError.message : "Unable to update stock.");
+      setError(userFacingErrorMessage(restockError, "Unable to update stock."));
     } finally {
       setSubmitting(false);
     }
@@ -519,7 +521,7 @@ export function StaffInventoryExperience() {
       if (editingProduct?.id === product.id) closeEditor();
       setNotice(`${product.name} archived.`);
     } catch (archiveError) {
-      setError(archiveError instanceof Error ? archiveError.message : "Unable to archive product.");
+      setError(userFacingErrorMessage(archiveError, "Unable to archive the product."));
     } finally {
       setArchivingProductId("");
       setSubmitting(false);
@@ -544,7 +546,7 @@ export function StaffInventoryExperience() {
       setProducts((current) => current.filter((item) => item.id !== product.id));
       setNotice(`${product.name} restored to active inventory.`);
     } catch (restoreError) {
-      setError(restoreError instanceof Error ? restoreError.message : "Unable to restore product.");
+      setError(userFacingErrorMessage(restoreError, "Unable to restore the product."));
     } finally {
       setRestoringProductId("");
       setSubmitting(false);
@@ -564,7 +566,7 @@ export function StaffInventoryExperience() {
       setPermanentDeleteConfirmation("");
       setPermanentDeleteReason("");
     } catch (deleteError) {
-      setError(deleteError instanceof Error ? deleteError.message : "Unable to check permanent deletion eligibility.");
+      setError(userFacingErrorMessage(deleteError, "Unable to check whether this product can be deleted."));
     } finally {
       setDeletingProductId("");
     }
@@ -584,7 +586,7 @@ export function StaffInventoryExperience() {
       setPermanentDeleteProduct(null);
       setNotice(`${deleted.name} permanently deleted.${deleted.imageCleanupQueued ? " Its managed image was queued for secure storage cleanup." : ""}`);
     } catch (deleteError) {
-      setError(deleteError instanceof Error ? deleteError.message : "Unable to permanently delete this product.");
+      setError(userFacingErrorMessage(deleteError, "Unable to permanently delete this product."));
     } finally {
       setDeletingProductId("");
       setSubmitting(false);
@@ -906,7 +908,7 @@ export function StaffInventoryExperience() {
               closeAddProduct();
               setNotice(`${finalProduct.name} added.`);
             } catch (createError) {
-              setError(createError instanceof Error ? createError.message : "Unable to add product.");
+              setError(userFacingErrorMessage(createError, "Unable to add the product."));
             } finally {
               setSubmitting(false);
             }
@@ -1216,7 +1218,7 @@ export function StaffInventoryExperience() {
                     setNotice(`${mappedProduct.name} selling setup updated.`);
                     setManageSection("menu");
                   } catch (modeError) {
-                    setError(modeError instanceof Error ? modeError.message : "Unable to update selling setup.");
+                    setError(userFacingErrorMessage(modeError, "Unable to update the selling setup."));
                   } finally {
                     setSubmitting(false);
                   }
@@ -1264,7 +1266,7 @@ export function StaffInventoryExperience() {
                     setNotice(`${mappedProduct.name} updated.`);
                     setManageSection("menu");
                   } catch (updateError) {
-                    setError(updateError instanceof Error ? updateError.message : "Unable to update product details.");
+                    setError(userFacingErrorMessage(updateError, "Unable to update the product details."));
                   } finally {
                     setSubmitting(false);
                   }
@@ -1309,7 +1311,7 @@ export function StaffInventoryExperience() {
                     setNotice(`${mappedProduct.name} image updated.`);
                     setManageSection("menu");
                   } catch (updateError) {
-                    setError(updateError instanceof Error ? updateError.message : "Unable to update product image.");
+                    setError(userFacingErrorMessage(updateError, "Unable to update the product image."));
                   } finally {
                     setSubmitting(false);
                   }
@@ -1532,7 +1534,7 @@ export function StaffInventoryExperience() {
         <div className="fixed inset-0 z-[11000] grid place-items-center overflow-y-auto bg-[#101820]/60 p-3" onMouseDown={(event) => { if (!submitting && event.target === event.currentTarget) setPermanentDeleteProduct(null); }}>
           <section role="alertdialog" aria-modal="true" aria-labelledby="permanent-product-delete-title" aria-describedby="permanent-product-delete-description" className="w-full max-w-lg rounded-lg bg-white p-5 shadow-2xl sm:p-6">
             <div className="flex items-start gap-3"><span className="grid size-11 shrink-0 place-items-center rounded-md bg-red-50 text-red-700"><Trash2 className="size-6" /></span><div><p className="text-xs font-bold uppercase text-red-700">Admin only · irreversible</p><h2 id="permanent-product-delete-title" className="mt-1 text-xl font-extrabold text-[#17211b]">Delete {permanentDeleteProduct.name} permanently?</h2></div><button type="button" autoFocus aria-label="Close permanent deletion dialog" onClick={() => setPermanentDeleteProduct(null)} disabled={submitting} className="ml-auto grid size-9 place-items-center rounded-md hover:bg-[#f1f5f1]"><X className="size-5" /></button></div>
-            <p id="permanent-product-delete-description" className="mt-4 text-sm leading-6 text-[#59665e]">The backend confirmed that this archived product has no reservation or transactional history that must be retained. Its managed image will be deleted through a retryable cleanup job.</p>
+            <p id="permanent-product-delete-description" className="mt-4 text-sm leading-6 text-[#59665e]">WESCOMM confirmed that this archived product has no reservation or payment history that must be retained. Its uploaded image will also be removed.</p>
             <label className="mt-5 grid gap-1.5 text-sm font-bold">Deletion reason<textarea required minLength={10} maxLength={500} value={permanentDeleteReason} onChange={(event) => setPermanentDeleteReason(event.target.value)} placeholder="Document why this product and its files should be removed." className="min-h-24 rounded-md border border-[#dfc4c4] px-3 py-2 font-normal outline-none focus:border-red-600" /></label>
             <label className="mt-4 grid gap-1.5 text-sm font-bold">Type the exact product name to confirm<input value={permanentDeleteConfirmation} onChange={(event) => setPermanentDeleteConfirmation(event.target.value)} placeholder={permanentDeleteProduct.name} autoComplete="off" className="h-11 rounded-md border border-[#dfc4c4] px-3 font-normal outline-none focus:border-red-600" /></label>
             <div className="mt-6 grid grid-cols-2 gap-3"><Button variant="secondary" onClick={() => setPermanentDeleteProduct(null)} disabled={submitting}>Keep archived</Button><Button className="bg-red-700 hover:bg-red-800" onClick={() => void deleteProductPermanently()} disabled={submitting || permanentDeleteConfirmation !== permanentDeleteProduct.name || permanentDeleteReason.trim().length < 10}>{submitting ? "Deleting..." : "Delete permanently"}</Button></div>

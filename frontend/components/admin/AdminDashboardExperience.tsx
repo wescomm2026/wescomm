@@ -45,7 +45,7 @@ export function AdminDashboardExperience() {
       <AdminHeader
         eyebrow="Admin dashboard"
         title="Commissary monitoring and decisions"
-        detail="Track sales, users, stock risk, reservations, receipts, and support activity from live backend data."
+        detail="Track current sales, users, stock risk, reservations, receipts, and support activity in WESCOMM."
         action={<Button variant="secondary" onClick={() => void Promise.all([reload(), reloadWesbotUsage()])} disabled={loading || wesbotLoading}><RefreshCw className="size-4" /> Refresh</Button>}
       />
       {error ? <p className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p> : null}

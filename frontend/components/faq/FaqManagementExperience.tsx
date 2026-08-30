@@ -1,5 +1,7 @@
 "use client";
 
+import { userFacingErrorMessage } from "@/lib/user-facing-error";
+
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Edit3, Plus, RefreshCw, Trash2, X } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
@@ -84,7 +86,7 @@ export function FaqManagementExperience() {
       setFaqs(rows);
     } catch (faqError) {
       if (!background) {
-        setError(faqError instanceof Error ? faqError.message : "Unable to load FAQs.");
+        setError(userFacingErrorMessage(faqError, "Unable to load FAQs."));
       }
     } finally {
       if (!background) setLoading(false);
@@ -151,7 +153,7 @@ export function FaqManagementExperience() {
 
       setEditing(null);
     } catch (faqError) {
-      setError(faqError instanceof Error ? faqError.message : "Unable to save FAQ.");
+      setError(userFacingErrorMessage(faqError, "Unable to save FAQ."));
     } finally {
       setSubmitting(false);
     }
@@ -180,7 +182,7 @@ export function FaqManagementExperience() {
       setFaqs((current) => current.map((item) => item.id === updatedFaq.id ? updatedFaq : item));
       setNotice(updatedFaq.isPublished ? "FAQ published." : "FAQ hidden from students.");
     } catch (faqError) {
-      setError(faqError instanceof Error ? faqError.message : "Unable to update FAQ.");
+      setError(userFacingErrorMessage(faqError, "Unable to update FAQ."));
     } finally {
       setSubmitting(false);
     }
@@ -204,7 +206,7 @@ export function FaqManagementExperience() {
       setFaqs((current) => current.filter((item) => item.id !== faq.id));
       setNotice("FAQ deleted.");
     } catch (faqError) {
-      setError(faqError instanceof Error ? faqError.message : "Unable to delete FAQ.");
+      setError(userFacingErrorMessage(faqError, "Unable to delete FAQ."));
     } finally {
       setSubmitting(false);
     }

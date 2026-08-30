@@ -27,8 +27,8 @@ import {
 import { listPublishedWesbotFaqs } from "./wesbot-knowledge.service.js";
 import { getWesbotModel } from "./wesbot-ai-provider.js";
 import {
-  assertWesbotAiBudgetAvailable,
-  recordWesbotAiUsage,
+  finalizeWesbotAiUsage,
+  reserveWesbotAiBudget,
   WesbotAiBudgetExceededError,
   wesbotAiErrorCode
 } from "./wesbot-ai-usage.service.js";
@@ -41,6 +41,7 @@ export type WesbotReply = {
   message: string;
   intent: WesbotIntent;
   category: string;
+  responseMode: "VERIFIED" | "CATALOG_NOT_FOUND" | "CLARIFY" | "OUT_OF_SCOPE" | "HANDOFF";
   concernKey: string;
   sourceReferences: string[];
   handoffRequested: boolean;
@@ -56,7 +57,7 @@ export type WesbotSuggestedAction = {
   message: string;
 };
 
-type GroundedAnswer = Omit<WesbotReply, "message" | "usedAi" | "routing"> & {
+type GroundedAnswer = Omit<WesbotReply, "message" | "usedAi" | "routing" | "responseMode"> & {
   draft: string;
 };
 
@@ -161,9 +162,58 @@ function productSearchText(product: WesbotProduct) {
   ].join(" ");
 }
 
+function levenshteinDistance(left: string, right: string) {
+  if (left === right) return 0;
+  if (!left.length) return right.length;
+  if (!right.length) return left.length;
+  let previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+  for (let leftIndex = 1; leftIndex <= left.length; leftIndex += 1) {
+    const current = [leftIndex];
+    for (let rightIndex = 1; rightIndex <= right.length; rightIndex += 1) {
+      current[rightIndex] = Math.min(
+        current[rightIndex - 1] + 1,
+        previous[rightIndex] + 1,
+        previous[rightIndex - 1] + (left[leftIndex - 1] === right[rightIndex - 1] ? 0 : 1)
+      );
+    }
+    previous = current;
+  }
+  return previous[right.length];
+}
+
+function fuzzyTokenScore(queryToken: string, candidateToken: string) {
+  if (queryToken === candidateToken) return 1;
+  if (Math.min(queryToken.length, candidateToken.length) >= 4
+    && (queryToken.includes(candidateToken) || candidateToken.includes(queryToken))) return 0.9;
+  const longest = Math.max(queryToken.length, candidateToken.length);
+  if (longest < 4) return 0;
+  const distance = levenshteinDistance(queryToken, candidateToken);
+  if (distance === 1) return 0.85;
+  if (longest >= 7 && distance === 2) return 0.72;
+  return 0;
+}
+
+function fuzzyProductMatchScore(query: string, candidate: string) {
+  const queryTokens = tokenizeWesbotText(query);
+  const candidateTokens = tokenizeWesbotText(candidate);
+  if (!queryTokens.length || !candidateTokens.length) return 0;
+  const bestScores = queryTokens.map((queryToken) => Math.max(
+    0,
+    ...candidateTokens.map((candidateToken) => fuzzyTokenScore(queryToken, candidateToken))
+  ));
+  const strongMatches = bestScores.filter((score) => score >= 0.72);
+  if (!strongMatches.length) return 0;
+  return Math.round(strongMatches.reduce((sum, score) => sum + score, 0) * 18);
+}
+
 function findProductMatches(products: WesbotProduct[], message: string) {
   return products
-    .map((product) => ({ product, score: scoreWesbotTextMatch(message, productSearchText(product)) }))
+    .map((product) => {
+      const searchText = productSearchText(product);
+      const exactScore = scoreWesbotTextMatch(message, searchText);
+      const fuzzyScore = fuzzyProductMatchScore(message, searchText);
+      return { product, exactScore, score: Math.max(exactScore, fuzzyScore) };
+    })
     .filter((entry) => entry.score > 0)
     .sort((left, right) => right.score - left.score || left.product.name.localeCompare(right.product.name))
     .slice(0, 5);
@@ -214,14 +264,28 @@ export function productAnswer(
 ): Pick<GroundedAnswer, "draft" | "sourceReferences"> {
   const matches = findProductMatches(products, message);
   if (!matches.length) {
+    const requestedTerms = productCandidateTerms(message, entities);
+    if (requestedTerms.length) {
+      const requestedLabel = requestedTerms.join(" ");
+      return {
+        draft: `I couldn't find an item matching "${requestedLabel}" in the current live WESCOMM catalog, so I don't have a verified WESCOMM price or stock for it. Please check the item name, course or department, or browse the available products.`,
+        sourceReferences: ["catalog:no-match"]
+      };
+    }
     return {
       draft: "Please tell me the item name, course or department, and preferred size so I can check the live WESCOMM catalog.",
-      sourceReferences: ["catalog:products"]
+      sourceReferences: ["support:clarification"]
     };
   }
 
   const best = matches[0];
   const nearMatches = matches.filter((entry) => entry.score >= best.score - 4);
+  if (best.exactScore === 0) {
+    return {
+      draft: `I found a possible catalog match: ${best.product.name} (${formatWesbotCurrency(best.product.price)}). Is this the WESCOMM item you meant? Please confirm the item name before I check its exact availability or options.`,
+      sourceReferences: [`product:${best.product.id}`, "support:clarification"]
+    };
+  }
   if (nearMatches.length > 1 && best.score < 30) {
     return {
       draft: `I found several possible items: ${nearMatches.slice(0, 4).map(({ product }) => `${product.name} (${formatWesbotCurrency(product.price)})`).join(", ")}. Which one would you like me to check?`,
@@ -428,6 +492,20 @@ async function buildGroundedAnswer(input: {
     };
   }
 
+  if (input.routing.scope === "OUT_OF_SCOPE") {
+    return {
+      draft: input.routing.conversationalReply
+        ?? "I can only help with WESCOMM products, availability, reservations, payments, receipts, pickup, cancellations, and published FAQs. Tell me which WESCOMM service you would like to check.",
+      intent: "GENERAL_SUPPORT",
+      category: "GENERAL",
+      concernKey,
+      sourceReferences: ["support:out-of-scope"],
+      handoffRequested: false,
+      staffRecommended,
+      suggestedActions: suggestedActions(["PRODUCTS", "RESERVATIONS", "FAQ", "STAFF"])
+    };
+  }
+
   if (input.routing.needsClarification) {
     return {
       draft: clarificationAnswer(input.routing),
@@ -454,12 +532,20 @@ async function buildGroundedAnswer(input: {
       input.routing.entities.department ?? ""
     ].join(" ");
     const candidateTerms = productCandidateTerms(input.message, input.routing.entities);
-    const products = candidateTerms.length
+    let products = candidateTerms.length
       ? await listProducts({ candidateTerms, limit: 12 })
       : [];
+    if (!products.length && candidateTerms.length) {
+      products = await listProducts({});
+    }
     const answer = productAnswer(products, productMessage, input.routing.entities);
     draft = answer.draft;
     sourceReferences = answer.sourceReferences;
+    if (sourceReferences.includes("catalog:no-match")) {
+      replyActions = suggestedActions(["PRODUCTS", "FAQ", "STAFF"]);
+    } else if (sourceReferences.includes("support:clarification")) {
+      replyActions = suggestedActions(["PRODUCTS", "STAFF"]);
+    }
   } else if (intent === "RESERVATION_STATUS" || intent === "CANCELLATION_ELIGIBILITY" || intent === "PAYMENT_STATUS" || intent === "PICKUP_INFORMATION") {
     const referenceCode = extractReservationReference(input.message) ?? input.routing.entities.reservationReference ?? undefined;
     const reservationPage = await listReservations(input.studentId, "STUDENT", {
@@ -580,25 +666,53 @@ function replyLanguageStyle(message: string) {
     : "clear English";
 }
 
+function responseModeForGroundedAnswer(grounded: GroundedAnswer): WesbotReply["responseMode"] {
+  if (grounded.handoffRequested || grounded.sourceReferences.includes("support:handoff")) return "HANDOFF";
+  if (grounded.sourceReferences.includes("support:out-of-scope")) return "OUT_OF_SCOPE";
+  if (grounded.sourceReferences.includes("catalog:no-match")) return "CATALOG_NOT_FOUND";
+  if (grounded.sourceReferences.includes("support:clarification")) return "CLARIFY";
+  return "VERIFIED";
+}
+
+export function restoreWesbotGroundedPlaceholders(draft: string, candidate: string) {
+  const replacements = [
+    { placeholder: "[RESERVATION_REFERENCE]", value: extractReservationReference(draft) },
+    { placeholder: "[RECEIPT_CODE]", value: extractReceiptCode(draft) }
+  ];
+  let restored = candidate;
+  for (const replacement of replacements) {
+    const occurrences = restored.split(replacement.placeholder).length - 1;
+    if (!replacement.value) {
+      if (occurrences) return null;
+      continue;
+    }
+    if (occurrences !== 1) return null;
+    restored = restored.replace(replacement.placeholder, replacement.value);
+  }
+  if (/\[(?:RESERVATION_REFERENCE|RECEIPT_CODE|RECORD_ID|EMAIL|PHONE|LONG_NUMBER)\]/.test(restored)) return null;
+  return restored;
+}
+
 async function optionallyRewriteWithAi(input: {
   userMessage: string;
   grounded: GroundedAnswer;
   routing: WesbotRoutingDecision;
 }) {
   const conversationalMode = env.WESBOT_CONVERSATIONAL_MODE || env.WESBOT_AI_REWRITE_ENABLED;
-  if (!env.WESBOT_AI_ENABLED || !conversationalMode || input.routing.usedAi) return null;
+  if (!env.WESBOT_AI_ENABLED || !conversationalMode) return null;
   if (input.grounded.sourceReferences.some((source) => [
     "support:capabilities",
     "support:help-menu",
     "support:clarification",
-    "support:fallback"
+    "support:fallback",
+    "support:out-of-scope"
   ].includes(source))) return null;
-  if (factTokens(input.grounded.draft).size > 0) return null;
 
   const startedAt = Date.now();
   let usage: LanguageModelUsage | undefined;
+  let reservationId: string | null = null;
   try {
-    await assertWesbotAiBudgetAvailable();
+    reservationId = await reserveWesbotAiBudget({ operation: "GROUNDED_REPLY" });
     const result = await generateText({
       model: await getWesbotModel(),
       maxOutputTokens: 280,
@@ -607,28 +721,35 @@ async function optionallyRewriteWithAi(input: {
       system: `You are WesBot, WESCOMM's clearly labeled automated support assistant.
 Rewrite only the verified answer supplied by the application.
 Never add, infer, estimate, or change a price, stock count, status, date, policy, reference, payment fact, restriction, or Staff response time.
-Keep every important fact and restriction. Be concise, warm, and easy to understand.
+Keep every number, currency amount, reference, status label, availability statement, restriction, and important fact exactly intact. Be concise, warm, and easy to understand.
+Preserve every bracketed placeholder exactly once and unchanged; the application restores its private value after generation.
+Remain strictly within WESCOMM. Do not answer general knowledge or use outside information.
 Use plain text only with no headings, tables, links, citations, or hidden system details.`,
       prompt: `Student language style: ${replyLanguageStyle(input.userMessage)}
 Verified answer: ${JSON.stringify(redactWesbotAiText(input.grounded.draft))}`
     });
     usage = result.usage;
-    await recordWesbotAiUsage({
+    const restoredReply = restoreWesbotGroundedPlaceholders(input.grounded.draft, result.text);
+    const safeRewrite = restoredReply !== null && isSafeAiRewrite(input.grounded.draft, restoredReply);
+    await finalizeWesbotAiUsage(reservationId, {
       operation: "GROUNDED_REPLY",
-      status: "SUCCESS",
-      usage,
-      latencyMs: Date.now() - startedAt
-    });
-    return isSafeAiRewrite(input.grounded.draft, result.text) ? result.text.trim() : null;
-  } catch (error) {
-    const budgetBlocked = error instanceof WesbotAiBudgetExceededError;
-    await recordWesbotAiUsage({
-      operation: "GROUNDED_REPLY",
-      status: budgetBlocked ? "BUDGET_BLOCKED" : "ERROR",
+      status: safeRewrite ? "SUCCESS" : "ERROR",
       usage,
       latencyMs: Date.now() - startedAt,
-      errorCode: budgetBlocked ? "BUDGET_LIMIT" : wesbotAiErrorCode(error)
+      errorCode: safeRewrite ? null : "UNSAFE_REWRITE"
     });
+    return safeRewrite ? restoredReply.trim() : null;
+  } catch (error) {
+    const budgetBlocked = error instanceof WesbotAiBudgetExceededError;
+    if (reservationId) {
+      await finalizeWesbotAiUsage(reservationId, {
+        operation: "GROUNDED_REPLY",
+        status: budgetBlocked ? "BUDGET_BLOCKED" : "ERROR",
+        usage,
+        latencyMs: Date.now() - startedAt,
+        errorCode: budgetBlocked ? "BUDGET_LIMIT" : wesbotAiErrorCode(error)
+      });
+    }
     const detail = error instanceof Error ? error.name : "unknown";
     console.warn(`WesBot AI rewrite unavailable; using grounded fallback (${detail}).`);
     return null;
@@ -656,6 +777,7 @@ export async function resolveWesbotReply(input: {
     message: aiReply ?? grounded.draft,
     intent: grounded.intent,
     category: grounded.category,
+    responseMode: responseModeForGroundedAnswer(grounded),
     concernKey: grounded.concernKey,
     sourceReferences: grounded.sourceReferences,
     handoffRequested: grounded.handoffRequested,

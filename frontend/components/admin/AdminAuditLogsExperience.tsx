@@ -1,5 +1,7 @@
 "use client";
 
+import { userFacingErrorMessage } from "@/lib/user-facing-error";
+
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { RefreshCw, Search } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
@@ -72,7 +74,7 @@ export function AdminAuditLogsExperience({ initialEntityType }: { initialEntityT
       setNextCursor(page.nextCursor);
     } catch (auditError) {
       if (requestId === requestSequenceRef.current && !background) {
-        setError(auditError instanceof Error ? auditError.message : "Unable to load audit logs.");
+        setError(userFacingErrorMessage(auditError, "Unable to load activity history."));
       }
     } finally {
       if (requestId === requestSequenceRef.current) {
@@ -118,16 +120,16 @@ export function AdminAuditLogsExperience({ initialEntityType }: { initialEntityT
   return (
     <div className="space-y-5">
       <AdminHeader
-        eyebrow="Audit logs"
-        title="System activity history"
+        eyebrow="Activity history"
+        title="Staff and admin actions"
         detail="Review admin and staff actions across products, reservations, receipts, FAQs, users, and support messages."
         action={<Button variant="secondary" onClick={() => void loadLogs()} disabled={loading}><RefreshCw className="size-4" /> Refresh</Button>}
       />
 
       <section className="grid gap-4 sm:grid-cols-3">
-        <AdminStatCard title="Loaded Events" value={String(logs.length)} detail="Most recent activity records" iconSrc="/assets/verified.svg" />
-        <AdminStatCard title="Action Types" value={String(actionOptions.length)} detail="Tracked backend actions" iconSrc="/assets/orders.svg" />
-        <AdminStatCard title="Entity Types" value={String(entityOptions.length)} detail="Products, users, receipts, and more" iconSrc="/assets/settings.svg" />
+        <AdminStatCard title="Activities Loaded" value={String(logs.length)} detail="Most recent staff and admin actions" iconSrc="/assets/verified.svg" />
+        <AdminStatCard title="Activity Categories" value={String(actionOptions.length)} detail="Different types of recorded actions" iconSrc="/assets/orders.svg" />
+        <AdminStatCard title="Areas Covered" value={String(entityOptions.length)} detail="Products, users, receipts, and more" iconSrc="/assets/settings.svg" />
       </section>
 
       <div className="grid gap-3 rounded-lg border border-[#dce5dd] bg-white p-3 lg:grid-cols-[1fr_auto_auto]">
@@ -136,7 +138,7 @@ export function AdminAuditLogsExperience({ initialEntityType }: { initialEntityT
           <input
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search action, actor, summary, or entity"
+            placeholder="Search action, person, summary, or area"
             className="min-w-0 flex-1 bg-transparent text-sm outline-none"
           />
         </label>
@@ -145,14 +147,14 @@ export function AdminAuditLogsExperience({ initialEntityType }: { initialEntityT
           {actionOptions.map((option) => <option key={option} value={option}>{formatAuditAction(option)}</option>)}
         </select>
         <select value={entityType} onChange={(event) => setEntityType(event.target.value)} className="h-11 rounded-md border border-[#d7e1d8] bg-white px-3 text-sm font-semibold outline-none focus:border-primary">
-          <option value="All">All entities</option>
+          <option value="All">All areas</option>
           {entityOptions.map((option) => <option key={option} value={option}>{option}</option>)}
         </select>
       </div>
 
       {error ? (
         <p className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
-          {error.includes("audit_logs") ? "Audit logs table is not created yet. Run backend/DATABASE_AUDIT_LOGS_SQL.txt in Supabase SQL Editor." : error}
+          {error}
         </p>
       ) : null}
       {loading ? <div className="rounded-lg border border-[#dce5dd] bg-white p-6 text-sm font-semibold text-[#68746d] shadow-sm">Loading audit logs...</div> : null}
@@ -172,7 +174,7 @@ export function AdminAuditLogsExperience({ initialEntityType }: { initialEntityT
               </div>
               {Object.keys(log.metadata ?? {}).length ? (
                 <details className="mt-3 rounded-md border border-[#edf1ed] bg-[#fbfdfb]">
-                  <summary className="cursor-pointer px-3 py-2 text-xs font-bold text-primary">View details</summary>
+                  <summary className="cursor-pointer px-3 py-2 text-xs font-bold text-primary">View activity details</summary>
                   <pre className="overflow-x-auto border-t border-[#edf1ed] p-3 text-xs leading-5 text-[#3f4a44]">{JSON.stringify(log.metadata, null, 2)}</pre>
                 </details>
               ) : null}
@@ -184,13 +186,13 @@ export function AdminAuditLogsExperience({ initialEntityType }: { initialEntityT
             </div>
           </article>
         )) : (
-          <div className="p-6 text-sm font-semibold text-[#68746d]">No audit logs found.</div>
+          <div className="p-6 text-sm font-semibold text-[#68746d]">No activity records found.</div>
         )}
       </section>
       {nextCursor ? (
         <div className="flex justify-center">
           <Button variant="secondary" disabled={loadingMore} onClick={() => void loadLogs({ cursor: nextCursor })}>
-            {loadingMore ? "Loading more..." : "Load more audit events"}
+            {loadingMore ? "Loading more..." : "Load more activity"}
           </Button>
         </div>
       ) : null}

@@ -97,9 +97,9 @@ export function StaffSettingsExperience() {
       </div>
 
       <section className="grid gap-4 md:grid-cols-3">
-        <article className="rounded-lg border border-[#dce5dd] bg-white p-4 shadow-sm"><AssetIcon src="/assets/verified.svg" className="size-9" /><h3 className="mt-3 font-extrabold text-[#17211b]">Role access</h3><p className="mt-1 text-sm text-[#68746d]">{roleLabel} permissions are controlled by the backend account role.</p></article>
+        <article className="rounded-lg border border-[#dce5dd] bg-white p-4 shadow-sm"><AssetIcon src="/assets/verified.svg" className="size-9" /><h3 className="mt-3 font-extrabold text-[#17211b]">Account access</h3><p className="mt-1 text-sm text-[#68746d]">Your {roleLabel.toLowerCase()} role determines which WESCOMM tools you can use.</p></article>
         <article className="rounded-lg border border-[#dce5dd] bg-white p-4 shadow-sm"><AssetIcon src="/assets/privacy.svg" className="size-9" /><h3 className="mt-3 font-extrabold text-[#17211b]">School email</h3><p className="mt-1 text-sm text-[#68746d]">Login is verified through the account email used in WESCOMM.</p></article>
-        <article className="rounded-lg border border-[#dce5dd] bg-white p-4 shadow-sm"><AssetIcon src="/assets/settings.svg" className="size-9" /><h3 className="mt-3 font-extrabold text-[#17211b]">Local preferences</h3><p className="mt-1 text-sm text-[#68746d]">These UI preferences are ready to connect to persistent backend settings.</p></article>
+        <article className="rounded-lg border border-[#dce5dd] bg-white p-4 shadow-sm"><AssetIcon src="/assets/settings.svg" className="size-9" /><h3 className="mt-3 font-extrabold text-[#17211b]">Current preferences</h3><p className="mt-1 text-sm text-[#68746d]">Review the notification and pickup choices currently shown on this page.</p></article>
       </section>
       {notice ? <Notice text={notice} onClose={() => setNotice("")} /> : null}
     </div>

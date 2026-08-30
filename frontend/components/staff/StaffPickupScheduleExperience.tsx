@@ -1,5 +1,7 @@
 "use client";
 
+import { userFacingErrorMessage } from "@/lib/user-facing-error";
+
 import Link from "next/link";
 import {
   useCallback,
@@ -192,7 +194,7 @@ export function StaffPickupScheduleExperience() {
         setDraft(nextDraft);
       }
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Unable to load the pickup schedule.");
+      setError(userFacingErrorMessage(loadError, "Unable to load the pickup schedule."));
     } finally {
       setLoading(false);
     }
@@ -361,7 +363,7 @@ export function StaffPickupScheduleExperience() {
       setChangeNote("");
       setReviewOpen(true);
     } catch (previewError) {
-      setError(previewError instanceof Error ? previewError.message : "Unable to review these schedule changes.");
+      setError(userFacingErrorMessage(previewError, "Unable to review these schedule changes."));
     } finally {
       setSubmitting(false);
     }
@@ -378,7 +380,7 @@ export function StaffPickupScheduleExperience() {
       setNotice(`Pickup schedule updated. ${result.affectedCount} existing reservation(s) need review; saved pickup times were not changed automatically.`);
       await loadPolicies();
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "Unable to save the pickup schedule.");
+      setError(userFacingErrorMessage(saveError, "Unable to save the pickup schedule."));
     } finally {
       setSubmitting(false);
     }

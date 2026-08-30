@@ -1,5 +1,7 @@
 "use client";
 
+import { userFacingErrorMessage } from "@/lib/user-facing-error";
+
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -70,7 +72,7 @@ export function StudentRestrictionProvider({ children }: { children: ReactNode }
       setError("");
     } catch (requestError) {
       if (requestSequence !== requestSequenceRef.current) return;
-      setError(requestError instanceof Error ? requestError.message : "Unable to check reservation access.");
+      setError(userFacingErrorMessage(requestError, "Unable to check reservation access."));
     } finally {
       if (requestSequence === requestSequenceRef.current) setLoading(false);
     }

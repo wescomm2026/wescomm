@@ -1,6 +1,7 @@
 import type { CartProduct } from "@/components/cart/StudentCartProvider";
 import { resolveShopProductAsset } from "@/lib/shop-assets";
 import { isUniformClothOnly, sortProductOptionValues } from "@/lib/product-display";
+import { apiErrorMessage } from "@/lib/user-facing-error";
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "/api/backend";
 export const COOKIE_SESSION_TOKEN = "cookie-session";
@@ -424,13 +425,15 @@ export class BackendApiError extends Error {
   status: number;
   code?: string;
   details?: Record<string, unknown>;
+  requestId?: string;
 
-  constructor(status: number, message: string, code?: string, details?: Record<string, unknown>) {
-    super(message);
+  constructor(status: number, message: string, code?: string, details?: Record<string, unknown>, requestId?: string) {
+    super(apiErrorMessage({ status, code, serverMessage: message, requestId }));
     this.name = "BackendApiError";
     this.status = status;
     this.code = code;
     this.details = details;
+    this.requestId = requestId;
   }
 }
 
@@ -627,6 +630,8 @@ export type BackendWesbotUsageSummary = {
   budgetEnforced: boolean;
   budgetUsd: number;
   estimatedSpendUsd: number;
+  reservedSpendUsd: number;
+  committedSpendUsd: number;
   remainingUsd: number;
   budgetPercent: number;
   budgetHealth: "HEALTHY" | "WATCH" | "CRITICAL" | "PAUSED" | "DISABLED";
@@ -638,11 +643,27 @@ export type BackendWesbotUsageSummary = {
   budgetBlockedCalls: number;
   rateLimitedCalls: number;
   timeoutCalls: number;
+  activeReservations: number;
   inputTokens: number;
+  cachedInputTokens: number;
   outputTokens: number;
+  reasoningOutputTokens: number;
   totalTokens: number;
   averageLatencyMs: number;
   lastSuccessAt: string | null;
+  lastUpdatedAt: string | null;
+  pricingVersion: string;
+  inputRateUsdPer1MTokens: number;
+  cachedRateUsdPer1MTokens: number;
+  outputRateUsdPer1MTokens: number;
+  operationBreakdown: Array<{
+    operation: string;
+    calls: number;
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+    estimatedSpendUsd: number;
+  }>;
   today: BackendWesbotUsageDay;
   daily: BackendWesbotUsageDay[];
 };
@@ -801,7 +822,13 @@ export async function apiFetch<T>(path: string, init?: RequestInit) {
 
   const payload = await response.json().catch(() => null);
   if (!response.ok) {
-    throw new BackendApiError(response.status, payload?.error ?? `API request failed: ${response.status}`, payload?.code, payload?.details);
+    throw new BackendApiError(
+      response.status,
+      payload?.error ?? "",
+      payload?.code,
+      payload?.details,
+      payload?.requestId ?? response.headers.get("X-Request-Id") ?? undefined
+    );
   }
 
   return payload as T;
@@ -824,7 +851,13 @@ export async function authApiFetch<T>(path: string, token: string, init?: Reques
     if (response.status === 401 && typeof window !== "undefined") {
       window.dispatchEvent(new Event(AUTH_UNAUTHORIZED_EVENT));
     }
-    throw new BackendApiError(response.status, payload?.error ?? `API request failed: ${response.status}`, payload?.code, payload?.details);
+    throw new BackendApiError(
+      response.status,
+      payload?.error ?? "",
+      payload?.code,
+      payload?.details,
+      payload?.requestId ?? response.headers.get("X-Request-Id") ?? undefined
+    );
   }
 
   return payload as T;

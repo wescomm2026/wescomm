@@ -1,5 +1,7 @@
 "use client";
 
+import { userFacingErrorMessage } from "@/lib/user-facing-error";
+
 import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
@@ -662,7 +664,7 @@ export function StudentReceiptsExperience() {
     } catch (receiptError) {
       if (requestSequence === requestSequenceRef.current && !background) {
         setSelectedReceiptId(null);
-        setError(receiptError instanceof Error ? receiptError.message : "Unable to load receipts.");
+        setError(userFacingErrorMessage(receiptError, "Unable to load receipts."));
       }
     } finally {
       if (requestSequence === requestSequenceRef.current && cursor) setLoadingMore(false);

@@ -1,5 +1,7 @@
 "use client";
 
+import { userFacingErrorMessage } from "@/lib/user-facing-error";
+
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import {
   Ban,
@@ -108,7 +110,7 @@ export function StaffRestrictionManagement({ role }: { role: "STAFF" | "ADMIN" }
         : next);
       setError("");
     } catch (requestError) {
-      if (!background) setError(requestError instanceof Error ? requestError.message : "Unable to load student access records.");
+      if (!background) setError(userFacingErrorMessage(requestError, "Unable to load student access records."));
     } finally {
       if (!background) setLoading(false);
       setLoadingMoreStudents(false);
@@ -134,7 +136,7 @@ export function StaffRestrictionManagement({ role }: { role: "STAFF" | "ADMIN" }
         : next);
       setError("");
     } catch (requestError) {
-      if (!background) setError(requestError instanceof Error ? requestError.message : "Unable to load eligible no-show reviews.");
+      if (!background) setError(userFacingErrorMessage(requestError, "Unable to load eligible no-show reviews."));
     } finally {
       if (!background) setLoadingNoShows(false);
       setLoadingMoreNoShows(false);
@@ -212,7 +214,7 @@ export function StaffRestrictionManagement({ role }: { role: "STAFF" | "ADMIN" }
       setReason("");
       setNotice(`${studentName(selectedStudent)} can no longer submit reservations for ${durationLabel(duration).toLowerCase()}.`);
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Unable to apply the restriction.");
+      setError(userFacingErrorMessage(requestError, "Unable to apply the restriction."));
     } finally {
       setSubmitting(false);
     }
@@ -230,7 +232,7 @@ export function StaffRestrictionManagement({ role }: { role: "STAFF" | "ADMIN" }
       setReason("");
       setNotice(`${studentName(selectedStudent)} can submit reservations again.`);
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Unable to restore reservation access.");
+      setError(userFacingErrorMessage(requestError, "Unable to restore reservation access."));
     } finally {
       setSubmitting(false);
     }
@@ -249,7 +251,7 @@ export function StaffRestrictionManagement({ role }: { role: "STAFF" | "ADMIN" }
       setNotice(message);
       setNoShowCandidate(null);
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Unable to confirm this no-show.");
+      setError(userFacingErrorMessage(requestError, "Unable to confirm this no-show."));
     } finally {
       setSubmitting(false);
     }
@@ -267,7 +269,7 @@ export function StaffRestrictionManagement({ role }: { role: "STAFF" | "ADMIN" }
       setOffenseToOverturn(null);
       setReason("");
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Unable to remove this offense.");
+      setError(userFacingErrorMessage(requestError, "Unable to remove this offense."));
     } finally {
       setSubmitting(false);
     }

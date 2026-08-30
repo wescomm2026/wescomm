@@ -1,5 +1,7 @@
 "use client";
 
+import { userFacingErrorMessage } from "@/lib/user-facing-error";
+
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
@@ -207,7 +209,7 @@ export function StudentCheckoutModal({
     try {
       await openGcashCheckout({ id: gcashRecovery.reservationId, referenceCode: gcashRecovery.referenceCode });
     } catch (paymentError) {
-      setError(paymentError instanceof Error ? paymentError.message : "Unable to open GCash payment.");
+      setError(userFacingErrorMessage(paymentError, "Unable to open GCash payment."));
     } finally {
       setSubmitting(false);
     }
@@ -251,7 +253,7 @@ export function StudentCheckoutModal({
       return;
     }
     if (!product.id) {
-      setError("Refresh the shop so this item can be reserved from the live inventory.");
+      setError("Refresh the shop so this item's current availability can be checked.");
       return;
     }
     if (!user.accessToken) {
@@ -284,7 +286,7 @@ export function StudentCheckoutModal({
         try {
           await openGcashCheckout(reservation);
         } catch (paymentError) {
-          setGcashRecovery({ reservationId: reservation.id, referenceCode: reservation.referenceCode, message: paymentError instanceof Error ? paymentError.message : "Unable to open GCash payment." });
+          setGcashRecovery({ reservationId: reservation.id, referenceCode: reservation.referenceCode, message: userFacingErrorMessage(paymentError, "Unable to open GCash payment.") });
         }
       } else {
         setReference(reservation.referenceCode);
@@ -300,7 +302,7 @@ export function StudentCheckoutModal({
         setPickupRefreshKey((current) => current + 1);
         setError("Pickup availability changed. Please choose another date and time.");
       } else {
-        setError(reservationError instanceof Error ? reservationError.message : "Unable to submit reservation.");
+        setError(userFacingErrorMessage(reservationError, "Unable to submit reservation."));
       }
     } finally {
       setSubmitting(false);

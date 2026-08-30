@@ -53,8 +53,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <PwaLifecycle
             enableServiceWorker={enableServiceWorker}
             enableRuntimeCaching={enableRuntimeCaching}
-          />
-          {children}
+          >
+            {children}
+          </PwaLifecycle>
         </ConfirmationDialogProvider>
       </body>
     </html>

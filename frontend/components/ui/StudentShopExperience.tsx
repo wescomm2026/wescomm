@@ -1,5 +1,7 @@
 "use client";
 
+import { userFacingErrorMessage } from "@/lib/user-facing-error";
+
 import Image from "next/image";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -448,7 +450,7 @@ export function StudentShopExperience() {
         if (!cancelled && requestSequence >= latestSuccessfulProductRequestRef.current) {
           if (!background) {
             setProducts([]);
-            setError(productsError instanceof Error ? productsError.message : "Unable to load shop items.");
+            setError(userFacingErrorMessage(productsError, "Unable to load shop items."));
           }
         }
       })
@@ -798,7 +800,7 @@ export function StudentShopExperience() {
           <div className="wes-card p-8 text-center">
             <p className="font-semibold">{wishlistViewLoading ? "Loading your wishlist..." : "Loading live shop items..."}</p>
             <p className="mt-1 text-sm text-muted-foreground">
-              {wishlistViewLoading ? "Syncing saved items for this account." : "Checking the WESCOMM inventory database."}
+              {wishlistViewLoading ? "Updating saved items for this account." : "Checking current product availability."}
             </p>
           </div>
         ) : !error && filteredProducts.length ? (

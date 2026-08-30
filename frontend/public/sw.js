@@ -1,4 +1,4 @@
-const BUILD_ID = "d2f8d34f8eabaea3";
+const BUILD_ID = "d24932f35f9e636b";
 const CACHE_PREFIX = "wescomm-pwa";
 const SHELL_CACHE = `${CACHE_PREFIX}-shell-${BUILD_ID}`;
 const STATIC_CACHE = `${CACHE_PREFIX}-static-${BUILD_ID}`;

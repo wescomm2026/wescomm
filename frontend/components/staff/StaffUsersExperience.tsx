@@ -1,5 +1,7 @@
 "use client";
 
+import { userFacingErrorMessage } from "@/lib/user-facing-error";
+
 import { useCallback, useEffect, useRef, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
@@ -39,7 +41,7 @@ export function StaffUsersExperience() {
       setUsers(rows);
     } catch (usersError) {
       if (requestId === requestSequenceRef.current && !background && !isRequestAbortError(usersError)) {
-        setError(usersError instanceof Error ? usersError.message : "Unable to load staff accounts.");
+        setError(userFacingErrorMessage(usersError, "Unable to load staff accounts."));
       }
     } finally {
       if (requestId === requestSequenceRef.current && !background) setLoading(false);
@@ -95,7 +97,7 @@ export function StaffUsersExperience() {
       <PageHeading
         eyebrow="Staff accounts"
         title="User access overview"
-        detail="Review real staff and admin accounts connected to the WESCOMM database."
+        detail="Review staff and admin accounts with access to WESCOMM."
         action={<Button variant="secondary" onClick={() => void loadUsers()} disabled={loading}><RefreshCw className="size-4" /> Refresh</Button>}
       />
       <section className="grid gap-4 sm:grid-cols-2">
@@ -126,7 +128,7 @@ export function StaffUsersExperience() {
             <StatusBadge status={row.role === "ADMIN" ? "Admin" : "Staff"} />
           </article>
         )) : (
-          <div className="p-6 text-sm font-semibold text-[#68746d]">No staff or admin accounts found in the database.</div>
+          <div className="p-6 text-sm font-semibold text-[#68746d]">No staff or admin accounts are available.</div>
         )}
       </section>
     </div>
