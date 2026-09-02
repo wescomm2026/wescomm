@@ -231,6 +231,7 @@ model Profile {
   messageEdits          ConversationMessageRevision[] @relation("MessageRevisionEditor")
   deletedConversations  Conversation[]                @relation("ConversationDeletedBy")
   conversationPurges    ConversationPurgeRecord[]     @relation("ConversationPurgedBy")
+  policyAcceptances     PolicyAcceptance[]
 
   @@index([createdAt(sort: Desc), id(sort: Desc)])
   @@index([role, createdAt(sort: Desc), id(sort: Desc)])
@@ -399,6 +400,8 @@ model Reservation {
   pickupReviewReason    String?                     @map("pickup_review_reason")
   scheduleRevision      Int                         @default(1) @map("schedule_revision")
   paymentMethod         PaymentMethod               @default(PAY_AT_COMMISSARY) @map("payment_method")
+  checkoutPolicyVersion    String?                  @map("checkout_policy_version") @db.VarChar(32)
+  checkoutPolicyAcceptedAt DateTime?                @map("checkout_policy_accepted_at") @db.Timestamptz(6)
   totalAmount           Decimal                     @default(0) @map("total_amount") @db.Decimal(12, 2)
   staffNotes            String?                     @map("staff_notes")
   createdAt             DateTime                    @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -421,6 +424,18 @@ model Reservation {
   @@index([pickupPolicyVersionId])
   @@index([pickupTimeSlotId])
   @@map("reservations")
+}
+
+model PolicyAcceptance {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId        String   @map("user_id") @db.Uuid
+  policyVersion String   @map("policy_version") @db.VarChar(32)
+  acceptedAt    DateTime @default(now()) @map("accepted_at") @db.Timestamptz(6)
+  user          Profile  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, policyVersion])
+  @@index([acceptedAt(sort: Desc)])
+  @@map("policy_acceptances")
 }
 
 model PickupPolicyVersion {

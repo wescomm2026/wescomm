@@ -13,6 +13,7 @@ import {
   type StudentCheckoutPaymentMethod
 } from "@/components/checkout/PaymentMethodSelector";
 import { useStudentRestriction } from "@/components/restrictions/StudentRestrictionProvider";
+import { PolicyConsentCheckbox } from "@/components/legal/PolicyConsentCheckbox";
 import { ActionLoadingOverlay } from "@/components/ui/ActionLoadingOverlay";
 import { AssetIcon } from "@/components/ui/AssetIcon";
 import { Button } from "@/components/ui/button";
@@ -52,6 +53,7 @@ import {
   type PendingReservationRequest
 } from "@/lib/reservation-idempotency";
 import { cn } from "@/lib/utils";
+import { currentCheckoutPolicyAcceptance } from "@/lib/policy-consent";
 
 export type CheckoutProduct = {
   id?: string;
@@ -123,6 +125,7 @@ export function StudentCheckoutModal({
   const [pickupSummary, setPickupSummary] = useState<PickupSelectionSummary | null>(null);
   const [pickupRefreshKey, setPickupRefreshKey] = useState(0);
   const [paymentMethod, setPaymentMethod] = useState<StudentCheckoutPaymentMethod | null>(null);
+  const [policyAccepted, setPolicyAccepted] = useState(false);
   const [notes, setNotes] = useState("");
   const [selectedOptions, setSelectedOptions] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
@@ -152,6 +155,7 @@ export function StudentCheckoutModal({
     setPickupSummary(null);
     setPickupRefreshKey(0);
     setPaymentMethod(null);
+    setPolicyAccepted(false);
     setNotes("");
     setSelectedOptions({});
     setError("");
@@ -253,6 +257,10 @@ export function StudentCheckoutModal({
       setError("Please choose how you would like to pay.");
       return;
     }
+    if (!policyAccepted) {
+      setError("Review and accept the reservation and refund terms before confirming.");
+      return;
+    }
     if (!product.id) {
       setError("Refresh the shop so this item's current availability can be checked.");
       return;
@@ -270,6 +278,7 @@ export function StudentCheckoutModal({
     const payload = {
       paymentMethod,
       ...pickupSelection,
+      policyAcceptance: currentCheckoutPolicyAcceptance(),
       items: [{ productId: product.id, ...(skuId ? { skuId } : {}), variantSummary, quantity }]
     };
     const requestIdentity = getReservationRequestIdentity(payload, pendingRequestRef.current, user.id);
@@ -371,13 +380,13 @@ export function StudentCheckoutModal({
               ) : (
                 <div className="grid gap-6 p-5 sm:p-8 lg:grid-cols-[1fr_0.9fr]">
                   <section><h2 className="text-lg font-extrabold text-foreground">Reservation summary</h2><div className="mt-4 rounded-surface border bg-surface-subtle p-4"><div className="flex gap-3"><div className="relative size-20 shrink-0 overflow-hidden rounded-control bg-white"><Image src={product.image} alt="" fill sizes="80px" className="object-contain p-2" /></div><div className="min-w-0"><p className="font-extrabold text-foreground">{product.name}</p>{Object.keys(selectedOptions).length ? <p className="mt-1 text-sm text-muted-foreground">{formatSelections(selectedOptions)}</p> : null}<p className="mt-1 text-sm text-muted-foreground">Quantity: {quantity}</p></div></div><dl className="mt-4 grid gap-3 border-t pt-4 text-sm"><div className="flex justify-between gap-4"><dt className="text-muted-foreground">Pickup</dt><dd className="max-w-[65%] text-right font-bold text-foreground">{pickupSummary ? `${pickupSummary.dateLabel} · ${pickupSummary.slotLabel}` : pickupSelection?.pickupDate}</dd></div><div className="flex items-end justify-between gap-4 border-t pt-3"><dt className="font-bold text-foreground">Total</dt><dd className="text-2xl font-extrabold text-primary">{formatPrice(total)}</dd></div></dl></div>{notes.trim() ? <p className="mt-3 rounded-control border px-3 py-2 text-sm text-muted-foreground"><strong className="text-foreground">Note:</strong> {notes.trim()}</p> : null}</section>
-                  <section><PaymentMethodSelector name="payment" value={paymentMethod} onChange={setPaymentMethod} disabled={submitting} legend="How would you like to pay?" />{error ? <p className="mt-4 rounded-control border border-danger/25 bg-danger/5 px-3 py-2.5 text-sm font-medium text-danger" role="alert">{error}</p> : null}{!user ? <p className="mt-4 rounded-control border border-warning/25 bg-warning/5 px-3 py-2.5 text-sm text-warning">Log in with your Wesleyan account before confirming.</p> : <p className="mt-4 text-xs leading-5 text-muted-foreground">Reserving as <strong>{user.email}</strong></p>}</section>
+                  <section className="space-y-4"><PaymentMethodSelector name="payment" value={paymentMethod} onChange={setPaymentMethod} disabled={submitting} legend="How would you like to pay?" /><PolicyConsentCheckbox id="buy-now-policy-consent" checked={policyAccepted} onCheckedChange={(checked) => { setPolicyAccepted(checked); if (checked) setError(""); }} disabled={submitting} context="checkout" />{error ? <p className="rounded-control border border-danger/25 bg-danger/5 px-3 py-2.5 text-sm font-medium text-danger" role="alert">{error}</p> : null}{!user ? <p className="rounded-control border border-warning/25 bg-warning/5 px-3 py-2.5 text-sm text-warning">Log in with your Wesleyan account before confirming.</p> : <p className="text-xs leading-5 text-muted-foreground">Reserving as <strong>{user.email}</strong></p>}</section>
                 </div>
               )}
             </div>
 
             <footer className="shrink-0 border-t bg-white p-4 sm:px-8">
-              {checkoutStep === 1 ? <div className="flex flex-col gap-3 sm:flex-row sm:items-center"><div className="sm:mr-auto"><p className="text-xs font-semibold uppercase text-muted-foreground">Total</p><p className="text-xl font-extrabold text-primary">{formatPrice(total)}</p></div><Button type="button" variant="secondary" size="lg" onClick={onClose} disabled={submitting}>Cancel</Button><Button type="button" size="lg" onClick={continueToPayment} disabled={Boolean(user && stepOneBlockingMessage)}>{user ? <>Next: Payment <ChevronRight className="size-4" /></> : "Sign in to continue"}</Button></div> : <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end"><Button type="button" variant="secondary" size="lg" onClick={() => { setCheckoutStep(1); setError(""); }} disabled={submitting}><ChevronLeft className="size-4" />Back</Button><Button type="submit" size="lg" disabled={!paymentMethod || isReservationRestricted} loading={submitting}><AssetIcon src={paymentMethod === "PAYMONGO_GCASH" ? "/assets/e-wallet.svg" : "/assets/verified.svg"} className="size-6" />{paymentMethod === "PAYMONGO_GCASH" ? "Continue to GCash" : "Confirm Reservation"}</Button></div>}
+              {checkoutStep === 1 ? <div className="flex flex-col gap-3 sm:flex-row sm:items-center"><div className="sm:mr-auto"><p className="text-xs font-semibold uppercase text-muted-foreground">Total</p><p className="text-xl font-extrabold text-primary">{formatPrice(total)}</p></div><Button type="button" variant="secondary" size="lg" onClick={onClose} disabled={submitting}>Cancel</Button><Button type="button" size="lg" onClick={continueToPayment} disabled={Boolean(user && stepOneBlockingMessage)}>{user ? <>Next: Payment <ChevronRight className="size-4" /></> : "Sign in to continue"}</Button></div> : <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end"><Button type="button" variant="secondary" size="lg" onClick={() => { setCheckoutStep(1); setError(""); }} disabled={submitting}><ChevronLeft className="size-4" />Back</Button><Button type="submit" size="lg" disabled={!paymentMethod || !policyAccepted || isReservationRestricted} loading={submitting}><AssetIcon src={paymentMethod === "PAYMONGO_GCASH" ? "/assets/e-wallet.svg" : "/assets/verified.svg"} className="size-6" />{paymentMethod === "PAYMONGO_GCASH" ? "Continue to GCash" : "Confirm Reservation"}</Button></div>}
             </footer>
           </form>
         )}

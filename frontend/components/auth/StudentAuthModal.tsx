@@ -7,6 +7,8 @@ import { KeyRound, LockKeyhole, Mail, ShieldCheck, X } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import { ActionLoadingOverlay } from "@/components/ui/ActionLoadingOverlay";
 import { EMAIL_OTP_LENGTH, isCompleteEmailOtp, normalizeEmailOtp } from "@/lib/auth-otp";
+import { PolicyConsentCheckbox } from "@/components/legal/PolicyConsentCheckbox";
+import { currentAccountPolicyAcceptance } from "@/lib/policy-consent";
 
 const RESEND_COOLDOWN_SECONDS = 60;
 const SEND_LIMIT_COUNT = 5;
@@ -110,6 +112,7 @@ export function StudentAuthModal({ open, onClose }: { open: boolean; onClose: ()
   const [password, setPassword] = useState("");
   const [resendSeconds, setResendSeconds] = useState(0);
   const [rememberEmail, setRememberEmail] = useState(true);
+  const [policyAccepted, setPolicyAccepted] = useState(false);
 
   useEffect(() => setMounted(true), []);
 
@@ -124,6 +127,7 @@ export function StudentAuthModal({ open, onClose }: { open: boolean; onClose: ()
     setCode("");
     setPassword("");
     setResendSeconds(0);
+    setPolicyAccepted(false);
 
     const rememberEnabled = window.localStorage.getItem(REMEMBER_EMAIL_ENABLED_KEY) !== "false";
     const rememberedEmailName = rememberEnabled ? window.localStorage.getItem(REMEMBER_EMAIL_KEY) ?? "" : "";
@@ -156,6 +160,10 @@ export function StudentAuthModal({ open, onClose }: { open: boolean; onClose: ()
   const handleSendOtp = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (resendSeconds > 0 || loading) return;
+    if (!policyAccepted) {
+      setError("Accept the current Terms and acknowledge the Privacy Policy to continue.");
+      return;
+    }
 
     setLoading("send");
     setError("");
@@ -194,7 +202,7 @@ export function StudentAuthModal({ open, onClose }: { open: boolean; onClose: ()
       return;
     }
 
-    const result = await sendEmailOtp(normalizedEmail);
+    const result = await sendEmailOtp(normalizedEmail, currentAccountPolicyAcceptance());
     if (!result.success) {
       setError(result.error ?? "Unable to send the verification email.");
       setResendSeconds(result.retryAfterSeconds ?? 0);
@@ -223,7 +231,7 @@ export function StudentAuthModal({ open, onClose }: { open: boolean; onClose: ()
     setError("");
     setNotice("");
 
-    const result = await verifyEmailOtp(sentEmail, normalizedCode);
+    const result = await verifyEmailOtp(sentEmail, normalizedCode, currentAccountPolicyAcceptance());
     if (!result.success) {
       setError(result.error ?? "Unable to verify the email code.");
       setLoading("");
@@ -242,7 +250,7 @@ export function StudentAuthModal({ open, onClose }: { open: boolean; onClose: ()
     setError("");
     setNotice("");
 
-    const result = await loginWithTestAccount(sentEmail, password);
+    const result = await loginWithTestAccount(sentEmail, password, currentAccountPolicyAcceptance());
     if (!result.success) {
       setError(result.error ?? "Unable to sign in with this account.");
       setLoading("");
@@ -264,7 +272,7 @@ export function StudentAuthModal({ open, onClose }: { open: boolean; onClose: ()
       return;
     }
 
-    const result = await sendEmailOtp(sentEmail);
+    const result = await sendEmailOtp(sentEmail, currentAccountPolicyAcceptance());
     if (!result.success) {
       setError(result.error ?? "Unable to resend the verification email.");
       setResendSeconds(result.retryAfterSeconds ?? 0);
@@ -430,9 +438,20 @@ export function StudentAuthModal({ open, onClose }: { open: boolean; onClose: ()
                   </span>
                 </label>
 
+                <PolicyConsentCheckbox
+                  id="account-policy-consent"
+                  checked={policyAccepted}
+                  onCheckedChange={(checked) => {
+                    setPolicyAccepted(checked);
+                    if (checked) setError("");
+                  }}
+                  disabled={Boolean(loading)}
+                  context="account"
+                />
+
                 <button
                   type="submit"
-                  disabled={Boolean(loading) || resendSeconds > 0}
+                  disabled={Boolean(loading) || resendSeconds > 0 || !policyAccepted}
                   className="flex h-12 w-full items-center justify-center gap-2 rounded-md bg-primary px-5 text-sm font-bold text-white shadow-[0_12px_24px_rgba(0,102,51,0.20)] transition hover:bg-[#00552a] disabled:cursor-wait disabled:opacity-70"
                 >
                   <Mail className="size-5" />

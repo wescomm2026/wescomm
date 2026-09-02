@@ -103,6 +103,7 @@ test("Buy Now writes only on final confirmation and recovers from a changed pick
   checkout = page.getByRole("dialog", { name: "Choose payment method" });
   await expect(checkout.getByRole("radio", { name: /Pay at Commissary/ })).toBeChecked();
   const availabilityBeforeConfirm = availabilityCalls;
+  await checkout.getByRole("checkbox", { name: /I agree to the Terms & Conditions/ }).check();
   await checkout.getByRole("button", { name: "Confirm Reservation" }).click();
 
   checkout = page.getByRole("dialog", { name: "Item and pickup details" });
@@ -113,6 +114,7 @@ test("Buy Now writes only on final confirmation and recovers from a changed pick
     paymentMethod: "PAY_AT_COMMISSARY",
     pickupDate: "2026-08-03",
     pickupSlotId,
-    pickupPolicyVersion: 7
+    pickupPolicyVersion: 7,
+    policyAcceptance: { accepted: true, version: "2026-09-02" }
   });
 });

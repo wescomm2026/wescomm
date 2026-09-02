@@ -60,6 +60,14 @@ test("public errors map technical codes to stakeholder actions", () => {
     }),
     "This list changed while you were viewing it. Refresh the page and try again."
   );
+  assert.equal(
+    publicErrorMessage({
+      status: 428,
+      code: "POLICY_ACCEPTANCE_REQUIRED",
+      message: "stale version"
+    }),
+    "Review and accept the current WESCOMM policies before continuing."
+  );
 });
 
 test("public error details expose retry guidance only", () => {

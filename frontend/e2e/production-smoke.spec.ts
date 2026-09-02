@@ -8,6 +8,8 @@ const supabaseServiceRoleKey = process.env.E2E_SUPABASE_SERVICE_ROLE_KEY?.trim()
 const enabled = process.env.E2E_LIVE_MUTATION_SMOKE === "true"
   && baseURL === "https://wescomm.store"
   && Boolean(supabaseURL && supabaseAnonKey && supabaseServiceRoleKey);
+const currentAccountPolicyAcceptance = { accepted: true, version: "2026-09-02" } as const;
+const currentCheckoutPolicyAcceptance = { accepted: true, version: "2026-09-02" } as const;
 
 type AppRole = "STUDENT" | "STAFF" | "ADMIN";
 type JsonRecord = Record<string, any>;
@@ -108,7 +110,8 @@ async function loginWithOneTimeLink(page: Page, email: string, expectedRole: App
   expect(accessToken, `Supabase access token for ${email}`).toBeTruthy();
 
   const response = await page.request.post("/api/auth/session", {
-    headers: { ...originHeader(), Authorization: `Bearer ${accessToken}` }
+    headers: { ...originHeader(), Authorization: `Bearer ${accessToken}` },
+    data: { policyAcceptance: currentAccountPolicyAcceptance }
   });
   const body = await responseJson(response, `login:${expectedRole.toLowerCase()}`);
   expect(body.profile?.email).toBe(email);
@@ -249,6 +252,7 @@ test("student dashboard, catalog, reservation, receipts, notifications, and supp
       data: {
         paymentMethod: "PAY_AT_COMMISSARY",
         ...futurePickupWindow(),
+        policyAcceptance: currentCheckoutPolicyAcceptance,
         items: [reservationItem()]
       }
     });
@@ -269,6 +273,7 @@ test("student dashboard, catalog, reservation, receipts, notifications, and supp
       data: {
         paymentMethod: "PAY_AT_COMMISSARY",
         ...futurePickupWindow(),
+        policyAcceptance: currentCheckoutPolicyAcceptance,
         items: [reservationItem()]
       }
     });
@@ -285,6 +290,7 @@ test("student dashboard, catalog, reservation, receipts, notifications, and supp
       data: {
         paymentMethod: "PAY_AT_COMMISSARY",
         ...futurePickupWindow(),
+        policyAcceptance: currentCheckoutPolicyAcceptance,
         items: [reservationItem()]
       }
     });

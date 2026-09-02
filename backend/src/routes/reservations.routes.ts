@@ -24,6 +24,10 @@ const createReservationSchema = z.object({
     pickupDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Pickup date must use YYYY-MM-DD."),
     pickupSlotId: z.string().uuid(),
     pickupPolicyVersion: z.number().int().positive(),
+    policyAcceptance: z.object({
+      accepted: z.boolean().optional(),
+      version: z.string().trim().min(1).max(32).optional()
+    }).strict().optional(),
     items: z
       .array(
         z.object({

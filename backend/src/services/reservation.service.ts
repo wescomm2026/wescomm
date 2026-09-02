@@ -11,6 +11,10 @@ import {
   paymentCanRetry
 } from "../domain/online-payment.js";
 import { RESERVATION_RESTRICTION_POLICY, getNoShowEligibleAt } from "../domain/reservation-policy.js";
+import {
+  assertCurrentCheckoutPolicyAcceptance,
+  type SubmittedPolicyAcceptance
+} from "../domain/policy-acceptance.js";
 import { assertStudentCanCancelReservation } from "../domain/student-reservation-cancellation.js";
 import {
   assertReservationTransition,
@@ -592,6 +596,7 @@ export async function createReservation(input: {
   pickupDate: string;
   pickupSlotId: string;
   pickupPolicyVersion: number;
+  policyAcceptance?: SubmittedPolicyAcceptance;
   items: Array<{
     productId: string;
     skuId?: string;
@@ -603,7 +608,11 @@ export async function createReservation(input: {
     throw new HttpError(503, "Online GCash payment is not available.", "PAYMONGO_DISABLED");
   }
 
-  const requestHash = hashReservationRequest(input);
+  const policyVersion = assertCurrentCheckoutPolicyAcceptance(input.policyAcceptance);
+  const requestHash = hashReservationRequest({
+    ...input,
+    policyAcceptance: { accepted: true, version: policyVersion }
+  });
   const idempotencyNow = new Date();
 
   let existingRequest = await prisma.reservationIdempotencyKey.findUnique({
@@ -772,6 +781,8 @@ export async function createReservation(input: {
             pickupEnd: pickup.pickupEnd,
             pickupPolicyVersionId: pickup.policy.id,
             pickupTimeSlotId: pickup.slot.id,
+            checkoutPolicyVersion: policyVersion,
+            checkoutPolicyAcceptedAt: new Date(),
             totalAmount
           },
           select: {
@@ -980,6 +991,7 @@ export async function createReservation(input: {
               itemCount: createdItems.reduce((sum, item) => sum + item.quantity, 0),
               totalAmount,
               paymentMethod: reservation.paymentMethod,
+              checkoutPolicyVersion: policyVersion,
               idempotencyKey: input.idempotencyKey,
               lowStockAlerts
             }

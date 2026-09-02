@@ -7,6 +7,10 @@ type ReservationRequestForHash = {
   pickupDate: string;
   pickupSlotId: string;
   pickupPolicyVersion: number;
+  policyAcceptance: {
+    accepted: true;
+    version: string;
+  };
   items: Array<{
     productId: string;
     skuId?: string;
@@ -36,6 +40,7 @@ export function hashReservationRequest(input: ReservationRequestForHash) {
     pickupDate: input.pickupDate,
     pickupSlotId: input.pickupSlotId,
     pickupPolicyVersion: input.pickupPolicyVersion,
+    policyVersion: input.policyAcceptance.version,
     items: canonicalItems(input.items)
   });
 

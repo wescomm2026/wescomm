@@ -10,7 +10,7 @@ export function LegalDocument({
   eyebrow,
   title,
   summary,
-  meta = "Effective and last updated: August 11, 2026",
+  meta = "Effective and last updated: September 2, 2026",
   icon,
   navigation,
   variant = "document",

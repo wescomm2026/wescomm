@@ -7,6 +7,8 @@ const supabaseURL = process.env.E2E_SUPABASE_URL?.trim() ?? "";
 const supabaseAnonKey = process.env.E2E_SUPABASE_ANON_KEY?.trim() ?? "";
 const supabaseServiceRoleKey = process.env.E2E_SUPABASE_SERVICE_ROLE_KEY?.trim() ?? "";
 const studentCount = Math.min(Math.max(Number(process.env.LOAD_TEST_STUDENTS ?? 8), 4), 12);
+const currentAccountPolicyAcceptance = { accepted: true, version: "2026-09-02" };
+const currentCheckoutPolicyAcceptance = { accepted: true, version: "2026-09-02" };
 
 if (
   process.env.E2E_LIVE_LOAD_TEST !== "true"
@@ -95,7 +97,8 @@ async function createSession(email, expectedRole) {
 
   const result = await timedRequest(null, "/api/auth/session", {
     method: "POST",
-    headers: { Authorization: `Bearer ${accessToken}` }
+    headers: { Authorization: `Bearer ${accessToken}` },
+    body: JSON.stringify({ policyAcceptance: currentAccountPolicyAcceptance })
   }, `session:${expectedRole.toLowerCase()}`);
   const body = expectStatus(result, [201], `session:${email}`);
   assert.equal(body.profile.role, expectedRole, `${email} has the wrong QA role.`);
@@ -170,6 +173,7 @@ async function createReservation(actor, suffix) {
     body: JSON.stringify({
       paymentMethod: "PAY_AT_COMMISSARY",
       ...futurePickupWindow(),
+      policyAcceptance: currentCheckoutPolicyAcceptance,
       items: [{ productId, quantity: 1 }]
     })
   }, "command:reservation-create");

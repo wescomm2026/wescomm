@@ -3,6 +3,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { env } from "../config/env.js";
 import { profileUpdateSchema } from "../domain/profile-update.js";
+import { assertCurrentAccountPolicyAcceptance } from "../domain/policy-acceptance.js";
 import {
   MAX_TEMPORARY_STAFF_SESSION_MS,
   TEMPORARY_PRODUCTION_STAFF_EMAIL,
@@ -28,10 +29,20 @@ import { HttpError } from "../utils/http-error.js";
 
 export const authRoutes = Router();
 
+const policyAcceptanceSchema = z.object({
+  accepted: z.boolean().optional(),
+  version: z.string().trim().min(1).max(32).optional()
+}).strict();
+
 const devLoginSchema = z.object({
   email: z.string().trim().toLowerCase().email().max(254),
-  password: z.string().min(1).max(128)
+  password: z.string().min(1).max(128),
+  policyAcceptance: policyAcceptanceSchema.optional()
 });
+
+const sessionExchangeSchema = z.object({
+  policyAcceptance: policyAcceptanceSchema.optional()
+}).strict();
 
 const devLoginLimiter = createRateLimiter({
   namespace: "dev-login",
@@ -96,6 +107,7 @@ authRoutes.post(
     }
 
     const input = devLoginSchema.parse(request.body);
+    assertCurrentAccountPolicyAcceptance(input.policyAcceptance);
     if (!isEmailAllowedForDomains(input.email, allowedEmailDomains)) {
       throw new HttpError(403, `Use an approved school account email domain: ${allowedEmailDomains.join(", ")}.`);
     }
@@ -108,7 +120,12 @@ authRoutes.post(
     if (!profile) throw new HttpError(401, "Invalid test account credentials.");
 
     await revokeAuthSession(readAuthSessionToken(request));
-    await issueAuthSession({ request, response, userId: profile.id });
+    await issueAuthSession({
+      request,
+      response,
+      userId: profile.id,
+      policyAcceptance: input.policyAcceptance
+    });
 
     response.setHeader("Cache-Control", "no-store");
     response.json({ profile });
@@ -126,6 +143,7 @@ authRoutes.post(
     }
 
     const input = devLoginSchema.parse(request.body);
+    assertCurrentAccountPolicyAcceptance(input.policyAcceptance);
     const passwordMatches = secretsMatch(input.password, expectedPassword);
     if (input.email !== TEMPORARY_PRODUCTION_STAFF_EMAIL || !passwordMatches) {
       throw new HttpError(401, "Invalid test account credentials.");
@@ -150,6 +168,7 @@ authRoutes.post(
       request,
       response,
       userId: profile.id,
+      policyAcceptance: input.policyAcceptance,
       maximumExpiresAt: maximumSessionExpiration,
       kind: "TEMPORARY_STAFF"
     });
@@ -176,8 +195,15 @@ authRoutes.post(
   requireBearerSessionExchange,
   sessionExchangeLimiter,
   asyncHandler(async (request: AuthenticatedRequest, response) => {
+    const input = sessionExchangeSchema.parse(request.body ?? {});
+    assertCurrentAccountPolicyAcceptance(input.policyAcceptance);
     await revokeAuthSession(readAuthSessionToken(request));
-    await issueAuthSession({ request, response, userId: request.auth!.id });
+    await issueAuthSession({
+      request,
+      response,
+      userId: request.auth!.id,
+      policyAcceptance: input.policyAcceptance
+    });
     response.setHeader("Cache-Control", "no-store");
     response.status(201).json({ profile: request.auth!.profile });
   })

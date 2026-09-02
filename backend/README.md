@@ -115,7 +115,7 @@ PayMongo setup, attempt recovery, expiration/stock-hold policy, reconciliation,
 GitHub Actions maintenance secrets, sandbox tests, and go-live gates are in
 `../txt_files/WESCOMM_PAYMONGO_GCASH_SETUP.md`.
 
-The browser exchanges its Supabase access token once through `POST /api/auth/session`, then uses a revocable HttpOnly cookie. Bearer tokens remain supported for trusted API testing.
+The browser exchanges its Supabase access token once through `POST /api/auth/session`, then uses a revocable HttpOnly cookie. Session issuance also requires `policyAcceptance: { accepted: true, version: "2026-09-02" }`; the backend rejects missing or stale policy versions and records the accepted user, version, and time. Bearer tokens remain supported for trusted API testing.
 
 ## Security Configuration
 
@@ -165,7 +165,7 @@ PayMongo lifecycle audit writes are part of the same database transaction as the
 
 ## Reservation Stock Safety
 
-`POST /api/reservations` now uses a Prisma database transaction. The backend checks stock, creates the reservation, writes reservation items, deducts inventory, records inventory movement, and creates reservation/low-stock notifications as one atomic flow. If stock changes while a student is reserving, the API returns `409` and the reservation is not saved.
+`POST /api/reservations` now uses a Prisma database transaction. The request must include the current `policyAcceptance` object. The backend checks the accepted version and stock, creates the reservation with the policy version/timestamp, writes reservation items, deducts inventory, records inventory movement, and creates reservation/low-stock notifications as one atomic flow. If the policy is stale, the API returns `428`; if stock changes while a student is reserving, the API returns `409` and the reservation is not saved.
 
 `PATCH /api/reservations/:id/status` also handles cancellation stock restoration inside a transaction, so cancelling a reservation restores stock and records the inventory movement together with the status change. Completing a reservation creates or repairs its single server-derived receipt in the same serializable transaction. Receipt notifications and audit delivery are written to the outbox in that transaction and can be retried safely.
 
@@ -186,7 +186,7 @@ encrypted off-site backup workflow and run regular restore drills using
 Run `../txt_files/DATABASE_RESERVATION_IDEMPOTENCY_SQL.txt` once in the Supabase SQL Editor. Student checkout must send a unique `Idempotency-Key` header between 16 and 128 characters. The frontend generates this automatically.
 
 - Repeating the same key with the same checkout details returns the original reservation and does not deduct stock or send notifications twice.
-- Reusing the key with changed items, quantity, options, payment, or pickup schedule returns `409 IDEMPOTENCY_KEY_REUSED`.
+- Reusing the key with changed items, quantity, options, payment, pickup schedule, or accepted policy version returns `409 IDEMPOTENCY_KEY_REUSED`.
 - Keys are scoped per student and retained for 24 hours. Expired records are cleaned when that student submits another checkout.
 - A new reservation returns HTTP `201`; an idempotent replay returns HTTP `200` with `Idempotent-Replayed: true`.
 

@@ -27,7 +27,8 @@ const messageByCode: Record<string, string> = {
   SKU_OPTION_VALUE_IN_USE: "This option is used by an active stock combination. Update the combinations before removing it.",
   SKU_RECONCILIATION_REQUIRED: "Set up the size or option combinations before updating stock.",
   WESBOT_DISABLED: "WesBot is temporarily unavailable. Staff support is still available.",
-  PICKUP_SLOT_FULL: "That pickup time just became full. Choose another available time."
+  PICKUP_SLOT_FULL: "That pickup time just became full. Choose another available time.",
+  POLICY_ACCEPTANCE_REQUIRED: "Review and accept the current WESCOMM policies before continuing."
 };
 
 const technicalMessagePattern = /\b(?:api|backend|database|internal server|json|migration|payload|prisma|provider identifiers?|rate snapshot|reconcil(?:e|ing|iation)|request body|route|runtime|schema|semantic mode|session identifier|sku|sql|supabase|token identity|webhook)\b/i;
@@ -41,6 +42,7 @@ function fallbackForStatus(status: number) {
   if (status === 408) return "WESCOMM is taking longer than expected. Please try again.";
   if (status === 409) return "This information changed while you were working. Refresh the page and try again.";
   if (status === 413) return "The selected file or submitted information is too large.";
+  if (status === 428) return "Review and accept the current WESCOMM policies before continuing.";
   if (status === 429) return "WESCOMM is receiving many requests right now. Please wait a moment and try again.";
   if (status >= 500) return "WESCOMM could not complete this request right now. Please try again.";
   return "WESCOMM could not complete this request. Please try again.";

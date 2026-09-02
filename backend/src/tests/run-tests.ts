@@ -80,6 +80,7 @@ await import("./temporary-staff-login-policy.test.js");
 await import("./rate-limit.test.js");
 await import("./request-security.test.js");
 await import("./profile-security.test.js");
+await import("./policy-acceptance.test.js");
 await import("./database-url.test.js");
 await import("./http-error.test.js");
 await import("./public-error.test.js");

@@ -40,6 +40,7 @@ export async function loginWithDevelopmentAccount(
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByRole("heading", { name: "Log in with your school email" })).toBeVisible();
   await dialog.getByRole("textbox").fill(email.split("@")[0]);
+  await dialog.getByRole("checkbox", { name: /I agree to the Terms & Conditions/ }).check();
   await dialog.getByRole("button", { name: "Continue to password" }).click();
 
   await expect(dialog.getByRole("heading", { name: "Enter account password" })).toBeVisible();

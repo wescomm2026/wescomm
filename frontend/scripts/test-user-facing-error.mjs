@@ -18,6 +18,10 @@ assert.equal(
   "This reservation is already paid."
 );
 assert.equal(
+  apiErrorMessage({ status: 428, code: "POLICY_ACCEPTANCE_REQUIRED", serverMessage: "stale version" }),
+  "Review and accept the current WESCOMM policies before continuing."
+);
+assert.equal(
   userFacingErrorMessage(new Error("Database schema failed."), "Unable to load this page."),
   "Unable to load this page."
 );

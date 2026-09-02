@@ -26,6 +26,16 @@ const releaseMigrations = [
       /conversation_purge_records ENABLE ROW LEVEL SECURITY/,
       /REVOKE ALL PRIVILEGES ON TABLE public\.conversation_purge_records FROM PUBLIC/
     ]
+  },
+  {
+    directory: "20260902000000_add_policy_acceptance",
+    required: [
+      /CREATE TABLE "policy_acceptances"/,
+      /policy_acceptances_user_id_policy_version_key/,
+      /reservations_checkout_policy_acceptance_check/,
+      /policy_acceptances ENABLE ROW LEVEL SECURITY/,
+      /REVOKE ALL PRIVILEGES ON TABLE public\.policy_acceptances FROM PUBLIC/
+    ]
   }
 ];
 

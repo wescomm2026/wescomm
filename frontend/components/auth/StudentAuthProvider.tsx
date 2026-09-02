@@ -26,6 +26,12 @@ import { EMAIL_OTP_LENGTH, isCompleteEmailOtp, normalizeEmailOtp } from "@/lib/a
 import { userFacingErrorMessage } from "@/lib/user-facing-error";
 import { unsubscribeWebPushFromBrowser } from "@/lib/push-notifications";
 import {
+  clearPendingAccountPolicyAcceptance,
+  readPendingAccountPolicyAcceptance,
+  rememberPendingAccountPolicyAcceptance,
+  type PolicyAcceptancePayload
+} from "@/lib/policy-consent";
+import {
   passwordLoginTarget,
   temporaryStaffLoginExpirationTimestamp
 } from "@/lib/password-login-policy.mjs";
@@ -63,9 +69,9 @@ type StudentAuthContextValue = {
   openAuth: () => void;
   openAuthAt: (returnTo: string) => void;
   closeAuth: () => void;
-  sendEmailOtp: (email: string) => Promise<AuthResult>;
-  verifyEmailOtp: (email: string, token: string) => Promise<AuthResult>;
-  loginWithTestAccount: (email: string, password: string) => Promise<AuthResult>;
+  sendEmailOtp: (email: string, policyAcceptance: PolicyAcceptancePayload) => Promise<AuthResult>;
+  verifyEmailOtp: (email: string, token: string, policyAcceptance: PolicyAcceptancePayload) => Promise<AuthResult>;
+  loginWithTestAccount: (email: string, password: string, policyAcceptance: PolicyAcceptancePayload) => Promise<AuthResult>;
   isPasswordLoginAvailable: (email: string) => boolean;
   completeEmailLogin: () => Promise<AuthResult>;
   updateProfile: (input: StudentProfileInput) => Promise<AuthResult>;
@@ -171,13 +177,18 @@ async function loadProfileSession(accessToken?: string): Promise<StudentUser> {
   return mapProfileToSession(profilePayload.profile as BackendAuthProfile);
 }
 
-async function establishBackendSession(accessToken: string): Promise<StudentUser> {
+async function establishBackendSession(
+  accessToken: string,
+  policyAcceptance: PolicyAcceptancePayload
+): Promise<StudentUser> {
   const response = await onlineFetch(`${API_BASE_URL}/auth/session`, {
     method: "POST",
     credentials: "include",
     headers: {
-      Authorization: `Bearer ${accessToken}`
-    }
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ policyAcceptance })
   });
   const payload = await response.json().catch(() => null);
   if (!response.ok) {
@@ -475,7 +486,10 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
     return true;
   }, [persistSession, router]);
 
-  const sendEmailOtp = useCallback(async (email: string): Promise<AuthResult> => {
+  const sendEmailOtp = useCallback(async (
+    email: string,
+    policyAcceptance: PolicyAcceptancePayload
+  ): Promise<AuthResult> => {
     if (!hasSupabaseBrowserConfig()) {
       return { success: false, error: "Login is not available right now. Please try again later." };
     }
@@ -504,6 +518,7 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
           retryAfterSeconds: failure.retryAfterSeconds
         };
       }
+      rememberPendingAccountPolicyAcceptance(normalizedEmail);
       return { success: true };
     } catch (error) {
       const failure = describeOtpSendError(error);
@@ -516,7 +531,11 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const verifyEmailOtp = useCallback(async (email: string, token: string): Promise<AuthResult> => {
+  const verifyEmailOtp = useCallback(async (
+    email: string,
+    token: string,
+    policyAcceptance: PolicyAcceptancePayload
+  ): Promise<AuthResult> => {
     if (!hasSupabaseBrowserConfig()) {
       return { success: false, error: "Login is not available right now. Please try again later." };
     }
@@ -552,12 +571,13 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
         if (window.localStorage.getItem(LOGOUT_PENDING_KEY) === "true") {
           throw new Error("A sign out is still in progress.");
         }
-        return establishBackendSession(accessToken);
+        return establishBackendSession(accessToken, policyAcceptance);
       });
       await supabase.auth.signOut({ scope: "local" }).catch(() => undefined);
       if (!saveSession(session)) {
         return { success: false, error: "A sign out was requested before login completed. Please try again." };
       }
+      clearPendingAccountPolicyAcceptance();
       return { success: true };
     } catch (error) {
       return {
@@ -577,18 +597,26 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
       const url = new URL(window.location.href);
 
       let accessToken = "";
+      let verifiedEmail = "";
       if (url.searchParams.has("code")) {
         const { data, error } = await supabase.auth.exchangeCodeForSession(url.searchParams.get("code") ?? "");
         if (error) return { success: false, error: "This sign-in link is invalid or expired. Please request a new code." };
         accessToken = data.session?.access_token ?? "";
+        verifiedEmail = data.session?.user.email ?? "";
       }
 
       if (!accessToken) {
         const { data, error } = await supabase.auth.getSession();
         if (error) return { success: false, error: "We could not complete your login. Please try again." };
         accessToken = data.session?.access_token ?? "";
+        verifiedEmail = data.session?.user.email ?? "";
       }
       if (!accessToken) return { success: false, error: "We could not complete your login. Please try again." };
+      const policyAcceptance = readPendingAccountPolicyAcceptance(verifiedEmail);
+      if (!policyAcceptance) {
+        await supabase.auth.signOut({ scope: "local" }).catch(() => undefined);
+        return { success: false, error: "Return to WESCOMM sign in and accept the current Terms and Privacy Policy before continuing." };
+      }
 
       if (!await prepareForNewSession()) {
         await supabase.auth.signOut({ scope: "local" }).catch(() => undefined);
@@ -598,12 +626,13 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
         if (window.localStorage.getItem(LOGOUT_PENDING_KEY) === "true") {
           throw new Error("A sign out is still in progress.");
         }
-        return establishBackendSession(accessToken);
+        return establishBackendSession(accessToken, policyAcceptance);
       });
       await supabase.auth.signOut({ scope: "local" }).catch(() => undefined);
       if (!saveSession(session)) {
         return { success: false, error: "A sign out was requested before login completed. Please try again." };
       }
+      clearPendingAccountPolicyAcceptance();
       return { success: true };
     } catch (error) {
       return {
@@ -624,7 +653,11 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
     getPasswordLoginTarget(email) !== null
   ), [getPasswordLoginTarget]);
 
-  const loginWithTestAccount = useCallback(async (email: string, password: string): Promise<AuthResult> => {
+  const loginWithTestAccount = useCallback(async (
+    email: string,
+    password: string,
+    policyAcceptance: PolicyAcceptancePayload
+  ): Promise<AuthResult> => {
     const normalizedEmail = email.trim().toLowerCase();
     const loginTarget = getPasswordLoginTarget(normalizedEmail);
     if (!loginTarget) {
@@ -645,7 +678,7 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
           headers: {
             "Content-Type": "application/json"
           },
-          body: JSON.stringify({ email: normalizedEmail, password })
+          body: JSON.stringify({ email: normalizedEmail, password, policyAcceptance })
         });
       });
 
@@ -665,6 +698,7 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
       if (!saveSession(session)) {
         return { success: false, error: "A sign out was requested before login completed. Please try again." };
       }
+      clearPendingAccountPolicyAcceptance();
       return { success: true };
     } catch (error) {
       return {

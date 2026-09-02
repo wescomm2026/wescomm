@@ -25,6 +25,7 @@ function requestFingerprint(payload: CreateReservationPayload) {
     pickupDate: payload.pickupDate,
     pickupSlotId: payload.pickupSlotId,
     pickupPolicyVersion: payload.pickupPolicyVersion,
+    policyVersion: payload.policyAcceptance.version,
     items: [...payload.items]
       .map((item) => ({
         productId: item.productId,

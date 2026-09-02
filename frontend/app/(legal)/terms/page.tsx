@@ -94,6 +94,9 @@ export default function TermsPage() {
         <p>
           These terms may be updated when the service, University rules, or legal requirements change. The effective date at the top of this page identifies the current version.
         </p>
+        <p>
+          When WESCOMM presents an acceptance checkbox, you must actively select it before continuing. WESCOMM records the authenticated account, applicable policy version, and acceptance time. A material update may require acceptance of the updated version before a later sign-in or reservation.
+        </p>
       </LegalSection>
 
       <LegalSection title="9. Privacy and contact">

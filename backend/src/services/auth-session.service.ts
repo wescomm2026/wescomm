@@ -2,6 +2,10 @@ import { createHash, randomBytes } from "node:crypto";
 import type { Request, Response } from "express";
 import { env } from "../config/env.js";
 import {
+  assertCurrentAccountPolicyAcceptance,
+  type SubmittedPolicyAcceptance
+} from "../domain/policy-acceptance.js";
+import {
   isTemporaryProductionStaffIdentity,
   temporaryStaffLoginExpirationMs
 } from "../domain/temporary-staff-login-policy.js";
@@ -146,9 +150,11 @@ export async function issueAuthSession(input: {
   request: Request;
   response: Response;
   userId: string;
+  policyAcceptance?: SubmittedPolicyAcceptance;
   maximumExpiresAt?: Date;
   kind?: AuthSessionKind;
 }) {
+  const policyVersion = assertCurrentAccountPolicyAcceptance(input.policyAcceptance);
   const tokenEntropy = randomBytes(32).toString("base64url");
   const rawToken = input.kind === "TEMPORARY_STAFF"
     ? `${TEMPORARY_STAFF_SESSION_TOKEN_PREFIX}${tokenEntropy}`
@@ -191,6 +197,14 @@ export async function issueAuthSession(input: {
           userAgent,
           expiresAt
         }
+      });
+      await tx.policyAcceptance.createMany({
+        data: [{
+          userId: input.userId,
+          policyVersion,
+          acceptedAt: now
+        }],
+        skipDuplicates: true
       });
     }, AUTH_SESSION_TRANSACTION_OPTIONS);
   } catch (error) {

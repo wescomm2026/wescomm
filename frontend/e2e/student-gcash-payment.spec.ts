@@ -170,6 +170,7 @@ test("cart checkout sends only server-owned GCash identifiers before trusted red
   await expect(checkout.getByText("Test mode", { exact: true })).toBeVisible();
   await expect(checkout.getByText("No real money will be charged.", { exact: true })).toBeVisible();
   await checkout.getByRole("radio", { name: /Pay Online via GCash/ }).check();
+  await checkout.getByRole("checkbox", { name: /I agree to the Terms & Conditions/ }).check();
   await checkout.getByRole("button", { name: "Continue to GCash" }).click();
   await page.waitForURL(`https://checkout.paymongo.com/test/${paymentId}`);
 
@@ -177,7 +178,8 @@ test("cart checkout sends only server-owned GCash identifiers before trusted red
     paymentMethod: "PAYMONGO_GCASH",
     pickupDate: "2026-08-03",
     pickupSlotId,
-    pickupPolicyVersion: 7
+    pickupPolicyVersion: 7,
+    policyAcceptance: { accepted: true, version: "2026-09-02" }
   });
   expect(reservationBody).not.toHaveProperty("amount");
   expect(reservationBody).not.toHaveProperty("status");

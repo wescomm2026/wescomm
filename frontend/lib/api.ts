@@ -186,6 +186,10 @@ export type CreateReservationPayload = {
   pickupDate: string;
   pickupSlotId: string;
   pickupPolicyVersion: number;
+  policyAcceptance: {
+    accepted: true;
+    version: string;
+  };
   items: Array<{
     productId: string;
     skuId?: string;

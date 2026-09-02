@@ -50,6 +50,7 @@ export default function PrivacyPage() {
           <li>Reservation and purchase information, including selected products, variants, quantities, pickup schedules, status, receipts, and support records.</li>
           <li>Online payment records such as internal references, PayMongo references, amount, fee, net amount, payment method, status, and timestamps.</li>
           <li>Security information such as sign-in activity, device or browser details, support reference numbers, activity records, notification preferences, and registered notification devices.</li>
+          <li>Policy acceptance records, including the authenticated account, policy version, acceptance context, and acceptance time.</li>
           <li>Messages and other information you voluntarily provide when contacting WESCOMM Support.</li>
         </LegalList>
         <LegalNote>
@@ -93,6 +94,9 @@ export default function PrivacyPage() {
         <p>
           Financial and audit records may need to be preserved even after an account becomes inactive. When information is no longer required, it is deleted, anonymized, or securely archived according to the applicable retention process.
         </p>
+        <p>
+          A support conversation moved into deletion retention remains recoverable to an administrator for 90 days before permanent purge becomes available. A non-content purge record may remain for accountability. Policy acceptance records are retained with the related account or reservation so WESCOMM can identify which terms applied to the interaction.
+        </p>
       </LegalSection>
 
       <LegalSection id="security" title="6. Security">
@@ -115,6 +119,9 @@ export default function PrivacyPage() {
         </LegalList>
         <p>
           To protect your account, WESCOMM may verify your identity before acting on a request. Some records cannot be deleted immediately when retention is required for transactions, audits, disputes, or law.
+        </p>
+        <p>
+          Required acceptance of the Terms is separate from optional browser push permission. You may disable browser notifications without losing access to reservation, receipt, or support records in WESCOMM.
         </p>
       </LegalSection>
 
