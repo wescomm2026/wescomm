@@ -52,7 +52,8 @@ const reservationStatusChangedPayloadSchema = z.object({
 });
 
 const reservationRescheduledPayloadSchema = z.object({
-  actorId: z.string().uuid(),
+  actorId: z.string().uuid().nullable(),
+  initiatedById: z.string().uuid().optional(),
   studentId: z.string().uuid(),
   referenceCode: z.string().min(1).max(80),
   pickupStart: z.string().datetime(),

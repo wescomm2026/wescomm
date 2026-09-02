@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import { WebPushSettings } from "@/components/notifications/WebPushSettings";
 import { AssetIcon } from "@/components/ui/AssetIcon";
@@ -9,6 +10,7 @@ import { clearStaffSession } from "@/lib/staff-api";
 import { Notice, PageHeading } from "@/components/staff/StaffOperationsShared";
 
 export function StaffSettingsExperience() {
+  const router = useRouter();
   const { user, logout } = useStudentAuth();
   const [lowStock, setLowStock] = useState(true);
   const [reservations, setReservations] = useState(true);
@@ -31,7 +33,8 @@ export function StaffSettingsExperience() {
     const signedOut = await logout();
     if (!signedOut) return;
     clearStaffSession();
-    window.location.assign("/");
+    router.replace("/");
+    router.refresh();
   };
 
   return (

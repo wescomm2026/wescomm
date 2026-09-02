@@ -53,7 +53,8 @@ import {
 const PICKUP_RECOVERY_CODES = new Set([
   "PICKUP_POLICY_CHANGED",
   "PICKUP_DATE_CLOSED",
-  "PICKUP_SLOT_UNAVAILABLE"
+  "PICKUP_SLOT_UNAVAILABLE",
+  "PICKUP_SLOT_FULL"
 ]);
 
 function parsePrice(price: string) {

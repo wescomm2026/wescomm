@@ -14,7 +14,7 @@ function roleHome(role: ServerProfile["role"]) {
 }
 
 export async function requireWorkspaceRole(role: "STAFF" | "ADMIN") {
-  const cookieStore = cookies();
+  const cookieStore = await cookies();
   const testRole = cookieStore.get("wescomm_e2e_workspace_role")?.value;
   if (
     process.env.E2E_WORKSPACE_BYPASS_TOKEN

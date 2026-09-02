@@ -26,7 +26,8 @@ const messageByCode: Record<string, string> = {
   SKU_NEW_OPTION_ZERO_STOCK_REQUIRED: "New options start with zero stock. Add them to a stock combination before restocking.",
   SKU_OPTION_VALUE_IN_USE: "This option is used by an active stock combination. Update the combinations before removing it.",
   SKU_RECONCILIATION_REQUIRED: "Set up the size or option combinations before updating stock.",
-  WESBOT_DISABLED: "WesBot is temporarily unavailable. Staff support is still available."
+  WESBOT_DISABLED: "WesBot is temporarily unavailable. Staff support is still available.",
+  PICKUP_SLOT_FULL: "That pickup time just became full. Choose another available time."
 };
 
 const technicalMessagePattern = /\b(?:api|backend|database|internal server|json|migration|payload|prisma|provider identifiers?|rate snapshot|reconcil(?:e|ing|iation)|request body|route|runtime|schema|semantic mode|session identifier|sku|sql|supabase|token identity|webhook)\b/i;

@@ -95,6 +95,13 @@ enum PickupReviewStatus {
   @@map("pickup_review_status")
 }
 
+enum ReservationScheduleChangeSource {
+  MANUAL
+  SYSTEM_CLOSURE
+
+  @@map("reservation_schedule_change_source")
+}
+
 enum PaymentMethod {
   PAY_AT_COMMISSARY
   E_WALLET_AT_PICKUP
@@ -221,6 +228,9 @@ model Profile {
   realtimeEvents        RealtimeEvent[]             @relation("RealtimeAudienceUser")
   createdPickupPolicies PickupPolicyVersion[]       @relation("PickupPolicyCreatedBy")
   pickupScheduleChanges ReservationScheduleChange[] @relation("PickupScheduleChangedBy")
+  messageEdits          ConversationMessageRevision[] @relation("MessageRevisionEditor")
+  deletedConversations  Conversation[]                @relation("ConversationDeletedBy")
+  conversationPurges    ConversationPurgeRecord[]     @relation("ConversationPurgedBy")
 
   @@index([createdAt(sort: Desc), id(sort: Desc)])
   @@index([role, createdAt(sort: Desc), id(sort: Desc)])
@@ -406,6 +416,7 @@ model Reservation {
   @@index([studentId, createdAt(sort: Desc), id(sort: Desc)])
   @@index([status, createdAt(sort: Desc), id(sort: Desc)])
   @@index([status, pickupEnd, id])
+  @@index([pickupStart, pickupEnd, status])
   @@index([pickupReviewStatus, pickupStart, id])
   @@index([pickupPolicyVersionId])
   @@index([pickupTimeSlotId])
@@ -421,6 +432,7 @@ model PickupPolicyVersion {
   effectiveAt    DateTime          @default(now()) @map("effective_at") @db.Timestamptz(6)
   isActive       Boolean           @default(false) @map("is_active")
   reason         String
+  activationKey  String?           @unique @map("activation_key")
   createdById    String?           @map("created_by_id") @db.Uuid
   createdAt      DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt      DateTime          @default(now()) @map("updated_at") @db.Timestamptz(6)
@@ -453,6 +465,7 @@ model PickupTimeSlot {
   endMinute       Int                 @map("end_minute")
   isActive        Boolean             @default(true) @map("is_active")
   sortOrder       Int                 @default(0) @map("sort_order")
+  capacity        Int?
   policyVersion   PickupPolicyVersion @relation(fields: [policyVersionId], references: [id], onDelete: Cascade)
   reservations    Reservation[]
 
@@ -467,6 +480,7 @@ model PickupClosure {
   date            DateTime            @db.Date
   reason          String
   policyVersion   PickupPolicyVersion @relation(fields: [policyVersionId], references: [id], onDelete: Cascade)
+  scheduleChanges ReservationScheduleChange[]
 
   @@unique([policyVersionId, date])
   @@index([date])
@@ -477,6 +491,9 @@ model ReservationScheduleChange {
   id                       String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   reservationId            String      @map("reservation_id") @db.Uuid
   actorId                  String?     @map("actor_id") @db.Uuid
+  source                   ReservationScheduleChangeSource @default(MANUAL)
+  closureId                String?     @map("closure_id") @db.Uuid
+  triggerKey               String?     @unique @map("trigger_key")
   reason                   String
   previousPickupStart      DateTime?   @map("previous_pickup_start") @db.Timestamptz(6)
   previousPickupEnd        DateTime?   @map("previous_pickup_end") @db.Timestamptz(6)
@@ -491,9 +508,11 @@ model ReservationScheduleChange {
   createdAt                DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
   reservation              Reservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
   actor                    Profile?    @relation("PickupScheduleChangedBy", fields: [actorId], references: [id], onDelete: SetNull)
+  closure                  PickupClosure? @relation(fields: [closureId], references: [id], onDelete: SetNull)
 
   @@index([reservationId, createdAt(sort: Desc)])
   @@index([actorId, createdAt(sort: Desc)])
+  @@index([closureId, createdAt(sort: Desc)])
   @@map("reservation_schedule_changes")
 }
 
@@ -825,15 +844,40 @@ model Conversation {
   lastIntent       String?               @map("last_intent")
   lastConcernKey   String?               @map("last_concern_key")
   botReplyCount    Int                   @default(0) @map("bot_reply_count")
+  studentArchivedAt DateTime?            @map("student_archived_at") @db.Timestamptz(6)
+  operationsArchivedAt DateTime?         @map("operations_archived_at") @db.Timestamptz(6)
+  deletedAt             DateTime?         @map("deleted_at") @db.Timestamptz(6)
+  deletedById           String?           @map("deleted_by_id") @db.Uuid
+  purgeEligibleAt       DateTime?         @map("purge_eligible_at") @db.Timestamptz(6)
   createdAt        DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt        DateTime              @default(now()) @map("updated_at") @db.Timestamptz(6)
   student          Profile               @relation("StudentConversations", fields: [studentId], references: [id], onDelete: Cascade)
   assignedStaff    Profile?              @relation("AssignedStaffConversations", fields: [assignedStaffId], references: [id], onDelete: SetNull)
+  deletedBy        Profile?              @relation("ConversationDeletedBy", fields: [deletedById], references: [id], onDelete: SetNull)
   messages         ConversationMessage[]
 
   @@index([mode, priority, updatedAt(sort: Desc)])
   @@index([studentId, updatedAt(sort: Desc)])
+  @@index([deletedAt, purgeEligibleAt])
   @@map("conversations")
+}
+
+model ConversationPurgeRecord {
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  conversationId     String   @unique @map("conversation_id") @db.Uuid
+  purgedById         String?  @map("purged_by_id") @db.Uuid
+  idempotencyKey     String   @unique @map("idempotency_key")
+  previewFingerprint String   @map("preview_fingerprint")
+  messageCount       Int      @map("message_count")
+  revisionCount      Int      @map("revision_count")
+  softDeletedAt      DateTime @map("soft_deleted_at") @db.Timestamptz(6)
+  purgeEligibleAt    DateTime @map("purge_eligible_at") @db.Timestamptz(6)
+  purgedAt           DateTime @default(now()) @map("purged_at") @db.Timestamptz(6)
+  purgedBy           Profile? @relation("ConversationPurgedBy", fields: [purgedById], references: [id], onDelete: SetNull)
+
+  @@index([purgedAt(sort: Desc)])
+  @@index([purgedById, purgedAt(sort: Desc)])
+  @@map("conversation_purge_records")
 }
 
 model ConversationMessage {
@@ -844,12 +888,32 @@ model ConversationMessage {
   message        String
   intent         String?
   metadata       Json                          @default("{}")
+  editedAt       DateTime?                     @map("edited_at") @db.Timestamptz(6)
+  editVersion    Int                           @default(0) @map("edit_version")
   createdAt      DateTime                      @default(now()) @map("created_at") @db.Timestamptz(6)
   conversation   Conversation                  @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   sender         Profile?                      @relation("MessageSender", fields: [senderId], references: [id], onDelete: SetNull)
+  revisions      ConversationMessageRevision[]
 
   @@index([conversationId, createdAt])
   @@map("conversation_messages")
+}
+
+model ConversationMessageRevision {
+  id              String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  messageId       String              @map("message_id") @db.Uuid
+  editedById      String              @map("edited_by_id") @db.Uuid
+  editVersion     Int                 @map("edit_version")
+  previousMessage String              @map("previous_message")
+  newMessage      String              @map("new_message")
+  editedAt        DateTime            @default(now()) @map("edited_at") @db.Timestamptz(6)
+  message         ConversationMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  editedBy        Profile             @relation("MessageRevisionEditor", fields: [editedById], references: [id], onDelete: Restrict)
+
+  @@unique([messageId, editVersion])
+  @@index([messageId, editedAt(sort: Desc)])
+  @@index([editedById, editedAt(sort: Desc)])
+  @@map("conversation_message_revisions")
 }
 
 model WesbotAiUsage {

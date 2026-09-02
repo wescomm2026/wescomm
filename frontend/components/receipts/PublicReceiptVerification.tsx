@@ -3,15 +3,18 @@
 import { userFacingErrorMessage } from "@/lib/user-facing-error";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { ArrowRight, Ban, Check, Clock3, LockKeyhole, QrCode, ReceiptText, Search, ShieldCheck } from "lucide-react";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import { FormControl, formControlClass } from "@/components/ui/FormControl";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { Surface } from "@/components/ui/Surface";
 import {
   verifyReceiptFromApi,
   verifyReceiptTokenFromApi,
+  resolveReceiptTokenFromApi,
   BackendApiError,
   type BackendPublicReceiptVerification
 } from "@/lib/api";
@@ -68,6 +71,8 @@ function receiptResultTone(status: BackendPublicReceiptVerification["status"]) {
 }
 
 export function PublicReceiptVerification() {
+  const router = useRouter();
+  const { ready, user } = useStudentAuth();
   const [receiptCode, setReceiptCode] = useState("");
   const [receipt, setReceipt] = useState<BackendPublicReceiptVerification | null>(null);
   const [submittedCode, setSubmittedCode] = useState("");
@@ -76,6 +81,7 @@ export function PublicReceiptVerification() {
   const [notFoundCode, setNotFoundCode] = useState("");
   const resultRef = useRef<HTMLElement | null>(null);
   const errorRef = useRef<HTMLParagraphElement | null>(null);
+  const processedTokenRef = useRef(false);
 
   useEffect(() => {
     if (error) errorRef.current?.focus();
@@ -83,19 +89,37 @@ export function PublicReceiptVerification() {
   }, [error, notFoundCode, receipt]);
 
   useEffect(() => {
+    if (!ready || processedTokenRef.current) return;
     const parameters = new URLSearchParams(window.location.hash.replace(/^#/, ""));
     const token = parameters.get("v")?.trim();
     if (!token) return;
 
+    processedTokenRef.current = true;
     window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
     setLoading(true);
     setError("");
     setNotFoundCode("");
-    void verifyReceiptTokenFromApi(token)
-      .then((result) => {
-        setReceipt(result);
-        setSubmittedCode(result.receiptCode);
-      })
+    const resolveToken = async () => {
+      if (user?.accessToken) {
+        try {
+          const receiptId = await resolveReceiptTokenFromApi(token, user.accessToken);
+          if (user.role === "STUDENT") {
+            router.replace(`/student/receipts?receiptId=${encodeURIComponent(receiptId)}`);
+          } else {
+            router.replace(`/${user.role.toLowerCase()}/receipt-verification?receiptId=${encodeURIComponent(receiptId)}`);
+          }
+          return;
+        } catch (resolveError) {
+          if (!(resolveError instanceof BackendApiError) || resolveError.status !== 404) throw resolveError;
+        }
+      }
+
+      const result = await verifyReceiptTokenFromApi(token);
+      setReceipt(result);
+      setSubmittedCode(result.receiptCode);
+    };
+
+    void resolveToken()
       .catch((verificationError) => {
         if (verificationError instanceof BackendApiError && verificationError.status === 404) {
           setNotFoundCode("Secure receipt link");
@@ -104,7 +128,7 @@ export function PublicReceiptVerification() {
         }
       })
       .finally(() => setLoading(false));
-  }, []);
+  }, [ready, router, user?.accessToken, user?.role]);
 
   const verifyReceipt = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();

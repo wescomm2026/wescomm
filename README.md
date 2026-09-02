@@ -47,15 +47,25 @@ Run these checks before opening a pull request or deploying:
 
 ```powershell
 cd backend
-npm run typecheck
-npm test
-npm run build
+npm run release:preflight
+npm run test:ci
 ```
 
 ```powershell
 cd frontend
+npm run lint
 npm run typecheck
+npm run test:config
 npm run build
+npm run test:e2e:release
+```
+
+Before a Production merge, authenticate the Vercel CLI to the owning team and
+validate the actual Production environment without downloading or printing
+secret values:
+
+```powershell
+vercel env run -e production -- npm --prefix backend run release:production:verify
 ```
 
 ## Deployment and QA

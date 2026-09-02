@@ -1,6 +1,25 @@
+# Local secrets, dependencies, and generated outputs are never deployment input.
+.env
+.env.*
+!.env.example
+backend/.env
+frontend/.env.local
+.vercel/
+**/node_modules/
+**/.next/
+**/dist/
+playwright-report/
+test-results/
+*.log
+*.tmp
+*.temp
+*.bak
+*.zip
+
 # Local QA and presentation artifacts are not part of the production runtime.
 WESCOMM_*/
 system-design-diagrams/
+wescomm_assets/
 
 # Untracked local media preview; production code does not reference it.
 frontend/public/assets/WesComm_Logo_Animation_Preview(1) (1).gif

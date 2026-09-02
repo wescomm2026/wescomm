@@ -8,10 +8,15 @@ import {
   createConversation,
   createBotReplyForMessage,
   createMessage,
+  editConversationMessage,
+  getConversationPurgePreview,
   listConversationMessages,
   listConversations,
+  permanentlyPurgeConversation,
   requestStaffHandoff,
   returnConversationToBot,
+  setConversationArchived,
+  setConversationDeleted,
   setConversationTyping,
   takeOverConversation,
   updateConversationStatus
@@ -40,11 +45,30 @@ const typingSchema = z.object({
   isTyping: z.boolean()
 });
 
+const archiveSchema = z.object({
+  archived: z.boolean()
+});
+
+const deletionSchema = z.object({
+  deleted: z.boolean()
+});
+
+const permanentPurgeSchema = z.object({
+  confirmationPhrase: z.string().min(1).max(80),
+  previewFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+  idempotencyKey: z.string().uuid()
+});
+
+const editMessageSchema = messageSchema.extend({
+  expectedEditVersion: z.number().int().min(0)
+});
+
 const handoffSchema = z.object({
   reason: z.string().trim().min(3).max(500).optional()
 });
 
 const conversationIdSchema = z.string().uuid();
+const messageIdSchema = z.string().uuid();
 const conversationCreateLimiter = createRateLimiter({
   namespace: "conversation-create",
   windowMs: 15 * 60 * 1000,
@@ -77,11 +101,77 @@ messagesRoutes.use(requireAuth);
 messagesRoutes.get(
   "/",
   asyncHandler(async (request: AuthenticatedRequest, response) => {
-    const query = z.object({ limit: z.coerce.number().int().min(1).max(50).optional() }).parse(request.query);
+    const query = z.object({
+      limit: z.coerce.number().int().min(1).max(50).optional(),
+      view: z.enum(["ACTIVE", "ARCHIVED", "DELETED"]).optional()
+    }).parse(request.query);
     const conversations = await measureRequestPhase(response, "message_query", () =>
-      listConversations(request.auth!.id, request.auth!.role, query.limit)
+      listConversations(request.auth!.id, request.auth!.role, query)
     );
     response.json({ conversations });
+  })
+);
+
+messagesRoutes.patch(
+  "/:conversationId/archive",
+  conversationStatusLimiter,
+  asyncHandler(async (request: AuthenticatedRequest, response) => {
+    const input = archiveSchema.parse(request.body);
+    const conversation = await measureRequestPhase(response, "message_command", () => setConversationArchived({
+      conversationId: conversationIdSchema.parse(request.params.conversationId),
+      userId: request.auth!.id,
+      role: request.auth!.role,
+      archived: input.archived
+    }));
+    await invalidateDashboardAndReportCaches();
+    response.json({ conversation });
+  })
+);
+
+messagesRoutes.patch(
+  "/:conversationId/deletion",
+  requireRole("ADMIN"),
+  conversationStatusLimiter,
+  asyncHandler(async (request: AuthenticatedRequest, response) => {
+    const input = deletionSchema.parse(request.body);
+    const conversation = await measureRequestPhase(response, "message_command", () => setConversationDeleted({
+      conversationId: conversationIdSchema.parse(request.params.conversationId),
+      actorId: request.auth!.id,
+      actorRole: request.auth!.role,
+      deleted: input.deleted
+    }));
+    await invalidateDashboardAndReportCaches();
+    response.json({ conversation });
+  })
+);
+
+messagesRoutes.get(
+  "/:conversationId/purge-preview",
+  requireRole("ADMIN"),
+  conversationStatusLimiter,
+  asyncHandler(async (request: AuthenticatedRequest, response) => {
+    const preview = await measureRequestPhase(response, "message_query", () => getConversationPurgePreview({
+      conversationId: conversationIdSchema.parse(request.params.conversationId),
+      actorRole: request.auth!.role
+    }));
+    response.json({ preview });
+  })
+);
+
+messagesRoutes.delete(
+  "/:conversationId/permanent",
+  requireRole("ADMIN"),
+  conversationStatusLimiter,
+  asyncHandler(async (request: AuthenticatedRequest, response) => {
+    const input = permanentPurgeSchema.parse(request.body);
+    const purge = await measureRequestPhase(response, "message_command", () => permanentlyPurgeConversation({
+      conversationId: conversationIdSchema.parse(request.params.conversationId),
+      actorId: request.auth!.id,
+      actorRole: request.auth!.role,
+      ...input
+    }));
+    await invalidateDashboardAndReportCaches();
+    response.json({ purge });
   })
 );
 
@@ -224,6 +314,23 @@ messagesRoutes.post(
   })
 );
 
+messagesRoutes.patch(
+  "/:conversationId/messages/:messageId",
+  messageCreateLimiter,
+  asyncHandler(async (request: AuthenticatedRequest, response) => {
+    const input = editMessageSchema.parse(request.body);
+    const message = await measureRequestPhase(response, "message_command", () => editConversationMessage({
+      conversationId: conversationIdSchema.parse(request.params.conversationId),
+      messageId: messageIdSchema.parse(request.params.messageId),
+      userId: request.auth!.id,
+      role: request.auth!.role,
+      message: input.message,
+      expectedEditVersion: input.expectedEditVersion
+    }));
+    response.json({ message });
+  })
+);
+
 messagesRoutes.post(
   "/:conversationId/messages/:messageId/bot-reply",
   requireRole("STUDENT"),
@@ -231,7 +338,7 @@ messagesRoutes.post(
   asyncHandler(async (request: AuthenticatedRequest, response) => {
     const botMessage = await measureRequestPhase(response, "message_command", () => createBotReplyForMessage({
       conversationId: conversationIdSchema.parse(request.params.conversationId),
-      messageId: z.string().uuid().parse(request.params.messageId),
+      messageId: messageIdSchema.parse(request.params.messageId),
       studentId: request.auth!.id
     }));
     response.status(201).json({ botMessage });

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { ReceiptText } from "lucide-react";
+import { StudentAuthProvider } from "@/components/auth/StudentAuthProvider";
 import { PublicReceiptVerification } from "@/components/receipts/PublicReceiptVerification";
 import { LegalDocument } from "@/components/legal/LegalDocument";
 
@@ -18,7 +19,9 @@ export default function VerifyReceiptPage() {
       icon={<ReceiptText className="size-6" />}
       variant="tool"
     >
-      <PublicReceiptVerification />
+      <StudentAuthProvider>
+        <PublicReceiptVerification />
+      </StudentAuthProvider>
     </LegalDocument>
   );
 }

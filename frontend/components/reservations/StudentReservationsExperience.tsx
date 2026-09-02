@@ -376,7 +376,7 @@ function ReservationDetailsModal({
   accessToken: string;
   onCancelled: (reservation: BackendReservation) => void;
   onClose: () => void;
-  returnFocusRef: RefObject<HTMLButtonElement>;
+  returnFocusRef: RefObject<HTMLButtonElement | null>;
 }) {
   const [mounted, setMounted] = useState(false);
   const overlayRef = useRef<HTMLDivElement>(null);

@@ -106,6 +106,8 @@ await import("./public-receipt.test.js");
 await import("./receipt-integrity.test.js");
 await import("./report-range.test.js");
 await import("./operations-v2-architecture.test.js");
+await import("./operations-lifecycle-architecture.test.js");
+await import("./conversation-retention.test.js");
 await import("./online-payment.test.js");
 await import("./paymongo-webhook.test.js");
 await import("./paymongo-payment-validation.test.js");

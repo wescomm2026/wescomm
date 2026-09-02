@@ -627,6 +627,7 @@ export function StudentReceiptsExperience() {
   const [selectedReceiptId, setSelectedReceiptId] = useState<string | null>(null);
   const receiptTriggerRef = useRef<HTMLButtonElement | null>(null);
   const requestSequenceRef = useRef(0);
+  const openedDeepLinkRef = useRef<string | null>(null);
   const accountId = user?.id ?? "";
   const cacheKey = receiptCacheKey(accountId);
   const receiptPage = useServerState<CursorPage<BackendReceipt>>(cacheKey);
@@ -689,6 +690,26 @@ export function StudentReceiptsExperience() {
       requestSequenceRef.current += 1;
     };
   }, [accountId, cacheKey, loadReceipts]);
+
+  useEffect(() => {
+    if (!authReady || !user?.accessToken || !accountId) return;
+    const parameters = new URLSearchParams(window.location.search);
+    const receiptId = parameters.get("receiptId")?.trim();
+    if (!receiptId || openedDeepLinkRef.current === receiptId) return;
+    openedDeepLinkRef.current = receiptId;
+    parameters.delete("receiptId");
+    const nextQuery = parameters.toString();
+    window.history.replaceState(null, "", `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ""}`);
+
+    void getReceiptFromApi(user.accessToken, receiptId)
+      .then((receipt) => {
+        upsertCursorItem(cacheKey, receipt, true);
+        setSelectedReceiptId(receipt.id);
+      })
+      .catch((receiptError) => {
+        setError(userFacingErrorMessage(receiptError, "Unable to open this receipt."));
+      });
+  }, [accountId, authReady, cacheKey, user?.accessToken]);
 
   useEffect(() => {
     if (!authReady || !user?.accessToken) return;

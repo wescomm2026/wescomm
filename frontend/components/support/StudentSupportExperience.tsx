@@ -4,18 +4,20 @@ import { userFacingErrorMessage } from "@/lib/user-facing-error";
 
 import Image from "next/image";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Headphones, MessageCircleMore, Plus, RefreshCw, Send } from "lucide-react";
+import { Archive, ArchiveRestore, ArrowLeft, Check, Headphones, MessageCircleMore, Pencil, Plus, RefreshCw, Send, X } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import { useRealtimeRefresh } from "@/components/realtime/RealtimeProvider";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import {
   createConversationFromApi,
+  editConversationMessageFromApi,
   getConversationMessagesFromApi,
   getConversationsFromApi,
   requestConversationBotReplyFromApi,
   requestConversationHandoffFromApi,
   sendConversationMessageFromApi,
+  setConversationArchivedFromApi,
   updateConversationTypingFromApi,
   type BackendConversation,
   type BackendConversationMessage,
@@ -153,6 +155,7 @@ function ChatAvatar({ kind, size = "md" }: { kind: "BOT" | "STAFF"; size?: "sm" 
 export function StudentSupportExperience() {
   const { user, ready, openAuth } = useStudentAuth();
   const [conversations, setConversations] = useState<BackendConversation[]>([]);
+  const [conversationView, setConversationView] = useState<"ACTIVE" | "ARCHIVED">("ACTIVE");
   const [selectedId, setSelectedId] = useState("");
   const [startingNew, setStartingNew] = useState(false);
   const [composer, setComposer] = useState("");
@@ -162,6 +165,9 @@ export function StudentSupportExperience() {
   const [submitting, setSubmitting] = useState(false);
   const [botReplyPending, setBotReplyPending] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState("");
   const [error, setError] = useState("");
   const messagesLogRef = useRef<HTMLDivElement | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
@@ -191,7 +197,7 @@ export function StudentSupportExperience() {
     }
 
     try {
-      const rows = await getConversationsFromApi(user.accessToken);
+      const rows = await getConversationsFromApi(user.accessToken, { view: conversationView });
       const scopedRows = user.role === "STUDENT"
         ? rows.filter((conversation) => conversation.studentId === user.id)
         : rows;
@@ -204,7 +210,7 @@ export function StudentSupportExperience() {
       setSelectedId((current) => conversationId && scopedRows.some((conversation) => conversation.id === conversationId)
         ? conversationId
         : scopedRows.some((conversation) => conversation.id === current) ? current : scopedRows[0]?.id || "");
-      if (!background && !scopedRows.length) setStartingNew(true);
+      if (!background && !scopedRows.length) setStartingNew(conversationView === "ACTIVE");
       if (!background) setThreadOpen(true);
     } catch (supportError) {
       if (!background) {
@@ -213,7 +219,7 @@ export function StudentSupportExperience() {
     } finally {
       if (!background) setLoading(false);
     }
-  }, [user?.accessToken, user?.id, user?.role]);
+  }, [conversationView, user?.accessToken, user?.id, user?.role]);
 
   const refreshConversations = useCallback(async () => {
     if (refreshing) return;
@@ -352,6 +358,7 @@ export function StudentSupportExperience() {
     setStartingNew(false);
     setSelectedId("");
     setConversations([]);
+    setConversationView("ACTIVE");
     setComposer("");
     setPendingMessage("");
     loadedThreadIdsRef.current.clear();
@@ -398,6 +405,7 @@ export function StudentSupportExperience() {
       sendTypingSignal(selectedConversation.id, false);
     }
     setSelectedId("");
+    setConversationView("ACTIVE");
     setStartingNew(true);
     setComposer("");
     setError("");
@@ -546,6 +554,48 @@ export function StudentSupportExperience() {
     }
   };
 
+  const archiveConversation = async (conversation: BackendConversation) => {
+    if (!user?.accessToken || conversation.status !== "RESOLVED") return;
+    setSubmitting(true);
+    setError("");
+    try {
+      await setConversationArchivedFromApi(user.accessToken, conversation.id, conversationView === "ACTIVE");
+      setConversations((current) => current.filter((item) => item.id !== conversation.id));
+      setSelectedId("");
+      setThreadOpen(false);
+    } catch (archiveError) {
+      setError(userFacingErrorMessage(archiveError, "Unable to update the conversation archive."));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const saveMessageEdit = async (conversation: BackendConversation, message: BackendConversationMessage) => {
+    const nextMessage = editDraft.trim();
+    if (!user?.accessToken || !nextMessage || savingEdit) return;
+    setSavingEdit(true);
+    setError("");
+    try {
+      const updated = await editConversationMessageFromApi(
+        user.accessToken,
+        conversation.id,
+        message.id,
+        nextMessage,
+        message.editVersion ?? 0
+      );
+      setConversations((current) => current.map((item) => item.id === conversation.id
+        ? { ...item, messages: item.messages.map((entry) => entry.id === updated.id ? updated : entry) }
+        : item));
+      setEditingMessageId(null);
+      setEditDraft("");
+    } catch (editError) {
+      setError(userFacingErrorMessage(editError, "Unable to edit this message."));
+      void loadThreadMessages(conversation.id);
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
   if (!ready || loading) {
     return (
       <div className="space-y-5">
@@ -627,6 +677,10 @@ export function StudentSupportExperience() {
               <Plus className="size-5" />
             </button>
           </div>
+          <div className="grid grid-cols-2 gap-1 border-b border-[#edf1ed] p-2" aria-label="Conversation view">
+            <button type="button" onClick={() => { setConversationView("ACTIVE"); setStartingNew(false); }} aria-pressed={conversationView === "ACTIVE"} className={cn("rounded-lg px-3 py-2 text-xs font-extrabold", conversationView === "ACTIVE" ? "bg-primary text-white" : "text-[#68746d] hover:bg-[#eef4ef]")}>Active</button>
+            <button type="button" onClick={() => { setConversationView("ARCHIVED"); setStartingNew(false); }} aria-pressed={conversationView === "ARCHIVED"} className={cn("rounded-lg px-3 py-2 text-xs font-extrabold", conversationView === "ARCHIVED" ? "bg-primary text-white" : "text-[#68746d] hover:bg-[#eef4ef]")}>Archived</button>
+          </div>
           <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-2">
             {conversations.length ? conversations.map((conversation) => (
               <button
@@ -695,6 +749,18 @@ export function StudentSupportExperience() {
             {selectedConversation ? (
               <span className="hidden shrink-0 md:inline-flex"><StatusBadge status={supportStatus(selectedConversation)} /></span>
             ) : null}
+            {selectedConversation?.status === "RESOLVED" ? (
+              <button
+                type="button"
+                onClick={() => void archiveConversation(selectedConversation)}
+                disabled={submitting}
+                aria-label={conversationView === "ACTIVE" ? "Archive conversation" : "Restore conversation"}
+                title={conversationView === "ACTIVE" ? "Archive" : "Restore"}
+                className="grid size-10 shrink-0 place-items-center rounded-full text-[#5d6962] transition hover:bg-[#f0f5f1] hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
+              >
+                {conversationView === "ACTIVE" ? <Archive className="size-[18px]" /> : <ArchiveRestore className="size-[18px]" />}
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={() => void refreshConversations()}
@@ -760,6 +826,11 @@ export function StudentSupportExperience() {
               const mine = message.senderType === "STUDENT" && message.senderId === user.id;
               const day = formatSupportDay(message.createdAt);
               const showDay = index === 0 || formatSupportDay(messages[index - 1].createdAt) !== day;
+              const canEdit = mine
+                && messages.at(-1)?.id === message.id
+                && selectedConversation.status === "OPEN"
+                && (selectedConversation.mode === "WAITING_FOR_STAFF" || selectedConversation.mode === "STAFF_ACTIVE")
+                && Date.now() - new Date(message.createdAt).getTime() <= 30 * 60_000;
 
               if (message.senderType === "SYSTEM") {
                 return (
@@ -795,11 +866,22 @@ export function StudentSupportExperience() {
                             ? "rounded-bl-md bg-white text-[#17211b] ring-1 ring-[#dfe8e0]"
                             : "rounded-bl-md bg-white text-[#17211b] ring-1 ring-sky-200"
                       )}>
-                        <p className="whitespace-pre-wrap break-words leading-6 [overflow-wrap:anywhere]">{message.message}</p>
+                        {editingMessageId === message.id ? (
+                          <textarea value={editDraft} onChange={(event) => setEditDraft(event.target.value)} maxLength={2000} rows={3} className="min-w-[220px] resize-y rounded-lg border border-white/50 bg-white/95 p-2 text-[#17211b] outline-none focus:ring-2 focus:ring-white" aria-label="Edit message" />
+                        ) : <p className="whitespace-pre-wrap break-words leading-6 [overflow-wrap:anywhere]">{message.message}</p>}
                       </div>
                       <p className={cn("mt-1 px-1 text-[10px] font-semibold", mine ? "text-[#718078]" : "text-[#7b867f]")}>
                         {mine ? "You" : botMessage ? "WesBot" : "Staff"} · {formatSupportTime(message.createdAt)}
                       </p>
+                      {message.editedAt ? <span className="px-1 text-[10px] font-semibold text-[#7b867f]">Edited</span> : null}
+                      {editingMessageId === message.id ? (
+                        <div className="mt-1 flex gap-1">
+                          <button type="button" disabled={savingEdit || !editDraft.trim()} onClick={() => void saveMessageEdit(selectedConversation, message)} className="grid size-8 place-items-center rounded-full bg-primary text-white disabled:opacity-50" aria-label="Save edited message"><Check className="size-4" /></button>
+                          <button type="button" disabled={savingEdit} onClick={() => { setEditingMessageId(null); setEditDraft(""); }} className="grid size-8 place-items-center rounded-full border bg-white text-muted-foreground" aria-label="Cancel editing"><X className="size-4" /></button>
+                        </div>
+                      ) : canEdit ? (
+                        <button type="button" onClick={() => { setEditingMessageId(message.id); setEditDraft(message.message); }} className="mt-1 inline-flex min-h-8 items-center gap-1 rounded-full px-2 text-[11px] font-bold text-primary hover:bg-primary/10" aria-label="Edit your latest message"><Pencil className="size-3" />Edit</button>
+                      ) : null}
                       {suggestedActions.length ? (
                         <div className="mt-2 flex max-w-full flex-wrap gap-1.5" aria-label="Suggested WesBot replies">
                           {suggestedActions.map((action) => (

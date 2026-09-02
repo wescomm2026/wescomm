@@ -63,6 +63,16 @@ function commonApiResponse(route: Route) {
       }
     });
   }
+  if (path === "/api/backend/pickup/availability/slots") {
+    const url = new URL(route.request().url());
+    return json(route, {
+      availability: {
+        pickupDate: url.searchParams.get("pickupDate"),
+        pickupPolicyVersion: 7,
+        slots: [{ slotId: pickupSlotId, capacity: null, booked: 0, remaining: null, isFull: false }]
+      }
+    });
+  }
   return null;
 }
 

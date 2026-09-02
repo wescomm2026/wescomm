@@ -264,6 +264,19 @@ export type BackendPickupTimeSlot = {
   endMinute: number;
   isActive: boolean;
   sortOrder: number;
+  capacity?: number | null;
+};
+
+export type BackendPickupSlotAvailability = {
+  pickupDate: string;
+  pickupPolicyVersion: number;
+  slots: Array<{
+    slotId: string;
+    capacity: number | null;
+    booked: number;
+    remaining: number | null;
+    isFull: boolean;
+  }>;
 };
 
 export type BackendPickupPolicy = {
@@ -292,8 +305,44 @@ export type PickupPolicyPayload = {
   maxAdvanceDays: number;
   reason: string;
   days: Array<{ weekday: number; enabled: boolean }>;
-  timeSlots: Array<{ label: string; startMinute: number; endMinute: number; isActive: boolean }>;
+  timeSlots: Array<{
+    label: string;
+    startMinute: number;
+    endMinute: number;
+    isActive: boolean;
+    capacity: number | null;
+  }>;
   closures: Array<{ date: string; reason: string }>;
+};
+
+export type BackendPickupPolicyImpact = {
+  id: string;
+  referenceCode: string;
+  pickupStart: string | null;
+  pickupEnd: string | null;
+  scheduleRevision: number;
+  action: "AUTO_RESCHEDULE" | "NEEDS_REVIEW";
+  reason: string;
+  proposedPickupStart: string | null;
+  proposedPickupEnd: string | null;
+  proposedSlotLabel: string | null;
+};
+
+export type BackendPickupPolicyPreview = {
+  currentVersion: number;
+  nextVersion: number;
+  affectedCount: number;
+  autoRescheduledCount: number;
+  needsReviewCount: number;
+  previewFingerprint: string;
+  affectedReservations: BackendPickupPolicyImpact[];
+  truncated: boolean;
+};
+
+export type PickupPolicyActivationPayload = PickupPolicyPayload & {
+  expectedCurrentPolicyVersion: number;
+  previewFingerprint: string;
+  idempotencyKey: string;
 };
 
 export type BackendPublicReceiptVerification = {
@@ -519,6 +568,8 @@ export type BackendConversationMessage = {
   message: string;
   intent?: string | null;
   metadata?: Record<string, unknown>;
+  editedAt?: string | null;
+  editVersion?: number;
   createdAt: string;
   sender?: BackendProfileSummary | null;
 };
@@ -547,12 +598,132 @@ export type BackendConversation = {
   botSummary?: string | null;
   lastIntent?: string | null;
   botReplyCount?: number;
+  studentArchivedAt?: string | null;
+  operationsArchivedAt?: string | null;
+  deletedAt?: string | null;
+  deletedById?: string | null;
+  purgeEligibleAt?: string | null;
   createdAt: string;
   updatedAt: string;
   student?: BackendProfileSummary | null;
   assignedStaff?: BackendProfileSummary | null;
   messages: BackendConversationMessage[];
   typingUsers?: BackendTypingUser[];
+};
+
+export type BackendConversationPurgePreview = {
+  conversationId: string;
+  retentionDays: number;
+  deletedAt: string;
+  purgeEligibleAt: string;
+  eligible: boolean;
+  messageCount: number;
+  revisionCount: number;
+  confirmationPhrase: string;
+  previewFingerprint: string;
+};
+
+export type BackendConversationPurgeRecord = {
+  conversationId: string;
+  messageCount: number;
+  revisionCount: number;
+  softDeletedAt: string;
+  purgeEligibleAt: string;
+  purgedAt: string;
+  idempotentReplay: boolean;
+};
+
+export type BackendOperationalStudent = {
+  id: string;
+  fullName: string;
+  email: string;
+  studentNumber: string | null;
+  department: string | null;
+  avatarUrl: string | null;
+  createdAt: string;
+  reservationCount: number;
+  receiptCount: number;
+  offenseCount: number;
+  activeRestriction: { id: string; level: number; endsAt: string | null } | null;
+};
+
+export type BackendOperationalStudentSummary = Omit<BackendOperationalStudent, "reservationCount" | "offenseCount"> & {
+  updatedAt: string;
+  reservationCounts: Partial<Record<BackendReservationStatus, number>>;
+  activeOffenseCount: number;
+  scheduleChangeCount: number;
+  activeRestriction: {
+    id: string;
+    level: number;
+    source: "AUTOMATIC" | "MANUAL";
+    reason: string;
+    startsAt: string;
+    endsAt: string | null;
+  } | null;
+};
+
+export type BackendOperationalReservation = {
+  id: string;
+  referenceCode: string;
+  status: BackendReservationStatus;
+  pickupStart: string | null;
+  pickupEnd: string | null;
+  pickupReviewStatus: string;
+  paymentMethod: BackendPaymentMethod;
+  totalAmount: string;
+  createdAt: string;
+  items: Array<{ name: string; quantity: number; variantSummary: string | null }>;
+};
+
+export type BackendOperationalReceipt = {
+  id: string;
+  receiptCode: string;
+  status: BackendReceiptStatus;
+  totalAmount: string;
+  paymentMethod: BackendPaymentMethod;
+  issuedAt: string;
+  verifiedAt: string | null;
+  voidedAt: string | null;
+  reservationReference: string | null;
+};
+
+export type BackendOperationalScheduleChange = {
+  id: string;
+  source: "MANUAL" | "SYSTEM_CLOSURE";
+  reason: string;
+  previousPickupStart: string | null;
+  previousPickupEnd: string | null;
+  newPickupStart: string;
+  newPickupEnd: string;
+  previousSlotLabel: string | null;
+  newSlotLabel: string;
+  createdAt: string;
+  reservation: { id: string; referenceCode: string };
+  actor: { id: string; fullName: string; email: string } | null;
+};
+
+export type BackendOperationalRestriction = {
+  id: string;
+  level: number;
+  source: "AUTOMATIC" | "MANUAL";
+  status: "ACTIVE" | "EXPIRED" | "LIFTED";
+  reason: string;
+  startsAt: string;
+  endsAt: string | null;
+  liftedAt: string | null;
+  liftReason: string | null;
+  createdAt: string;
+};
+
+export type BackendOperationalOffense = {
+  id: string;
+  type: "NO_SHOW" | "LATE_CANCELLATION" | "RESERVATION_SPAM";
+  status: "ACTIVE" | "OVERTURNED";
+  reason: string;
+  occurredAt: string;
+  overturnedAt: string | null;
+  overturnReason: string | null;
+  reservation: { id: string; referenceCode: string } | null;
 };
 
 export type BackendAppRole = "STUDENT" | "STAFF" | "ADMIN";
@@ -1038,6 +1209,12 @@ export async function getPickupAvailabilityFromApi() {
   return data.policy;
 }
 
+export async function getPickupSlotAvailabilityFromApi(pickupDate: string, pickupPolicyVersion: number) {
+  const query = new URLSearchParams({ pickupDate, pickupPolicyVersion: String(pickupPolicyVersion) });
+  const data = await apiFetch<{ availability: BackendPickupSlotAvailability }>(`/pickup/availability/slots?${query}`);
+  return data.availability;
+}
+
 export async function getPickupPoliciesFromApi(token: string) {
   const data = await authApiFetch<{ policies: BackendPickupPolicy[] }>("/pickup/policies", token);
   return data.policies;
@@ -1049,25 +1226,22 @@ export async function getCurrentPickupPolicyFromApi(token: string) {
 }
 
 export async function previewPickupPolicyFromApi(token: string, payload: PickupPolicyPayload) {
-  const data = await authApiFetch<{
-    preview: {
-      nextVersion: number;
-      affectedCount: number;
-      affectedReservations: Array<{
-        id: string;
-        referenceCode: string;
-        pickupStart: string | null;
-        pickupEnd: string | null;
-        reason: string;
-      }>;
-      truncated: boolean;
-    };
-  }>("/pickup/policies/preview", token, { method: "POST", body: JSON.stringify(payload) });
+  const data = await authApiFetch<{ preview: BackendPickupPolicyPreview }>(
+    "/pickup/policies/preview",
+    token,
+    { method: "POST", body: JSON.stringify(payload) }
+  );
   return data.preview;
 }
 
-export async function createPickupPolicyFromApi(token: string, payload: PickupPolicyPayload) {
-  return authApiFetch<{ policy: BackendPickupPolicy; affectedCount: number }>("/pickup/policies", token, {
+export async function createPickupPolicyFromApi(token: string, payload: PickupPolicyActivationPayload) {
+  return authApiFetch<{
+    policy: BackendPickupPolicy;
+    affectedCount: number;
+    autoRescheduledCount: number;
+    needsReviewCount: number;
+    idempotentReplay: boolean;
+  }>("/pickup/policies", token, {
     method: "POST",
     body: JSON.stringify(payload)
   });
@@ -1247,6 +1421,75 @@ export async function overturnStudentOffenseFromApi(token: string, offenseId: st
   return data.offense;
 }
 
+function operationalStudentPageQuery(options: { cursor?: string; limit?: number; query?: string } = {}) {
+  const params = new URLSearchParams();
+  if (options.cursor) params.set("cursor", options.cursor);
+  if (options.limit) params.set("limit", String(options.limit));
+  if (options.query?.trim()) params.set("query", options.query.trim());
+  return params.size ? `?${params.toString()}` : "";
+}
+
+export async function getOperationalStudentsFromApi(
+  token: string,
+  options: { cursor?: string; limit?: number; query?: string; signal?: AbortSignal } = {}
+) {
+  return authApiFetch<BackendCursorPage<BackendOperationalStudent>>(
+    `/staff/students${operationalStudentPageQuery(options)}`,
+    token,
+    { signal: options.signal }
+  );
+}
+
+export async function getOperationalStudentSummaryFromApi(token: string, studentId: string) {
+  const data = await authApiFetch<{ summary: BackendOperationalStudentSummary }>(
+    `/staff/students/${encodeURIComponent(studentId)}/summary`,
+    token
+  );
+  return data.summary;
+}
+
+async function getOperationalStudentPageFromApi<T>(
+  token: string,
+  studentId: string,
+  resource: "reservations" | "receipts" | "schedule-history" | "restrictions" | "offenses",
+  options: { cursor?: string; limit?: number } = {}
+) {
+  return authApiFetch<BackendCursorPage<T>>(
+    `/staff/students/${encodeURIComponent(studentId)}/${resource}${operationalStudentPageQuery(options)}`,
+    token
+  );
+}
+
+export const getOperationalStudentReservationsFromApi = (
+  token: string,
+  studentId: string,
+  options?: { cursor?: string; limit?: number }
+) => getOperationalStudentPageFromApi<BackendOperationalReservation>(token, studentId, "reservations", options);
+
+export const getOperationalStudentReceiptsFromApi = (
+  token: string,
+  studentId: string,
+  options?: { cursor?: string; limit?: number }
+) => getOperationalStudentPageFromApi<BackendOperationalReceipt>(token, studentId, "receipts", options);
+
+export const getOperationalStudentScheduleHistoryFromApi = (
+  token: string,
+  studentId: string,
+  options?: { cursor?: string; limit?: number }
+) => getOperationalStudentPageFromApi<BackendOperationalScheduleChange>(token, studentId, "schedule-history", options);
+
+export const getOperationalStudentRestrictionsFromApi = (
+  token: string,
+  studentId: string,
+  options?: { cursor?: string; limit?: number }
+) => getOperationalStudentPageFromApi<BackendOperationalRestriction>(token, studentId, "restrictions", options);
+
+export const getOperationalStudentOffensesFromApi = (
+  token: string,
+  studentId: string,
+  options?: { cursor?: string; limit?: number }
+) => getOperationalStudentPageFromApi<BackendOperationalOffense>(token, studentId, "offenses", options);
+
 export async function getReceiptPageFromApi(token: string, options: BackendCollectionOptions = {}) {
   const params = new URLSearchParams();
   if (options.limit) params.set("limit", String(options.limit));
@@ -1288,6 +1531,14 @@ export async function verifyReceiptTokenFromApi(token: string) {
     body: JSON.stringify({ token })
   });
   return data.receipt;
+}
+
+export async function resolveReceiptTokenFromApi(token: string, authToken: string) {
+  const data = await authApiFetch<{ receiptId: string }>("/receipts/resolve-token", authToken, {
+    method: "POST",
+    body: JSON.stringify({ token })
+  });
+  return data.receiptId;
 }
 
 export async function markReceiptVerifiedFromApi(token: string, receiptId: string) {
@@ -1360,11 +1611,16 @@ export async function markAllNotificationsReadFromApi(token: string) {
   return data.updatedCount;
 }
 
-export async function getConversationsFromApi(token: string, signal?: AbortSignal) {
+export async function getConversationsFromApi(
+  token: string,
+  options: { view?: "ACTIVE" | "ARCHIVED" | "DELETED"; signal?: AbortSignal } = {}
+) {
+  const params = new URLSearchParams({ limit: "50" });
+  if (options.view) params.set("view", options.view);
   const data = await authApiFetch<{ conversations: BackendConversation[] }>(
-    "/conversations?limit=50",
+    `/conversations?${params.toString()}`,
     token,
-    { signal }
+    { signal: options.signal }
   );
   return data.conversations;
 }
@@ -1467,6 +1723,64 @@ export async function updateConversationStatusFromApi(
     body: JSON.stringify({ status })
   });
   return data.conversation;
+}
+
+export async function setConversationArchivedFromApi(token: string, conversationId: string, archived: boolean) {
+  const data = await authApiFetch<{ conversation: BackendConversation }>(
+    `/conversations/${encodeURIComponent(conversationId)}/archive`,
+    token,
+    { method: "PATCH", body: JSON.stringify({ archived }) }
+  );
+  return data.conversation;
+}
+
+export async function setConversationDeletedFromApi(token: string, conversationId: string, deleted: boolean) {
+  const data = await authApiFetch<{ conversation: BackendConversation }>(
+    `/conversations/${encodeURIComponent(conversationId)}/deletion`,
+    token,
+    { method: "PATCH", body: JSON.stringify({ deleted }) }
+  );
+  return data.conversation;
+}
+
+export async function getConversationPurgePreviewFromApi(token: string, conversationId: string) {
+  const data = await authApiFetch<{ preview: BackendConversationPurgePreview }>(
+    `/conversations/${encodeURIComponent(conversationId)}/purge-preview`,
+    token
+  );
+  return data.preview;
+}
+
+export async function permanentlyPurgeConversationFromApi(
+  token: string,
+  conversationId: string,
+  payload: {
+    confirmationPhrase: string;
+    previewFingerprint: string;
+    idempotencyKey: string;
+  }
+) {
+  const data = await authApiFetch<{ purge: BackendConversationPurgeRecord }>(
+    `/conversations/${encodeURIComponent(conversationId)}/permanent`,
+    token,
+    { method: "DELETE", body: JSON.stringify(payload) }
+  );
+  return data.purge;
+}
+
+export async function editConversationMessageFromApi(
+  token: string,
+  conversationId: string,
+  messageId: string,
+  message: string,
+  expectedEditVersion: number
+) {
+  const data = await authApiFetch<{ message: BackendConversationMessage }>(
+    `/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}`,
+    token,
+    { method: "PATCH", body: JSON.stringify({ message, expectedEditVersion }) }
+  );
+  return data.message;
 }
 
 function reportQuery(options: ReportRangeOptions = {}) {

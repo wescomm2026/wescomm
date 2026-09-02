@@ -1,6 +1,7 @@
 name: WESCOMM CI
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
   pull_request:
@@ -17,6 +18,7 @@ jobs:
   backend:
     name: Backend checks
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     services:
       postgres:
         image: postgres:16
@@ -51,6 +53,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Verify release migration safety
+        run: npm run release:preflight
+
+      - name: Bootstrap Supabase-compatible CI roles
+        env:
+          WESCOMM_BOOTSTRAP_CI_DATABASE_ROLES: I_CONFIRM_EPHEMERAL_WESCOMM_CI_DATABASE
+        run: npm run prisma:bootstrap:ci
+
       - name: Replay database migrations
         run: npm run prisma:migrate:deploy
 
@@ -76,6 +89,7 @@ jobs:
   frontend:
     name: Frontend checks
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     defaults:
       run:
         working-directory: frontend
@@ -100,6 +114,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+
       - name: Lint
         run: npm run lint
 
@@ -111,3 +128,40 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Install release-test browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Run release acceptance browser tests
+        run: npm run test:e2e:release
+
+      - name: Upload release browser diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-browser-diagnostics
+          path: |
+            frontend/playwright-report/release
+            frontend/test-results
+          if-no-files-found: ignore
+          retention-days: 7
+
+  release-gate:
+    name: Release gate
+    if: always()
+    needs: [backend, frontend]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require every release check
+        shell: bash
+        env:
+          BACKEND_RESULT: ${{ needs.backend.result }}
+          FRONTEND_RESULT: ${{ needs.frontend.result }}
+        run: |
+          set -euo pipefail
+          if [[ "$BACKEND_RESULT" != "success" || "$FRONTEND_RESULT" != "success" ]]; then
+            echo "::error::Release blocked: backend=${BACKEND_RESULT}, frontend=${FRONTEND_RESULT}."
+            exit 1
+          fi
+          echo "Release gate passed."

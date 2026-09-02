@@ -40,7 +40,8 @@ function requestHostOrigin(request: NextRequest) {
   }
 }
 
-async function proxy(request: NextRequest, context: { params: { path: string[] } }) {
+async function proxy(request: NextRequest, context: { params: Promise<{ path: string[] }> }) {
+  const { path } = await context.params;
   const isMutation = !["GET", "HEAD", "OPTIONS"].includes(request.method);
   const browserOrigin = request.headers.get("origin");
   const hostOrigin = requestHostOrigin(request);
@@ -67,7 +68,7 @@ async function proxy(request: NextRequest, context: { params: { path: string[] }
     return NextResponse.json({ error: "Request body is too large." }, { status: 413 });
   }
 
-  const target = new URL(`${backendBaseUrl}/${context.params.path.map(encodeURIComponent).join("/")}`);
+  const target = new URL(`${backendBaseUrl}/${path.map(encodeURIComponent).join("/")}`);
   request.nextUrl.searchParams.forEach((value, key) => target.searchParams.append(key, value));
 
   const headers = new Headers();

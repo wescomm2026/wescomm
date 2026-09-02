@@ -115,7 +115,10 @@ separately but deploy together under one project, domain, and release.
    AUTH_ALLOWED_EMAIL_DOMAIN=wesleyan.edu.ph
    AUTH_ALLOWED_EMAIL_DOMAINS=wesleyan.edu.ph
    AUTH_ALLOWED_AUTH_PROVIDERS=email
+   AUTH_ALLOWED_AUTH_METHODS=otp,magiclink,email/signup,token_refresh
    AUTH_ENABLE_DEV_LOGIN=false
+   AUTH_ENABLE_TEMP_PRODUCTION_STAFF_LOGIN=false
+   NEXT_PUBLIC_ENABLE_TEMP_PRODUCTION_STAFF_LOGIN=false
    AUTH_SESSION_TTL_HOURS=168
    AUTH_SESSION_MAX_PER_USER=5
 
@@ -135,14 +138,41 @@ separately but deploy together under one project, domain, and release.
 
    WESBOT_ENABLED=false
    WESBOT_AI_ENABLED=false
-   WESBOT_MODEL=openai/gpt-5.6-luna
+   WESBOT_AI_REWRITE_ENABLED=false
+   WESBOT_CONVERSATIONAL_MODE=true
+   WESBOT_SEMANTIC_MODE=off
+   WESBOT_MODEL=gemini-3.5-flash-lite
+   WESBOT_BUDGET_ENFORCEMENT_ENABLED=true
+   WESBOT_MONTHLY_BUDGET_USD=10
+   WESBOT_REQUEST_RESERVE_USD=0.01
+   WESBOT_PRICING_VERSION=gemini-3.5-flash-lite-standard-2026-08
+   WESBOT_INPUT_USD_PER_1M_TOKENS=0.30
+   WESBOT_CACHED_INPUT_USD_PER_1M_TOKENS=0.03
+   WESBOT_OUTPUT_USD_PER_1M_TOKENS=2.50
+
+   PAYMONGO_ENABLED=false
+   PAYMONGO_LIVEMODE=false
+   PAYMONGO_CHECKOUT_TTL_MINUTES=30
+   PAYMONGO_RETURN_ORIGIN=https://wescomm.vercel.app
 
    NEXT_PUBLIC_APP_ENV=production
    NEXT_PUBLIC_API_URL=/api
    NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=<public publishable key, if used>
    NEXT_PUBLIC_AUTH_ALLOWED_EMAIL_DOMAIN=wesleyan.edu.ph
    NEXT_PUBLIC_ENABLE_DEV_LOGIN=false
+   NEXT_PUBLIC_ENABLE_TEMP_PRODUCTION_STAFF_LOGIN=false
    NEXT_PUBLIC_E2E_TEST=false
+
+   If live GCash checkout is approved, set PAYMONGO_ENABLED=true and
+   PAYMONGO_LIVEMODE=true, then add PAYMONGO_SECRET_KEY, PAYMONGO_WEBHOOK_SECRET,
+   and PAYMENT_MAINTENANCE_SECRET as Production Sensitive variables. Keep the
+   checkout disabled until the live key, webhook endpoint/signature, maintenance
+   workflow, and refund-review procedure have been verified.
+
+   If WesBot AI is approved, keep WESBOT_ENABLED=true and add GEMINI_API_KEY as
+   a Production Sensitive variable before enabling WESBOT_AI_ENABLED. Semantic
+   shadow/active mode and AI rewriting remain off until their separate cost and
+   quality gates pass.
 
 10. Do not add BACKEND_API_URL on Vercel Services. Browser API requests use the
     same domain at /api, and Vercel routes them directly to Express.
@@ -277,9 +307,31 @@ Create a branch for each change:
   git commit -m "fix: short description"
   git push -u origin fix/short-description
 
-Open a Pull Request on GitHub. Vercel will create Preview deployments. After QA
-and review, merge the Pull Request into main. The stable QA projects will deploy
-the updated main branch automatically.
+Open a Pull Request on GitHub. Vercel will create a Preview deployment. Require
+the single GitHub Actions check named "Release gate" before merging; it passes
+only after both the full backend/database job and frontend/browser job pass.
+
+Before merging a release PR into main:
+
+1. Confirm `vercel whoami` is authenticated to the team that owns the linked
+   wescomm project. A local .vercel/project.json file is not proof of access.
+2. List Production variable names with `vercel env ls production`; never pull
+   or print their values into logs or tickets.
+3. Validate the actual Production variables without writing them to disk:
+
+     vercel env run -e production -- npm --prefix backend run release:production:verify
+
+4. Confirm the latest encrypted backup workflow passed and a restore has been
+   rehearsed with the matching DATA_ENCRYPTION_KEYS.
+5. Run backend `npm run release:preflight`, then apply and verify the additive
+   Prisma migrations against the intended Production project during the approved
+   release window.
+6. Verify the Vercel Preview, including `/api/health/ready`, before merging.
+
+Only then merge the Pull Request into main. Vercel will create the Production
+deployment from that exact reviewed commit. Configure Vercel Deployment Checks
+to require the GitHub "Release gate" check before the Production deployment is
+assigned to the live domain. Never Force Promote around a failed check.
 
 For the first WesBot release, apply its Prisma migration while both WesBot flags
 remain false, deploy the combined Services artifact, verify health and messaging,
@@ -301,6 +353,9 @@ Do not call the staging system production-ready until all are true:
 7. Message privacy between different student accounts passes.
 8. Push notifications are verified on at least one real phone.
 9. Backup and restore procedures have been tested.
+10. `npm run release:production:verify` passes against Vercel Production variables.
+11. Vercel CLI access resolves the expected project and owning team.
+12. GitHub branch protection and Vercel Deployment Checks require "Release gate".
 
 
 COMMON PROBLEMS

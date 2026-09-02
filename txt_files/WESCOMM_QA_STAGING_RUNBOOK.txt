@@ -1,5 +1,5 @@
 WESCOMM QA AND STAGING RUNBOOK
-Last updated: July 11, 2026
+Last updated: September 1, 2026
 
 PURPOSE
 This runbook verifies the student, staff, and admin experiences without changing
@@ -7,22 +7,26 @@ live inventory. Browser automation covers browsing, local cart behavior, login,
 logout, and role-based API access. Checkout, inventory writes, email OTP, push
 delivery, and database recovery remain controlled manual checks on staging.
 
-CURRENT AUTOMATED RESULT - JULY 11, 2026
-- Backend test suite: 22 passed, 0 failed.
-- Playwright desktop/mobile suite: 8 passed, 0 failed, 4 intentionally skipped.
-- Frontend production build: passed; all 37 routes generated.
-- Frontend and backend production dependency audits: 0 vulnerabilities.
-- QA servers on ports 3100 and 4100 stop automatically after the suite.
+CURRENT AUTOMATED RESULT - SEPTEMBER 1, 2026
+- Backend unit/regression/integration suite: 251 passed, 0 failed.
+- Release browser acceptance suite: 17 passed, 0 failed.
+- Frontend production build: passed; all 49 routes generated.
+- Fresh PostgreSQL replay: all 30 migrations and post-deploy checks passed.
+- Release migration preflight: passed for all three September release migrations.
+- Prisma schema validation, frontend typecheck, style guard, copy guard, and
+  server-auth tests: passed.
 
-The intentional skips prevent duplicate coverage: role tests run once on desktop,
-while the hamburger-menu test runs only in the mobile project.
+The release browser contracts use fake route data and a frontend-only server on
+port 3200. They prove critical UI/API contracts without touching any database.
+Database migration replay and integration checks use a separate disposable
+PostgreSQL database and remain separate staging gates for live-provider checks.
 
 ============================================================
 1. ONE-TIME LOCAL SETUP
 ============================================================
 
 Requirements:
-- Node.js 20 or newer
+- Node.js 22 (matches the backend and frontend package engines)
 - Backend and frontend dependencies installed
 - backend/.env and frontend/.env.local configured
 - The three development profiles exist in Supabase:
@@ -54,6 +58,7 @@ This environment variable lasts only for that PowerShell session.
 Backend rules, security policies, rate limits, and reservation safety:
 
   cd C:\Users\vjohn\Desktop\Wescomm\backend
+  npm run release:preflight
   npm run test:ci
 
 Frontend type safety and production build:
@@ -67,6 +72,11 @@ Desktop and mobile browser tests:
   cd C:\Users\vjohn\Desktop\Wescomm\frontend
   $env:E2E_TEST_PASSWORD="<your local test password>"
   npm run test:e2e
+
+Frontend-only release acceptance for critical Admin/Staff operational flows:
+
+  cd C:\Users\vjohn\Desktop\Wescomm\frontend
+  npm run test:e2e:release
 
 Playwright starts isolated QA servers on frontend port 3100 and backend port
 4100. Your normal localhost:3000/4000 preview can keep running independently.
@@ -150,6 +160,25 @@ Support privacy:
 4. Confirm typing indicators and new messages update without manual refresh.
 5. Inspect the database and confirm encrypted support fields do not contain the
    original plaintext.
+
+September operational feature acceptance:
+1. Create a closure preview containing AUTO_RESCHEDULE and NEEDS_REVIEW rows.
+2. Activate once and confirm eligible reservations move once, capacity is
+   honored, history records SYSTEM_CLOSURE, and students are notified.
+3. Repeat the activation request with the same idempotency key and confirm no
+   second move or duplicate notification occurs.
+4. Scan one receipt token as guest, owner, Staff, and Admin. Confirm public data
+   stays masked, owner navigation opens only the owned receipt, Staff/Admin use
+   the internal receipt record, and scanning alone never verifies a receipt.
+5. Search Students by name, student number, and email. Confirm operational tabs
+   are paginated and identity/role/authentication fields remain read-only.
+6. Resolve, archive, restore, and edit a latest human message. Confirm the
+   encrypted revision and Edited indicator remain visible after refresh.
+7. As Admin, move an operations-archived conversation into retention. Confirm
+   Student and Staff can no longer access it, then restore it successfully.
+8. Permanent purge must stay locked until 90 days have elapsed. On an eligible
+   fake conversation, request a fresh preview, enter the exact phrase, purge,
+   and confirm only the PII-free audit tombstone remains.
 
 ============================================================
 5. PHONE AND BROWSER PUSH CHECK
@@ -258,6 +287,7 @@ The database backup is not sufficient without the matching encryption key set.
 ============================================================
 
 Do not release until all are true:
+[ ] Backend release:preflight passes.
 [ ] Backend test:ci passes.
 [ ] Frontend typecheck and production build pass.
 [ ] Playwright desktop and mobile tests pass.
@@ -272,3 +302,97 @@ Credential rotation can wait during isolated local development, but it is a
 required gate before sharing staging publicly, accepting real student data, or
 deploying production. Preserve DATA_ENCRYPTION_KEYS during service credential
 rotation; use versioned encryption migration when rotating the data key itself.
+
+============================================================
+9. SEPTEMBER RELEASE MIGRATION ORDER
+============================================================
+
+The release is additive and must use Prisma's timestamp order:
+
+1. 20260831000000_add_closure_qr_students_support_lifecycle
+2. 20260901000000_add_pickup_slot_capacity
+3. 20260901010000_add_conversation_retention_purge
+
+Never run db push in staging or production. Before migration:
+[ ] Confirm an encrypted off-site backup and matching DATA_ENCRYPTION_KEYS.
+[ ] Run npm run release:preflight from backend.
+[ ] Confirm the target is the intended QA/staging project, not Production.
+
+Apply and verify on staging:
+
+  cd C:\Users\vjohn\Desktop\Wescomm\backend
+  npm run prisma:migrate:deploy
+  npm run prisma:migrate:verify
+
+Then verify GET /api/health/ready before running controlled acceptance tests.
+Production migration/deployment requires a separate explicit owner approval and
+the same successful staging evidence.
+
+Fresh plain-PostgreSQL CI databases do not include Supabase's standard roles.
+Before replaying migrations in CI only, run prisma:bootstrap:ci with the exact
+ephemeral-database confirmation used by .github/workflows/ci.yml. The command
+fails closed unless the database is a local/GitHub Actions WESCOMM test, CI, or
+sandbox database. Never use this CI bootstrap against staging or Production;
+Supabase already manages those roles.
+
+============================================================
+10. ROLLOUT AND ROLLBACK RULES
+============================================================
+
+Rollout order:
+1. Record backup timestamp and migration status.
+2. Apply and verify additive migrations during a low-traffic window.
+3. Deploy backend and frontend from the same reviewed commit.
+4. Check readiness, authentication, core reads, then the Phase 1-8 smoke flows.
+5. Monitor request IDs, audit logs, outbox/notification health, and errors.
+
+Rollback rules:
+- Do not manually reverse or edit an applied Prisma migration.
+- If application code is unhealthy but database integrity is good, roll back the
+  application deployment and keep the additive schema in place.
+- A code rollback does not reverse automatic pickup moves. Use preserved
+  schedule history and approved manual correction; do not move records backward
+  automatically.
+- Permanent conversation purge is irreversible in the application. Test it only
+  with fake staging evidence. Recovery of real purged data would require an
+  approved whole-database backup restore and may overwrite newer data.
+- Restore a database backup only for confirmed data/schema corruption, with an
+  owner-approved maintenance window and a documented recovery point.
+- After any rollback, rerun migration verification and GET /api/health/ready,
+  then record the incident, request IDs, affected records, and final decision.
+
+============================================================
+11. RELEASE CANDIDATE AUTOMATED EVIDENCE (2026-09-01)
+============================================================
+
+Completed on an isolated local release-candidate environment:
+[x] Backend and frontend production dependency audits: 0 vulnerabilities.
+[x] Release migration preflight: all three September migrations passed the
+    transaction, invariant, and destructive-DDL safeguards.
+[x] Fresh PostgreSQL 15 replay: all 30 Prisma migrations applied in timestamp
+    order to a disposable wescomm_rc_test database.
+[x] Post-deploy schema, privilege, RLS, and migration-status verification passed.
+[x] Backend suite: 251/251 passed, including PostgreSQL concurrency tests.
+[x] Isolated PayMongo webhook concurrency and lifecycle verification passed.
+[x] Frontend lint, typecheck, production configuration safeguards, copy/error
+    guards, PWA preparation, and production build passed for all 49 routes.
+[x] Release browser acceptance: 17/17 passed for retention/purge, policy
+    activation, rescheduling/capacity, receipts, reports, product deletion,
+    staff chat/takeover, inventory, loading feedback, and confirmations across
+    desktop/mobile viewports.
+[x] Temporary PostgreSQL cluster and test data were stopped and removed.
+
+CI release-candidate improvements:
+[x] Manual workflow_dispatch is available before deployment.
+[x] Both jobs fail on high/critical production dependency advisories.
+[x] Backend CI bootstraps only the minimum Supabase-compatible roles in its
+    ephemeral database before replaying all migrations.
+[x] Frontend CI runs the 17-test release browser suite and retains diagnostics
+    for seven days on failure.
+
+Automated decision:
+  GO for deployment to the protected staging/Preview environment.
+  NO-GO for Production until every unchecked live-environment item in Section 8
+  is evidenced: verified backup/restore, staging checkout/concurrency, real OTP
+  email and device push, production credential/environment review, development
+  login disabled, and readiness/smoke checks on the deployed candidate.

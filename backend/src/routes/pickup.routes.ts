@@ -7,10 +7,13 @@ import {
   createPickupPolicyVersion,
   getCurrentPickupPolicy,
   getPickupAvailability,
+  getPickupSlotAvailability,
   listPickupPolicyVersions,
   previewPickupPolicy
 } from "../services/pickup-policy.service.js";
 import { asyncHandler } from "../utils/async-handler.js";
+import { scheduleOutboxProcessing } from "../services/outbox.service.js";
+import { invalidateDashboardAndReportCaches } from "../services/operational-cache.service.js";
 
 export const pickupRoutes = Router();
 
@@ -27,7 +30,8 @@ const policySchema = z.object({
     label: z.string().trim().min(3).max(80),
     startMinute: z.number().int().min(0).max(1439),
     endMinute: z.number().int().min(1).max(1440),
-    isActive: z.boolean()
+    isActive: z.boolean(),
+    capacity: z.number().int().min(1).max(500).nullable().default(null)
   })).min(1).max(20),
   closures: z.array(z.object({
     date: dateKeySchema,
@@ -68,11 +72,29 @@ const pickupPolicyWriteLimiter = createRateLimiter({
   message: "Pickup policy update limit reached. Please wait and try again."
 });
 
+const policyActivationSchema = policySchema.and(z.object({
+  expectedCurrentPolicyVersion: z.number().int().positive(),
+  previewFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+  idempotencyKey: z.string().uuid()
+}));
+
 pickupRoutes.get(
   "/availability",
   asyncHandler(async (_request, response) => {
-    response.setHeader("Cache-Control", "private, max-age=30, stale-while-revalidate=30");
+    response.setHeader("Cache-Control", "no-store");
     response.json({ policy: await getPickupAvailability() });
+  })
+);
+
+pickupRoutes.get(
+  "/availability/slots",
+  asyncHandler(async (request, response) => {
+    const query = z.object({
+      pickupDate: dateKeySchema,
+      pickupPolicyVersion: z.coerce.number().int().positive()
+    }).parse(request.query);
+    response.setHeader("Cache-Control", "no-store");
+    response.json({ availability: await getPickupSlotAvailability(query) });
   })
 );
 
@@ -112,7 +134,9 @@ pickupRoutes.post(
   requireRole("STAFF", "ADMIN"),
   pickupPolicyWriteLimiter,
   asyncHandler(async (request: AuthenticatedRequest, response) => {
-    const result = await createPickupPolicyVersion(policySchema.parse(request.body), request.auth!.id);
+    const result = await createPickupPolicyVersion(policyActivationSchema.parse(request.body), request.auth!.id);
+    await invalidateDashboardAndReportCaches();
+    scheduleOutboxProcessing();
     response.status(201).json(result);
   })
 );

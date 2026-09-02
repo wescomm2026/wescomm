@@ -63,6 +63,16 @@ test("Buy Now writes only on final confirmation and recovers from a changed pick
       availabilityCalls += 1;
       return json(route, { policy: pickupPolicy(pickupPolicyChanged ? 8 : 7) });
     }
+    if (path === "/api/backend/pickup/availability/slots") {
+      const url = new URL(request.url());
+      return json(route, {
+        availability: {
+          pickupDate: url.searchParams.get("pickupDate"),
+          pickupPolicyVersion: pickupPolicyChanged ? 8 : 7,
+          slots: [{ slotId: pickupSlotId, capacity: 2, booked: 1, remaining: 1, isFull: false }]
+        }
+      });
+    }
     if (path === "/api/backend/reservations" && request.method() === "POST") {
       reservationCalls += 1;
       reservationBody = request.postDataJSON();
@@ -79,6 +89,7 @@ test("Buy Now writes only on final confirmation and recovers from a changed pick
   let checkout = page.getByRole("dialog", { name: "Item and pickup details" });
   await expect(checkout.getByText(/Policy v/)).toHaveCount(0);
   await checkout.getByRole("button", { name: "2026-08-03, available" }).click();
+  await expect(checkout.getByText("1 spot left", { exact: true })).toBeVisible();
   await checkout.getByRole("button", { name: "Next: Payment" }).click();
   expect(reservationCalls).toBe(0);
 

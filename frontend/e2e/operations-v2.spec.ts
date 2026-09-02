@@ -89,7 +89,7 @@ async function handleShellRequest(route: Route, profile: BackendAuthProfile) {
   return false;
 }
 
-test("staff policy activation previews impact without silently rescheduling existing reservations", async ({ page }, testInfo) => {
+test("staff policy activation previews impact and preserves staff-review counts", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop-chromium", "One full policy transaction is sufficient.");
   let policies = [pickupPolicy()];
   let previewPayload: Record<string, unknown> | null = null;
@@ -109,14 +109,23 @@ test("staff policy activation previews impact without silently rescheduling exis
       previewPayload = request.postDataJSON();
       return json(route, {
         preview: {
+          currentVersion: 7,
           nextVersion: 8,
           affectedCount: 1,
+          autoRescheduledCount: 0,
+          needsReviewCount: 1,
+          previewFingerprint: "a".repeat(64),
           affectedReservations: [{
             id: "93000000-0000-4000-8000-000000000001",
             referenceCode: "WES-POLICY-REVIEW",
             pickupStart: "2026-08-08T02:00:00.000Z",
             pickupEnd: "2026-08-08T04:00:00.000Z",
-            reason: "Saturday is disabled in the proposed policy"
+            scheduleRevision: 2,
+            action: "NEEDS_REVIEW",
+            reason: "Saturday is disabled in the proposed policy",
+            proposedPickupStart: null,
+            proposedPickupEnd: null,
+            proposedSlotLabel: null
           }],
           truncated: false
         }
@@ -126,7 +135,13 @@ test("staff policy activation previews impact without silently rescheduling exis
       activationPayload = request.postDataJSON();
       const nextPolicy = { ...pickupPolicy(8), reason: "Open Saturday for enrollment", isActive: true };
       policies = [nextPolicy, { ...policies[0], isActive: false }];
-      return json(route, { policy: nextPolicy, affectedCount: 1 });
+      return json(route, {
+        policy: nextPolicy,
+        affectedCount: 1,
+        autoRescheduledCount: 0,
+        needsReviewCount: 1,
+        idempotentReplay: false
+      });
     }
 
     unhandled.push(`${request.method()} ${path}`);
@@ -148,13 +163,13 @@ test("staff policy activation previews impact without silently rescheduling exis
 
   const review = page.getByRole("alertdialog", { name: "Save pickup schedule changes?" });
   await expect(review).toBeVisible();
-  await expect(review.getByText(/1 reservation.*need staff review/)).toBeVisible();
+  await expect(review.getByText(/0 will be moved automatically; 1 need staff review/)).toBeVisible();
   expect((previewPayload as unknown as { days: Array<{ weekday: number; enabled: boolean }> }).days)
     .toContainEqual({ weekday: 6, enabled: true });
 
   await review.getByLabel("Change note").fill("Open Saturday for enrollment");
   await review.getByRole("button", { name: "Save Changes", exact: true }).click();
-  await expect(page.getByText(/Pickup schedule updated.*saved pickup times were not changed automatically/)).toBeVisible();
+  await expect(page.getByText(/Pickup schedule updated.*0 reservation.*safely moved.*1 still need staff review/)).toBeVisible();
   expect((activationPayload as unknown as { reason: string }).reason).toBe("Open Saturday for enrollment");
   expect(unhandled).toEqual([]);
 });
@@ -208,6 +223,19 @@ test("authorized reschedule submits the selected policy version and schedule rev
     if (path === "/api/backend/pickup/availability" && request.method() === "GET") {
       return json(route, { policy: pickupPolicy() });
     }
+    if (path === "/api/backend/pickup/availability/slots" && request.method() === "GET") {
+      const url = new URL(request.url());
+      return json(route, {
+        availability: {
+          pickupDate: url.searchParams.get("pickupDate"),
+          pickupPolicyVersion: 7,
+          slots: [
+            { slotId: morningSlotId, capacity: 1, booked: 1, remaining: 0, isFull: true },
+            { slotId: afternoonSlotId, capacity: null, booked: 0, remaining: null, isFull: false }
+          ]
+        }
+      });
+    }
     if (path === `/api/backend/reservations/${reservation.id}/pickup` && request.method() === "PATCH") {
       reschedulePayload = request.postDataJSON();
       return json(route, {
@@ -238,6 +266,7 @@ test("authorized reschedule submits the selected policy version and schedule rev
   await expect(dialog.getByRole("button", { name: /2026-08-05, unavailable: Campus holiday/ })).toBeDisabled();
   await expect(dialog.getByRole("button", { name: /2026-08-08, unavailable: No pickup on this day/ })).toBeDisabled();
   await dialog.getByRole("button", { name: "2026-08-06, available" }).click();
+  await expect(dialog.getByRole("button", { name: "Morning pickup, Full" })).toBeDisabled();
   await dialog.getByRole("button", { name: "Afternoon pickup" }).click();
   await dialog.getByLabel("Reason for rescheduling").fill("Student approved the new afternoon schedule");
   await dialog.getByRole("button", { name: "Save and notify student" }).click();

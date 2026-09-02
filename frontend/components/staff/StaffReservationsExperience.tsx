@@ -300,7 +300,7 @@ export function StaffReservationsExperience() {
                   </p>
                 ) : null}
                 {noShowEligible ? (
-                  <Link href={user?.role === "ADMIN" ? "/admin/student-access" : "/staff/student-access"}>
+                  <Link href={user?.role === "ADMIN" ? "/admin/students" : "/staff/students"}>
                     <Button variant="secondary" className="h-10 border-amber-300 text-amber-800 hover:bg-amber-50">
                       <Ban className="size-4" /> Review no-show
                     </Button>

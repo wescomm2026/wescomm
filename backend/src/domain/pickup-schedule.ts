@@ -15,6 +15,7 @@ export type PickupPolicySnapshot = {
     startMinute: number;
     endMinute: number;
     isActive: boolean;
+    capacity?: number | null;
   }>;
   closures: Array<{ date: Date; reason: string }>;
 };

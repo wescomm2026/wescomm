@@ -24,6 +24,7 @@ import {
   encryptSensitiveText,
   hashHighEntropyLookup
 } from "../utils/field-encryption.js";
+import { safelyRecordAuditLog } from "./audit-log.service.js";
 
 const RECEIPT_TOKEN_CONTEXT = "receipt.public-verification-token";
 
@@ -344,6 +345,27 @@ export async function verifyReceiptToken(token: string) {
         }
       : null
   };
+}
+
+export async function resolveReceiptTokenForViewer(token: string, userId: string, role: AppRole) {
+  const tokenHash = hashHighEntropyLookup(token, RECEIPT_TOKEN_CONTEXT);
+  const receipt = await prisma.receipt.findUnique({
+    where: { publicVerificationTokenHash: tokenHash },
+    select: { id: true, studentId: true, receiptCode: true }
+  });
+  if (!receipt || (role === "STUDENT" && receipt.studentId !== userId)) return null;
+
+  if (role === "STAFF" || role === "ADMIN") {
+    await safelyRecordAuditLog({
+      actorId: userId,
+      action: "RECEIPT_QR_RESOLVED",
+      entityType: "receipt",
+      entityId: receipt.id,
+      summary: `Opened receipt ${receipt.receiptCode} from its secure QR code.`,
+      metadata: { receiptCode: receipt.receiptCode, studentId: receipt.studentId }
+    });
+  }
+  return { receiptId: receipt.id };
 }
 
 export async function ensureReceiptForCompletedReservationInTransaction(

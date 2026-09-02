@@ -3,21 +3,29 @@
 import { userFacingErrorMessage } from "@/lib/user-facing-error";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Bot, Check, Filter, Headphones, LoaderCircle, RefreshCw, Search, Send } from "lucide-react";
+import { Archive, ArchiveRestore, ArrowLeft, Bot, Check, Filter, Headphones, LoaderCircle, Pencil, RefreshCw, RotateCcw, Search, Send, ShieldAlert, Trash2, X } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import { useRealtimeRefresh } from "@/components/realtime/RealtimeProvider";
 import { AssetIcon } from "@/components/ui/AssetIcon";
 import { Button } from "@/components/ui/button";
 import { useConfirmationDialog } from "@/components/ui/ConfirmationDialogProvider";
+import { useAccessibleDialog } from "@/components/ui/useAccessibleDialog";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import {
+  editConversationMessageFromApi,
+  getConversationPurgePreviewFromApi,
   getConversationMessagesFromApi,
   getConversationsFromApi,
   isRequestAbortError,
+  permanentlyPurgeConversationFromApi,
   returnConversationToBotFromApi,
   sendConversationMessageFromApi,
+  setConversationArchivedFromApi,
+  setConversationDeletedFromApi,
   takeOverConversationFromApi,
   type BackendConversation,
+  type BackendConversationMessage,
+  type BackendConversationPurgePreview,
   type BackendConversationStatus,
   type BackendTypingUser,
   updateConversationTypingFromApi,
@@ -40,6 +48,7 @@ export function StaffMessagesExperience() {
   const { user } = useStudentAuth();
   const confirm = useConfirmationDialog();
   const [conversations, setConversations] = useState<BackendConversation[]>([]);
+  const [conversationView, setConversationView] = useState<"ACTIVE" | "ARCHIVED" | "DELETED">("ACTIVE");
   const [selectedId, setSelectedId] = useState("");
   const [reply, setReply] = useState("");
   const [pendingReply, setPendingReply] = useState("");
@@ -49,9 +58,17 @@ export function StaffMessagesExperience() {
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState("");
+  const [purgeDialog, setPurgeDialog] = useState<{
+    conversation: BackendConversation;
+    preview: BackendConversationPurgePreview;
+  } | null>(null);
+  const [purgePhrase, setPurgePhrase] = useState("");
   const [pendingAction, setPendingAction] = useState<{
     conversationId: string;
-    type: "takeover" | "return-to-bot" | "resolve" | "reopen" | "send";
+    type: "takeover" | "return-to-bot" | "resolve" | "reopen" | "archive" | "soft-delete" | "retention-restore" | "purge-preview" | "purge" | "send";
   } | null>(null);
   const messagesLogRef = useRef<HTMLDivElement | null>(null);
   const replyComposerRef = useRef<HTMLTextAreaElement | null>(null);
@@ -69,14 +86,18 @@ export function StaffMessagesExperience() {
     () => conversations.find((conversation) => conversation.id === selectedId) ?? conversations[0] ?? null,
     [conversations, selectedId]
   );
+  const isAdmin = user?.role === "ADMIN";
   const submitting = pendingAction !== null;
   const activeAction = selected && pendingAction?.conversationId === selected.id ? pendingAction.type : null;
   const ownsConversation = Boolean(selected && selected.mode === "STAFF_ACTIVE" && selected.assignedStaffId === user?.id);
-  const canReply = selected?.status !== "RESOLVED" && ownsConversation;
-  const canTakeOver = Boolean(selected && selected.status !== "RESOLVED" && !ownsConversation);
+  const deletedView = conversationView === "DELETED";
+  const canReply = !deletedView && selected?.status !== "RESOLVED" && ownsConversation;
+  const canTakeOver = Boolean(!deletedView && selected && selected.status !== "RESOLVED" && !ownsConversation);
   const handlerName = selected?.assignedStaff?.fullName || "another staff member";
   const composerStatus = activeAction === "send"
     ? "Sending reply to the student..."
+    : deletedView
+      ? "This conversation is read-only while it is in retention. Restore it before changing the thread."
     : selected?.status === "RESOLVED"
       ? "This conversation is resolved. Reopen it before replying."
       : selected?.mode === "BOT_ACTIVE"
@@ -96,7 +117,25 @@ export function StaffMessagesExperience() {
           ? "Resolving conversation"
           : activeAction === "reopen"
             ? "Reopening conversation"
+            : activeAction === "archive"
+              ? "Updating conversation archive"
+              : activeAction === "soft-delete"
+                ? "Moving conversation into retention"
+                : activeAction === "retention-restore"
+                  ? "Restoring conversation from retention"
+                  : activeAction === "purge-preview"
+                    ? "Checking permanent purge eligibility"
+                    : activeAction === "purge"
+                      ? "Permanently purging conversation"
             : "";
+
+  const closePurgeDialog = useCallback(() => {
+    if (pendingAction?.type === "purge") return;
+    setPurgeDialog(null);
+    setPurgePhrase("");
+  }, [pendingAction?.type]);
+  const purgeDialogA11y = useAccessibleDialog<HTMLElement>(Boolean(purgeDialog), closePurgeDialog);
+  const purgeDescriptionId = `${purgeDialogA11y.titleId}-description`;
 
   const loadConversations = useCallback(async ({ background = false }: { background?: boolean } = {}) => {
     const requestId = ++conversationRequestRef.current;
@@ -117,7 +156,7 @@ export function StaffMessagesExperience() {
     }
 
     try {
-      const rows = await getConversationsFromApi(session.token, requestController.signal);
+      const rows = await getConversationsFromApi(session.token, { view: conversationView, signal: requestController.signal });
       if (requestId !== conversationRequestRef.current) return;
       setConversations((current) => rows.map((row) => {
         const existing = current.find((conversation) => conversation.id === row.id);
@@ -136,7 +175,7 @@ export function StaffMessagesExperience() {
     } finally {
       if (requestId === conversationRequestRef.current && !background) setLoading(false);
     }
-  }, []);
+  }, [conversationView]);
 
   const loadThreadMessages = useCallback(async (conversationId: string, after?: string) => {
     const session = getStoredStaffSession();
@@ -175,6 +214,14 @@ export function StaffMessagesExperience() {
       }
     }
   }, []);
+
+  useEffect(() => {
+    if (!user || isAdmin || conversationView !== "DELETED") return;
+    setConversations([]);
+    setSelectedId("");
+    setThreadOpen(false);
+    setConversationView("ACTIVE");
+  }, [conversationView, isAdmin, user]);
 
   useRealtimeRefresh(["conversations", "typing"], (update) => {
     if (update.topic === "conversations") {
@@ -474,14 +521,161 @@ export function StaffMessagesExperience() {
 
     try {
       const updatedConversation = await updateConversationStatusFromApi(session.token, conversation.id, nextStatus);
-      setConversations((current) => current.map((item) => item.id === conversation.id
-        ? { ...updatedConversation, messages: item.messages }
-        : item));
+      setConversations((current) => conversationView === "ARCHIVED" && nextStatus === "OPEN"
+        ? current.filter((item) => item.id !== conversation.id)
+        : current.map((item) => item.id === conversation.id
+          ? { ...updatedConversation, messages: item.messages }
+          : item));
       setNotice(`${conversation.subject} marked as ${nextStatus === "RESOLVED" ? "resolved" : "open"}.`);
     } catch (messageError) {
       setError(userFacingErrorMessage(messageError, "Unable to update the conversation."));
     } finally {
       setPendingAction(null);
+    }
+  };
+
+  const archiveConversation = async (conversation: BackendConversation) => {
+    const session = getStoredStaffSession();
+    if (!session.token || conversation.status !== "RESOLVED" || submitting) return;
+    setPendingAction({ conversationId: conversation.id, type: "archive" });
+    setError("");
+    try {
+      await setConversationArchivedFromApi(session.token, conversation.id, conversationView === "ACTIVE");
+      setConversations((current) => current.filter((item) => item.id !== conversation.id));
+      setSelectedId("");
+      setThreadOpen(false);
+      setNotice(conversationView === "ACTIVE" ? "Conversation archived." : "Conversation restored to the active inbox.");
+    } catch (archiveError) {
+      setError(userFacingErrorMessage(archiveError, "Unable to update the conversation archive."));
+    } finally {
+      setPendingAction(null);
+    }
+  };
+
+  const deleteConversationIntoRetention = async (conversation: BackendConversation) => {
+    const session = getStoredStaffSession();
+    if (!session.token || !isAdmin || conversationView !== "ARCHIVED" || submitting) return;
+    const confirmed = await confirm({
+      title: "Move this conversation into retention?",
+      description: "It will disappear for the student and Staff, remain recoverable by Admin for 90 days, and cannot be permanently purged before that period ends.",
+      confirmLabel: "Move to Deleted",
+      tone: "danger"
+    });
+    if (!confirmed) return;
+
+    setPendingAction({ conversationId: conversation.id, type: "soft-delete" });
+    setError("");
+    try {
+      await setConversationDeletedFromApi(session.token, conversation.id, true);
+      setConversations((current) => current.filter((item) => item.id !== conversation.id));
+      setSelectedId("");
+      setThreadOpen(false);
+      setNotice("Conversation moved into 90-day retention.");
+    } catch (deletionError) {
+      setError(userFacingErrorMessage(deletionError, "Unable to move this conversation into retention."));
+    } finally {
+      setPendingAction(null);
+    }
+  };
+
+  const restoreConversationFromRetention = async (conversation: BackendConversation) => {
+    const session = getStoredStaffSession();
+    if (!session.token || !isAdmin || conversationView !== "DELETED" || submitting) return;
+    const confirmed = await confirm({
+      title: "Restore this conversation?",
+      description: "The full thread will return to the operations archive. It will remain resolved and read-only until Staff explicitly reopens it.",
+      confirmLabel: "Restore conversation"
+    });
+    if (!confirmed) return;
+
+    setPendingAction({ conversationId: conversation.id, type: "retention-restore" });
+    setError("");
+    try {
+      await setConversationDeletedFromApi(session.token, conversation.id, false);
+      setConversations((current) => current.filter((item) => item.id !== conversation.id));
+      setSelectedId("");
+      setThreadOpen(false);
+      setNotice("Conversation restored to the operations archive.");
+    } catch (restoreError) {
+      setError(userFacingErrorMessage(restoreError, "Unable to restore this conversation."));
+    } finally {
+      setPendingAction(null);
+    }
+  };
+
+  const requestPermanentPurge = async (conversation: BackendConversation) => {
+    const session = getStoredStaffSession();
+    if (!session.token || !isAdmin || conversationView !== "DELETED" || submitting) return;
+    setPendingAction({ conversationId: conversation.id, type: "purge-preview" });
+    setError("");
+    try {
+      const preview = await getConversationPurgePreviewFromApi(session.token, conversation.id);
+      if (!preview.eligible) {
+        setError(`Permanent purge is locked until ${new Date(preview.purgeEligibleAt).toLocaleString()}. You can still restore this conversation.`);
+        return;
+      }
+      setPurgePhrase("");
+      setPurgeDialog({ conversation, preview });
+    } catch (previewError) {
+      setError(userFacingErrorMessage(previewError, "Unable to verify permanent purge eligibility."));
+    } finally {
+      setPendingAction(null);
+    }
+  };
+
+  const confirmPermanentPurge = async () => {
+    const session = getStoredStaffSession();
+    if (!session.token || !purgeDialog || submitting) return;
+    const { conversation, preview } = purgeDialog;
+    if (purgePhrase !== preview.confirmationPhrase) return;
+
+    setPendingAction({ conversationId: conversation.id, type: "purge" });
+    setError("");
+    try {
+      await permanentlyPurgeConversationFromApi(session.token, conversation.id, {
+        confirmationPhrase: purgePhrase,
+        previewFingerprint: preview.previewFingerprint,
+        idempotencyKey: crypto.randomUUID()
+      });
+      setConversations((current) => current.filter((item) => item.id !== conversation.id));
+      setSelectedId("");
+      setThreadOpen(false);
+      setPurgeDialog(null);
+      setPurgePhrase("");
+      setNotice("Conversation evidence permanently purged. A non-content audit tombstone was retained.");
+    } catch (purgeError) {
+      setError(userFacingErrorMessage(purgeError, "Unable to permanently purge this conversation."));
+      setPurgeDialog(null);
+      setPurgePhrase("");
+    } finally {
+      setPendingAction(null);
+    }
+  };
+
+  const saveMessageEdit = async (conversation: BackendConversation, message: BackendConversationMessage) => {
+    const session = getStoredStaffSession();
+    const nextMessage = editDraft.trim();
+    if (!session.token || !nextMessage || savingEdit) return;
+    setSavingEdit(true);
+    setError("");
+    try {
+      const updated = await editConversationMessageFromApi(
+        session.token,
+        conversation.id,
+        message.id,
+        nextMessage,
+        message.editVersion ?? 0
+      );
+      setConversations((current) => current.map((item) => item.id === conversation.id
+        ? { ...item, messages: item.messages.map((entry) => entry.id === updated.id ? updated : entry) }
+        : item));
+      setEditingMessageId(null);
+      setEditDraft("");
+    } catch (editError) {
+      setError(userFacingErrorMessage(editError, "Unable to edit this message."));
+      void loadThreadMessages(conversation.id);
+    } finally {
+      setSavingEdit(false);
     }
   };
 
@@ -530,6 +724,12 @@ export function StaffMessagesExperience() {
             </button>
           </div>
 
+          <div className={cn("grid gap-1 border-b border-[#edf1ed] p-2", isAdmin ? "grid-cols-3" : "grid-cols-2")} aria-label="Conversation view">
+            <button type="button" onClick={() => setConversationView("ACTIVE")} aria-pressed={conversationView === "ACTIVE"} className={cn("rounded-lg px-3 py-2 text-xs font-extrabold", conversationView === "ACTIVE" ? "bg-primary text-white" : "text-[#68746d] hover:bg-[#eef4ef]")}>Active</button>
+            <button type="button" onClick={() => setConversationView("ARCHIVED")} aria-pressed={conversationView === "ARCHIVED"} className={cn("rounded-lg px-3 py-2 text-xs font-extrabold", conversationView === "ARCHIVED" ? "bg-primary text-white" : "text-[#68746d] hover:bg-[#eef4ef]")}>Archived</button>
+            {isAdmin ? <button type="button" onClick={() => setConversationView("DELETED")} aria-pressed={conversationView === "DELETED"} className={cn("rounded-lg px-3 py-2 text-xs font-extrabold", conversationView === "DELETED" ? "bg-red-700 text-white" : "text-[#68746d] hover:bg-red-50 hover:text-red-700")}>Deleted</button> : null}
+          </div>
+
           <div className="space-y-2 border-b border-[#edf1ed] p-3">
             <label className="flex h-10 items-center rounded-full border border-[#d7e1d8] bg-white px-3 focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/15">
               <Search className="mr-2 size-4 shrink-0 text-[#68746d]" aria-hidden="true" />
@@ -569,7 +769,7 @@ export function StaffMessagesExperience() {
               <span className="min-w-0 flex-1">
                 <span className="flex items-start gap-2">
                   <span className="min-w-0 flex-1 truncate text-sm font-extrabold text-[#17211b]">{conversation.student?.fullName || conversation.student?.email || "Student"}</span>
-                  <span className="shrink-0 text-[10px] font-semibold text-[#879089]">{formatConversationTime(conversation.updatedAt)}</span>
+                  <span className="shrink-0 text-[10px] font-semibold text-[#879089]">{formatConversationTime(conversation.deletedAt || conversation.updatedAt)}</span>
                 </span>
                 <span className="mt-0.5 block truncate text-xs font-semibold text-[#3f4a44]">{conversation.subject}</span>
                 <span className="mt-1 block truncate text-xs text-[#68746d]">{conversationPreview(conversation)}</span>
@@ -578,7 +778,9 @@ export function StaffMessagesExperience() {
                     "size-1.5 rounded-full",
                     conversation.mode === "BOT_ACTIVE" ? "bg-emerald-500" : conversation.mode === "WAITING_FOR_STAFF" ? "bg-amber-500" : conversation.mode === "STAFF_ACTIVE" ? "bg-sky-500" : "bg-slate-400"
                   )} />
-                  {conversation.mode === "STAFF_ACTIVE"
+                  {conversationView === "DELETED"
+                    ? "Deleted · in retention"
+                    : conversation.mode === "STAFF_ACTIVE"
                     ? `Handled by ${conversation.assignedStaffId === user?.id ? "you" : conversation.assignedStaff?.fullName || "Staff"}`
                     : formatConversationStatus(conversation)}
                 </span>
@@ -615,7 +817,21 @@ export function StaffMessagesExperience() {
                 <h2 className="truncate text-[15px] font-extrabold text-[#17211b] sm:text-base">{selected.student?.fullName || selected.student?.email || "Student"}</h2>
                 <p className="truncate text-[11px] font-semibold text-[#68746d] sm:text-xs">{selected.subject}</p>
               </div>
-              <span className="hidden shrink-0 md:inline-flex"><StatusBadge status={formatConversationStatus(selected)} /></span>
+              <span className="hidden shrink-0 md:inline-flex">
+                {deletedView ? <span className="rounded-full bg-red-100 px-2.5 py-1 text-xs font-extrabold text-red-800">Deleted</span> : <StatusBadge status={formatConversationStatus(selected)} />}
+              </span>
+              {!deletedView && selected.status === "RESOLVED" ? (
+                <button
+                  type="button"
+                  onClick={() => void archiveConversation(selected)}
+                  disabled={submitting}
+                  aria-label={conversationView === "ACTIVE" ? "Archive conversation" : "Restore conversation"}
+                  title={conversationView === "ACTIVE" ? "Archive" : "Restore"}
+                  className="grid size-10 shrink-0 place-items-center rounded-full text-[#5d6962] transition hover:bg-[#f0f5f1] hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
+                >
+                  {conversationView === "ACTIVE" ? <Archive className="size-[18px]" /> : <ArchiveRestore className="size-[18px]" />}
+                </button>
+              ) : null}
               <button
                 type="button"
                 onClick={() => void loadConversations({ background: true })}
@@ -630,31 +846,66 @@ export function StaffMessagesExperience() {
             {pendingActionLabel ? <p className="sr-only" role="status" aria-live="polite">{pendingActionLabel}</p> : null}
 
             <div className="flex min-h-[52px] shrink-0 flex-wrap items-center gap-2 border-b border-[#e5ebe6] bg-[#fbfcfb] px-3 py-2 sm:px-5">
-              <span className="shrink-0 md:hidden"><StatusBadge status={formatConversationStatus(selected)} /></span>
-              {canTakeOver ? (
-                <Button className="min-h-10 shrink-0 rounded-full px-3" disabled={submitting} aria-busy={activeAction === "takeover"} onClick={() => void takeOverConversation(selected)}>
-                  {activeAction === "takeover" ? <LoaderCircle className="size-4 motion-safe:animate-spin" aria-hidden="true" /> : <Headphones className="size-4" aria-hidden="true" />}
-                  {activeAction === "takeover" ? "Taking over..." : "Take Over"}
-                </Button>
-              ) : null}
-              {selected.mode === "STAFF_ACTIVE" && selected.assignedStaffId === user?.id ? (
-                <Button variant="secondary" className="h-9 shrink-0 rounded-full px-3" disabled={submitting} aria-busy={activeAction === "return-to-bot"} onClick={() => void returnToWesBot(selected)}>
-                  {activeAction === "return-to-bot" ? <LoaderCircle className="size-4 motion-safe:animate-spin" aria-hidden="true" /> : <Bot className="size-4" aria-hidden="true" />}
-                  {activeAction === "return-to-bot" ? "Returning..." : "Return to WesBot"}
-                </Button>
-              ) : null}
-              <Button
-                variant={selected.status === "RESOLVED" ? "secondary" : "ghost"}
-                className="min-h-10 shrink-0 rounded-full border border-[#d7e1d8] px-3"
-                disabled={submitting || (selected.status !== "RESOLVED" && !ownsConversation)}
-                aria-busy={activeAction === "resolve" || activeAction === "reopen"}
-                onClick={() => void updateStatus(selected, selected.status === "RESOLVED" ? "OPEN" : "RESOLVED")}
-              >
-                {activeAction === "resolve" || activeAction === "reopen" ? <LoaderCircle className="size-4 motion-safe:animate-spin" aria-hidden="true" /> : <Check className="size-4" aria-hidden="true" />}
-                {activeAction === "resolve" ? "Resolving..." : activeAction === "reopen" ? "Reopening..." : selected.status === "RESOLVED" ? "Reopen" : "Resolve"}
-              </Button>
+              <span className="shrink-0 md:hidden">
+                {deletedView ? <span className="rounded-full bg-red-100 px-2.5 py-1 text-xs font-extrabold text-red-800">Deleted</span> : <StatusBadge status={formatConversationStatus(selected)} />}
+              </span>
+              {deletedView ? (
+                <>
+                  <Button variant="secondary" className="min-h-10 shrink-0 rounded-full px-3" disabled={submitting} aria-busy={activeAction === "retention-restore"} onClick={() => void restoreConversationFromRetention(selected)}>
+                    {activeAction === "retention-restore" ? <LoaderCircle className="size-4 motion-safe:animate-spin" aria-hidden="true" /> : <RotateCcw className="size-4" aria-hidden="true" />}
+                    {activeAction === "retention-restore" ? "Restoring..." : "Restore"}
+                  </Button>
+                  <Button variant="destructive" className="min-h-10 shrink-0 rounded-full px-3" disabled={submitting} aria-busy={activeAction === "purge-preview" || activeAction === "purge"} onClick={() => void requestPermanentPurge(selected)}>
+                    {activeAction === "purge-preview" || activeAction === "purge" ? <LoaderCircle className="size-4 motion-safe:animate-spin" aria-hidden="true" /> : <ShieldAlert className="size-4" aria-hidden="true" />}
+                    {activeAction === "purge-preview" ? "Checking..." : activeAction === "purge" ? "Purging..." : "Permanently Purge"}
+                  </Button>
+                </>
+              ) : (
+                <>
+                  {canTakeOver ? (
+                    <Button className="min-h-10 shrink-0 rounded-full px-3" disabled={submitting} aria-busy={activeAction === "takeover"} onClick={() => void takeOverConversation(selected)}>
+                      {activeAction === "takeover" ? <LoaderCircle className="size-4 motion-safe:animate-spin" aria-hidden="true" /> : <Headphones className="size-4" aria-hidden="true" />}
+                      {activeAction === "takeover" ? "Taking over..." : "Take Over"}
+                    </Button>
+                  ) : null}
+                  {selected.mode === "STAFF_ACTIVE" && selected.assignedStaffId === user?.id ? (
+                    <Button variant="secondary" className="h-9 shrink-0 rounded-full px-3" disabled={submitting} aria-busy={activeAction === "return-to-bot"} onClick={() => void returnToWesBot(selected)}>
+                      {activeAction === "return-to-bot" ? <LoaderCircle className="size-4 motion-safe:animate-spin" aria-hidden="true" /> : <Bot className="size-4" aria-hidden="true" />}
+                      {activeAction === "return-to-bot" ? "Returning..." : "Return to WesBot"}
+                    </Button>
+                  ) : null}
+                  <Button
+                    variant={selected.status === "RESOLVED" ? "secondary" : "ghost"}
+                    className="min-h-10 shrink-0 rounded-full border border-[#d7e1d8] px-3"
+                    disabled={submitting || (selected.status !== "RESOLVED" && !ownsConversation)}
+                    aria-busy={activeAction === "resolve" || activeAction === "reopen"}
+                    onClick={() => void updateStatus(selected, selected.status === "RESOLVED" ? "OPEN" : "RESOLVED")}
+                  >
+                    {activeAction === "resolve" || activeAction === "reopen" ? <LoaderCircle className="size-4 motion-safe:animate-spin" aria-hidden="true" /> : <Check className="size-4" aria-hidden="true" />}
+                    {activeAction === "resolve" ? "Resolving..." : activeAction === "reopen" ? "Reopening..." : selected.status === "RESOLVED" ? "Reopen" : "Resolve"}
+                  </Button>
+                  {isAdmin && conversationView === "ARCHIVED" ? (
+                    <Button variant="destructive" className="min-h-10 shrink-0 rounded-full px-3" disabled={submitting} aria-busy={activeAction === "soft-delete"} onClick={() => void deleteConversationIntoRetention(selected)}>
+                      {activeAction === "soft-delete" ? <LoaderCircle className="size-4 motion-safe:animate-spin" aria-hidden="true" /> : <Trash2 className="size-4" aria-hidden="true" />}
+                      {activeAction === "soft-delete" ? "Deleting..." : "Delete"}
+                    </Button>
+                  ) : null}
+                </>
+              )}
             </div>
-            {selected.mode === "WAITING_FOR_STAFF" ? (
+            {deletedView ? (
+              <div className="border-b border-red-200 bg-red-50 px-3 py-3 text-sm text-red-950 sm:px-5">
+                <div className="flex items-start gap-2">
+                  <ShieldAlert className="mt-0.5 size-5 shrink-0 text-red-700" aria-hidden="true" />
+                  <p>
+                    <span className="font-extrabold">Retention copy — read only.</span>{" "}
+                    Deleted {selected.deletedAt ? new Date(selected.deletedAt).toLocaleString() : "recently"}.
+                    {selected.purgeEligibleAt ? ` Permanent purge unlocks ${new Date(selected.purgeEligibleAt).toLocaleString()}.` : ""}
+                  </p>
+                </div>
+              </div>
+            ) : null}
+            {!deletedView && selected.mode === "WAITING_FOR_STAFF" ? (
               <div className="border-b border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-950">
                 <div className="flex items-start gap-2">
                   <Headphones className="mt-0.5 size-5 shrink-0" />
@@ -666,17 +917,17 @@ export function StaffMessagesExperience() {
                 </div>
               </div>
             ) : null}
-            {selected.mode === "STAFF_ACTIVE" && selected.assignedStaffId !== user?.id ? (
+            {!deletedView && selected.mode === "STAFF_ACTIVE" && selected.assignedStaffId !== user?.id ? (
               <div className="border-b border-sky-200 bg-sky-50 px-3 py-3 text-sm font-semibold text-sky-900 sm:px-5">
                 <span className="font-extrabold">Handled by: {handlerName}.</span> Your reply box is locked until ownership is transferred with Take Over.
               </div>
             ) : null}
-            {ownsConversation ? (
+            {!deletedView && ownsConversation ? (
               <div className="border-b border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-900 sm:px-5">
                 Handled by: You{user?.fullName ? ` (${user.fullName})` : ""}. Other Staff cannot reply unless they take over.
               </div>
             ) : null}
-            {selected.mode === "BOT_ACTIVE" ? (
+            {!deletedView && selected.mode === "BOT_ACTIVE" ? (
               <div className="flex items-start gap-2 border-b border-[#cfe0d0] bg-[#f3f9f3] px-3 py-3 text-sm text-[#445149] sm:px-5">
                 <Bot className="mt-0.5 size-5 shrink-0 text-primary" />
                 <p><span className="font-extrabold text-[#17211b]">Handled by: WesBot.</span> Staff can take over now; the bot is paused as soon as ownership changes.</p>
@@ -687,6 +938,13 @@ export function StaffMessagesExperience() {
                 const mine = message.senderType === "STAFF" && message.senderId === user?.id;
                 const day = formatConversationDay(message.createdAt);
                 const showDay = index === 0 || formatConversationDay(messages[index - 1].createdAt) !== day;
+                const canEdit = mine
+                  && !deletedView
+                  && messages.at(-1)?.id === message.id
+                  && selected.status === "OPEN"
+                  && selected.mode === "STAFF_ACTIVE"
+                  && selected.assignedStaffId === user?.id
+                  && Date.now() - new Date(message.createdAt).getTime() <= 30 * 60_000;
                 if (message.senderType === "SYSTEM") {
                   return (
                     <div key={message.id}>
@@ -723,8 +981,19 @@ export function StaffMessagesExperience() {
                               ? "rounded-bl-md bg-white text-[#17211b] ring-1 ring-sky-200"
                               : "rounded-bl-md bg-white text-[#17211b] ring-1 ring-[#dce5dd]"
                       )}>
-                        <p className="whitespace-pre-wrap break-words leading-6 [overflow-wrap:anywhere]">{message.message}</p>
+                        {editingMessageId === message.id ? (
+                          <textarea value={editDraft} onChange={(event) => setEditDraft(event.target.value)} maxLength={2000} rows={3} className="min-w-[220px] resize-y rounded-lg border border-white/50 bg-white/95 p-2 text-[#17211b] outline-none focus:ring-2 focus:ring-white" aria-label="Edit message" />
+                        ) : <p className="whitespace-pre-wrap break-words leading-6 [overflow-wrap:anywhere]">{message.message}</p>}
                       </div>
+                      {message.editedAt ? <span className="px-1 text-[10px] font-semibold text-[#7b867f]">Edited</span> : null}
+                      {editingMessageId === message.id ? (
+                        <div className="mt-1 flex gap-1">
+                          <button type="button" disabled={savingEdit || !editDraft.trim()} onClick={() => void saveMessageEdit(selected, message)} className="grid size-8 place-items-center rounded-full bg-primary text-white disabled:opacity-50" aria-label="Save edited message"><Check className="size-4" /></button>
+                          <button type="button" disabled={savingEdit} onClick={() => { setEditingMessageId(null); setEditDraft(""); }} className="grid size-8 place-items-center rounded-full border bg-white text-muted-foreground" aria-label="Cancel editing"><X className="size-4" /></button>
+                        </div>
+                      ) : canEdit ? (
+                        <button type="button" onClick={() => { setEditingMessageId(message.id); setEditDraft(message.message); }} className="mt-1 inline-flex min-h-8 items-center gap-1 rounded-full px-2 text-[11px] font-bold text-primary hover:bg-primary/10" aria-label="Edit your latest reply"><Pencil className="size-3" />Edit</button>
+                      ) : null}
                       <p className="mt-1 px-1 text-[10px] font-semibold text-[#7b867f]">{mine ? "You" : senderName} · {formatConversationTime(message.createdAt)}</p>
                     </div>
                     </div>
@@ -786,6 +1055,8 @@ export function StaffMessagesExperience() {
                 placeholder={
                   activeAction === "send"
                     ? "Sending reply..."
+                    : deletedView
+                      ? "Restore this conversation before making changes..."
                     : selected.mode === "WAITING_FOR_STAFF"
                     ? "Take over this conversation before replying..."
                     : selected.mode === "BOT_ACTIVE"
@@ -823,6 +1094,61 @@ export function StaffMessagesExperience() {
           </div>
         )}
       </section>
+      {purgeDialog ? (
+        <div
+          className="fixed inset-0 z-[13000] grid place-items-center overflow-y-auto bg-[#101820]/60 p-4 backdrop-blur-[2px]"
+          onMouseDown={(event) => {
+            if (event.currentTarget === event.target) closePurgeDialog();
+          }}
+        >
+          <section
+            ref={purgeDialogA11y.dialogRef}
+            {...purgeDialogA11y.dialogProps}
+            role="alertdialog"
+            aria-describedby={purgeDescriptionId}
+            className="w-full max-w-lg overflow-hidden rounded-2xl border border-red-200 bg-white shadow-2xl outline-none"
+          >
+            <div className="flex items-start gap-4 p-5 sm:p-6">
+              <span className="grid size-11 shrink-0 place-items-center rounded-full bg-red-50 text-red-700" aria-hidden="true">
+                <ShieldAlert className="size-5" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <h2 id={purgeDialogA11y.titleId} className="text-lg font-extrabold leading-6 text-[#17211b]">Permanently purge this evidence?</h2>
+                <div id={purgeDescriptionId} className="mt-2 space-y-3 text-sm leading-6 text-[#59655d]">
+                  <p>This cannot be undone. The conversation, {purgeDialog.preview.messageCount} message{purgeDialog.preview.messageCount === 1 ? "" : "s"}, and {purgeDialog.preview.revisionCount} edit revision{purgeDialog.preview.revisionCount === 1 ? "" : "s"} will be removed.</p>
+                  <p>A minimal audit tombstone will remain, without the subject, student identity, or message content.</p>
+                  <p>Type <code className="select-all rounded bg-red-50 px-1.5 py-1 font-mono font-extrabold text-red-800">{purgeDialog.preview.confirmationPhrase}</code> exactly to continue.</p>
+                </div>
+                <label className="mt-4 block text-xs font-extrabold uppercase tracking-[0.12em] text-[#59655d]" htmlFor="permanent-purge-phrase">Confirmation phrase</label>
+                <input
+                  id="permanent-purge-phrase"
+                  data-dialog-autofocus
+                  autoComplete="off"
+                  spellCheck={false}
+                  value={purgePhrase}
+                  onChange={(event) => setPurgePhrase(event.target.value)}
+                  disabled={pendingAction?.type === "purge"}
+                  className="mt-2 h-11 w-full rounded-lg border border-red-200 bg-white px-3 font-mono text-sm font-bold text-[#17211b] outline-none focus:border-red-600 focus:ring-2 focus:ring-red-200 disabled:opacity-60"
+                />
+              </div>
+            </div>
+            <div className="flex flex-col gap-2 border-t border-red-100 bg-red-50/40 p-4 sm:flex-row sm:justify-end">
+              <Button type="button" variant="secondary" className="w-full sm:w-auto" disabled={pendingAction?.type === "purge"} onClick={closePurgeDialog}>Cancel</Button>
+              <Button
+                type="button"
+                variant="destructive"
+                className="w-full sm:w-auto"
+                disabled={pendingAction?.type === "purge" || purgePhrase !== purgeDialog.preview.confirmationPhrase}
+                aria-busy={pendingAction?.type === "purge"}
+                onClick={() => void confirmPermanentPurge()}
+              >
+                {pendingAction?.type === "purge" ? <LoaderCircle className="size-4 motion-safe:animate-spin" aria-hidden="true" /> : <Trash2 className="size-4" aria-hidden="true" />}
+                {pendingAction?.type === "purge" ? "Purging..." : "Permanently Purge"}
+              </Button>
+            </div>
+          </section>
+        </div>
+      ) : null}
       {notice ? <Notice text={notice} onClose={() => setNotice("")} /> : null}
     </div>
   );

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { requireAuth, type AuthenticatedRequest } from "../middleware/auth.js";
 import { createRateLimiter, ipRateLimitKey, userRateLimitKey } from "../middleware/rate-limit.js";
 import { requireRole } from "../middleware/require-role.js";
-import { getReceipt, listReceipts, markReceiptVerified, verifyReceipt, verifyReceiptToken, voidReceipt } from "../services/receipt.service.js";
+import { getReceipt, listReceipts, markReceiptVerified, resolveReceiptTokenForViewer, verifyReceipt, verifyReceiptToken, voidReceipt } from "../services/receipt.service.js";
 import { asyncHandler } from "../utils/async-handler.js";
 import { HttpError } from "../utils/http-error.js";
 import { measureRequestPhase } from "../middleware/request-timing.js";
@@ -51,6 +51,12 @@ const receiptWriteLimiter = createRateLimiter({
   max: 60,
   key: userRateLimitKey
 });
+const receiptResolveLimiter = createRateLimiter({
+  namespace: "receipt-token-resolve",
+  windowMs: 10 * 60 * 1000,
+  max: 60,
+  key: userRateLimitKey
+});
 const publicTokenSchema = z.object({
   token: z.string().trim().min(32).max(128).regex(/^[A-Za-z0-9_-]+$/, "Invalid verification reference.")
 });
@@ -77,6 +83,20 @@ receiptsRoutes.post(
     response.setHeader("Cache-Control", "no-store");
     response.setHeader("Referrer-Policy", "no-referrer");
     response.json({ receipt });
+  })
+);
+
+receiptsRoutes.post(
+  "/resolve-token",
+  requireAuth,
+  receiptResolveLimiter,
+  asyncHandler(async (request: AuthenticatedRequest, response) => {
+    const { token } = publicTokenSchema.parse(request.body);
+    const resolution = await resolveReceiptTokenForViewer(token, request.auth!.id, request.auth!.role);
+    if (!resolution) throw new HttpError(404, "Receipt not found.");
+    response.setHeader("Cache-Control", "no-store");
+    response.setHeader("Referrer-Policy", "no-referrer");
+    response.json(resolution);
   })
 );
 

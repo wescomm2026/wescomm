@@ -56,6 +56,7 @@ type SlotEditor = {
   startMinute: number;
   endMinute: number;
   isActive: boolean;
+  capacity: number | null;
 };
 type ClosureEditor = { index: number | null; date: string; reason: string };
 
@@ -79,6 +80,15 @@ function addDays(dateKey: string, amount: number) {
   return date.toISOString().slice(0, 10);
 }
 
+function formatPickupMoment(value: string | null) {
+  if (!value) return "Not scheduled";
+  return new Date(value).toLocaleString("en-PH", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "Asia/Manila"
+  });
+}
+
 function draftFromPolicy(policy: BackendPickupPolicy): PickupPolicyPayload {
   return {
     minAdvanceDays: policy.minAdvanceDays,
@@ -89,7 +99,8 @@ function draftFromPolicy(policy: BackendPickupPolicy): PickupPolicyPayload {
       label: slot.label,
       startMinute: slot.startMinute,
       endMinute: slot.endMinute,
-      isActive: slot.isActive
+      isActive: slot.isActive,
+      capacity: slot.capacity ?? null
     })),
     closures: policy.closures.map((closure) => ({ date: closure.date, reason: closure.reason }))
   };
@@ -114,6 +125,9 @@ function validateDraft(draft: PickupPolicyPayload) {
   if (!draft.timeSlots.length) return "Add at least one pickup time slot.";
   if (draft.timeSlots.some((slot) => slot.label.trim().length < 3 || slot.endMinute <= slot.startMinute)) {
     return "Every time slot needs a valid name, start time, and end time.";
+  }
+  if (draft.timeSlots.some((slot) => slot.capacity !== null && (!Number.isInteger(slot.capacity) || slot.capacity < 1 || slot.capacity > 500))) {
+    return "Each reservation limit must be a whole number from 1 to 500, or unlimited.";
   }
   const activeSlots = [...draft.timeSlots.filter((slot) => slot.isActive)].sort((left, right) => left.startMinute - right.startMinute);
   if (!activeSlots.length) return "Keep at least one pickup time slot active.";
@@ -165,6 +179,7 @@ export function StaffPickupScheduleExperience() {
   const [savedDraft, setSavedDraft] = useState<PickupPolicyPayload | null>(null);
   const [draft, setDraft] = useState<PickupPolicyPayload | null>(null);
   const [impactPreview, setImpactPreview] = useState<PolicyPreview | null>(null);
+  const [activationKey, setActivationKey] = useState<string | null>(null);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [studentPreviewOpen, setStudentPreviewOpen] = useState(false);
   const [studentPreviewSelection, setStudentPreviewSelection] = useState<PickupSelection | null>(null);
@@ -192,6 +207,8 @@ export function StaffPickupScheduleExperience() {
         const nextDraft = draftFromPolicy(activePolicy);
         setSavedDraft(nextDraft);
         setDraft(nextDraft);
+        setImpactPreview(null);
+        setActivationKey(null);
       }
     } catch (loadError) {
       setError(userFacingErrorMessage(loadError, "Unable to load the pickup schedule."));
@@ -222,6 +239,7 @@ export function StaffPickupScheduleExperience() {
   const updateDraft = (updater: (current: PickupPolicyPayload) => PickupPolicyPayload) => {
     setDraft((current) => current ? updater(current) : current);
     setImpactPreview(null);
+    setActivationKey(null);
     setReviewOpen(false);
     setNotice("");
     setError("");
@@ -261,7 +279,8 @@ export function StaffPickupScheduleExperience() {
       label: "",
       startMinute,
       endMinute: Math.min(startMinute + 120, 1440),
-      isActive: true
+      isActive: true,
+      capacity: null
     });
   };
 
@@ -271,11 +290,16 @@ export function StaffPickupScheduleExperience() {
       setError("The slot end time must be later than its start time.");
       return;
     }
+    if (slotEditor.capacity !== null && (!Number.isInteger(slotEditor.capacity) || slotEditor.capacity < 1 || slotEditor.capacity > 500)) {
+      setError("The reservation limit must be a whole number from 1 to 500.");
+      return;
+    }
     const slot = {
       label: slotEditor.label.trim() || `${formatTime(slotEditor.startMinute)} – ${formatTime(slotEditor.endMinute)}`,
       startMinute: slotEditor.startMinute,
       endMinute: slotEditor.endMinute,
-      isActive: slotEditor.isActive
+      isActive: slotEditor.isActive,
+      capacity: slotEditor.capacity
     };
     updateDraft((current) => ({
       ...current,
@@ -328,6 +352,7 @@ export function StaffPickupScheduleExperience() {
     if (!approved) return;
     setDraft(savedDraft);
     setImpactPreview(null);
+    setActivationKey(null);
     setChangeNote("");
     setError("");
   };
@@ -360,6 +385,7 @@ export function StaffPickupScheduleExperience() {
         reason: "Pending pickup schedule review"
       });
       setImpactPreview(preview);
+      setActivationKey(crypto.randomUUID());
       setChangeNote("");
       setReviewOpen(true);
     } catch (previewError) {
@@ -370,14 +396,21 @@ export function StaffPickupScheduleExperience() {
   };
 
   const saveChanges = async () => {
-    if (!user?.accessToken || !draft || !impactPreview || changeNote.trim().length < 5) return;
+    if (!user?.accessToken || !draft || !impactPreview || !activationKey || changeNote.trim().length < 5) return;
     setSubmitting(true);
     setError("");
     try {
-      const result = await createPickupPolicyFromApi(user.accessToken, { ...draft, reason: changeNote.trim() });
+      const result = await createPickupPolicyFromApi(user.accessToken, {
+        ...draft,
+        reason: changeNote.trim(),
+        expectedCurrentPolicyVersion: impactPreview.currentVersion,
+        previewFingerprint: impactPreview.previewFingerprint,
+        idempotencyKey: activationKey
+      });
       setReviewOpen(false);
       setImpactPreview(null);
-      setNotice(`Pickup schedule updated. ${result.affectedCount} existing reservation(s) need review; saved pickup times were not changed automatically.`);
+      setActivationKey(null);
+      setNotice(`Pickup schedule updated. ${result.autoRescheduledCount} reservation(s) were safely moved and ${result.needsReviewCount} still need staff review.`);
       await loadPolicies();
     } catch (saveError) {
       setError(userFacingErrorMessage(saveError, "Unable to save the pickup schedule."));
@@ -395,7 +428,7 @@ export function StaffPickupScheduleExperience() {
       <PageHeader
         eyebrow="Commissary operations"
         title="Pickup schedule"
-        description="Set when students can collect their reservations. Schedule changes apply to new reservations; existing pickup times never change silently."
+        description="Set when students can collect their reservations. Closure conflicts are previewed first, then safely moved to the next valid schedule when possible."
         meta={isDirty ? <span className="inline-flex rounded-full bg-warning/10 px-2.5 py-1 text-warning">Unsaved changes</span> : <span>All changes saved</span>}
         action={(
           <div className="flex items-center gap-2">
@@ -452,13 +485,13 @@ export function StaffPickupScheduleExperience() {
         <p className="mt-3 text-sm text-muted-foreground">Pickups are currently available on {openDays.length ? openDays.join(", ") : "no weekdays"}.</p>
       </SettingsSection>
 
-      <SettingsSection number={3} title="Pickup time slots" description="Keep the list simple for students and turn off a slot without deleting it.">
+      <SettingsSection number={3} title="Pickup time slots" description="Set each collection window, control its reservation limit, or leave it unlimited.">
         <div className="flex justify-end"><Button variant="secondary" onClick={() => openSlotEditor(null)}><Plus className="size-4" />Add time slot</Button></div>
         <div className="mt-4 grid gap-2">
           {draft.timeSlots.map((slot, index) => (
             <article key={`${slot.startMinute}-${slot.endMinute}-${index}`} onDragOver={(event) => event.preventDefault()} onDrop={() => { if (draggedSlotIndex !== null) moveSlot(draggedSlotIndex, index); setDraggedSlotIndex(null); }} className="flex flex-wrap items-center gap-3 rounded-surface border bg-white p-3">
               <span draggable aria-hidden="true" onDragStart={() => setDraggedSlotIndex(index)} onDragEnd={() => setDraggedSlotIndex(null)} className="cursor-grab text-muted-foreground active:cursor-grabbing"><GripVertical className="size-5" /></span>
-              <div className="min-w-[180px] flex-1"><p className="font-extrabold text-foreground">{formatTime(slot.startMinute)} – {formatTime(slot.endMinute)}</p><p className="mt-0.5 text-xs text-muted-foreground">{slot.label}</p></div>
+              <div className="min-w-[180px] flex-1"><p className="font-extrabold text-foreground">{formatTime(slot.startMinute)} – {formatTime(slot.endMinute)}</p><p className="mt-0.5 text-xs text-muted-foreground">{slot.label} · {slot.capacity === null ? "Unlimited reservations" : `${slot.capacity} reservation${slot.capacity === 1 ? "" : "s"} maximum`}</p></div>
               <button type="button" role="switch" aria-checked={slot.isActive} aria-label={`${slot.label}: ${slot.isActive ? "active" : "inactive"}`} onClick={() => updateDraft((current) => ({ ...current, timeSlots: current.timeSlots.map((item, itemIndex) => itemIndex === index ? { ...item, isActive: !item.isActive } : item) }))} className={cn("inline-flex h-8 items-center gap-2 rounded-full px-3 text-xs font-bold", slot.isActive ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground")}>
                 <span className={cn("size-2 rounded-full", slot.isActive ? "bg-primary" : "bg-muted-foreground")} />{slot.isActive ? "Active" : "Inactive"}
               </button>
@@ -503,14 +536,16 @@ export function StaffPickupScheduleExperience() {
       {slotEditor ? (
         <div className="fixed inset-0 z-[12000] grid place-items-center overflow-y-auto bg-foreground/55 p-4 backdrop-blur-sm" onMouseDown={(event) => { if (event.target === event.currentTarget) setSlotEditor(null); }}>
           <section ref={slotDialog.dialogRef} {...slotDialog.dialogProps} className="w-full max-w-lg rounded-feature border bg-white shadow-overlay outline-none">
-            <div className="flex items-start justify-between gap-4 border-b p-5"><div><h2 id={slotDialog.titleId} className="text-xl font-extrabold text-foreground">{slotEditor.index === null ? "Add pickup time slot" : "Edit pickup time slot"}</h2><p className="mt-1 text-sm text-muted-foreground">Set a clear collection window for students.</p></div><Button variant="ghost" size="icon" onClick={() => setSlotEditor(null)} aria-label="Close time slot editor"><X className="size-5" /></Button></div>
+            <div className="flex items-start justify-between gap-4 border-b p-5"><div><h2 id={slotDialog.titleId} className="text-xl font-extrabold text-foreground">{slotEditor.index === null ? "Add pickup time slot" : "Edit pickup time slot"}</h2><p className="mt-1 text-sm text-muted-foreground">Set the collection window and optional reservation limit.</p></div><Button variant="ghost" size="icon" onClick={() => setSlotEditor(null)} aria-label="Close time slot editor"><X className="size-5" /></Button></div>
             <div className="grid gap-4 p-5 sm:grid-cols-2">
               <FormControl label="Start time" htmlFor="slot-start" required><input id="slot-start" type="time" value={timeValue(slotEditor.startMinute)} onChange={(event) => setSlotEditor((current) => current ? { ...current, startMinute: timeMinutes(event.target.value) } : current)} className={formControlClass} data-dialog-autofocus /></FormControl>
               <FormControl label="End time" htmlFor="slot-end" required error={slotEditor.endMinute <= slotEditor.startMinute ? "End time must be later than start time." : undefined}><input id="slot-end" type="time" value={timeValue(slotEditor.endMinute)} onChange={(event) => setSlotEditor((current) => current ? { ...current, endMinute: timeMinutes(event.target.value) } : current)} className={formControlClass} /></FormControl>
               <FormControl label="Display name (optional)" htmlFor="slot-label" helper="If blank, the time range becomes the name." className="sm:col-span-2"><input id="slot-label" value={slotEditor.label} maxLength={80} onChange={(event) => setSlotEditor((current) => current ? { ...current, label: event.target.value } : current)} placeholder={`${formatTime(slotEditor.startMinute)} – ${formatTime(slotEditor.endMinute)}`} className={formControlClass} /></FormControl>
+              <label className="flex items-center gap-3 text-sm font-bold text-foreground sm:col-span-2"><input type="checkbox" checked={slotEditor.capacity !== null} onChange={(event) => setSlotEditor((current) => current ? { ...current, capacity: event.target.checked ? 20 : null } : current)} className="size-4 accent-primary" />Limit reservations for this time slot</label>
+              {slotEditor.capacity !== null ? <FormControl label="Maximum reservations" htmlFor="slot-capacity" required helper="Counts active reservations only. Canceled, completed, and no-show reservations do not use capacity." error={!Number.isInteger(slotEditor.capacity) || slotEditor.capacity < 1 || slotEditor.capacity > 500 ? "Enter a whole number from 1 to 500." : undefined} className="sm:col-span-2"><input id="slot-capacity" type="number" min={1} max={500} step={1} value={slotEditor.capacity} onChange={(event) => setSlotEditor((current) => current ? { ...current, capacity: Number(event.target.value) } : current)} className={formControlClass} /></FormControl> : null}
               <label className="flex items-center gap-3 text-sm font-bold text-foreground sm:col-span-2"><input type="checkbox" checked={slotEditor.isActive} onChange={(event) => setSlotEditor((current) => current ? { ...current, isActive: event.target.checked } : current)} className="size-4 accent-primary" />Make this slot available to students</label>
             </div>
-            <div className="flex justify-end gap-2 border-t bg-surface-subtle p-4"><Button variant="secondary" onClick={() => setSlotEditor(null)}>Cancel</Button><Button onClick={saveSlot} disabled={slotEditor.endMinute <= slotEditor.startMinute}>{slotEditor.index === null ? "Add Time Slot" : "Save Time Slot"}</Button></div>
+            <div className="flex justify-end gap-2 border-t bg-surface-subtle p-4"><Button variant="secondary" onClick={() => setSlotEditor(null)}>Cancel</Button><Button onClick={saveSlot} disabled={slotEditor.endMinute <= slotEditor.startMinute || (slotEditor.capacity !== null && (!Number.isInteger(slotEditor.capacity) || slotEditor.capacity < 1 || slotEditor.capacity > 500))}>{slotEditor.index === null ? "Add Time Slot" : "Save Time Slot"}</Button></div>
           </section>
         </div>
       ) : null}
@@ -549,8 +584,39 @@ export function StaffPickupScheduleExperience() {
                 <div><dt className="font-semibold text-muted-foreground">Active time slots</dt><dd className="mt-1 font-extrabold text-foreground">{activeSlots.length} · {slotSpan}</dd></div>
                 <div><dt className="font-semibold text-muted-foreground">Closed dates</dt><dd className="mt-1 font-extrabold text-foreground">{draft.closures.length}</dd></div>
               </dl>
-              <div className={cn("rounded-surface border p-4", impactPreview.affectedCount ? "border-warning/30 bg-warning/5" : "border-success/25 bg-success/5")}><p className="font-extrabold text-foreground">{impactPreview.affectedCount ? `${impactPreview.affectedCount} reservation(s) will need staff review` : "No existing reservations are affected"}</p><p className="mt-1 text-sm leading-6 text-muted-foreground">Existing pickup times will remain unchanged. Any incompatible reservations will be flagged for authorized staff to review and reschedule.</p></div>
-              {impactPreview.affectedReservations.length ? <div className="max-h-44 overflow-y-auto rounded-surface border">{impactPreview.affectedReservations.map((reservation) => <div key={reservation.id} className="border-b p-3 text-sm last:border-b-0"><p className="font-extrabold text-foreground">{reservation.referenceCode}</p><p className="mt-1 text-xs text-muted-foreground">{reservation.reason}</p></div>)}</div> : null}
+              <div className={cn("rounded-surface border p-4", impactPreview.affectedCount ? "border-warning/30 bg-warning/5" : "border-success/25 bg-success/5")}>
+                <p className="font-extrabold text-foreground">
+                  {impactPreview.affectedCount
+                    ? `${impactPreview.autoRescheduledCount} will be moved automatically; ${impactPreview.needsReviewCount} need staff review`
+                    : "No existing reservations are affected"}
+                </p>
+                <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                  Future pickups on a newly closed date move to the next valid date and time with remaining capacity. Other conflicts keep their current schedule and are flagged for review.
+                </p>
+              </div>
+              {impactPreview.affectedReservations.length ? (
+                <div className="max-h-64 overflow-y-auto rounded-surface border">
+                  {impactPreview.affectedReservations.map((reservation) => (
+                    <div key={reservation.id} className="border-b p-3 text-sm last:border-b-0">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="font-extrabold text-foreground">{reservation.referenceCode}</p>
+                        <span className={cn(
+                          "rounded-full px-2 py-1 text-[11px] font-extrabold uppercase tracking-wide",
+                          reservation.action === "AUTO_RESCHEDULE" ? "bg-primary/10 text-primary" : "bg-warning/10 text-warning"
+                        )}>
+                          {reservation.action === "AUTO_RESCHEDULE" ? "Auto-reschedule" : "Needs review"}
+                        </span>
+                      </div>
+                      <dl className="mt-2 grid gap-2 text-xs sm:grid-cols-2">
+                        <div><dt className="font-bold text-muted-foreground">Current</dt><dd className="mt-0.5 text-foreground">{formatPickupMoment(reservation.pickupStart)}</dd></div>
+                        <div><dt className="font-bold text-muted-foreground">Proposed</dt><dd className="mt-0.5 text-foreground">{formatPickupMoment(reservation.proposedPickupStart)}{reservation.proposedSlotLabel ? ` · ${reservation.proposedSlotLabel}` : ""}</dd></div>
+                      </dl>
+                      <p className="mt-2 text-xs text-muted-foreground">{reservation.reason}</p>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              {impactPreview.truncated ? <p className="text-xs font-semibold text-muted-foreground">Showing the first 100 affected reservations. The totals above include every affected reservation.</p> : null}
               <FormControl label="Change note" htmlFor="schedule-change-note" required helper="Explain why this schedule is changing. This is saved in the activity log." error={changeNote.length > 0 && changeNote.trim().length < 5 ? "Enter at least 5 characters." : undefined}>
                 <textarea id="schedule-change-note" value={changeNote} minLength={5} maxLength={500} onChange={(event) => setChangeNote(event.target.value)} placeholder="Example: Updated pickup hours for the new semester." className={cn(formControlClass, "min-h-24 py-2")} data-dialog-autofocus />
               </FormControl>

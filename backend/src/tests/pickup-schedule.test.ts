@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { HttpError } from "../utils/http-error.js";
 import { pickupInstant, scheduleReviewReason, validatePickupSelection, type PickupPolicySnapshot } from "../domain/pickup-schedule.js";
-import { serializePublicPolicy } from "../services/pickup-policy.service.js";
+import { findAutomaticPickupDestination, serializePublicPolicy } from "../services/pickup-policy.service.js";
+import { pickupCapacitySnapshot, pickupWindowKey } from "../services/pickup-capacity.service.js";
 
 const policy: PickupPolicySnapshot = {
   version: 4,
@@ -37,12 +38,72 @@ test("pickup validation rejects weekends, closures, stale versions, and inactive
   assert.equal(errorCode(() => validatePickupSelection({ policy, policyVersion: 4, pickupDate: "2026-08-31", slotId: "missing", now })), "PICKUP_SLOT_UNAVAILABLE");
 });
 
-test("policy impact review flags incompatible existing schedules without rewriting them", () => {
+test("policy impact review identifies incompatible existing schedules", () => {
   const originalStart = new Date("2026-09-01T00:00:00.000Z");
   const originalEnd = new Date("2026-09-01T02:00:00.000Z");
   assert.equal(scheduleReviewReason({ policy, pickupStart: originalStart, pickupEnd: originalEnd, now }), "Pickup date is closed: University holiday");
   assert.equal(originalStart.toISOString(), "2026-09-01T00:00:00.000Z");
   assert.equal(originalEnd.toISOString(), "2026-09-01T02:00:00.000Z");
+});
+
+test("closure auto-rescheduling preserves the time window and skips unavailable days", () => {
+  const nextDay = findAutomaticPickupDestination(policy, {
+    pickupStart: new Date("2026-09-01T00:00:00.000Z"),
+    pickupEnd: new Date("2026-09-01T02:00:00.000Z")
+  }, now);
+  assert.equal(nextDay?.pickupStart.toISOString(), "2026-09-02T00:00:00.000Z");
+  assert.equal(nextDay?.pickupEnd.toISOString(), "2026-09-02T02:00:00.000Z");
+  assert.equal(nextDay?.slot.id, "slot-morning");
+
+  const fridayClosedPolicy = {
+    ...policy,
+    closures: [{ date: new Date("2026-09-04T00:00:00.000Z"), reason: "Campus closure" }]
+  };
+  const afterWeekend = findAutomaticPickupDestination(fridayClosedPolicy, {
+    pickupStart: new Date("2026-09-04T00:00:00.000Z"),
+    pickupEnd: new Date("2026-09-04T02:00:00.000Z")
+  }, now);
+  assert.equal(afterWeekend?.pickupStart.toISOString(), "2026-09-07T00:00:00.000Z");
+});
+
+test("closure auto-rescheduling returns no destination outside the booking window", () => {
+  const narrowPolicy = { ...policy, maxAdvanceDays: 3 };
+  const destination = findAutomaticPickupDestination(narrowPolicy, {
+    pickupStart: new Date("2026-08-31T00:00:00.000Z"),
+    pickupEnd: new Date("2026-08-31T02:00:00.000Z")
+  }, now);
+  assert.equal(destination, null);
+});
+
+test("closure auto-rescheduling skips a full matching time on the next open date", () => {
+  const capacityPolicy: PickupPolicySnapshot = {
+    ...policy,
+    timeSlots: policy.timeSlots.map((slot) => ({ ...slot, capacity: 1 }))
+  };
+  const fullStart = pickupInstant("2026-09-02", 480);
+  const fullEnd = pickupInstant("2026-09-02", 600);
+  const destination = findAutomaticPickupDestination(capacityPolicy, {
+    pickupStart: new Date("2026-09-01T00:00:00.000Z"),
+    pickupEnd: new Date("2026-09-01T02:00:00.000Z")
+  }, now, new Map([[pickupWindowKey(fullStart, fullEnd), 1]]));
+
+  assert.equal(destination?.pickupStart.toISOString(), "2026-09-03T00:00:00.000Z");
+  assert.equal(destination?.slot.id, "slot-morning");
+});
+
+test("capacity snapshots preserve unlimited slots and clamp full-slot remaining counts", () => {
+  assert.deepEqual(pickupCapacitySnapshot(null, 12), {
+    capacity: null,
+    booked: 12,
+    remaining: null,
+    isFull: false
+  });
+  assert.deepEqual(pickupCapacitySnapshot(2, 3), {
+    capacity: 2,
+    booked: 3,
+    remaining: 0,
+    isFull: true
+  });
 });
 
 test("public pickup availability excludes staff metadata and inactive windows", () => {
@@ -65,8 +126,8 @@ test("public pickup availability excludes staff metadata and inactive windows", 
     },
     days: policy.days,
     timeSlots: [
-      { id: "active", label: "Morning", startMinute: 480, endMinute: 600, isActive: true, sortOrder: 0 },
-      { id: "inactive", label: "Internal retired slot", startMinute: 600, endMinute: 720, isActive: false, sortOrder: 1 }
+      { id: "active", label: "Morning", startMinute: 480, endMinute: 600, isActive: true, sortOrder: 0, capacity: 20 },
+      { id: "inactive", label: "Internal retired slot", startMinute: 600, endMinute: 720, isActive: false, sortOrder: 1, capacity: null }
     ],
     closures: [{ id: "closure", date: new Date("2026-09-01T00:00:00.000Z"), reason: "University holiday" }]
   }, now);
@@ -76,4 +137,5 @@ test("public pickup availability excludes staff metadata and inactive windows", 
   assert.equal("reason" in serialized, false);
   assert.equal("createdAt" in serialized, false);
   assert.deepEqual(serialized.timeSlots.map((slot) => slot.id), ["active"]);
+  assert.equal(serialized.timeSlots[0].capacity, 20);
 });
