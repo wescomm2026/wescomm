@@ -48,6 +48,7 @@ faqsRoutes.get(
   publicFaqLimiter,
   asyncHandler(async (_request, response) => {
     const faqs = await listPublishedFaqs();
+    response.setHeader("Cache-Control", "public, max-age=60, s-maxage=60, stale-while-revalidate=120");
     response.json({ faqs });
   })
 );

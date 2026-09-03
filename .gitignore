@@ -52,3 +52,7 @@ Desktop.ini
 # Local archives and design-reference source files are not deployed.
 *.zip
 wescomm_assets/
+WESCOMM_*/
+
+# Local media preview; production code does not reference this file.
+frontend/public/assets/WesComm_Logo_Animation_Preview(1) (1).gif

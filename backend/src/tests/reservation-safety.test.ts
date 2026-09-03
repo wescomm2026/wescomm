@@ -74,8 +74,10 @@ test("invalid consecutive offense counts are rejected", () => {
 test("equivalent checkout payloads have the same hash even when item order changes", () => {
   const first = hashReservationRequest({
     paymentMethod: "PAY_AT_COMMISSARY",
-    pickupStart: new Date("2026-07-12T02:00:00.000Z"),
-    pickupEnd: new Date("2026-07-12T04:00:00.000Z"),
+    pickupDate: "2026-07-12",
+    pickupSlotId: "33333333-3333-4333-8333-333333333333",
+    pickupPolicyVersion: 1,
+    policyAcceptance: { accepted: true, version: "2026-09-02" },
     items: [
       { productId: "11111111-1111-4111-8111-111111111111", variantSummary: "Size: Medium", quantity: 1 },
       { productId: "22222222-2222-4222-8222-222222222222", quantity: 2 }
@@ -83,8 +85,10 @@ test("equivalent checkout payloads have the same hash even when item order chang
   });
   const reordered = hashReservationRequest({
     paymentMethod: "PAY_AT_COMMISSARY",
-    pickupStart: new Date("2026-07-12T02:00:00.000Z"),
-    pickupEnd: new Date("2026-07-12T04:00:00.000Z"),
+    pickupDate: "2026-07-12",
+    pickupSlotId: "33333333-3333-4333-8333-333333333333",
+    pickupPolicyVersion: 1,
+    policyAcceptance: { accepted: true, version: "2026-09-02" },
     items: [
       { productId: "22222222-2222-4222-8222-222222222222", quantity: 2 },
       { productId: "11111111-1111-4111-8111-111111111111", variantSummary: "Size: Medium", quantity: 1 }
@@ -98,15 +102,18 @@ test("equivalent checkout payloads have the same hash even when item order chang
 test("changing quantity, pickup schedule, or item details changes the request hash", () => {
   const base = {
     paymentMethod: "PAY_AT_COMMISSARY",
-    pickupStart: new Date("2026-07-12T02:00:00.000Z"),
-    pickupEnd: new Date("2026-07-12T04:00:00.000Z"),
+    pickupDate: "2026-07-12",
+    pickupSlotId: "33333333-3333-4333-8333-333333333333",
+    pickupPolicyVersion: 1,
+    policyAcceptance: { accepted: true as const, version: "2026-09-02" },
     items: [{ productId: "11111111-1111-4111-8111-111111111111", variantSummary: "Size: Medium", quantity: 1 }]
   };
   const original = hashReservationRequest(base);
 
   assert.notEqual(original, hashReservationRequest({ ...base, items: [{ ...base.items[0], quantity: 2 }] }));
-  assert.notEqual(original, hashReservationRequest({ ...base, pickupEnd: new Date("2026-07-12T05:00:00.000Z") }));
+  assert.notEqual(original, hashReservationRequest({ ...base, pickupSlotId: "44444444-4444-4444-8444-444444444444" }));
   assert.notEqual(original, hashReservationRequest({ ...base, items: [{ ...base.items[0], variantSummary: "Size: Large" }] }));
+  assert.notEqual(original, hashReservationRequest({ ...base, policyAcceptance: { accepted: true, version: "2026-09-03" } }));
 });
 
 test("checkout idempotency records use a 24-hour retention window", () => {

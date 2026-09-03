@@ -40,7 +40,7 @@ export function PaymentMethodSelector({
   disabled = false,
   legend = "Payment method"
 }: {
-  value: StudentCheckoutPaymentMethod;
+  value: StudentCheckoutPaymentMethod | null;
   onChange: (value: StudentCheckoutPaymentMethod) => void;
   name: string;
   disabled?: boolean;

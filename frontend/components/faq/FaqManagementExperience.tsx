@@ -1,11 +1,15 @@
 "use client";
 
+import { userFacingErrorMessage } from "@/lib/user-facing-error";
+
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Edit3, Plus, RefreshCw, Trash2, X } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import { AssetIcon } from "@/components/ui/AssetIcon";
 import { Button } from "@/components/ui/button";
+import { useConfirmationDialog } from "@/components/ui/ConfirmationDialogProvider";
 import { StatusBadge } from "@/components/ui/StatusBadge";
+import { useAccessibleDialog } from "@/components/ui/useAccessibleDialog";
 import {
   createFaqFromApi,
   deleteFaqFromApi,
@@ -54,6 +58,7 @@ function mapFaqToDraft(faq: BackendFaq): FaqDraft {
 
 export function FaqManagementExperience() {
   const { user, ready, openAuth } = useStudentAuth();
+  const confirm = useConfirmationDialog();
   const [faqs, setFaqs] = useState<BackendFaq[]>([]);
   const [editing, setEditing] = useState<FaqDraft | null>(null);
   const [search, setSearch] = useState("");
@@ -62,6 +67,7 @@ export function FaqManagementExperience() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const dialog = useAccessibleDialog<HTMLFormElement>(Boolean(editing), () => setEditing(null));
 
   const loadFaqs = useCallback(async ({ background = false }: { background?: boolean } = {}) => {
     if (!user?.accessToken) {
@@ -80,7 +86,7 @@ export function FaqManagementExperience() {
       setFaqs(rows);
     } catch (faqError) {
       if (!background) {
-        setError(faqError instanceof Error ? faqError.message : "Unable to load FAQs.");
+        setError(userFacingErrorMessage(faqError, "Unable to load FAQs."));
       }
     } finally {
       if (!background) setLoading(false);
@@ -99,7 +105,7 @@ export function FaqManagementExperience() {
       if (document.visibilityState === "visible" && !editing) void loadFaqs({ background: true });
     };
 
-    const interval = window.setInterval(refreshInBackground, 20000);
+    const interval = window.setInterval(refreshInBackground, 120000);
     window.addEventListener("focus", refreshInBackground);
     document.addEventListener("visibilitychange", refreshInBackground);
 
@@ -147,7 +153,7 @@ export function FaqManagementExperience() {
 
       setEditing(null);
     } catch (faqError) {
-      setError(faqError instanceof Error ? faqError.message : "Unable to save FAQ.");
+      setError(userFacingErrorMessage(faqError, "Unable to save FAQ."));
     } finally {
       setSubmitting(false);
     }
@@ -155,6 +161,17 @@ export function FaqManagementExperience() {
 
   const togglePublished = async (faq: BackendFaq) => {
     if (!user?.accessToken) return;
+    const willPublish = faq.isPublished === false;
+    const confirmed = await confirm({
+      title: willPublish ? "Publish this FAQ?" : "Hide this FAQ from students?",
+      description: willPublish
+        ? `“${faq.question}” will become visible in student help content.`
+        : `“${faq.question}” will be unpublished and hidden from student help content. It will remain available here as a draft.`,
+      confirmLabel: willPublish ? "Publish FAQ" : "Hide FAQ",
+      tone: willPublish ? "default" : "warning"
+    });
+    if (!confirmed) return;
+
     setSubmitting(true);
     setError("");
 
@@ -165,7 +182,7 @@ export function FaqManagementExperience() {
       setFaqs((current) => current.map((item) => item.id === updatedFaq.id ? updatedFaq : item));
       setNotice(updatedFaq.isPublished ? "FAQ published." : "FAQ hidden from students.");
     } catch (faqError) {
-      setError(faqError instanceof Error ? faqError.message : "Unable to update FAQ.");
+      setError(userFacingErrorMessage(faqError, "Unable to update FAQ."));
     } finally {
       setSubmitting(false);
     }
@@ -173,7 +190,13 @@ export function FaqManagementExperience() {
 
   const removeFaq = async (faq: BackendFaq) => {
     if (!user?.accessToken) return;
-    if (!window.confirm(`Delete this FAQ?\n\n${faq.question}`)) return;
+    const confirmed = await confirm({
+      title: "Delete this FAQ?",
+      description: `“${faq.question}” will be permanently removed from FAQ management.`,
+      confirmLabel: "Delete FAQ",
+      tone: "danger"
+    });
+    if (!confirmed) return;
 
     setSubmitting(true);
     setError("");
@@ -183,7 +206,7 @@ export function FaqManagementExperience() {
       setFaqs((current) => current.filter((item) => item.id !== faq.id));
       setNotice("FAQ deleted.");
     } catch (faqError) {
-      setError(faqError instanceof Error ? faqError.message : "Unable to delete FAQ.");
+      setError(userFacingErrorMessage(faqError, "Unable to delete FAQ."));
     } finally {
       setSubmitting(false);
     }
@@ -281,6 +304,8 @@ export function FaqManagementExperience() {
       {editing ? (
         <div className="fixed inset-0 z-[10000] grid place-items-center overflow-y-auto bg-[#101820]/50 p-4">
           <form
+            ref={dialog.dialogRef}
+            {...dialog.dialogProps}
             className="my-auto w-full max-w-xl rounded-lg bg-white p-5 shadow-2xl"
             onSubmit={(event) => {
               event.preventDefault();
@@ -288,8 +313,8 @@ export function FaqManagementExperience() {
             }}
           >
             <div className="flex items-center gap-3">
-              <h2 className="text-xl font-extrabold">{editing.id ? "Edit FAQ" : "Add FAQ"}</h2>
-              <button type="button" onClick={() => setEditing(null)} className="ml-auto grid size-9 place-items-center rounded-md hover:bg-[#eef3ee]">
+              <h2 id={dialog.titleId} className="text-xl font-extrabold">{editing.id ? "Edit FAQ" : "Add FAQ"}</h2>
+              <button type="button" data-dialog-autofocus onClick={() => setEditing(null)} aria-label="Close FAQ editor" className="ml-auto grid size-9 place-items-center rounded-md hover:bg-[#eef3ee]">
                 <X className="size-5" />
               </button>
             </div>

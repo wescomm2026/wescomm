@@ -14,6 +14,29 @@ const prisma = new PrismaClient({
 });
 const verifyAppliedMigration = process.argv.includes("--after-deploy");
 const allowMissingSupabaseAuth = process.argv.includes("--allow-missing-supabase-auth");
+const DATABASE_VERIFICATION_MAX_ATTEMPTS = 3;
+const DATABASE_VERIFICATION_RETRY_DELAY_MS = 500;
+
+function isTransientConnectionError(error) {
+  return error?.code === "P1001" || error?.code === "P1002";
+}
+
+async function waitForDatabaseConnection() {
+  for (let attempt = 1; attempt <= DATABASE_VERIFICATION_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      await prisma.$queryRaw`SELECT 1`;
+      return;
+    } catch (error) {
+      if (!isTransientConnectionError(error) || attempt === DATABASE_VERIFICATION_MAX_ATTEMPTS) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(
+        resolve,
+        DATABASE_VERIFICATION_RETRY_DELAY_MS * attempt,
+      ));
+    }
+  }
+}
 
 const baselineRequiredColumns = {
   profiles: "id full_name email student_number phone department address role avatar_url created_at updated_at",
@@ -40,11 +63,17 @@ const requiredColumns = verifyAppliedMigration
   ? {
       ...baselineRequiredColumns,
       notifications: `${baselineRequiredColumns.notifications} dedupe_key action_url`,
+      faqs: `${baselineRequiredColumns.faqs} source source_version`,
+      product_aliases: "id product_id alias normalized_alias source source_version created_at updated_at",
+      faq_variants: "id faq_id variant normalized_text source source_version created_at",
       wishlist_items: "user_id product_id created_at updated_at",
       online_payments: "id reservation_id status amount_centavos currency livemode provider_checkout_session_id provider_payment_intent_id provider_payment_id checkout_url checkout_expires_at last_reconciled_at fee_centavos net_amount_centavos refunded_amount_centavos paid_at expired_at cancelled_at refunded_at created_at updated_at",
       online_payment_attempts: "id online_payment_id attempt_number status provider_idempotency_key request_hash request_payload provider_checkout_session_id provider_payment_intent_id provider_payment_id checkout_url livemode checkout_expires_at last_reconciled_at expire_requested_at expired_at provider_created_at paid_at fee_centavos net_amount_centavos last_provider_error_code created_at updated_at",
       paymongo_webhook_events: "id provider_event_id dedupe_key event_type livemode resource_id payload_hash status reason_code online_payment_id received_at processed_at",
-      audit_logs: "id actor_id action entity_type entity_id summary metadata created_at",
+      audit_logs: "id actor_id action entity_type entity_id dedupe_key summary metadata created_at",
+      outbox_events: "id type entity_id payload created_at available_at locked_at processed_at attempt_count last_error",
+      rate_limit_counters: "key_hash count reset_at updated_at",
+      realtime_events: "id topic dedupe_key audience_user_id audience_role entity_id payload created_at expires_at",
     }
   : baselineRequiredColumns;
 
@@ -98,35 +127,31 @@ function collectMissing(actual, required) {
 }
 
 try {
-  const [
-    columnRows,
-    enumRows,
-    indexRows,
-    impactRows,
-    clientPrivilegeRows,
-    defaultPrivilegeRows,
-    authBoundaryRows,
-  ] = await Promise.all([
-    prisma.$queryRaw`
+  await waitForDatabaseConnection();
+
+  // DIRECT_URL commonly points to Supabase's session pooler. Keep catalog
+  // verification sequential so a single release check cannot consume several
+  // scarce administrative connections at once.
+  const columnRows = await prisma.$queryRaw`
       SELECT table_name, column_name
       FROM information_schema.columns
       WHERE table_schema = 'public'
-    `,
-    prisma.$queryRaw`
+    `;
+  const enumRows = await prisma.$queryRaw`
       SELECT type.typname AS enum_name, value.enumlabel AS enum_value
       FROM pg_type AS type
       JOIN pg_enum AS value ON value.enumtypid = type.oid
       JOIN pg_namespace AS namespace ON namespace.oid = type.typnamespace
       WHERE namespace.nspname = 'public'
-    `,
-    prisma.$queryRaw`
+    `;
+  const indexRows = await prisma.$queryRaw`
       SELECT indexdef
       FROM pg_indexes
       WHERE schemaname = 'public'
         AND tablename = 'account_restrictions'
         AND indexname = 'account_restrictions_one_active_per_student_idx'
-    `,
-    prisma.$queryRaw`
+    `;
+  const impactRows = await prisma.$queryRaw`
       SELECT
         (
           SELECT COUNT(*)::integer
@@ -145,8 +170,8 @@ try {
             HAVING COUNT(*) > 1
           ) AS duplicate_groups
         ) AS duplicate_active_rows
-    `,
-    prisma.$queryRaw`
+    `;
+  const clientPrivilegeRows = await prisma.$queryRaw`
       WITH client_roles AS (
         SELECT rolname AS role_name
         FROM pg_roles
@@ -196,14 +221,28 @@ try {
         CROSS JOIN pg_proc AS routine
         JOIN pg_namespace AS namespace ON namespace.oid = routine.pronamespace
         WHERE namespace.nspname = 'public'
+          -- Supabase owns pg_trgm and grants its pure text/index helpers to its
+          -- client roles. The project postgres role cannot change those ACLs;
+          -- exclude only catalog-confirmed members of that managed extension.
+          AND NOT EXISTS (
+            SELECT 1
+            FROM pg_depend AS dependency
+            JOIN pg_extension AS installed_extension
+              ON installed_extension.oid = dependency.refobjid
+            WHERE dependency.classid = 'pg_proc'::regclass
+              AND dependency.objid = routine.oid
+              AND dependency.refclassid = 'pg_extension'::regclass
+              AND dependency.deptype = 'e'
+              AND installed_extension.extname = 'pg_trgm'
+          )
           AND has_function_privilege(role.role_name, routine.oid, 'EXECUTE')
       )
       SELECT role_name, object_name, privilege_type FROM relation_access
       UNION ALL
       SELECT role_name, object_name, privilege_type FROM function_access
       ORDER BY role_name, object_name, privilege_type
-    `,
-    prisma.$queryRaw`
+    `;
+  const defaultPrivilegeRows = await prisma.$queryRaw`
       SELECT
         owner.rolname AS owner_role,
         COALESCE(grantee.rolname, 'PUBLIC') AS grantee_role,
@@ -218,8 +257,8 @@ try {
         AND owner.rolname = current_user
         AND (privilege.grantee = 0 OR grantee.rolname IN ('anon', 'authenticated'))
         AND defaults.defaclobjtype IN ('r', 'S', 'f')
-    `,
-    prisma.$queryRaw`
+    `;
+  const authBoundaryRows = await prisma.$queryRaw`
       SELECT
         (
           SELECT COUNT(*)::integer
@@ -289,6 +328,32 @@ try {
         ) AS wishlist_policies,
         (
           SELECT COUNT(*)::integer
+          FROM pg_class AS knowledge_table
+          JOIN pg_namespace AS knowledge_schema ON knowledge_schema.oid = knowledge_table.relnamespace
+          WHERE knowledge_schema.nspname = 'public'
+            AND knowledge_table.relname IN ('product_aliases', 'faq_variants')
+            AND knowledge_table.relkind IN ('r', 'p')
+            AND knowledge_table.relrowsecurity
+            AND NOT knowledge_table.relforcerowsecurity
+        ) AS wesbot_knowledge_rls_tables,
+        (
+          SELECT COUNT(*)::integer
+          FROM pg_policies
+          WHERE schemaname = 'public'
+            AND tablename IN ('product_aliases', 'faq_variants')
+        ) AS wesbot_knowledge_policies,
+        (
+          SELECT COUNT(*)::integer
+          FROM pg_indexes
+          WHERE schemaname = 'public'
+            AND indexname IN (
+              'product_aliases_normalized_alias_trgm_idx',
+              'faq_variants_normalized_text_trgm_idx'
+            )
+            AND indexdef ILIKE '%USING gin%gin_trgm_ops%'
+        ) AS wesbot_knowledge_trigram_indexes,
+        (
+          SELECT COUNT(*)::integer
           FROM pg_class AS payment_table
           JOIN pg_namespace AS payment_schema ON payment_schema.oid = payment_table.relnamespace
           WHERE payment_schema.nspname = 'public'
@@ -296,7 +361,10 @@ try {
               'online_payments',
               'online_payment_attempts',
               'paymongo_webhook_events',
-              'audit_logs'
+              'audit_logs',
+              'outbox_events',
+              'rate_limit_counters',
+              'realtime_events'
             )
             AND payment_table.relkind IN ('r', 'p')
             AND payment_table.relrowsecurity
@@ -309,7 +377,11 @@ try {
             AND tablename IN (
               'online_payments',
               'online_payment_attempts',
-              'paymongo_webhook_events'
+              'paymongo_webhook_events',
+              'audit_logs',
+              'outbox_events',
+              'rate_limit_counters',
+              'realtime_events'
             )
         ) AS payment_policies,
         (
@@ -332,6 +404,15 @@ try {
             AND UPPER(indexdef) LIKE 'CREATE UNIQUE INDEX%'
             AND indexdef ILIKE '%WHERE%status%CREATING%CREATE_UNKNOWN%ACTIVE%EXPIRY_REQUESTED%'
         ) AS payment_open_attempt_indexes,
+        (
+          SELECT COUNT(*)::integer
+          FROM pg_indexes
+          WHERE schemaname = 'public'
+            AND tablename = 'receipts'
+            AND indexname = 'receipts_reservation_id_key'
+            AND UPPER(indexdef) LIKE 'CREATE UNIQUE INDEX%'
+            AND REPLACE(indexdef, '"', '') ILIKE '%(reservation_id)%'
+        ) AS reservation_receipt_unique_indexes,
         (
           SELECT COUNT(*)::integer
           FROM pg_constraint AS wishlist_constraint
@@ -419,8 +500,7 @@ try {
               'receipts_staff_read'
             )
         ) AS storage_write_policies
-    `,
-  ]);
+    `;
 
   const columns = toSetMap(columnRows, "table_name", "column_name");
   const enums = toSetMap(enumRows, "enum_name", "enum_value");
@@ -494,17 +574,29 @@ try {
     } else if (verifyAppliedMigration && authBoundary.wishlist_policies !== 0) {
       console.error("public.wishlist_items must not expose direct browser database policies.");
       process.exitCode = 1;
-    } else if (verifyAppliedMigration && authBoundary.payment_rls_tables !== 4) {
-      console.error("RLS must be enabled, but not forced, on all server-only payment and audit tables.");
+    } else if (verifyAppliedMigration && authBoundary.wesbot_knowledge_rls_tables !== 2) {
+      console.error("RLS must be enabled, but not forced, on WesBot knowledge tables.");
+      process.exitCode = 1;
+    } else if (verifyAppliedMigration && authBoundary.wesbot_knowledge_policies !== 0) {
+      console.error("WesBot knowledge tables must not expose direct browser database policies.");
+      process.exitCode = 1;
+    } else if (verifyAppliedMigration && authBoundary.wesbot_knowledge_trigram_indexes !== 2) {
+      console.error("WesBot knowledge trigram indexes are missing or malformed.");
+      process.exitCode = 1;
+    } else if (verifyAppliedMigration && authBoundary.payment_rls_tables !== 7) {
+      console.error("RLS must be enabled, but not forced, on all server-only payment, audit, outbox, rate-limit, and realtime tables.");
       process.exitCode = 1;
     } else if (verifyAppliedMigration && authBoundary.payment_policies !== 0) {
-      console.error("Payment tables must not expose direct browser database policies.");
+      console.error("Server-only payment, audit, outbox, rate-limit, and realtime tables must not expose direct browser database policies.");
       process.exitCode = 1;
     } else if (verifyAppliedMigration && authBoundary.payment_identity_triggers !== 1) {
       console.error("The online payment attempt identity-protection trigger is missing or disabled.");
       process.exitCode = 1;
     } else if (verifyAppliedMigration && authBoundary.payment_open_attempt_indexes !== 1) {
       console.error("The one-open-payment-attempt partial unique index is missing or malformed.");
+      process.exitCode = 1;
+    } else if (verifyAppliedMigration && authBoundary.reservation_receipt_unique_indexes !== 1) {
+      console.error("The one-receipt-per-reservation unique index is missing or malformed.");
       process.exitCode = 1;
     } else if (verifyAppliedMigration && authBoundary.wishlist_primary_keys !== 1) {
       console.error("The wishlist user/product primary key is missing.");

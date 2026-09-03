@@ -1,0 +1,9 @@
+node_modules
+dist
+.env*
+!.env.example
+.vercel-bundle
+coverage
+src/tests
+src/scripts
+*.log

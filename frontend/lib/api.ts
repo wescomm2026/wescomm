@@ -1,9 +1,12 @@
 import type { CartProduct } from "@/components/cart/StudentCartProvider";
 import { resolveShopProductAsset } from "@/lib/shop-assets";
+import { isUniformClothOnly, sortProductOptionValues } from "@/lib/product-display";
+import { apiErrorMessage } from "@/lib/user-facing-error";
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "/api/backend";
 export const COOKIE_SESSION_TOKEN = "cookie-session";
 export const AUTH_UNAUTHORIZED_EVENT = "wescomm:auth-unauthorized";
+export const PRODUCTS_REFRESH_EVENT = "wescomm:products-refresh";
 
 export type BackendAuthProfile = {
   id: string;
@@ -39,6 +42,15 @@ export type BackendVariant = {
   stock: number;
 };
 
+export type BackendSku = {
+  id: string;
+  stock: number;
+  lowStockThreshold?: number;
+  options: Array<{ optionName: string; optionValue: string }>;
+};
+
+export type ProductSaleMode = "SIMPLE" | "CLOTH_ONLY" | "OPTIONS";
+
 export type BackendProduct = {
   id: string;
   name: string;
@@ -46,10 +58,16 @@ export type BackendProduct = {
   imageUrl?: string | null;
   price: string | number;
   oldPrice?: string | number | null;
+  isOnSale?: boolean;
   status: "IN_STOCK" | "RESTOCK_SOON" | "OUT_OF_STOCK" | "ON_SALE";
   stock: number;
+  saleMode?: ProductSaleMode;
   category?: BackendCategory | null;
   variants?: BackendVariant[];
+  skuInventoryEnabled?: boolean;
+  inventoryReconciledAt?: string | null;
+  inventorySetupRequired?: boolean;
+  skus?: BackendSku[];
 };
 
 export type BackendFaq = {
@@ -68,9 +86,7 @@ export type BackendPaymentMethod = "PAY_AT_COMMISSARY" | "E_WALLET_AT_PICKUP" | 
 export type BackendPaymentStatus =
   | "INITIALIZING"
   | "AWAITING_PAYMENT"
-  | "PROCESSING"
   | "PAID"
-  | "FAILED"
   | "EXPIRED"
   | "CANCELLED"
   | "REFUND_REVIEW_REQUIRED"
@@ -86,6 +102,8 @@ export type BackendNotificationType =
   | "SYSTEM"
   | "BACK_IN_STOCK";
 export type BackendConversationStatus = "OPEN" | "RESOLVED";
+export type BackendConversationMode = "BOT_ACTIVE" | "WAITING_FOR_STAFF" | "STAFF_ACTIVE" | "RESOLVED";
+export type BackendConversationMessageSenderType = "STUDENT" | "BOT" | "STAFF" | "SYSTEM";
 
 export type BackendProfileSummary = {
   id: string;
@@ -124,6 +142,11 @@ export type BackendReservation = {
   status: BackendReservationStatus;
   pickupStart: string | null;
   pickupEnd: string | null;
+  pickupReviewStatus: "NONE" | "NEEDS_REVIEW" | "RESCHEDULED" | "WAIVED";
+  pickupReviewReason: string | null;
+  scheduleRevision: number;
+  pickupPolicyVersion: number | null;
+  pickupSlot: BackendPickupTimeSlot | null;
   paymentMethod: BackendPaymentMethod;
   totalAmount: string | number;
   staffNotes?: string | null;
@@ -140,14 +163,36 @@ export type BackendReservation = {
     subtotal: string | number;
     product?: BackendProduct | null;
   }>;
+  scheduleChanges?: Array<{
+    id: string;
+    reason: string;
+    previousPickupStart: string | null;
+    previousPickupEnd: string | null;
+    previousPolicyVersion: number | null;
+    previousSlotLabel: string | null;
+    newPickupStart: string;
+    newPickupEnd: string;
+    newPolicyVersion: number;
+    newSlotLabel: string;
+    previousScheduleRevision: number;
+    newScheduleRevision: number;
+    createdAt: string;
+    actor?: BackendProfileSummary | null;
+  }>;
 };
 
 export type CreateReservationPayload = {
   paymentMethod: BackendPaymentMethod;
-  pickupStart?: string;
-  pickupEnd?: string;
+  pickupDate: string;
+  pickupSlotId: string;
+  pickupPolicyVersion: number;
+  policyAcceptance: {
+    accepted: true;
+    version: string;
+  };
   items: Array<{
     productId: string;
+    skuId?: string;
     variantSummary?: string;
     quantity: number;
   }>;
@@ -161,11 +206,13 @@ export type BackendReceipt = {
   totalAmount: string | number;
   paymentMethod: BackendPaymentMethod;
   status: BackendReceiptStatus;
-  verificationHash: string;
+  publicVerificationUrl: string | null;
   receiptImageUrl?: string | null;
   receiptPdfUrl?: string | null;
   issuedById?: string | null;
   issuedAt: string;
+  verifiedAt?: string | null;
+  voidedAt?: string | null;
   createdAt: string;
   updatedAt: string;
   student?: BackendProfileSummary | null;
@@ -198,6 +245,110 @@ export type BackendReceipt = {
   } | null;
 };
 
+export type BackendCursorPage<T> = {
+  items: T[];
+  nextCursor: string | null;
+};
+
+export type BackendCollectionOptions = {
+  limit?: number;
+  cursor?: string;
+  status?: string;
+  query?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  paymentChannel?: "ONLINE_GCASH" | "AT_COMMISSARY";
+  signal?: AbortSignal;
+};
+
+export type BackendPickupTimeSlot = {
+  id: string;
+  label: string;
+  startMinute: number;
+  endMinute: number;
+  isActive: boolean;
+  sortOrder: number;
+  capacity?: number | null;
+};
+
+export type BackendPickupSlotAvailability = {
+  pickupDate: string;
+  pickupPolicyVersion: number;
+  slots: Array<{
+    slotId: string;
+    capacity: number | null;
+    booked: number;
+    remaining: number | null;
+    isFull: boolean;
+  }>;
+};
+
+export type BackendPickupPolicy = {
+  id?: string;
+  version: number;
+  timezone: "Asia/Manila" | string;
+  minAdvanceDays: number;
+  maxAdvanceDays: number;
+  minDate: string;
+  maxDate: string;
+  serverDate: string;
+  effectiveAt?: string;
+  isActive: boolean;
+  reason?: string;
+  createdById?: string | null;
+  createdBy?: BackendProfileSummary | null;
+  createdAt?: string;
+  updatedAt?: string;
+  days: Array<{ weekday: number; enabled: boolean }>;
+  timeSlots: BackendPickupTimeSlot[];
+  closures: Array<{ id?: string; date: string; reason: string }>;
+};
+
+export type PickupPolicyPayload = {
+  minAdvanceDays: number;
+  maxAdvanceDays: number;
+  reason: string;
+  days: Array<{ weekday: number; enabled: boolean }>;
+  timeSlots: Array<{
+    label: string;
+    startMinute: number;
+    endMinute: number;
+    isActive: boolean;
+    capacity: number | null;
+  }>;
+  closures: Array<{ date: string; reason: string }>;
+};
+
+export type BackendPickupPolicyImpact = {
+  id: string;
+  referenceCode: string;
+  pickupStart: string | null;
+  pickupEnd: string | null;
+  scheduleRevision: number;
+  action: "AUTO_RESCHEDULE" | "NEEDS_REVIEW";
+  reason: string;
+  proposedPickupStart: string | null;
+  proposedPickupEnd: string | null;
+  proposedSlotLabel: string | null;
+};
+
+export type BackendPickupPolicyPreview = {
+  currentVersion: number;
+  nextVersion: number;
+  affectedCount: number;
+  autoRescheduledCount: number;
+  needsReviewCount: number;
+  previewFingerprint: string;
+  affectedReservations: BackendPickupPolicyImpact[];
+  truncated: boolean;
+};
+
+export type PickupPolicyActivationPayload = PickupPolicyPayload & {
+  expectedCurrentPolicyVersion: number;
+  previewFingerprint: string;
+  idempotencyKey: string;
+};
+
 export type BackendPublicReceiptVerification = {
   receiptCode: string;
   totalAmount: string | number;
@@ -211,13 +362,8 @@ export type BackendPublicReceiptVerification = {
   reservation: {
     referenceCode: string;
     status: BackendReservationStatus;
-    items: Array<{
-      name: string;
-      variantSummary: string | null;
-      quantity: number;
-      unitPrice: string | number;
-      subtotal: string | number;
-    }>;
+    itemCount: number;
+    totalQuantity: number;
   } | null;
 };
 
@@ -293,6 +439,7 @@ export type BackendRestrictionStudent = BackendProfileSummary & {
   activeRestriction: BackendRestriction | null;
   consecutiveOffenses: number;
   offenses: BackendStudentOffense[];
+  caseType?: "RESTRICTION" | "WARNING" | "REVIEW" | "CLEAR";
 };
 
 export type BackendNoShowCandidate = {
@@ -308,7 +455,18 @@ export type BackendNoShowCandidate = {
 export type BackendRestrictionOverview = {
   policy: BackendRestrictionPolicy;
   students: BackendRestrictionStudent[];
-  noShowCandidates: BackendNoShowCandidate[];
+  nextCursor: string | null;
+  summary: {
+    totalStudents: number;
+    restrictedStudents: number;
+    warningStudents: number;
+  };
+};
+
+export type BackendNoShowPage = {
+  items: BackendNoShowCandidate[];
+  nextCursor: string | null;
+  totalCandidates: number;
 };
 
 export type BackendPushPublicConfig = {
@@ -320,28 +478,79 @@ export class BackendApiError extends Error {
   status: number;
   code?: string;
   details?: Record<string, unknown>;
+  requestId?: string;
 
-  constructor(status: number, message: string, code?: string, details?: Record<string, unknown>) {
-    super(message);
+  constructor(status: number, message: string, code?: string, details?: Record<string, unknown>, requestId?: string) {
+    super(apiErrorMessage({ status, code, serverMessage: message, requestId }));
     this.name = "BackendApiError";
     this.status = status;
     this.code = code;
     this.details = details;
+    this.requestId = requestId;
   }
 }
 
 export const OFFLINE_API_MESSAGE =
   "You are offline. Connect to the internet, then try again.";
 
+const READ_REQUEST_TIMEOUT_MS = 15_000;
+const WRITE_REQUEST_TIMEOUT_MS = 30_000;
+const UPLOAD_REQUEST_TIMEOUT_MS = 60_000;
+
+function requestTimeoutMs(input: RequestInfo | URL, init?: RequestInit) {
+  const method = (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
+  const url = typeof input === "string"
+    ? input
+    : input instanceof URL
+      ? input.toString()
+      : input.url;
+
+  if (/\/uploads\//.test(url)) return UPLOAD_REQUEST_TIMEOUT_MS;
+  return method === "GET" || method === "HEAD"
+    ? READ_REQUEST_TIMEOUT_MS
+    : WRITE_REQUEST_TIMEOUT_MS;
+}
+
+export function isRequestAbortError(error: unknown) {
+  return error instanceof DOMException && error.name === "AbortError";
+}
+
 export async function onlineFetch(input: RequestInfo | URL, init?: RequestInit) {
   if (typeof navigator !== "undefined" && !navigator.onLine) {
     throw new BackendApiError(0, OFFLINE_API_MESSAGE, "OFFLINE");
   }
 
+  const requestController = new AbortController();
+  const callerSignal = init?.signal;
+  let timedOut = false;
+  const abortFromCaller = () => requestController.abort(callerSignal?.reason);
+
+  if (callerSignal?.aborted) {
+    abortFromCaller();
+  } else {
+    callerSignal?.addEventListener("abort", abortFromCaller, { once: true });
+  }
+
+  const timeout = globalThis.setTimeout(() => {
+    timedOut = true;
+    requestController.abort();
+  }, requestTimeoutMs(input, init));
+
   try {
-    return await fetch(input, { ...init, cache: "no-store" });
+    return await fetch(input, {
+      ...init,
+      cache: init?.cache ?? "no-store",
+      signal: requestController.signal
+    });
   } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") throw error;
+    if (timedOut) {
+      throw new BackendApiError(
+        408,
+        "This request took too long. Please try again.",
+        "REQUEST_TIMEOUT"
+      );
+    }
+    if (callerSignal?.aborted || isRequestAbortError(error)) throw error;
     throw new BackendApiError(
       0,
       typeof navigator !== "undefined" && !navigator.onLine
@@ -349,14 +558,22 @@ export async function onlineFetch(input: RequestInfo | URL, init?: RequestInit) 
         : "Unable to reach WESCOMM services. Check your connection and try again.",
       "NETWORK_UNAVAILABLE"
     );
+  } finally {
+    globalThis.clearTimeout(timeout);
+    callerSignal?.removeEventListener("abort", abortFromCaller);
   }
 }
 
 export type BackendConversationMessage = {
   id: string;
   conversationId: string;
-  senderId: string;
+  senderId: string | null;
+  senderType: BackendConversationMessageSenderType;
   message: string;
+  intent?: string | null;
+  metadata?: Record<string, unknown>;
+  editedAt?: string | null;
+  editVersion?: number;
   createdAt: string;
   sender?: BackendProfileSummary | null;
 };
@@ -375,12 +592,142 @@ export type BackendConversation = {
   assignedStaffId: string | null;
   subject: string;
   status: BackendConversationStatus;
+  mode: BackendConversationMode;
+  category?: string | null;
+  priority?: number;
+  escalationReason?: string | null;
+  escalatedAt?: string | null;
+  acceptedAt?: string | null;
+  resolvedAt?: string | null;
+  botSummary?: string | null;
+  lastIntent?: string | null;
+  botReplyCount?: number;
+  studentArchivedAt?: string | null;
+  operationsArchivedAt?: string | null;
+  deletedAt?: string | null;
+  deletedById?: string | null;
+  purgeEligibleAt?: string | null;
   createdAt: string;
   updatedAt: string;
   student?: BackendProfileSummary | null;
   assignedStaff?: BackendProfileSummary | null;
   messages: BackendConversationMessage[];
   typingUsers?: BackendTypingUser[];
+};
+
+export type BackendConversationPurgePreview = {
+  conversationId: string;
+  retentionDays: number;
+  deletedAt: string;
+  purgeEligibleAt: string;
+  eligible: boolean;
+  messageCount: number;
+  revisionCount: number;
+  confirmationPhrase: string;
+  previewFingerprint: string;
+};
+
+export type BackendConversationPurgeRecord = {
+  conversationId: string;
+  messageCount: number;
+  revisionCount: number;
+  softDeletedAt: string;
+  purgeEligibleAt: string;
+  purgedAt: string;
+  idempotentReplay: boolean;
+};
+
+export type BackendOperationalStudent = {
+  id: string;
+  fullName: string;
+  email: string;
+  studentNumber: string | null;
+  department: string | null;
+  avatarUrl: string | null;
+  createdAt: string;
+  reservationCount: number;
+  receiptCount: number;
+  offenseCount: number;
+  activeRestriction: { id: string; level: number; endsAt: string | null } | null;
+};
+
+export type BackendOperationalStudentSummary = Omit<BackendOperationalStudent, "reservationCount" | "offenseCount"> & {
+  updatedAt: string;
+  reservationCounts: Partial<Record<BackendReservationStatus, number>>;
+  activeOffenseCount: number;
+  scheduleChangeCount: number;
+  activeRestriction: {
+    id: string;
+    level: number;
+    source: "AUTOMATIC" | "MANUAL";
+    reason: string;
+    startsAt: string;
+    endsAt: string | null;
+  } | null;
+};
+
+export type BackendOperationalReservation = {
+  id: string;
+  referenceCode: string;
+  status: BackendReservationStatus;
+  pickupStart: string | null;
+  pickupEnd: string | null;
+  pickupReviewStatus: string;
+  paymentMethod: BackendPaymentMethod;
+  totalAmount: string;
+  createdAt: string;
+  items: Array<{ name: string; quantity: number; variantSummary: string | null }>;
+};
+
+export type BackendOperationalReceipt = {
+  id: string;
+  receiptCode: string;
+  status: BackendReceiptStatus;
+  totalAmount: string;
+  paymentMethod: BackendPaymentMethod;
+  issuedAt: string;
+  verifiedAt: string | null;
+  voidedAt: string | null;
+  reservationReference: string | null;
+};
+
+export type BackendOperationalScheduleChange = {
+  id: string;
+  source: "MANUAL" | "SYSTEM_CLOSURE";
+  reason: string;
+  previousPickupStart: string | null;
+  previousPickupEnd: string | null;
+  newPickupStart: string;
+  newPickupEnd: string;
+  previousSlotLabel: string | null;
+  newSlotLabel: string;
+  createdAt: string;
+  reservation: { id: string; referenceCode: string };
+  actor: { id: string; fullName: string; email: string } | null;
+};
+
+export type BackendOperationalRestriction = {
+  id: string;
+  level: number;
+  source: "AUTOMATIC" | "MANUAL";
+  status: "ACTIVE" | "EXPIRED" | "LIFTED";
+  reason: string;
+  startsAt: string;
+  endsAt: string | null;
+  liftedAt: string | null;
+  liftReason: string | null;
+  createdAt: string;
+};
+
+export type BackendOperationalOffense = {
+  id: string;
+  type: "NO_SHOW" | "LATE_CANCELLATION" | "RESERVATION_SPAM";
+  status: "ACTIVE" | "OVERTURNED";
+  reason: string;
+  occurredAt: string;
+  overturnedAt: string | null;
+  overturnReason: string | null;
+  reservation: { id: string; referenceCode: string } | null;
 };
 
 export type BackendAppRole = "STUDENT" | "STAFF" | "ADMIN";
@@ -399,7 +746,20 @@ export type BackendAdminUser = {
 };
 
 export type BackendReportSummary = {
+  range: {
+    preset: ReportRangePreset;
+    from: string | null;
+    to: string;
+    granularity: "DAILY" | "MONTHLY";
+    label: string;
+  };
   totalSales: number;
+  onlineGcashRevenue: number;
+  payAtCommissaryRevenue: number;
+  paymentMethodBreakdown: {
+    onlineGcash: { amount: number; receipts: number };
+    payAtCommissary: { amount: number; receipts: number };
+  };
   totalReservations: number;
   pendingReservations: number;
   lowStockItems: number;
@@ -438,6 +798,107 @@ export type BackendReportSummary = {
   }>;
 };
 
+export type BackendWesbotUsageSummary = {
+  model: string;
+  aiEnabled: boolean;
+  semanticMode: "off" | "shadow" | "active";
+  budgetEnforced: boolean;
+  budgetUsd: number;
+  estimatedSpendUsd: number;
+  reservedSpendUsd: number;
+  committedSpendUsd: number;
+  remainingUsd: number;
+  budgetPercent: number;
+  budgetHealth: "HEALTHY" | "WATCH" | "CRITICAL" | "PAUSED" | "DISABLED";
+  monthStart: string;
+  monthEnd: string;
+  totalCalls: number;
+  successfulCalls: number;
+  fallbackCalls: number;
+  budgetBlockedCalls: number;
+  rateLimitedCalls: number;
+  timeoutCalls: number;
+  activeReservations: number;
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  reasoningOutputTokens: number;
+  totalTokens: number;
+  averageLatencyMs: number;
+  lastSuccessAt: string | null;
+  lastUpdatedAt: string | null;
+  pricingVersion: string;
+  inputRateUsdPer1MTokens: number;
+  cachedRateUsdPer1MTokens: number;
+  outputRateUsdPer1MTokens: number;
+  operationBreakdown: Array<{
+    operation: string;
+    calls: number;
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+    estimatedSpendUsd: number;
+  }>;
+  today: BackendWesbotUsageDay;
+  daily: BackendWesbotUsageDay[];
+};
+
+export type BackendWesbotUsageDay = {
+  day: string;
+  calls: number;
+  successfulCalls: number;
+  fallbackCalls: number;
+  inputTokens: number;
+  outputTokens: number;
+  estimatedSpendUsd: number;
+};
+
+export type ReportRangePreset = "TODAY" | "LAST_7_DAYS" | "LAST_30_DAYS" | "THIS_MONTH" | "LAST_MONTH" | "CUSTOM" | "ALL_TIME";
+export type ReportRangeOptions = {
+  preset?: ReportRangePreset;
+  from?: string;
+  to?: string;
+  granularity?: "AUTO" | "DAILY" | "MONTHLY";
+};
+
+export type BackendDashboardProduct = {
+  id: string;
+  categoryId: string;
+  name: string;
+  description?: string | null;
+  imageUrl?: string | null;
+  price: string | number;
+  oldPrice?: string | number | null;
+  isOnSale?: boolean;
+  status: "IN_STOCK" | "RESTOCK_SOON" | "OUT_OF_STOCK" | "ON_SALE";
+  stock: number;
+  lowStockThreshold: number;
+  isActive: boolean;
+  category?: BackendCategory | null;
+};
+
+export type BackendStaffDashboard = {
+  metrics: {
+    totalProducts: number;
+    itemsToRestock: number;
+    pendingReservations: number;
+    activeReservations: number;
+    receiptsToVerify: number;
+    openConversations: number;
+  };
+  products: BackendDashboardProduct[];
+  reservations: BackendReservation[];
+  receipts: BackendReceipt[];
+};
+
+export type BackendGlobalSearchResult = {
+  id: string;
+  type: "PRODUCT" | "RESERVATION" | "RECEIPT" | "CONVERSATION";
+  title: string;
+  subtitle: string;
+  section: "inventory" | "reservations" | "receipt-verification" | "messages";
+};
+
 export type BackendAuditLog = {
   id: string;
   actorId: string | null;
@@ -471,31 +932,56 @@ function formatStatus(status: BackendProduct["status"]) {
 }
 
 function groupOptions(variants: BackendVariant[] = []) {
-  const grouped = new Map<string, string[]>();
+  const grouped = new Map<string, Map<string, number>>();
 
   variants.forEach((variant) => {
-    const values = grouped.get(variant.optionName) ?? [];
-    if (!values.includes(variant.optionValue)) values.push(variant.optionValue);
+    const values = grouped.get(variant.optionName) ?? new Map<string, number>();
+    values.set(variant.optionValue, Math.max(0, Math.floor(Number(variant.stock) || 0)));
     grouped.set(variant.optionName, values);
   });
 
-  return Array.from(grouped.entries()).map(([name, values]) => ({ name, values }));
+  return Array.from(grouped.entries()).map(([name, values]) => ({
+    name,
+    values: sortProductOptionValues(name, Array.from(values.keys())),
+    stockByValue: Object.fromEntries(values)
+  }));
 }
 
 export function mapBackendProduct(product: BackendProduct): CartProduct {
-  const asset = resolveShopProductAsset(product.name, product.imageUrl);
+  const asset = resolveShopProductAsset(product.name, product.imageUrl, product.category?.name);
+  const categoryName = product.category?.name ?? "Others";
+  const saleMode: ProductSaleMode = product.saleMode
+    ?? (isUniformClothOnly({ name: product.name, category: categoryName })
+      ? "CLOTH_ONLY"
+      : (product.variants?.length ?? 0) > 0
+        ? "OPTIONS"
+        : "SIMPLE");
 
   return {
     id: product.id,
     name: asset.name,
-    category: product.category?.name ?? "Others",
+    category: categoryName,
     detail: product.description ?? "",
     price: formatPrice(product.price),
     oldPrice: formatPrice(product.oldPrice),
+    isOnSale: product.isOnSale ?? (
+      product.oldPrice !== null
+      && product.oldPrice !== undefined
+      && Number(product.oldPrice) > Number(product.price)
+    ),
     status: formatStatus(product.status),
     count: String(product.stock),
     image: asset.image,
-    options: groupOptions(product.variants)
+    saleMode,
+    inventorySetupRequired: saleMode === "OPTIONS" && Boolean(product.inventorySetupRequired),
+    options: saleMode === "OPTIONS" ? groupOptions(product.variants) : [],
+    skus: saleMode === "OPTIONS" && product.skuInventoryEnabled
+      ? (product.skus ?? []).map((sku) => ({
+          id: sku.id,
+          stock: Math.max(0, Math.floor(Number(sku.stock) || 0)),
+          options: Object.fromEntries(sku.options.map((option) => [option.optionName, option.optionValue]))
+        }))
+      : []
   };
 }
 
@@ -511,7 +997,13 @@ export async function apiFetch<T>(path: string, init?: RequestInit) {
 
   const payload = await response.json().catch(() => null);
   if (!response.ok) {
-    throw new BackendApiError(response.status, payload?.error ?? `API request failed: ${response.status}`, payload?.code, payload?.details);
+    throw new BackendApiError(
+      response.status,
+      payload?.error ?? "",
+      payload?.code,
+      payload?.details,
+      payload?.requestId ?? response.headers.get("X-Request-Id") ?? undefined
+    );
   }
 
   return payload as T;
@@ -534,7 +1026,13 @@ export async function authApiFetch<T>(path: string, token: string, init?: Reques
     if (response.status === 401 && typeof window !== "undefined") {
       window.dispatchEvent(new Event(AUTH_UNAUTHORIZED_EVENT));
     }
-    throw new BackendApiError(response.status, payload?.error ?? `API request failed: ${response.status}`, payload?.code, payload?.details);
+    throw new BackendApiError(
+      response.status,
+      payload?.error ?? "",
+      payload?.code,
+      payload?.details,
+      payload?.requestId ?? response.headers.get("X-Request-Id") ?? undefined
+    );
   }
 
   return payload as T;
@@ -548,9 +1046,87 @@ export async function updateMyProfileFromApi(token: string, payload: UpdateMyPro
   return data.profile;
 }
 
-export async function getProductsFromApi() {
-  const data = await apiFetch<{ products: BackendProduct[] }>("/products");
-  return data.products.map(mapBackendProduct);
+const PRODUCT_CACHE_TTL_MS = 30_000;
+const FAQ_CACHE_TTL_MS = 60_000;
+type MappedProducts = ReturnType<typeof mapBackendProduct>[];
+type PendingProductsRequest = {
+  promise: Promise<MappedProducts>;
+  fresh: boolean;
+  generation: number;
+  requestSequence: number;
+};
+
+let cachedProducts: { value: MappedProducts; expiresAt: number } | null = null;
+let pendingProducts: PendingProductsRequest | null = null;
+let productCacheGeneration = 0;
+let productRequestSequence = 0;
+let latestAppliedProductRequest = 0;
+let productRefreshTimer: number | null = null;
+let pendingProductRefreshDetail: unknown;
+let cachedFaqs: { value: BackendFaq[]; expiresAt: number } | null = null;
+let pendingFaqs: Promise<BackendFaq[]> | null = null;
+
+export function invalidateProductsCache() {
+  productCacheGeneration += 1;
+  cachedProducts = null;
+}
+
+export function requestProductsRefresh(detail?: unknown) {
+  invalidateProductsCache();
+  if (typeof window === "undefined") return;
+  pendingProductRefreshDetail = detail;
+  if (productRefreshTimer) return;
+  productRefreshTimer = window.setTimeout(() => {
+    productRefreshTimer = null;
+    const nextDetail = pendingProductRefreshDetail;
+    pendingProductRefreshDetail = undefined;
+    window.dispatchEvent(
+      nextDetail === undefined
+        ? new Event(PRODUCTS_REFRESH_EVENT)
+        : new CustomEvent(PRODUCTS_REFRESH_EVENT, { detail: nextDetail })
+    );
+  }, 100);
+}
+
+export async function getProductsFromApi(options: { fresh?: boolean } = {}) {
+  const fresh = options.fresh === true;
+  const generation = productCacheGeneration;
+
+  if (!fresh && cachedProducts && cachedProducts.expiresAt > Date.now()) {
+    return cachedProducts.value;
+  }
+  if (
+    pendingProducts
+    && pendingProducts.generation === generation
+    && (!fresh || pendingProducts.fresh)
+  ) {
+    return pendingProducts.promise;
+  }
+
+  const requestSequence = ++productRequestSequence;
+  const path = fresh
+    ? `/products?fresh=${encodeURIComponent(`${generation}-${requestSequence}`)}`
+    : "/products";
+  const promise = apiFetch<{ products: BackendProduct[] }>(path, {
+    cache: fresh ? "no-store" : "default"
+  })
+    .then((data) => {
+      const value = data.products.map(mapBackendProduct);
+      if (
+        generation === productCacheGeneration
+        && requestSequence >= latestAppliedProductRequest
+      ) {
+        latestAppliedProductRequest = requestSequence;
+        cachedProducts = { value, expiresAt: Date.now() + PRODUCT_CACHE_TTL_MS };
+      }
+      return value;
+    })
+    .finally(() => {
+      if (pendingProducts?.requestSequence === requestSequence) pendingProducts = null;
+    });
+
+  pendingProducts = { promise, fresh, generation, requestSequence };
+  return promise;
 }
 
 export async function getWishlistFromApi(token: string) {
@@ -573,9 +1149,19 @@ export async function removeWishlistItemFromApi(token: string, productId: string
   });
 }
 
-export async function getFaqsFromApi() {
-  const data = await apiFetch<{ faqs: BackendFaq[] }>("/faqs");
-  return data.faqs;
+export async function getFaqsFromApi(options: { fresh?: boolean } = {}) {
+  if (!options.fresh && cachedFaqs && cachedFaqs.expiresAt > Date.now()) return cachedFaqs.value;
+  if (pendingFaqs) return pendingFaqs;
+
+  pendingFaqs = apiFetch<{ faqs: BackendFaq[] }>("/faqs", { cache: "default" })
+    .then((data) => {
+      cachedFaqs = { value: data.faqs, expiresAt: Date.now() + FAQ_CACHE_TTL_MS };
+      return data.faqs;
+    })
+    .finally(() => {
+      pendingFaqs = null;
+    });
+  return pendingFaqs;
 }
 
 export async function getManageFaqsFromApi(token: string) {
@@ -622,6 +1208,63 @@ export async function createReservationFromApi(token: string, payload: CreateRes
   return data.reservation;
 }
 
+export async function getPickupAvailabilityFromApi() {
+  const data = await apiFetch<{ policy: BackendPickupPolicy }>("/pickup/availability");
+  return data.policy;
+}
+
+export async function getPickupSlotAvailabilityFromApi(pickupDate: string, pickupPolicyVersion: number) {
+  const query = new URLSearchParams({ pickupDate, pickupPolicyVersion: String(pickupPolicyVersion) });
+  const data = await apiFetch<{ availability: BackendPickupSlotAvailability }>(`/pickup/availability/slots?${query}`);
+  return data.availability;
+}
+
+export async function getPickupPoliciesFromApi(token: string) {
+  const data = await authApiFetch<{ policies: BackendPickupPolicy[] }>("/pickup/policies", token);
+  return data.policies;
+}
+
+export async function getCurrentPickupPolicyFromApi(token: string) {
+  const data = await authApiFetch<{ policy: BackendPickupPolicy }>("/pickup/policies/current", token);
+  return data.policy;
+}
+
+export async function previewPickupPolicyFromApi(token: string, payload: PickupPolicyPayload) {
+  const data = await authApiFetch<{ preview: BackendPickupPolicyPreview }>(
+    "/pickup/policies/preview",
+    token,
+    { method: "POST", body: JSON.stringify(payload) }
+  );
+  return data.preview;
+}
+
+export async function createPickupPolicyFromApi(token: string, payload: PickupPolicyActivationPayload) {
+  return authApiFetch<{
+    policy: BackendPickupPolicy;
+    affectedCount: number;
+    autoRescheduledCount: number;
+    needsReviewCount: number;
+    idempotentReplay: boolean;
+  }>("/pickup/policies", token, {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function rescheduleReservationFromApi(token: string, reservationId: string, payload: {
+  expectedScheduleRevision: number;
+  pickupDate: string;
+  pickupSlotId: string;
+  pickupPolicyVersion: number;
+  reason: string;
+}) {
+  const data = await authApiFetch<{ reservation: BackendReservation }>(`/reservations/${encodeURIComponent(reservationId)}/pickup`, token, {
+    method: "PATCH",
+    body: JSON.stringify(payload)
+  });
+  return data.reservation;
+}
+
 export async function getPaymentOptionsFromApi(): Promise<BackendPaymentOptions> {
   const data = await apiFetch<BackendPaymentOptions | { options: BackendPaymentOptions }>("/payments/options");
   const options = "options" in data ? data.options : data;
@@ -654,9 +1297,46 @@ export async function getPaymentFromApi(token: string, paymentId: string) {
   return data.payment;
 }
 
+export async function getReservationPageFromApi(token: string, options: BackendCollectionOptions = {}) {
+  const params = new URLSearchParams();
+  if (options.limit) params.set("limit", String(options.limit));
+  if (options.cursor) params.set("cursor", options.cursor);
+  if (options.status) params.set("status", options.status);
+  if (options.query?.trim()) params.set("query", options.query.trim());
+  if (options.dateFrom) params.set("dateFrom", options.dateFrom);
+  if (options.dateTo) params.set("dateTo", options.dateTo);
+  const query = params.toString();
+  const data = await authApiFetch<BackendCursorPage<BackendReservation> & { reservations?: BackendReservation[] }>(
+    `/reservations${query ? `?${query}` : ""}`,
+    token,
+    { signal: options.signal }
+  );
+  return {
+    items: Array.isArray(data.items) ? data.items : data.reservations ?? [],
+    nextCursor: data.nextCursor ?? null
+  };
+}
+
 export async function getReservationsFromApi(token: string) {
-  const data = await authApiFetch<{ reservations: BackendReservation[] }>("/reservations", token);
-  return data.reservations;
+  return (await getReservationPageFromApi(token)).items;
+}
+
+export async function getReservationFromApi(token: string, reservationId: string) {
+  const data = await authApiFetch<{ reservation: BackendReservation }>(
+    `/reservations/${encodeURIComponent(reservationId)}`,
+    token
+  );
+  return data.reservation;
+}
+
+export async function cancelMyReservationFromApi(token: string, reservationId: string) {
+  const data = await authApiFetch<{
+    reservation: BackendReservation;
+    receipt: BackendReceipt | null;
+  }>(`/reservations/${encodeURIComponent(reservationId)}/cancel`, token, {
+    method: "POST"
+  });
+  return data.reservation;
 }
 
 export async function updateReservationStatusFromApi(
@@ -693,14 +1373,29 @@ export async function getMyRestrictionSummaryFromApi(token: string) {
 
 export async function getRestrictionOverviewFromApi(
   token: string,
-  filters: { query?: string; status?: "ALL" | "RESTRICTED" | "CLEAR" } = {}
+  filters: { query?: string; status?: "ACTIONABLE" | "ALL" | "RESTRICTED" | "WARNING" | "REVIEW"; cursor?: string; limit?: number } = {}
 ) {
   const params = new URLSearchParams();
   if (filters.query?.trim()) params.set("query", filters.query.trim());
   if (filters.status) params.set("status", filters.status);
+  if (filters.cursor) params.set("cursor", filters.cursor);
+  if (filters.limit) params.set("limit", String(filters.limit));
   const suffix = params.size ? `?${params.toString()}` : "";
   const data = await authApiFetch<{ overview: BackendRestrictionOverview }>(`/staff/restrictions${suffix}`, token);
   return data.overview;
+}
+
+export async function getNoShowCandidatesFromApi(
+  token: string,
+  filters: { query?: string; cursor?: string; limit?: number } = {}
+) {
+  const params = new URLSearchParams();
+  if (filters.query?.trim()) params.set("query", filters.query.trim());
+  if (filters.cursor) params.set("cursor", filters.cursor);
+  if (filters.limit) params.set("limit", String(filters.limit));
+  const suffix = params.size ? `?${params.toString()}` : "";
+  const data = await authApiFetch<{ page: BackendNoShowPage }>(`/staff/restrictions/no-shows${suffix}`, token);
+  return data.page;
 }
 
 export async function createStudentRestrictionFromApi(
@@ -730,14 +1425,124 @@ export async function overturnStudentOffenseFromApi(token: string, offenseId: st
   return data.offense;
 }
 
+function operationalStudentPageQuery(options: { cursor?: string; limit?: number; query?: string } = {}) {
+  const params = new URLSearchParams();
+  if (options.cursor) params.set("cursor", options.cursor);
+  if (options.limit) params.set("limit", String(options.limit));
+  if (options.query?.trim()) params.set("query", options.query.trim());
+  return params.size ? `?${params.toString()}` : "";
+}
+
+export async function getOperationalStudentsFromApi(
+  token: string,
+  options: { cursor?: string; limit?: number; query?: string; signal?: AbortSignal } = {}
+) {
+  return authApiFetch<BackendCursorPage<BackendOperationalStudent>>(
+    `/staff/students${operationalStudentPageQuery(options)}`,
+    token,
+    { signal: options.signal }
+  );
+}
+
+export async function getOperationalStudentSummaryFromApi(token: string, studentId: string) {
+  const data = await authApiFetch<{ summary: BackendOperationalStudentSummary }>(
+    `/staff/students/${encodeURIComponent(studentId)}/summary`,
+    token
+  );
+  return data.summary;
+}
+
+async function getOperationalStudentPageFromApi<T>(
+  token: string,
+  studentId: string,
+  resource: "reservations" | "receipts" | "schedule-history" | "restrictions" | "offenses",
+  options: { cursor?: string; limit?: number } = {}
+) {
+  return authApiFetch<BackendCursorPage<T>>(
+    `/staff/students/${encodeURIComponent(studentId)}/${resource}${operationalStudentPageQuery(options)}`,
+    token
+  );
+}
+
+export const getOperationalStudentReservationsFromApi = (
+  token: string,
+  studentId: string,
+  options?: { cursor?: string; limit?: number }
+) => getOperationalStudentPageFromApi<BackendOperationalReservation>(token, studentId, "reservations", options);
+
+export const getOperationalStudentReceiptsFromApi = (
+  token: string,
+  studentId: string,
+  options?: { cursor?: string; limit?: number }
+) => getOperationalStudentPageFromApi<BackendOperationalReceipt>(token, studentId, "receipts", options);
+
+export const getOperationalStudentScheduleHistoryFromApi = (
+  token: string,
+  studentId: string,
+  options?: { cursor?: string; limit?: number }
+) => getOperationalStudentPageFromApi<BackendOperationalScheduleChange>(token, studentId, "schedule-history", options);
+
+export const getOperationalStudentRestrictionsFromApi = (
+  token: string,
+  studentId: string,
+  options?: { cursor?: string; limit?: number }
+) => getOperationalStudentPageFromApi<BackendOperationalRestriction>(token, studentId, "restrictions", options);
+
+export const getOperationalStudentOffensesFromApi = (
+  token: string,
+  studentId: string,
+  options?: { cursor?: string; limit?: number }
+) => getOperationalStudentPageFromApi<BackendOperationalOffense>(token, studentId, "offenses", options);
+
+export async function getReceiptPageFromApi(token: string, options: BackendCollectionOptions = {}) {
+  const params = new URLSearchParams();
+  if (options.limit) params.set("limit", String(options.limit));
+  if (options.cursor) params.set("cursor", options.cursor);
+  if (options.status) params.set("status", options.status);
+  if (options.query?.trim()) params.set("query", options.query.trim());
+  if (options.dateFrom) params.set("dateFrom", options.dateFrom);
+  if (options.dateTo) params.set("dateTo", options.dateTo);
+  if (options.paymentChannel) params.set("paymentChannel", options.paymentChannel);
+  const query = params.toString();
+  const data = await authApiFetch<BackendCursorPage<BackendReceipt> & { receipts?: BackendReceipt[] }>(
+    `/receipts${query ? `?${query}` : ""}`,
+    token,
+    { signal: options.signal }
+  );
+  return {
+    items: Array.isArray(data.items) ? data.items : data.receipts ?? [],
+    nextCursor: data.nextCursor ?? null
+  };
+}
+
 export async function getReceiptsFromApi(token: string) {
-  const data = await authApiFetch<{ receipts: BackendReceipt[] }>("/receipts", token);
-  return data.receipts;
+  return (await getReceiptPageFromApi(token)).items;
+}
+
+export async function getReceiptFromApi(token: string, receiptId: string) {
+  const data = await authApiFetch<{ receipt: BackendReceipt }>(`/receipts/${encodeURIComponent(receiptId)}`, token);
+  return data.receipt;
 }
 
 export async function verifyReceiptFromApi(receiptCode: string) {
   const data = await apiFetch<{ receipt: BackendPublicReceiptVerification }>(`/receipts/verify/${encodeURIComponent(receiptCode)}`);
   return data.receipt;
+}
+
+export async function verifyReceiptTokenFromApi(token: string) {
+  const data = await apiFetch<{ receipt: BackendPublicReceiptVerification }>("/receipts/verify-token", {
+    method: "POST",
+    body: JSON.stringify({ token })
+  });
+  return data.receipt;
+}
+
+export async function resolveReceiptTokenFromApi(token: string, authToken: string) {
+  const data = await authApiFetch<{ receiptId: string }>("/receipts/resolve-token", authToken, {
+    method: "POST",
+    body: JSON.stringify({ token })
+  });
+  return data.receiptId;
 }
 
 export async function markReceiptVerifiedFromApi(token: string, receiptId: string) {
@@ -755,9 +1560,20 @@ export async function voidReceiptFromApi(token: string, receiptId: string, reaso
   return data.receipt;
 }
 
-export async function getNotificationsFromApi(token: string) {
-  const data = await authApiFetch<{ notifications: BackendNotification[] }>("/notifications", token);
-  return data.notifications;
+export async function getNotificationsFromApi(token: string, options: { limit?: number; before?: string } = {}) {
+  const params = new URLSearchParams();
+  if (options.limit) params.set("limit", String(options.limit));
+  if (options.before) params.set("before", options.before);
+  const query = params.toString();
+  return authApiFetch<{ notifications: BackendNotification[]; nextCursor: string | null }>(
+    `/notifications${query ? `?${query}` : ""}`,
+    token
+  );
+}
+
+export async function getUnreadNotificationCountFromApi(token: string) {
+  const data = await authApiFetch<{ unreadCount: number }>("/notifications/unread-count", token);
+  return data.unreadCount;
 }
 
 export async function getPushPublicConfigFromApi() {
@@ -793,31 +1609,104 @@ export async function markNotificationReadFromApi(token: string, notificationId:
 }
 
 export async function markAllNotificationsReadFromApi(token: string) {
-  const data = await authApiFetch<{ notifications: BackendNotification[] }>("/notifications/read-all", token, {
+  const data = await authApiFetch<{ updatedCount: number }>("/notifications/read-all", token, {
     method: "PATCH"
   });
-  return data.notifications;
+  return data.updatedCount;
 }
 
-export async function getConversationsFromApi(token: string) {
-  const data = await authApiFetch<{ conversations: BackendConversation[] }>("/conversations", token);
+export async function getConversationsFromApi(
+  token: string,
+  options: { view?: "ACTIVE" | "ARCHIVED" | "DELETED"; signal?: AbortSignal } = {}
+) {
+  const params = new URLSearchParams({ limit: "50" });
+  if (options.view) params.set("view", options.view);
+  const data = await authApiFetch<{ conversations: BackendConversation[] }>(
+    `/conversations?${params.toString()}`,
+    token,
+    { signal: options.signal }
+  );
   return data.conversations;
 }
 
+export async function getConversationMessagesFromApi(
+  token: string,
+  conversationId: string,
+  options: { limit?: number; before?: string; after?: string; signal?: AbortSignal } = {}
+) {
+  const params = new URLSearchParams();
+  if (options.limit) params.set("limit", String(options.limit));
+  if (options.before) params.set("before", options.before);
+  if (options.after) params.set("after", options.after);
+  const query = params.toString();
+  return authApiFetch<{
+    messages: BackendConversationMessage[];
+    nextCursor: string | null;
+    typingUsers: BackendTypingUser[];
+  }>(`/conversations/${conversationId}/messages${query ? `?${query}` : ""}`, token, {
+    signal: options.signal
+  });
+}
+
 export async function createConversationFromApi(token: string, payload: { subject: string; message: string }) {
-  const data = await authApiFetch<{ conversation: BackendConversation }>("/conversations", token, {
+  return authApiFetch<{
+    conversation: BackendConversation;
+    message: BackendConversationMessage;
+    botReplyPending: boolean;
+  }>("/conversations", token, {
     method: "POST",
     body: JSON.stringify(payload)
+  });
+}
+
+export async function sendConversationMessageFromApi(token: string, conversationId: string, message: string) {
+  return authApiFetch<{
+    message: BackendConversationMessage;
+    botMessage: BackendConversationMessage | null;
+    botReplyPending: boolean;
+    conversation: BackendConversation;
+  }>(`/conversations/${conversationId}/messages`, token, {
+    method: "POST",
+    body: JSON.stringify({ message })
+  });
+}
+
+export async function requestConversationBotReplyFromApi(token: string, conversationId: string, messageId: string) {
+  const data = await authApiFetch<{ botMessage: BackendConversationMessage | null }>(
+    `/conversations/${conversationId}/messages/${messageId}/bot-reply`,
+    token,
+    { method: "POST" }
+  );
+  return data.botMessage;
+}
+
+export async function requestConversationHandoffFromApi(token: string, conversationId: string, reason?: string) {
+  const data = await authApiFetch<{ conversation: BackendConversation }>(`/conversations/${conversationId}/handoff`, token, {
+    method: "POST",
+    body: JSON.stringify(reason ? { reason } : {})
   });
   return data.conversation;
 }
 
-export async function sendConversationMessageFromApi(token: string, conversationId: string, message: string) {
-  const data = await authApiFetch<{ message: BackendConversationMessage }>(`/conversations/${conversationId}/messages`, token, {
-    method: "POST",
-    body: JSON.stringify({ message })
+export async function acceptConversationFromApi(token: string, conversationId: string) {
+  const data = await authApiFetch<{ conversation: BackendConversation }>(`/conversations/${conversationId}/accept`, token, {
+    method: "POST"
   });
-  return data.message;
+  return data.conversation;
+}
+
+export async function takeOverConversationFromApi(token: string, conversationId: string) {
+  const data = await authApiFetch<{ conversation: BackendConversation }>(`/conversations/${conversationId}/takeover`, token, {
+    method: "POST"
+  });
+  return data.conversation;
+}
+
+export async function returnConversationToBotFromApi(token: string, conversationId: string) {
+  const data = await authApiFetch<{ conversation: BackendConversation }>(`/conversations/${conversationId}/return-to-bot`, token, {
+    method: "POST"
+  });
+  return data.conversation;
 }
 
 export async function updateConversationTypingFromApi(token: string, conversationId: string, isTyping: boolean) {
@@ -840,23 +1729,135 @@ export async function updateConversationStatusFromApi(
   return data.conversation;
 }
 
-export async function getAdminReportSummaryFromApi(token: string) {
-  const data = await authApiFetch<{ summary: BackendReportSummary }>("/admin/reports/summary", token);
+export async function setConversationArchivedFromApi(token: string, conversationId: string, archived: boolean) {
+  const data = await authApiFetch<{ conversation: BackendConversation }>(
+    `/conversations/${encodeURIComponent(conversationId)}/archive`,
+    token,
+    { method: "PATCH", body: JSON.stringify({ archived }) }
+  );
+  return data.conversation;
+}
+
+export async function setConversationDeletedFromApi(token: string, conversationId: string, deleted: boolean) {
+  const data = await authApiFetch<{ conversation: BackendConversation }>(
+    `/conversations/${encodeURIComponent(conversationId)}/deletion`,
+    token,
+    { method: "PATCH", body: JSON.stringify({ deleted }) }
+  );
+  return data.conversation;
+}
+
+export async function getConversationPurgePreviewFromApi(token: string, conversationId: string) {
+  const data = await authApiFetch<{ preview: BackendConversationPurgePreview }>(
+    `/conversations/${encodeURIComponent(conversationId)}/purge-preview`,
+    token
+  );
+  return data.preview;
+}
+
+export async function permanentlyPurgeConversationFromApi(
+  token: string,
+  conversationId: string,
+  payload: {
+    confirmationPhrase: string;
+    previewFingerprint: string;
+    idempotencyKey: string;
+  }
+) {
+  const data = await authApiFetch<{ purge: BackendConversationPurgeRecord }>(
+    `/conversations/${encodeURIComponent(conversationId)}/permanent`,
+    token,
+    { method: "DELETE", body: JSON.stringify(payload) }
+  );
+  return data.purge;
+}
+
+export async function editConversationMessageFromApi(
+  token: string,
+  conversationId: string,
+  messageId: string,
+  message: string,
+  expectedEditVersion: number
+) {
+  const data = await authApiFetch<{ message: BackendConversationMessage }>(
+    `/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}`,
+    token,
+    { method: "PATCH", body: JSON.stringify({ message, expectedEditVersion }) }
+  );
+  return data.message;
+}
+
+function reportQuery(options: ReportRangeOptions = {}) {
+  const params = new URLSearchParams();
+  if (options.preset) params.set("preset", options.preset);
+  if (options.from) params.set("from", options.from);
+  if (options.to) params.set("to", options.to);
+  if (options.granularity) params.set("granularity", options.granularity);
+  return params.size ? `?${params.toString()}` : "";
+}
+
+export async function getAdminReportSummaryFromApi(token: string, options: ReportRangeOptions = {}, signal?: AbortSignal) {
+  const data = await authApiFetch<{ summary: BackendReportSummary }>(`/admin/reports/summary${reportQuery(options)}`, token, { signal });
   return data.summary;
 }
 
-export async function getStaffReportSummaryFromApi(token: string) {
-  const data = await authApiFetch<{ summary: BackendReportSummary }>("/staff/reports/summary", token);
+export async function getAdminWesbotUsageFromApi(token: string, signal?: AbortSignal) {
+  const data = await authApiFetch<{ usage: BackendWesbotUsageSummary }>("/admin/wesbot/usage", token, { signal });
+  return data.usage;
+}
+
+export async function getStaffReportSummaryFromApi(token: string, options: ReportRangeOptions = {}, signal?: AbortSignal) {
+  const data = await authApiFetch<{ summary: BackendReportSummary }>(`/staff/reports/summary${reportQuery(options)}`, token, { signal });
   return data.summary;
+}
+
+export async function getStaffDashboardSummaryFromApi(token: string, signal?: AbortSignal) {
+  const data = await authApiFetch<{ dashboard: BackendStaffDashboard }>("/staff/dashboard/summary", token, { signal });
+  return data.dashboard;
+}
+
+export async function searchStaffWorkspaceFromApi(
+  token: string,
+  query: string,
+  role: "STAFF" | "ADMIN",
+  signal?: AbortSignal
+) {
+  const routeBase = role === "ADMIN" ? "/admin" : "/staff";
+  const data = await authApiFetch<{ results: BackendGlobalSearchResult[] }>(
+    `${routeBase}/search?query=${encodeURIComponent(query)}`,
+    token,
+    { signal }
+  );
+  return data.results;
+}
+
+export async function getAdminUsersPageFromApi(
+  token: string,
+  options: BackendCollectionOptions & { role?: BackendAppRole } = {}
+) {
+  const params = new URLSearchParams();
+  if (options.limit) params.set("limit", String(options.limit));
+  if (options.cursor) params.set("cursor", options.cursor);
+  if (options.query?.trim()) params.set("query", options.query.trim());
+  if (options.role) params.set("role", options.role);
+  const query = params.toString();
+  const data = await authApiFetch<BackendCursorPage<BackendAdminUser> & {
+    users?: BackendAdminUser[];
+    roleCounts?: { students: number; staff: number; admins: number };
+  }>(`/admin/users${query ? `?${query}` : ""}`, token, { signal: options.signal });
+  return {
+    items: Array.isArray(data.items) ? data.items : data.users ?? [],
+    nextCursor: data.nextCursor ?? null,
+    roleCounts: data.roleCounts ?? { students: 0, staff: 0, admins: 0 }
+  };
 }
 
 export async function getAdminUsersFromApi(token: string) {
-  const data = await authApiFetch<{ users: BackendAdminUser[] }>("/admin/users", token);
-  return data.users;
+  return (await getAdminUsersPageFromApi(token)).items;
 }
 
-export async function getStaffUsersFromApi(token: string) {
-  const data = await authApiFetch<{ users: BackendAdminUser[] }>("/staff/users", token);
+export async function getStaffUsersFromApi(token: string, signal?: AbortSignal) {
+  const data = await authApiFetch<{ users: BackendAdminUser[] }>("/staff/users", token, { signal });
   return data.users;
 }
 
@@ -870,13 +1871,22 @@ export async function updateAdminUserRoleFromApi(token: string, userId: string, 
 
 export async function getAdminAuditLogsFromApi(
   token: string,
-  filters: { action?: string; entityType?: string; limit?: number } = {}
+  filters: { action?: string; entityType?: string; query?: string; cursor?: string; limit?: number; signal?: AbortSignal } = {}
 ) {
   const params = new URLSearchParams();
   if (filters.action) params.set("action", filters.action);
   if (filters.entityType) params.set("entityType", filters.entityType);
+  if (filters.query?.trim()) params.set("query", filters.query.trim());
+  if (filters.cursor) params.set("cursor", filters.cursor);
   if (filters.limit) params.set("limit", String(filters.limit));
   const query = params.toString();
-  const data = await authApiFetch<{ auditLogs: BackendAuditLog[] }>(`/admin/audit-logs${query ? `?${query}` : ""}`, token);
-  return data.auditLogs;
+  const data = await authApiFetch<BackendCursorPage<BackendAuditLog> & { auditLogs?: BackendAuditLog[] }>(
+    `/admin/audit-logs${query ? `?${query}` : ""}`,
+    token,
+    { signal: filters.signal }
+  );
+  return {
+    items: Array.isArray(data.items) ? data.items : data.auditLogs ?? [],
+    nextCursor: data.nextCursor ?? null
+  };
 }

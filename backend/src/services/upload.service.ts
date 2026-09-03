@@ -11,6 +11,27 @@ const EXTENSION_BY_MIME: Record<string, string> = {
   "image/webp": "webp"
 };
 
+const MANAGED_PRODUCT_IMAGE_PATH = /^products\/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}-[a-z0-9._-]+\.(?:jpg|png|webp)$/;
+
+export function isManagedProductImagePath(value: string) {
+  return MANAGED_PRODUCT_IMAGE_PATH.test(value);
+}
+
+export function managedProductImagePath(storagePath?: string | null, imageUrl?: string | null) {
+  if (storagePath && isManagedProductImagePath(storagePath)) return storagePath;
+  if (!imageUrl) return null;
+  try {
+    const pathname = decodeURIComponent(new URL(imageUrl).pathname);
+    const marker = "/storage/v1/object/public/product-images/";
+    const markerIndex = pathname.indexOf(marker);
+    if (markerIndex < 0) return null;
+    const inferred = pathname.slice(markerIndex + marker.length);
+    return isManagedProductImagePath(inferred) ? inferred : null;
+  } catch {
+    return null;
+  }
+}
+
 function hasExpectedImageSignature(buffer: Buffer, contentType: string) {
   if (contentType === "image/jpeg") {
     return buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
@@ -101,4 +122,12 @@ export async function uploadProductImage(input: {
     path,
     url: data.publicUrl
   };
+}
+
+export async function deleteProductImage(path: string) {
+  if (!isManagedProductImagePath(path)) {
+    throw new HttpError(400, "Invalid managed product image path.", "INVALID_PRODUCT_IMAGE_PATH");
+  }
+  const { error } = await supabaseAdmin.storage.from(PRODUCT_IMAGE_BUCKET).remove([path]);
+  if (error) throw HttpError.fromSupabase(error, "Unable to delete product image");
 }

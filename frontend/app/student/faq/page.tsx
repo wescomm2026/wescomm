@@ -1,5 +1,5 @@
-import { FaqPage } from "@/components/ui/ModulePages";
+import { StudentFaqPage } from "@/components/student/StudentFaqPage";
 
 export default function Page() {
-  return <FaqPage />;
+  return <StudentFaqPage />;
 }

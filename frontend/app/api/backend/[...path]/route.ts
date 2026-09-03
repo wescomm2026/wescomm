@@ -22,6 +22,7 @@ const forwardedResponseHeaders = [
   "ratelimit-remaining",
   "ratelimit-reset",
   "retry-after",
+  "server-timing",
   "set-cookie",
   "x-request-id"
 ];
@@ -39,7 +40,8 @@ function requestHostOrigin(request: NextRequest) {
   }
 }
 
-async function proxy(request: NextRequest, context: { params: { path: string[] } }) {
+async function proxy(request: NextRequest, context: { params: Promise<{ path: string[] }> }) {
+  const { path } = await context.params;
   const isMutation = !["GET", "HEAD", "OPTIONS"].includes(request.method);
   const browserOrigin = request.headers.get("origin");
   const hostOrigin = requestHostOrigin(request);
@@ -66,7 +68,7 @@ async function proxy(request: NextRequest, context: { params: { path: string[] }
     return NextResponse.json({ error: "Request body is too large." }, { status: 413 });
   }
 
-  const target = new URL(`${backendBaseUrl}/${context.params.path.map(encodeURIComponent).join("/")}`);
+  const target = new URL(`${backendBaseUrl}/${path.map(encodeURIComponent).join("/")}`);
   request.nextUrl.searchParams.forEach((value, key) => target.searchParams.append(key, value));
 
   const headers = new Headers();
@@ -98,7 +100,7 @@ async function proxy(request: NextRequest, context: { params: { path: string[] }
   });
 
   const responseHasNoBody = request.method === "HEAD" || [204, 205, 304].includes(backendResponse.status);
-  return new NextResponse(responseHasNoBody ? null : await backendResponse.arrayBuffer(), {
+  return new NextResponse(responseHasNoBody ? null : backendResponse.body, {
     status: backendResponse.status,
     headers: responseHeaders
   });
@@ -106,6 +108,7 @@ async function proxy(request: NextRequest, context: { params: { path: string[] }
 
 export const GET = proxy;
 export const POST = proxy;
+export const PUT = proxy;
 export const PATCH = proxy;
 export const DELETE = proxy;
 export const OPTIONS = proxy;

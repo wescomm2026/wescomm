@@ -1,5 +1,7 @@
 "use client";
 
+import { userFacingErrorMessage } from "@/lib/user-facing-error";
+
 import { useCallback, useEffect, useState } from "react";
 import { FaqManagementExperience } from "@/components/faq/FaqManagementExperience";
 import { AssetIcon } from "@/components/ui/AssetIcon";
@@ -17,12 +19,12 @@ export function FaqExperience({ manage = false }: { manage?: boolean }) {
     }
 
     try {
-      const apiFaqs = await getFaqsFromApi();
+      const apiFaqs = await getFaqsFromApi({ fresh: background });
       setFaqs(apiFaqs);
     } catch (faqError) {
       if (!background) {
         setFaqs([]);
-        setError(faqError instanceof Error ? faqError.message : "Unable to load FAQs.");
+        setError(userFacingErrorMessage(faqError, "Unable to load FAQs."));
       }
     } finally {
       if (!background) setLoading(false);
@@ -36,7 +38,7 @@ export function FaqExperience({ manage = false }: { manage?: boolean }) {
       if (document.visibilityState === "visible") void loadFaqs({ background: true });
     };
 
-    const interval = window.setInterval(refresh, 30000);
+    const interval = window.setInterval(refresh, 60000);
     window.addEventListener("focus", refresh);
     document.addEventListener("visibilitychange", refresh);
     return () => {

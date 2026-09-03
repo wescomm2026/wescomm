@@ -1,6 +1,16 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode
+} from "react";
+import { usePathname } from "next/navigation";
 import { Download, RefreshCw, Share2, WifiOff, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { registerWescommServiceWorker } from "@/lib/service-worker";
@@ -20,11 +30,30 @@ type NavigatorWithStandalone = Navigator & {
   standalone?: boolean;
 };
 
+export type PwaInstallResult = "accepted" | "dismissed" | "instructions";
+
+type PwaInstallContextValue = {
+  canPrompt: boolean;
+  isInstalled: boolean;
+  isIos: boolean;
+  isMobile: boolean;
+  requestInstall: () => Promise<PwaInstallResult>;
+};
+
 const INSTALL_DISMISSED_KEY = "wescomm:pwa-install-dismissed:v1";
-const INSTALL_PROMPT_SNOOZE_MS = 14 * 24 * 60 * 60 * 1000;
+const INSTALL_PROMPT_SNOOZE_MS = 7 * 24 * 60 * 60 * 1000;
+const INSTALL_REMINDER_DELAY_MS = process.env.NEXT_PUBLIC_E2E_TEST === "true" ? 0 : 20 * 1000;
+const MOBILE_VIEW_QUERY = "(max-width: 767px)";
 const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
-const PRODUCT_REFRESH_INTERVAL_MS = 60 * 1000;
 const UPDATE_ACTIVATION_TIMEOUT_MS = 10 * 1000;
+
+const PwaInstallContext = createContext<PwaInstallContextValue | null>(null);
+
+export function usePwaInstall() {
+  const context = useContext(PwaInstallContext);
+  if (!context) throw new Error("usePwaInstall must be used inside PwaLifecycle.");
+  return context;
+}
 
 function isStandaloneDisplay() {
   return (
@@ -51,39 +80,41 @@ function wasInstallPromptDismissed() {
 }
 
 export function PwaLifecycle({
+  children,
   enableServiceWorker,
   enableRuntimeCaching
 }: {
+  children: ReactNode;
   enableServiceWorker: boolean;
   enableRuntimeCaching: boolean;
 }) {
+  const pathname = usePathname();
   const registrationRef = useRef<ServiceWorkerRegistration | null>(null);
   const reloadForUpdateRef = useRef(false);
   const updateActivationTimerRef = useRef<number | null>(null);
   const [isOnline, setIsOnline] = useState(true);
   const [isStandalone, setIsStandalone] = useState(false);
   const [isIos, setIsIos] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [installDismissed, setInstallDismissed] = useState(false);
+  const [installReminderReady, setInstallReminderReady] = useState(false);
   const [updateAvailable, setUpdateAvailable] = useState(false);
   const [updateDismissed, setUpdateDismissed] = useState(false);
   const [applyingUpdate, setApplyingUpdate] = useState(false);
 
   useEffect(() => {
     const displayMode = window.matchMedia("(display-mode: standalone)");
-    const requestFreshProducts = () => window.dispatchEvent(new Event("wescomm:products-refresh"));
-    const onOnline = () => {
-      setIsOnline(true);
-      requestFreshProducts();
-    };
+    const mobileView = window.matchMedia(MOBILE_VIEW_QUERY);
+    const onOnline = () => setIsOnline(true);
     const onOffline = () => setIsOnline(false);
     const onVisibilityChange = () => {
       if (document.visibilityState === "visible" && navigator.onLine) {
-        requestFreshProducts();
         void registrationRef.current?.update().catch(() => undefined);
       }
     };
     const syncDisplayMode = () => setIsStandalone(isStandaloneDisplay());
+    const syncMobileView = () => setIsMobile(mobileView.matches);
     const onBeforeInstallPrompt = (event: Event) => {
       event.preventDefault();
       setInstallPrompt(event as BeforeInstallPromptEvent);
@@ -101,6 +132,7 @@ export function PwaLifecycle({
 
     setIsOnline(navigator.onLine);
     syncDisplayMode();
+    syncMobileView();
     setIsIos(isIosDevice());
     setInstallDismissed(wasInstallPromptDismissed());
 
@@ -110,20 +142,30 @@ export function PwaLifecycle({
     window.addEventListener("appinstalled", onAppInstalled);
     document.addEventListener("visibilitychange", onVisibilityChange);
     displayMode.addEventListener("change", syncDisplayMode);
-    const productRefreshInterval = window.setInterval(() => {
-      if (document.visibilityState === "visible" && navigator.onLine) requestFreshProducts();
-    }, PRODUCT_REFRESH_INTERVAL_MS);
-
+    mobileView.addEventListener("change", syncMobileView);
     return () => {
-      window.clearInterval(productRefreshInterval);
       window.removeEventListener("online", onOnline);
       window.removeEventListener("offline", onOffline);
       window.removeEventListener("beforeinstallprompt", onBeforeInstallPrompt);
       window.removeEventListener("appinstalled", onAppInstalled);
       document.removeEventListener("visibilitychange", onVisibilityChange);
       displayMode.removeEventListener("change", syncDisplayMode);
+      mobileView.removeEventListener("change", syncMobileView);
     };
   }, []);
+
+  useEffect(() => {
+    if (isStandalone || !isMobile) {
+      setInstallReminderReady(false);
+      return;
+    }
+
+    const reminderTimer = window.setTimeout(
+      () => setInstallReminderReady(true),
+      INSTALL_REMINDER_DELAY_MS
+    );
+    return () => window.clearTimeout(reminderTimer);
+  }, [isMobile, isStandalone]);
 
   useEffect(() => {
     if (!enableServiceWorker || !("serviceWorker" in navigator)) return;
@@ -194,27 +236,38 @@ export function PwaLifecycle({
     };
   }, [enableRuntimeCaching, enableServiceWorker]);
 
-  const dismissInstall = () => {
+  const dismissInstall = useCallback(() => {
     setInstallDismissed(true);
     try {
       window.localStorage.setItem(INSTALL_DISMISSED_KEY, String(Date.now()));
     } catch {
       // Dismissal remains in component state when storage is unavailable.
     }
-  };
+  }, []);
 
-  const installApplication = async () => {
-    if (!installPrompt) return;
+  const requestInstall = useCallback(async (): Promise<PwaInstallResult> => {
+    if (isStandalone) return "accepted";
+    if (!installPrompt) return "instructions";
 
     try {
       await installPrompt.prompt();
       const choice = await installPrompt.userChoice;
       setInstallPrompt(null);
       if (choice.outcome === "dismissed") dismissInstall();
+      return choice.outcome;
     } catch {
       setInstallPrompt(null);
+      return "instructions";
     }
-  };
+  }, [dismissInstall, installPrompt, isStandalone]);
+
+  const installContext = useMemo<PwaInstallContextValue>(() => ({
+    canPrompt: Boolean(installPrompt),
+    isInstalled: isStandalone,
+    isIos,
+    isMobile,
+    requestInstall
+  }), [installPrompt, isIos, isMobile, isStandalone, requestInstall]);
 
   const applyUpdate = () => {
     const waitingWorker = registrationRef.current?.waiting;
@@ -239,11 +292,15 @@ export function PwaLifecycle({
     isOnline &&
     !showUpdate &&
     !isStandalone &&
+    isMobile &&
+    pathname !== "/student/profile" &&
+    installReminderReady &&
     !installDismissed &&
     Boolean(installPrompt || isIos);
 
   return (
-    <>
+    <PwaInstallContext.Provider value={installContext}>
+      {children}
       {!isOnline ? (
         <div
           role="status"
@@ -328,7 +385,7 @@ export function PwaLifecycle({
               Not now
             </Button>
             {installPrompt ? (
-              <Button type="button" onClick={() => void installApplication()}>
+              <Button type="button" onClick={() => void requestInstall()}>
                 <Download className="size-4" aria-hidden="true" />
                 Install
               </Button>
@@ -338,6 +395,6 @@ export function PwaLifecycle({
           </div>
         </aside>
       ) : null}
-    </>
+    </PwaInstallContext.Provider>
   );
 }

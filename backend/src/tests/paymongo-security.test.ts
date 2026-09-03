@@ -38,6 +38,7 @@ test("signed foreign events are ignored and recognized mismatches are durably qu
 test("reservation fulfillment is gated by a paid online payment and exposes the singular payment alias", () => {
   const reservationService = source("src/services/reservation.service.ts");
   assert.match(reservationService, /assertPaymentAllowsReservationTransition\(/);
-  assert.match(reservationService, /payment:online_payments!online_payments_reservation_id_fkey\(/);
+  assert.match(reservationService, /onlinePayment:\s*\{[\s\S]*select:/);
+  assert.match(reservationService, /const payment = reservation\.onlinePayment/);
   assert.match(reservationService, /payment: payment[\s\S]*providerReference/);
 });

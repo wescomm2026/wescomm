@@ -11,7 +11,7 @@ import {
 } from "react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import { StudentCartDrawer } from "@/components/cart/StudentCartDrawer";
-import { getProductsFromApi } from "@/lib/api";
+import { getProductsFromApi, PRODUCTS_REFRESH_EVENT } from "@/lib/api";
 import { productPurchaseLimit } from "@/lib/product-display";
 
 export type CartProduct = {
@@ -21,12 +21,21 @@ export type CartProduct = {
   detail: string;
   price: string;
   oldPrice: string;
+  isOnSale?: boolean;
   status: string;
   count: string;
   image: string;
+  saleMode?: "SIMPLE" | "CLOTH_ONLY" | "OPTIONS";
+  inventorySetupRequired?: boolean;
   options: Array<{
     name: string;
     values: string[];
+    stockByValue?: Record<string, number>;
+  }>;
+  skus?: Array<{
+    id: string;
+    stock: number;
+    options: Record<string, string>;
   }>;
 };
 
@@ -71,6 +80,7 @@ export function StudentCartProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<CartItem[]>([]);
   const [open, setOpen] = useState(false);
   const [loadedOwnerId, setLoadedOwnerId] = useState("");
+  const [productRefreshVersion, setProductRefreshVersion] = useState(0);
   const ownerId = authReady ? user?.id ?? "guest" : "";
   const visibleItems = loadedOwnerId === ownerId ? items : EMPTY_CART_ITEMS;
 
@@ -94,7 +104,8 @@ export function StudentCartProvider({ children }: { children: ReactNode }) {
               id: item.id ?? createCartItemId(item.product.name, selectedOptions, item.product.id),
               product: {
                 ...item.product,
-                options: item.product.options ?? []
+                options: item.product.options ?? [],
+                skus: item.product.skus ?? []
               },
               quantity: item.quantity,
               selectedOptions
@@ -118,10 +129,16 @@ export function StudentCartProvider({ children }: { children: ReactNode }) {
   }, [items, loadedOwnerId, ownerId]);
 
   useEffect(() => {
+    const requestRefresh = () => setProductRefreshVersion((current) => current + 1);
+    window.addEventListener(PRODUCTS_REFRESH_EVENT, requestRefresh);
+    return () => window.removeEventListener(PRODUCTS_REFRESH_EVENT, requestRefresh);
+  }, []);
+
+  useEffect(() => {
     if (!open || !ownerId || loadedOwnerId !== ownerId || !navigator.onLine) return;
     let cancelled = false;
 
-    getProductsFromApi()
+    getProductsFromApi({ fresh: true })
       .then((products) => {
         if (cancelled) return;
         const productsById = new Map(
@@ -140,15 +157,28 @@ export function StudentCartProvider({ children }: { children: ReactNode }) {
                 product: { ...item.product, status: "Out of Stock", count: "0" }
               };
             }
+            const refreshedProduct: CartProduct = {
+              ...item.product,
+              status: liveProduct.status,
+              count: liveProduct.count,
+              price: liveProduct.price,
+              oldPrice: liveProduct.oldPrice,
+              saleMode: liveProduct.saleMode,
+              inventorySetupRequired: liveProduct.inventorySetupRequired,
+              options: liveProduct.options,
+              skus: liveProduct.skus ?? []
+            };
+            const refreshedSelections = refreshedProduct.saleMode === "OPTIONS"
+              ? Object.fromEntries(Object.entries(item.selectedOptions).filter(([name, value]) =>
+                  refreshedProduct.options.some((option) => option.name === name && option.values.includes(value))
+                ))
+              : {};
+            const liveLimit = productPurchaseLimit(refreshedProduct, 10, refreshedSelections);
             return {
               ...item,
-              product: {
-                ...item.product,
-                status: liveProduct.status,
-                count: liveProduct.count,
-                price: liveProduct.price,
-                oldPrice: liveProduct.oldPrice
-              }
+              product: refreshedProduct,
+              selectedOptions: refreshedSelections,
+              quantity: liveLimit > 0 ? Math.min(item.quantity, liveLimit) : item.quantity
             };
           })
         );
@@ -161,14 +191,14 @@ export function StudentCartProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [loadedOwnerId, open, ownerId]);
+  }, [loadedOwnerId, open, ownerId, productRefreshVersion]);
 
   const openCart = useCallback(() => setOpen(true), []);
   const closeCart = useCallback(() => setOpen(false), []);
 
   const addItem = useCallback((product: CartProduct, selectedOptions: Record<string, string>, quantity = 1) => {
     if (!ownerId || loadedOwnerId !== ownerId) return;
-    const limit = productPurchaseLimit(product);
+    const limit = productPurchaseLimit(product, 10, selectedOptions);
     if (limit === 0) return;
     const safeQuantity = Math.max(1, Math.min(limit, Math.floor(Number(quantity) || 1)));
     const id = createCartItemId(product.name, selectedOptions, product.id);
@@ -189,7 +219,7 @@ export function StudentCartProvider({ children }: { children: ReactNode }) {
     setItems((current) =>
       current.flatMap((item) => {
         if (item.id !== id) return item;
-        const limit = productPurchaseLimit(item.product);
+        const limit = productPurchaseLimit(item.product, 10, item.selectedOptions);
         if (limit === 0) return [];
         return [{ ...item, quantity: Math.max(1, Math.min(limit, Math.floor(Number(quantity) || 1))) }];
       })

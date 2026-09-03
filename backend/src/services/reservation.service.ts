@@ -12,147 +12,85 @@ import {
 } from "../domain/online-payment.js";
 import { RESERVATION_RESTRICTION_POLICY, getNoShowEligibleAt } from "../domain/reservation-policy.js";
 import {
+  assertCurrentCheckoutPolicyAcceptance,
+  type SubmittedPolicyAcceptance
+} from "../domain/policy-acceptance.js";
+import { assertStudentCanCancelReservation } from "../domain/student-reservation-cancellation.js";
+import {
   assertReservationTransition,
   deriveProductStatus,
   reservationStatusLabel
 } from "../domain/reservation-state.js";
+import { resolveReservationVariantSelections } from "../domain/variant-stock.js";
+import { sameSkuVariantSelection } from "../domain/sku-inventory.js";
 import { prisma } from "../lib/prisma.js";
-import { supabaseAdmin } from "../lib/supabase.js";
-import { safelyRecordAuditLog } from "./audit-log.service.js";
-import { createReceiptForReservation } from "./receipt.service.js";
+import { ensureReceiptForCompletedReservationInTransaction } from "./receipt.service.js";
+import { validatePickupSelectionInTransaction } from "./pickup-policy.service.js";
 import { expireCheckoutAttemptBestEffort } from "./paymongo-reconciliation.service.js";
 import {
   assertReservationAccessInTransaction,
-  notifyStudentOfPolicyOutcome,
   recordNoShowOffenseInTransaction,
   type NoShowPolicyOutcome
 } from "./restriction.service.js";
-import { sendPushToUser } from "./push.service.js";
+import { OUTBOX_EVENT_TYPES } from "./outbox.service.js";
+import { publishRealtimeEvents, REALTIME_TOPICS, wakeRealtimeBroker } from "./realtime-event.service.js";
 import {
   createBackInStockNotificationsInTransaction
 } from "./wishlist-notification.service.js";
 import {
   type AppRole,
-  type NotificationType,
   type OnlinePaymentStatus,
   type PaymentMethod,
   type RawProfileSummary,
   type ReservationStatus,
-  firstRow,
   mapProfileSummary
 } from "../types/app.js";
 import { HttpError } from "../utils/http-error.js";
+import { createPage, decodeCursor, normalizePageLimit } from "../utils/cursor-pagination.js";
 import {
   hashReservationRequest,
   reservationIdempotencyExpiry
 } from "../utils/reservation-idempotency.js";
 
-type RawProduct = {
-  id: string;
-  name: string;
-  description: string | null;
-  image_url: string | null;
-  price: string | number;
-  status: string;
-  stock: number;
-  category?:
-    | {
-    name: string;
-    slug: string;
-    icon_url: string | null;
+const RESERVATION_SERIALIZATION_MAX_ATTEMPTS = 6;
+
+async function waitForReservationSerializationRetry(attempt: number) {
+  const jitterCeilingMs = Math.min(750, 75 * (2 ** (attempt - 1)));
+  const delayMs = 25 + Math.floor(Math.random() * jitterCeilingMs);
+  await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+}
+
+async function withReservationSerializationRetry<T>(operation: () => Promise<T>) {
+  for (let attempt = 1; attempt <= RESERVATION_SERIALIZATION_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      if (
+        !(error instanceof Prisma.PrismaClientKnownRequestError)
+        || error.code !== "P2034"
+        || attempt >= RESERVATION_SERIALIZATION_MAX_ATTEMPTS
+      ) {
+        throw error;
       }
-    | Array<{
-        name: string;
-        slug: string;
-        icon_url: string | null;
-      }>
-    | null;
-};
+      await waitForReservationSerializationRetry(attempt);
+    }
+  }
 
-type RawReservationItem = {
-  id: string;
-  reservation_id: string;
-  product_id: string;
-  variant_summary: string | null;
-  quantity: number;
-  unit_price: string | number;
-  subtotal: string | number;
-  created_at: string;
-  product: RawProduct | RawProduct[] | null;
-};
-
-type RawReservation = {
-  id: string;
-  student_id: string;
-  reference_code: string;
-  status: ReservationStatus;
-  pickup_start: string | null;
-  pickup_end: string | null;
-  payment_method: PaymentMethod;
-  total_amount: string | number;
-  staff_notes: string | null;
-  created_at: string;
-  updated_at: string;
-  student: RawProfileSummary | RawProfileSummary[] | null;
-  items: RawReservationItem[] | null;
-  payment: RawOnlinePayment | RawOnlinePayment[] | null;
-};
-
-type RawOnlinePayment = {
-  id: string;
-  reservation_id: string;
-  status: OnlinePaymentStatus;
-  amount_centavos: number;
-  currency: string;
-  livemode: boolean;
-  provider_checkout_session_id: string | null;
-  provider_payment_id: string | null;
-  checkout_url: string | null;
-  checkout_expires_at: string | null;
-  paid_at: string | null;
-  created_at: string;
-  updated_at: string;
-};
-
-function normalizeVariantPart(value: string) {
-  return value.trim().toLowerCase().replace(/\s+/g, " ");
+  throw new Error("Reservation serialization retry exhausted unexpectedly.");
 }
 
-function createVariantKey(productId: string, optionName: string, optionValue: string) {
-  return `${productId}:${normalizeVariantPart(optionName)}:${normalizeVariantPart(optionValue)}`;
-}
-
-function parseVariantSelections(summary?: string | null) {
-  if (!summary?.trim()) return [];
-
-  return summary
-    .split("|")
-    .map((section) => section.trim())
-    .filter((section) => section && !section.toLowerCase().startsWith("note:"))
-    .flatMap((section) => section.split(","))
-    .map((part) => part.trim())
-    .map((part) => {
-      const separatorIndex = part.indexOf(":");
-      if (separatorIndex === -1) return null;
-
-      const optionName = part.slice(0, separatorIndex).trim();
-      const optionValue = part.slice(separatorIndex + 1).trim();
-      if (!optionName || !optionValue) return null;
-
-      return { optionName, optionValue };
-    })
-    .filter((selection): selection is { optionName: string; optionValue: string } => Boolean(selection));
-}
-
-function aggregateVariantQuantities(
+function aggregateVariantQuantities<T extends {
+  id: string;
+  productId: string;
+  optionName: string;
+  optionValue: string;
+  stock: number;
+}>(
   items: Array<{ productId: string; quantity: number; variantSummary?: string | null }>,
-  variants: Array<{ id: string; productId: string; optionName: string; optionValue: string; stock: number }>,
+  variants: T[],
   products: Array<{ id: string; name: string }>,
   options: { strict?: boolean } = {}
 ) {
-  const variantByKey = new Map(
-    variants.map((variant) => [createVariantKey(variant.productId, variant.optionName, variant.optionValue), variant])
-  );
   const variantsByProduct = variants.reduce((map, variant) => {
     const entries = map.get(variant.productId) ?? [];
     entries.push(variant);
@@ -162,17 +100,24 @@ function aggregateVariantQuantities(
   const quantityByVariant = new Map<string, { variant: (typeof variants)[number]; quantity: number }>();
 
   items.forEach((item) => {
-    const selections = parseVariantSelections(item.variantSummary);
-    if (!selections.length) return;
+    const productName = products.find((product) => product.id === item.productId)?.name ?? "Selected product";
+    const resolution = resolveReservationVariantSelections({
+      variants: variantsByProduct.get(item.productId) ?? [],
+      summary: item.variantSummary,
+      strict: options.strict !== false
+    });
+    if (resolution.issue) {
+      const message = resolution.issue.code === "MISSING_OPTION"
+        ? `${productName}: choose a ${resolution.issue.optionName} option.`
+        : resolution.issue.code === "DUPLICATE_OPTION"
+          ? `${productName}: choose only one ${resolution.issue.optionName} option.`
+          : resolution.issue.code === "UNKNOWN_VALUE"
+            ? `${productName} option ${resolution.issue.optionName}: ${resolution.issue.optionValue} is no longer available.`
+            : `${productName} does not offer the ${resolution.issue.optionName} option.`;
+      throw new HttpError(400, message, "INVALID_VARIANT_SELECTION");
+    }
 
-    selections.forEach((selection) => {
-      const variant = variantByKey.get(createVariantKey(item.productId, selection.optionName, selection.optionValue));
-      if (!variant && options.strict !== false && (variantsByProduct.get(item.productId)?.length ?? 0) > 0) {
-        const productName = products.find((product) => product.id === item.productId)?.name ?? "Selected product";
-        throw new HttpError(400, `${productName} option ${selection.optionName}: ${selection.optionValue} is no longer available.`);
-      }
-      if (!variant) return;
-
+    resolution.selected.forEach((variant) => {
       const current = quantityByVariant.get(variant.id);
       quantityByVariant.set(variant.id, {
         variant,
@@ -184,258 +129,454 @@ function aggregateVariantQuantities(
   return Array.from(quantityByVariant.values());
 }
 
+
+function nonOptionReservationSummary(summary?: string | null) {
+  if (!summary?.trim()) return null;
+  const notes = summary
+    .split("|")
+    .map((part) => part.trim())
+    .filter((part) => /^note\s*:/i.test(part));
+  return notes.length ? notes.join(" | ") : null;
+}
+
+type SkuReservationRecord = {
+  id: string;
+  productId: string;
+  stock: number;
+  lowStockThreshold: number;
+  optionValues: Array<{ variantId: string }>;
+};
+
+function resolveRequestedSkus<TVariant extends {
+  id: string;
+  productId: string;
+  optionName: string;
+  optionValue: string;
+  stock: number;
+}>(input: {
+  items: Array<{ productId: string; skuId?: string | null; quantity: number; variantSummary?: string | null }>;
+  products: Array<{ id: string; name: string; saleMode: "SIMPLE" | "CLOTH_ONLY" | "OPTIONS"; skuInventoryEnabled: boolean }>;
+  variants: TVariant[];
+  skus: SkuReservationRecord[];
+}) {
+  const variantsByProduct = input.variants.reduce((map, variant) => {
+    const values = map.get(variant.productId) ?? [];
+    values.push(variant);
+    map.set(variant.productId, values);
+    return map;
+  }, new Map<string, TVariant[]>());
+  const skusByProduct = input.skus.reduce((map, sku) => {
+    const values = map.get(sku.productId) ?? [];
+    values.push(sku);
+    map.set(sku.productId, values);
+    return map;
+  }, new Map<string, SkuReservationRecord[]>());
+  const itemSkuIds = new Map<number, string>();
+  const quantityBySku = new Map<string, { sku: SkuReservationRecord; quantity: number; productName: string }>();
+
+  input.items.forEach((item, index) => {
+    const product = input.products.find((entry) => entry.id === item.productId);
+    if (product?.saleMode !== "OPTIONS" || !product.skuInventoryEnabled) return;
+    const productName = product.name;
+    const resolution = resolveReservationVariantSelections({
+      variants: variantsByProduct.get(item.productId) ?? [],
+      summary: item.variantSummary,
+      strict: true
+    });
+    if (resolution.issue) {
+      const message = resolution.issue.code === "MISSING_OPTION"
+        ? `${productName}: choose a ${resolution.issue.optionName} option.`
+        : resolution.issue.code === "DUPLICATE_OPTION"
+          ? `${productName}: choose only one ${resolution.issue.optionName} option.`
+          : resolution.issue.code === "UNKNOWN_VALUE"
+            ? `${productName} option ${resolution.issue.optionName}: ${resolution.issue.optionValue} is no longer available.`
+            : `${productName} does not offer the ${resolution.issue.optionName} option.`;
+      throw new HttpError(400, message, "INVALID_VARIANT_SELECTION");
+    }
+    const selectedIds = resolution.selected.map((variant) => variant.id).sort();
+    const productSkus = skusByProduct.get(item.productId) ?? [];
+    const matchesSelection = (sku: SkuReservationRecord) =>
+      sameSkuVariantSelection(sku.optionValues.map((link) => link.variantId), selectedIds);
+    const matching = item.skuId
+      ? productSkus.filter((sku) => sku.id === item.skuId && matchesSelection(sku))
+      : productSkus.filter(matchesSelection);
+    if (matching.length !== 1) {
+      throw new HttpError(
+        409,
+        `${productName}: the selected option combination is not configured in inventory. Please refresh the item and try again.`,
+        item.skuId ? "SKU_SELECTION_STALE" : "SKU_COMBINATION_NOT_AVAILABLE"
+      );
+    }
+    const sku = matching[0];
+    itemSkuIds.set(index, sku.id);
+    const current = quantityBySku.get(sku.id);
+    quantityBySku.set(sku.id, {
+      sku,
+      quantity: (current?.quantity ?? 0) + item.quantity,
+      productName
+    });
+  });
+
+  return { itemSkuIds, requestedSkus: Array.from(quantityBySku.values()) };
+}
+
 function createReferenceCode() {
   const year = new Date().getFullYear();
   const suffix = randomBytes(4).toString("hex").toUpperCase();
   return `WES-${year}-${suffix}`;
 }
 
-type ReservationPushNotification = {
-  id?: string;
-  userId: string;
-  role: AppRole;
-  type: NotificationType;
-  title: string;
-  message: string;
-};
-
-function dispatchReservationPushNotifications(notifications: ReservationPushNotification[]) {
-  void Promise.all(
-    notifications.map((notification) =>
-      sendPushToUser(notification.userId, {
-        id: notification.id,
-        title: notification.title,
-        message: notification.message,
-        type: notification.type
-      }, notification.role)
-    )
-  ).catch((error) => {
-    const message = error instanceof Error ? error.message : "Unknown push dispatch error.";
-    console.warn(`Unable to dispatch reservation push notifications: ${message}`);
-  });
-}
-
-async function createReservationCreatedNotifications(input: {
-  studentId: string;
-  referenceCode: string;
-  lowStockAlerts: Array<{ productName: string; newStock: number }>;
-}) {
-  try {
-    const staffAndAdmins = await prisma.profile.findMany({
-      where: { role: { in: ["STAFF", "ADMIN"] } },
-      select: { id: true, role: true }
-    });
-
-    const notifications: Prisma.NotificationCreateManyInput[] = [
-      {
-        userId: input.studentId,
-        type: "RESERVATION",
-        title: "Reservation submitted",
-        message: `${input.referenceCode} was submitted and is waiting for staff confirmation.`
-      },
-      ...staffAndAdmins.map((profile) => ({
-        userId: profile.id,
-        type: "RESERVATION" as const,
-        title: "New student reservation",
-        message: `${input.referenceCode} needs review and confirmation.`
-      })),
-      ...input.lowStockAlerts.flatMap((alert) =>
-        staffAndAdmins.map((profile) => ({
-          userId: profile.id,
-          type: "LOW_STOCK" as const,
-          title: `Low stock: ${alert.productName}`,
-          message: `${alert.productName} dropped to ${alert.newStock} pcs after reservation ${input.referenceCode}.`
-        }))
-      )
-    ];
-
-    await prisma.notification.createMany({ data: notifications });
-
-    dispatchReservationPushNotifications([
-      {
-        userId: input.studentId,
-        role: "STUDENT",
-        type: "RESERVATION",
-        title: "Reservation submitted",
-        message: `${input.referenceCode} was submitted and is waiting for staff confirmation.`
-      },
-      ...staffAndAdmins.map((profile) => ({
-        userId: profile.id,
-        role: profile.role as AppRole,
-        type: "RESERVATION" as const,
-        title: "New student reservation",
-        message: `${input.referenceCode} needs review and confirmation.`
-      })),
-      ...input.lowStockAlerts.flatMap((alert) =>
-        staffAndAdmins.map((profile) => ({
-          userId: profile.id,
-          role: profile.role as AppRole,
-          type: "LOW_STOCK" as const,
-          title: `Low stock: ${alert.productName}`,
-          message: `${alert.productName} dropped to ${alert.newStock} pcs after reservation ${input.referenceCode}.`
-        }))
-      )
-    ]);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown notification error.";
-    console.warn(`Unable to create reservation notifications: ${message}`);
-  }
-}
-
-async function createReservationStatusNotification(notification: ReservationPushNotification | null) {
-  if (!notification) return;
-
-  try {
-    const createdNotification = await prisma.notification.create({
-      data: {
-        userId: notification.userId,
-        type: notification.type,
-        title: notification.title,
-        message: notification.message
-      },
-      select: { id: true }
-    });
-
-    dispatchReservationPushNotifications([{ ...notification, id: createdNotification.id }]);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown notification error.";
-    console.warn(`Unable to create reservation status notification: ${message}`);
-  }
-}
-
-function mapProduct(product: RawProduct | RawProduct[] | null | undefined) {
-  const row = firstRow(product);
-  if (!row) return null;
-  const category = firstRow(row.category);
-
-  return {
-    id: row.id,
-    name: row.name,
-    description: row.description,
-    imageUrl: row.image_url,
-    price: row.price,
-    status: row.status,
-    stock: row.stock,
-    category: category
-      ? {
-          name: category.name,
-          slug: category.slug,
-          iconUrl: category.icon_url
+const reservationRecordSelect = Prisma.validator<Prisma.ReservationSelect>()({
+  id: true,
+  studentId: true,
+  referenceCode: true,
+  status: true,
+  pickupStart: true,
+  pickupEnd: true,
+  pickupReviewStatus: true,
+  pickupReviewReason: true,
+  scheduleRevision: true,
+  pickupPolicyVersion: { select: { id: true, version: true } },
+  pickupTimeSlot: { select: { id: true, label: true, startMinute: true, endMinute: true } },
+  paymentMethod: true,
+  totalAmount: true,
+  staffNotes: true,
+  createdAt: true,
+  updatedAt: true,
+  student: { select: { id: true, fullName: true, email: true, studentNumber: true } },
+  scheduleChanges: {
+    orderBy: { createdAt: "desc" },
+    take: 20,
+    select: {
+      id: true,
+      reason: true,
+      previousPickupStart: true,
+      previousPickupEnd: true,
+      previousPolicyVersion: true,
+      previousSlotLabel: true,
+      newPickupStart: true,
+      newPickupEnd: true,
+      newPolicyVersion: true,
+      newSlotLabel: true,
+      previousScheduleRevision: true,
+      newScheduleRevision: true,
+      createdAt: true,
+      actor: { select: { id: true, fullName: true, email: true } }
+    }
+  },
+  onlinePayment: {
+    select: {
+      id: true,
+      reservationId: true,
+      status: true,
+      amountCentavos: true,
+      currency: true,
+      livemode: true,
+      providerCheckoutSessionId: true,
+      providerPaymentId: true,
+      checkoutUrl: true,
+      checkoutExpiresAt: true,
+      paidAt: true,
+      createdAt: true,
+      updatedAt: true
+    }
+  },
+  items: {
+    orderBy: { createdAt: "asc" },
+    select: {
+      id: true,
+      reservationId: true,
+      productId: true,
+      variantSummary: true,
+      quantity: true,
+      unitPrice: true,
+      subtotal: true,
+      createdAt: true,
+      product: {
+        select: {
+          id: true,
+          name: true,
+          description: true,
+          imageUrl: true,
+          price: true,
+          status: true,
+          stock: true,
+          category: { select: { name: true, slug: true, iconUrl: true } }
         }
-      : null
-  };
-}
+      }
+    }
+  }
+});
 
-function mapReservation(row: RawReservation) {
-  const payment = firstRow(row.payment);
+type ReservationRecord = Prisma.ReservationGetPayload<{ select: typeof reservationRecordSelect }>;
+
+function mapPrismaReservation(reservation: ReservationRecord) {
+  const payment = reservation.onlinePayment;
   return {
-    id: row.id,
-    studentId: row.student_id,
-    referenceCode: row.reference_code,
-    status: row.status,
-    pickupStart: row.pickup_start,
-    pickupEnd: row.pickup_end,
-    paymentMethod: row.payment_method,
-    totalAmount: row.total_amount,
-    staffNotes: row.staff_notes,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
+    id: reservation.id,
+    studentId: reservation.studentId,
+    referenceCode: reservation.referenceCode,
+    status: reservation.status,
+    pickupStart: reservation.pickupStart?.toISOString() ?? null,
+    pickupEnd: reservation.pickupEnd?.toISOString() ?? null,
+    pickupReviewStatus: reservation.pickupReviewStatus,
+    pickupReviewReason: reservation.pickupReviewReason,
+    scheduleRevision: reservation.scheduleRevision,
+    pickupPolicyVersion: reservation.pickupPolicyVersion?.version ?? null,
+    pickupSlot: reservation.pickupTimeSlot,
+    paymentMethod: reservation.paymentMethod,
+    totalAmount: reservation.totalAmount.toString(),
+    staffNotes: reservation.staffNotes,
+    createdAt: reservation.createdAt.toISOString(),
+    updatedAt: reservation.updatedAt.toISOString(),
+    student: {
+      id: reservation.student.id,
+      fullName: reservation.student.fullName,
+      email: reservation.student.email,
+      studentNumber: reservation.student.studentNumber
+    },
+    scheduleChanges: reservation.scheduleChanges.map((change) => ({
+      ...change,
+      previousPickupStart: change.previousPickupStart?.toISOString() ?? null,
+      previousPickupEnd: change.previousPickupEnd?.toISOString() ?? null,
+      newPickupStart: change.newPickupStart.toISOString(),
+      newPickupEnd: change.newPickupEnd.toISOString(),
+      createdAt: change.createdAt.toISOString()
+    })),
     payment: payment
       ? {
           id: payment.id,
-          reservationId: payment.reservation_id,
+          reservationId: payment.reservationId,
           status: payment.status,
-          amountMinor: payment.amount_centavos,
+          amountMinor: payment.amountCentavos,
           currency: payment.currency.trim(),
           livemode: payment.livemode,
-          canResume: paymentCanResume(payment.status, payment.checkout_url, payment.checkout_expires_at),
+          canResume: paymentCanResume(payment.status, payment.checkoutUrl, payment.checkoutExpiresAt?.toISOString() ?? null),
           canRetry: paymentCanRetry(payment.status),
-          providerReference: payment.provider_payment_id ?? payment.provider_checkout_session_id,
-          paidAt: payment.paid_at,
-          checkoutExpiresAt: payment.checkout_expires_at,
-          createdAt: payment.created_at,
-          updatedAt: payment.updated_at
+          providerReference: payment.providerPaymentId ?? payment.providerCheckoutSessionId,
+          paidAt: payment.paidAt?.toISOString() ?? null,
+          checkoutExpiresAt: payment.checkoutExpiresAt?.toISOString() ?? null,
+          createdAt: payment.createdAt.toISOString(),
+          updatedAt: payment.updatedAt.toISOString()
         }
       : null,
-    student: mapProfileSummary(row.student),
-    items: (row.items ?? []).map((item) => ({
+    items: reservation.items.map((item) => ({
       id: item.id,
-      reservationId: item.reservation_id,
-      productId: item.product_id,
-      variantSummary: item.variant_summary,
+      reservationId: item.reservationId,
+      productId: item.productId,
+      variantSummary: item.variantSummary,
       quantity: item.quantity,
-      unitPrice: item.unit_price,
-      subtotal: item.subtotal,
-      createdAt: item.created_at,
-      product: mapProduct(item.product)
+      unitPrice: item.unitPrice.toString(),
+      subtotal: item.subtotal.toString(),
+      createdAt: item.createdAt.toISOString(),
+      product: {
+        id: item.product.id,
+        name: item.product.name,
+        description: item.product.description,
+        imageUrl: item.product.imageUrl,
+        price: item.product.price.toString(),
+        status: item.product.status,
+        stock: item.product.stock,
+        category: item.product.category
+      }
     }))
   };
 }
 
-const reservationSelect = `
-  id,
-  student_id,
-  reference_code,
-  status,
-  pickup_start,
-  pickup_end,
-  payment_method,
-  total_amount,
-  staff_notes,
-  created_at,
-  updated_at,
-  payment:online_payments!online_payments_reservation_id_fkey(
-    id,
-    reservation_id,
-    status,
-    amount_centavos,
-    currency,
-    livemode,
-    provider_checkout_session_id,
-    provider_payment_id,
-    checkout_url,
-    checkout_expires_at,
-    paid_at,
-    created_at,
-    updated_at
-  ),
-  student:profiles!reservations_student_id_fkey(id,full_name,email,student_number),
-  items:reservation_items(
-    id,
-    reservation_id,
-    product_id,
-    variant_summary,
-    quantity,
-    unit_price,
-    subtotal,
-    created_at,
-    product:products(
-      id,
-      name,
-      description,
-      image_url,
-      price,
-      status,
-      stock,
-      category:categories(name,slug,icon_url)
-    )
-  )
-`;
+const staffReservationListSelect = Prisma.validator<Prisma.ReservationSelect>()({
+  id: true,
+  studentId: true,
+  referenceCode: true,
+  status: true,
+  pickupStart: true,
+  pickupEnd: true,
+  pickupReviewStatus: true,
+  pickupReviewReason: true,
+  scheduleRevision: true,
+  pickupPolicyVersion: { select: { id: true, version: true } },
+  pickupTimeSlot: { select: { id: true, label: true, startMinute: true, endMinute: true } },
+  paymentMethod: true,
+  totalAmount: true,
+  staffNotes: true,
+  createdAt: true,
+  updatedAt: true,
+  student: { select: { id: true, fullName: true, email: true, studentNumber: true } },
+  onlinePayment: {
+    select: {
+      id: true,
+      reservationId: true,
+      status: true,
+      amountCentavos: true,
+      currency: true,
+      livemode: true,
+      providerCheckoutSessionId: true,
+      providerPaymentId: true,
+      checkoutUrl: true,
+      checkoutExpiresAt: true,
+      paidAt: true,
+      createdAt: true,
+      updatedAt: true
+    }
+  },
+  items: {
+    orderBy: { createdAt: "asc" },
+    select: {
+      id: true,
+      reservationId: true,
+      productId: true,
+      variantSummary: true,
+      quantity: true,
+      unitPrice: true,
+      subtotal: true,
+      createdAt: true,
+      product: { select: { id: true, name: true } }
+    }
+  }
+});
 
-export async function listReservations(userId: string, role: AppRole) {
-  let query = supabaseAdmin.from("reservations").select(reservationSelect).order("created_at", { ascending: false });
-  if (role === "STUDENT") query = query.eq("student_id", userId);
+type StaffReservationListRecord = Prisma.ReservationGetPayload<{ select: typeof staffReservationListSelect }>;
 
-  const { data, error } = await query;
-  if (error) throw HttpError.fromSupabase(error);
-
-  return ((data ?? []) as RawReservation[]).map(mapReservation);
+function mapStaffReservationList(reservation: StaffReservationListRecord) {
+  const payment = reservation.onlinePayment;
+  return {
+    id: reservation.id,
+    studentId: reservation.studentId,
+    referenceCode: reservation.referenceCode,
+    status: reservation.status,
+    pickupStart: reservation.pickupStart?.toISOString() ?? null,
+    pickupEnd: reservation.pickupEnd?.toISOString() ?? null,
+    pickupReviewStatus: reservation.pickupReviewStatus,
+    pickupReviewReason: reservation.pickupReviewReason,
+    scheduleRevision: reservation.scheduleRevision,
+    pickupPolicyVersion: reservation.pickupPolicyVersion?.version ?? null,
+    pickupSlot: reservation.pickupTimeSlot,
+    paymentMethod: reservation.paymentMethod,
+    totalAmount: reservation.totalAmount.toString(),
+    staffNotes: reservation.staffNotes,
+    createdAt: reservation.createdAt.toISOString(),
+    updatedAt: reservation.updatedAt.toISOString(),
+    student: {
+      id: reservation.student.id,
+      fullName: reservation.student.fullName,
+      email: reservation.student.email,
+      studentNumber: reservation.student.studentNumber
+    },
+    payment: payment
+      ? {
+          id: payment.id,
+          reservationId: payment.reservationId,
+          status: payment.status,
+          amountMinor: payment.amountCentavos,
+          currency: payment.currency.trim(),
+          livemode: payment.livemode,
+          canResume: paymentCanResume(payment.status, payment.checkoutUrl, payment.checkoutExpiresAt?.toISOString() ?? null),
+          canRetry: paymentCanRetry(payment.status),
+          providerReference: payment.providerPaymentId ?? payment.providerCheckoutSessionId,
+          paidAt: payment.paidAt?.toISOString() ?? null,
+          checkoutExpiresAt: payment.checkoutExpiresAt?.toISOString() ?? null,
+          createdAt: payment.createdAt.toISOString(),
+          updatedAt: payment.updatedAt.toISOString()
+        }
+      : null,
+    items: reservation.items.map((item) => ({
+      id: item.id,
+      reservationId: item.reservationId,
+      productId: item.productId,
+      variantSummary: item.variantSummary,
+      quantity: item.quantity,
+      unitPrice: item.unitPrice.toString(),
+      subtotal: item.subtotal.toString(),
+      createdAt: item.createdAt.toISOString(),
+      product: { id: item.product.id, name: item.product.name }
+    }))
+  };
 }
 
-async function loadReservationById(reservationId: string) {
-  const { data, error } = await supabaseAdmin.from("reservations").select(reservationSelect).eq("id", reservationId).single();
-  if (error) throw HttpError.fromSupabase(error);
-  return mapReservation(data as RawReservation);
+export type ReservationListOptions = {
+  referenceCode?: string;
+  status?: ReservationStatus;
+  query?: string;
+  dateFrom?: Date;
+  dateTo?: Date;
+  cursor?: string;
+  limit?: number;
+};
+
+export async function listReservations(userId: string, role: AppRole, options: ReservationListOptions = {}) {
+  const limit = normalizePageLimit(options.limit);
+  const cursorId = decodeCursor(options.cursor);
+  const where: Prisma.ReservationWhereInput = role === "STUDENT" ? { studentId: userId } : {};
+
+  if (options.referenceCode) where.referenceCode = options.referenceCode;
+  if (options.status) where.status = options.status as PrismaReservationStatus;
+  if (options.dateFrom || options.dateTo) {
+    where.createdAt = {
+      ...(options.dateFrom ? { gte: options.dateFrom } : {}),
+      ...(options.dateTo ? { lte: options.dateTo } : {})
+    };
+  }
+  if (options.query?.trim()) {
+    const query = options.query.trim();
+    where.OR = [
+      { referenceCode: { contains: query, mode: "insensitive" } },
+      ...(role === "STUDENT" ? [] : [{
+        student: {
+          is: {
+            OR: [
+              { fullName: { contains: query, mode: "insensitive" as const } },
+              { email: { contains: query, mode: "insensitive" as const } },
+              { studentNumber: { contains: query, mode: "insensitive" as const } }
+            ]
+          }
+        }
+      }])
+    ];
+  }
+
+  if (role === "STUDENT") {
+    const rows = await prisma.reservation.findMany({
+      where,
+      select: reservationRecordSelect,
+      relationLoadStrategy: "join",
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      ...(cursorId ? { cursor: { id: cursorId }, skip: 1 } : {}),
+      take: limit + 1
+    });
+    return createPage(rows.map(mapPrismaReservation), limit);
+  }
+
+  const rows = await prisma.reservation.findMany({
+    where,
+    select: staffReservationListSelect,
+    relationLoadStrategy: "join",
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    ...(cursorId ? { cursor: { id: cursorId }, skip: 1 } : {}),
+    take: limit + 1
+  });
+  return createPage(rows.map(mapStaffReservationList), limit);
+}
+
+export async function getReservation(userId: string, role: AppRole, reservationId: string) {
+  const reservation = await prisma.reservation.findFirst({
+    where: {
+      id: reservationId,
+      ...(role === "STUDENT" ? { studentId: userId } : {})
+    },
+    select: reservationRecordSelect,
+    relationLoadStrategy: "join"
+  });
+  if (!reservation) throw new HttpError(404, "Reservation not found.");
+  return mapPrismaReservation(reservation);
+}
+
+async function loadReservationCommandResult(reservationId: string) {
+  const reservation = await prisma.reservation.findUnique({
+    where: { id: reservationId },
+    select: reservationRecordSelect,
+    relationLoadStrategy: "join"
+  });
+  if (!reservation) throw new HttpError(404, "Reservation not found.");
+  return mapPrismaReservation(reservation);
 }
 
 function assertIdempotencyPayloadMatches(existingHash: string, requestHash: string) {
@@ -452,10 +593,13 @@ export async function createReservation(input: {
   studentId: string;
   idempotencyKey: string;
   paymentMethod: PaymentMethod;
-  pickupStart?: Date;
-  pickupEnd?: Date;
+  pickupDate: string;
+  pickupSlotId: string;
+  pickupPolicyVersion: number;
+  policyAcceptance?: SubmittedPolicyAcceptance;
   items: Array<{
     productId: string;
+    skuId?: string;
     variantSummary?: string;
     quantity: number;
   }>;
@@ -464,15 +608,14 @@ export async function createReservation(input: {
     throw new HttpError(503, "Online GCash payment is not available.", "PAYMONGO_DISABLED");
   }
 
-  const requestHash = hashReservationRequest(input);
-  await prisma.reservationIdempotencyKey.deleteMany({
-    where: {
-      studentId: input.studentId,
-      expiresAt: { lte: new Date() }
-    }
+  const policyVersion = assertCurrentCheckoutPolicyAcceptance(input.policyAcceptance);
+  const requestHash = hashReservationRequest({
+    ...input,
+    policyAcceptance: { accepted: true, version: policyVersion }
   });
+  const idempotencyNow = new Date();
 
-  const existingRequest = await prisma.reservationIdempotencyKey.findUnique({
+  let existingRequest = await prisma.reservationIdempotencyKey.findUnique({
     where: {
       studentId_key: {
         studentId: input.studentId,
@@ -480,10 +623,19 @@ export async function createReservation(input: {
       }
     },
     select: {
+      id: true,
       requestHash: true,
-      reservationId: true
+      reservationId: true,
+      expiresAt: true
     }
   });
+
+  if (existingRequest?.expiresAt && existingRequest.expiresAt <= idempotencyNow) {
+    await prisma.reservationIdempotencyKey.deleteMany({
+      where: { id: existingRequest.id, expiresAt: { lte: idempotencyNow } }
+    });
+    existingRequest = null;
+  }
 
   if (existingRequest) {
     assertIdempotencyPayloadMatches(existingRequest.requestHash, requestHash);
@@ -492,7 +644,7 @@ export async function createReservation(input: {
     }
 
     return {
-      reservation: await loadReservationById(existingRequest.reservationId),
+      reservation: await loadReservationCommandResult(existingRequest.reservationId),
       idempotentReplay: true
     };
   }
@@ -505,8 +657,7 @@ export async function createReservation(input: {
   const productIds = Array.from(requestedQuantityByProduct.keys());
   const referenceCode = createReferenceCode();
 
-  const transactionResult = await prisma
-    .$transaction(
+  const executeTransaction = () => prisma.$transaction(
       async (tx) => {
         const idempotencyRequest = await tx.reservationIdempotencyKey.create({
           data: {
@@ -519,35 +670,83 @@ export async function createReservation(input: {
         });
 
         await assertReservationAccessInTransaction(tx, input.studentId);
+        const pickup = await validatePickupSelectionInTransaction(tx, input);
 
         const products = await tx.product.findMany({
           where: { id: { in: productIds } },
           select: {
             id: true,
             name: true,
+            description: true,
+            imageUrl: true,
             price: true,
             status: true,
             stock: true,
             lowStockThreshold: true,
-            isActive: true
-          }
+            isActive: true,
+            saleMode: true,
+            skuInventoryEnabled: true,
+            category: { select: { name: true, slug: true, iconUrl: true } }
+          },
+          relationLoadStrategy: "join"
         });
 
         if (products.length !== requestedQuantityByProduct.size) {
           throw new HttpError(400, "One or more products were not found.");
         }
 
-        const productVariants = await tx.productVariant.findMany({
-          where: { productId: { in: productIds } },
-          select: {
-            id: true,
-            productId: true,
-            optionName: true,
-            optionValue: true,
-            stock: true
+        const optionProductIds = products
+          .filter((product) => product.saleMode === "OPTIONS")
+          .map((product) => product.id);
+        const productVariants = optionProductIds.length
+          ? await tx.productVariant.findMany({
+              where: { productId: { in: optionProductIds } },
+              select: {
+                id: true,
+                productId: true,
+                optionName: true,
+                optionValue: true,
+                stock: true,
+                lowStockThreshold: true
+              }
+            })
+          : [];
+        const productSkus = optionProductIds.length
+          ? await tx.productSku.findMany({
+              where: { productId: { in: optionProductIds }, isActive: true },
+              select: {
+                id: true,
+                productId: true,
+                stock: true,
+                lowStockThreshold: true,
+                optionValues: { select: { variantId: true } }
+              },
+              relationLoadStrategy: "join"
+            })
+          : [];
+        const pendingInventorySetup = products.find(
+          (product) => product.saleMode === "OPTIONS" && !product.skuInventoryEnabled
+        );
+        if (pendingInventorySetup) {
+          throw new HttpError(
+            409,
+            `${pendingInventorySetup.name} is temporarily unavailable while staff verifies its physical inventory.`,
+            "INVENTORY_RECONCILIATION_REQUIRED"
+          );
+        }
+        input.items.forEach((item) => {
+          const product = products.find((entry) => entry.id === item.productId);
+          if (!product) return;
+          if (product.saleMode !== "OPTIONS" && item.skuId) {
+            throw new HttpError(400, `${product.name} does not use selectable size or option inventory.`, "PRODUCT_OPTIONS_NOT_ALLOWED");
           }
         });
-        const requestedVariants = aggregateVariantQuantities(input.items, productVariants, products);
+        const { itemSkuIds, requestedSkus } = resolveRequestedSkus({
+          items: input.items,
+          products,
+          variants: productVariants,
+          skus: productSkus
+        });
 
         products.forEach((product) => {
           const requestedQuantity = requestedQuantityByProduct.get(product.id) ?? 0;
@@ -558,12 +757,12 @@ export async function createReservation(input: {
           }
         });
 
-        requestedVariants.forEach(({ variant, quantity }) => {
-          const product = products.find((entry) => entry.id === variant.productId);
-          if (quantity > variant.stock) {
+        requestedSkus.forEach(({ sku, quantity, productName }) => {
+          if (quantity > sku.stock) {
             throw new HttpError(
               400,
-              `${product?.name ?? "Selected product"} ${variant.optionName}: ${variant.optionValue} only has ${variant.stock} item${variant.stock === 1 ? "" : "s"} available.`
+              `${productName} selected combination only has ${sku.stock} item${sku.stock === 1 ? "" : "s"} available.`,
+              "SKU_STOCK_UNAVAILABLE"
             );
           }
         });
@@ -578,25 +777,58 @@ export async function createReservation(input: {
             studentId: input.studentId,
             referenceCode,
             paymentMethod: input.paymentMethod,
-            pickupStart: input.pickupStart ?? null,
-            pickupEnd: input.pickupEnd ?? null,
-            totalAmount,
-            items: {
-              create: input.items.map((item) => {
-                const product = products.find((entry) => entry.id === item.productId)!;
-                const unitPrice = Number(product.price ?? 0);
-
-                return {
-                  productId: item.productId,
-                  variantSummary: item.variantSummary ?? null,
-                  quantity: item.quantity,
-                  unitPrice,
-                  subtotal: unitPrice * item.quantity
-                };
-              })
-            }
+            pickupStart: pickup.pickupStart,
+            pickupEnd: pickup.pickupEnd,
+            pickupPolicyVersionId: pickup.policy.id,
+            pickupTimeSlotId: pickup.slot.id,
+            checkoutPolicyVersion: policyVersion,
+            checkoutPolicyAcceptedAt: new Date(),
+            totalAmount
           },
-          select: { id: true, referenceCode: true }
+          select: {
+            id: true,
+            studentId: true,
+            referenceCode: true,
+            status: true,
+            pickupStart: true,
+            pickupEnd: true,
+            pickupReviewStatus: true,
+            pickupReviewReason: true,
+            scheduleRevision: true,
+            paymentMethod: true,
+            totalAmount: true,
+            createdAt: true,
+            updatedAt: true
+          }
+        });
+
+        const createdItems = await tx.reservationItem.createManyAndReturn({
+          data: input.items.map((item, itemIndex) => {
+            const product = products.find((entry) => entry.id === item.productId)!;
+            const unitPrice = Number(product.price ?? 0);
+            return {
+              reservationId: reservation.id,
+              productId: item.productId,
+              skuId: itemSkuIds.get(itemIndex) ?? null,
+              variantSummary: product.saleMode === "OPTIONS"
+                ? item.variantSummary ?? null
+                : nonOptionReservationSummary(item.variantSummary),
+              quantity: item.quantity,
+              unitPrice,
+              subtotal: unitPrice * item.quantity
+            };
+          }),
+          select: {
+            id: true,
+            reservationId: true,
+            productId: true,
+            skuId: true,
+            variantSummary: true,
+            quantity: true,
+            unitPrice: true,
+            subtotal: true,
+            createdAt: true
+          }
         });
 
         await tx.reservationIdempotencyKey.update({
@@ -605,88 +837,237 @@ export async function createReservation(input: {
           select: { id: true }
         });
 
-        const lowStockAlerts: Array<{ productName: string; newStock: number }> = [];
+        const lowStockAlerts: Array<{
+          productId: string;
+          productName: string;
+          newStock: number;
+          variantId?: string;
+          skuId?: string;
+          skuLabel?: string;
+          optionName?: string;
+          optionValue?: string;
+          lowStockThreshold?: number;
+        }> = [];
+        const updatedProductState = new Map<string, { stock: number; status: PrismaProductStatus }>();
+        const inventoryMovements: Prisma.InventoryMovementCreateManyInput[] = [];
 
-        for (const [productId, quantity] of requestedQuantityByProduct.entries()) {
+        const productStockUpdates = Array.from(requestedQuantityByProduct, ([productId, quantity]) => {
           const product = products.find((entry) => entry.id === productId)!;
-          const newStock = product.stock - quantity;
-          const status = deriveProductStatus(newStock, product.lowStockThreshold, product.status) as PrismaProductStatus;
+          const stock = product.stock - quantity;
+          const status = deriveProductStatus(stock, product.lowStockThreshold, product.status) as PrismaProductStatus;
+          return { product, productId, quantity, stock, status };
+        });
+        const inventoryUpdatedAt = new Date();
+        const changedProducts = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+          UPDATE "products" AS product
+          SET
+            "stock" = product."stock" - requested."quantity",
+            "status" = requested."status",
+            "updated_at" = ${inventoryUpdatedAt}
+          FROM (
+            VALUES ${Prisma.join(productStockUpdates.map((update) => Prisma.sql`
+              (${update.productId}::uuid, ${update.quantity}::integer, ${update.status}::"product_status")
+            `))}
+          ) AS requested("id", "quantity", "status")
+          WHERE product."id" = requested."id"
+            AND product."is_active" = true
+            AND product."stock" >= requested."quantity"
+            AND product."status" <> 'OUT_OF_STOCK'::"product_status"
+          RETURNING product."id"
+        `);
+        const changedProductIds = new Set(changedProducts.map((row) => row.id));
 
-          const updateResult = await tx.product.updateMany({
-            where: {
-              id: productId,
-              isActive: true,
-              stock: { gte: quantity },
-              status: { not: "OUT_OF_STOCK" }
-            },
-            data: {
-              stock: { decrement: quantity },
-              status,
-              updatedAt: new Date()
-            }
-          });
-
-          if (updateResult.count !== 1) {
+        for (const { product, productId, quantity, stock: newStock, status } of productStockUpdates) {
+          if (!changedProductIds.has(productId)) {
             throw new HttpError(409, `${product.name} stock changed while reserving. Please review your cart and try again.`);
           }
+          updatedProductState.set(productId, { stock: newStock, status });
 
-          await tx.inventoryMovement.create({
-            data: {
-              productId,
-              type: "RESERVATION_HOLD",
-              quantity,
-              previousStock: product.stock,
-              newStock,
-              performedById: input.studentId,
-              notes: `Reservation ${reservation.referenceCode}`
-            }
+          inventoryMovements.push({
+            productId,
+            type: "RESERVATION_HOLD",
+            quantity,
+            previousStock: product.stock,
+            newStock,
+            performedById: input.studentId,
+            notes: `Reservation ${reservation.referenceCode}`
           });
 
           if (newStock <= product.lowStockThreshold && product.stock > product.lowStockThreshold) {
-            lowStockAlerts.push({ productName: product.name, newStock });
+            lowStockAlerts.push({ productId: product.id, productName: product.name, newStock });
           }
         }
 
-        for (const { variant, quantity } of requestedVariants) {
-          const newStock = variant.stock - quantity;
-          const updateResult = await tx.productVariant.updateMany({
-            where: {
-              id: variant.id,
-              productId: variant.productId,
-              stock: { gte: quantity }
-            },
-            data: {
-              stock: { decrement: quantity },
-              updatedAt: new Date()
+        if (requestedSkus.length) {
+          const changedSkus = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+            UPDATE "product_skus" AS sku
+            SET
+              "stock" = sku."stock" - requested."quantity",
+              "updated_at" = ${inventoryUpdatedAt}
+            FROM (
+              VALUES ${Prisma.join(requestedSkus.map(({ sku, quantity }) => Prisma.sql`
+                (${sku.id}::uuid, ${quantity}::integer)
+              `))}
+            ) AS requested("id", "quantity")
+            WHERE sku."id" = requested."id"
+              AND sku."is_active" = true
+              AND sku."stock" >= requested."quantity"
+            RETURNING sku."id"
+          `);
+          const changedSkuIds = new Set(changedSkus.map((row) => row.id));
+          const variantQuantityById = requestedSkus.reduce((map, { sku, quantity }) => {
+            for (const link of sku.optionValues) {
+              map.set(link.variantId, (map.get(link.variantId) ?? 0) + quantity);
             }
-          });
+            return map;
+          }, new Map<string, number>());
+          const changedVariants = variantQuantityById.size
+            ? await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+                UPDATE "product_variants" AS variant
+                SET
+                  "stock" = variant."stock" - requested."quantity",
+                  "updated_at" = ${inventoryUpdatedAt}
+                FROM (
+                  VALUES ${Prisma.join(Array.from(variantQuantityById, ([variantId, quantity]) => Prisma.sql`
+                    (${variantId}::uuid, ${quantity}::integer)
+                  `))}
+                ) AS requested("id", "quantity")
+                WHERE variant."id" = requested."id"
+                  AND variant."stock" >= requested."quantity"
+                RETURNING variant."id"
+              `)
+            : [];
+          const changedVariantIds = new Set(changedVariants.map((row) => row.id));
 
-          if (updateResult.count !== 1) {
-            const product = products.find((entry) => entry.id === variant.productId);
-            throw new HttpError(
-              409,
-              `${product?.name ?? "Selected product"} ${variant.optionName}: ${variant.optionValue} stock changed while reserving. Please review your cart and try again.`
-            );
-          }
+          for (const { sku, quantity, productName } of requestedSkus) {
+            if (!changedSkuIds.has(sku.id)) {
+              throw new HttpError(409, `${productName} stock changed while reserving. Please review your selected options and try again.`);
+            }
+            const unavailableVariant = sku.optionValues.find((link) => !changedVariantIds.has(link.variantId));
+            if (unavailableVariant) {
+              throw new HttpError(409, `${productName} option stock changed while reserving. Please try again.`);
+            }
+            const newStock = sku.stock - quantity;
 
-          await tx.inventoryMovement.create({
-            data: {
-              productId: variant.productId,
-              variantId: variant.id,
+            inventoryMovements.push({
+              productId: sku.productId,
+              skuId: sku.id,
               type: "RESERVATION_HOLD",
               quantity,
-              previousStock: variant.stock,
+              previousStock: sku.stock,
               newStock,
               performedById: input.studentId,
-              notes: `Reservation ${reservation.referenceCode} (${variant.optionName}: ${variant.optionValue})`
+              notes: `Reservation ${reservation.referenceCode} SKU hold`
+            });
+
+            if (newStock <= sku.lowStockThreshold && sku.stock > sku.lowStockThreshold) {
+              const variantsForSku = productVariants.filter((variant) => sku.optionValues.some((link) => link.variantId === variant.id));
+              const skuLabel = variantsForSku.length
+                ? variantsForSku.map((variant) => `${variant.optionName}: ${variant.optionValue}`).join(" / ")
+                : "Standard item";
+              lowStockAlerts.push({
+                productId: sku.productId,
+                productName,
+                newStock,
+                skuId: sku.id,
+                skuLabel,
+                lowStockThreshold: sku.lowStockThreshold
+              });
             }
-          });
+          }
         }
 
-        return {
-          reservationId: reservation.id,
+        if (inventoryMovements.length) {
+          await tx.inventoryMovement.createMany({ data: inventoryMovements });
+        }
+
+        await tx.outboxEvent.create({
+          data: {
+            type: OUTBOX_EVENT_TYPES.reservationCreated,
+            entityId: reservation.id,
+            payload: {
+              studentId: input.studentId,
+              referenceCode: reservation.referenceCode,
+              itemCount: createdItems.reduce((sum, item) => sum + item.quantity, 0),
+              totalAmount,
+              paymentMethod: reservation.paymentMethod,
+              checkoutPolicyVersion: policyVersion,
+              idempotencyKey: input.idempotencyKey,
+              lowStockAlerts
+            }
+          },
+          select: { id: true }
+        });
+
+        await publishRealtimeEvents(tx, [
+          {
+            topic: REALTIME_TOPICS.reservations,
+            entityId: reservation.id,
+            audienceUserIds: [input.studentId],
+            audienceRoles: ["STAFF", "ADMIN"],
+            payload: { action: "created", status: reservation.status }
+          },
+          {
+            topic: REALTIME_TOPICS.inventory,
+            entityId: reservation.id,
+            audienceRoles: ["STUDENT", "STAFF", "ADMIN"],
+            payload: { action: "reservation-hold" }
+          },
+          {
+            topic: REALTIME_TOPICS.dashboard,
+            entityId: reservation.id,
+            audienceRoles: ["STAFF", "ADMIN"],
+            payload: { action: "reservation-created" }
+          }
+        ]);
+
+        const commandReservation = {
+          id: reservation.id,
+          studentId: reservation.studentId,
           referenceCode: reservation.referenceCode,
-          lowStockAlerts,
+          status: reservation.status,
+          pickupStart: reservation.pickupStart?.toISOString() ?? null,
+          pickupEnd: reservation.pickupEnd?.toISOString() ?? null,
+          pickupReviewStatus: reservation.pickupReviewStatus,
+          pickupReviewReason: reservation.pickupReviewReason,
+          scheduleRevision: reservation.scheduleRevision,
+          pickupPolicyVersion: pickup.policy.version,
+          pickupSlot: pickup.slot,
+          paymentMethod: reservation.paymentMethod,
+          totalAmount: reservation.totalAmount.toString(),
+          staffNotes: null,
+          createdAt: reservation.createdAt.toISOString(),
+          updatedAt: reservation.updatedAt.toISOString(),
+          student: null,
+          payment: null,
+          items: createdItems.map((item) => {
+            const product = products.find((entry) => entry.id === item.productId)!;
+            const nextProduct = updatedProductState.get(product.id);
+            return {
+              id: item.id,
+              reservationId: item.reservationId,
+              productId: item.productId,
+              variantSummary: item.variantSummary,
+              quantity: item.quantity,
+              unitPrice: item.unitPrice.toString(),
+              subtotal: item.subtotal.toString(),
+              createdAt: item.createdAt.toISOString(),
+              product: {
+                id: product.id,
+                name: product.name,
+                description: product.description,
+                imageUrl: product.imageUrl,
+                price: product.price.toString(),
+                status: nextProduct?.status ?? product.status,
+                stock: nextProduct?.stock ?? product.stock,
+                category: product.category
+              }
+            };
+          })
+        };
+
+        return {
+          reservation: commandReservation,
           idempotentReplay: false
         };
       },
@@ -695,7 +1076,9 @@ export async function createReservation(input: {
         maxWait: 10000,
         timeout: 20000
       }
-    )
+    );
+
+  const transactionResult = await withReservationSerializationRetry(executeTransaction)
     .catch(async (error) => {
       if (error instanceof HttpError) throw error;
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
@@ -710,7 +1093,8 @@ export async function createReservation(input: {
             requestHash: true,
             reservationId: true,
             reservation: { select: { referenceCode: true } }
-          }
+          },
+          relationLoadStrategy: "join"
         });
 
         if (replayRequest) {
@@ -720,52 +1104,33 @@ export async function createReservation(input: {
           }
 
           return {
-            reservationId: replayRequest.reservationId,
-            referenceCode: replayRequest.reservation.referenceCode,
-            lowStockAlerts: [],
+            reservation: await loadReservationCommandResult(replayRequest.reservationId),
             idempotentReplay: true
           };
         }
       }
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034") {
-        throw new HttpError(409, "Reservation stock changed while processing. Please try again.");
+        throw new HttpError(
+          409,
+          "Reservation stock changed while processing. Please try again.",
+          "RESERVATION_SERIALIZATION_CONFLICT",
+          { retryable: true, attempts: RESERVATION_SERIALIZATION_MAX_ATTEMPTS }
+        );
       }
       throw error;
     });
 
-  if (!transactionResult.idempotentReplay) {
-    await createReservationCreatedNotifications({
-      studentId: input.studentId,
-      referenceCode: transactionResult.referenceCode,
-      lowStockAlerts: transactionResult.lowStockAlerts
-    });
-  }
-
-  const reservation = await loadReservationById(transactionResult.reservationId);
-
-  if (!transactionResult.idempotentReplay) {
-    await safelyRecordAuditLog({
-      actorId: input.studentId,
-      action: "RESERVATION_CREATED",
-      entityType: "reservation",
-      entityId: reservation.id,
-      summary: `Created reservation ${reservation.referenceCode}.`,
-      metadata: {
-        referenceCode: reservation.referenceCode,
-        itemCount: reservation.items.length,
-        totalAmount: reservation.totalAmount,
-        paymentMethod: reservation.paymentMethod,
-        idempotencyKey: input.idempotencyKey
-      }
-    });
-  }
-
-  return { reservation, idempotentReplay: transactionResult.idempotentReplay };
+  if (!transactionResult.idempotentReplay) wakeRealtimeBroker();
+  return transactionResult;
 }
 
-export async function updateReservationStatus(reservationId: string, status: ReservationStatus, performedById?: string) {
-  const result = await prisma
-    .$transaction(
+export async function updateReservationStatus(
+  reservationId: string,
+  status: ReservationStatus,
+  performedById?: string,
+  actorRole?: AppRole
+) {
+  const result = await withReservationSerializationRetry(() => prisma.$transaction(
       async (tx) => {
         const existingReservation = await tx.reservation.findUnique({
           where: { id: reservationId },
@@ -775,6 +1140,7 @@ export async function updateReservationStatus(reservationId: string, status: Res
             referenceCode: true,
             status: true,
             paymentMethod: true,
+            totalAmount: true,
             pickupEnd: true,
             onlinePayment: {
               select: {
@@ -789,14 +1155,32 @@ export async function updateReservationStatus(reservationId: string, status: Res
             items: {
               select: {
                 productId: true,
+                skuId: true,
                 variantSummary: true,
                 quantity: true
               }
             }
-          }
+          },
+          relationLoadStrategy: "join"
         });
 
         if (!existingReservation) throw new HttpError(404, "Reservation not found.");
+
+        if (actorRole === "STUDENT") {
+          if (!performedById) throw new HttpError(401, "Authentication is required.");
+          assertStudentCanCancelReservation({
+            studentId: performedById,
+            reservationStudentId: existingReservation.studentId,
+            currentStatus: existingReservation.status as ReservationStatus,
+            nextStatus: status,
+            paymentMethod: existingReservation.paymentMethod as PaymentMethod,
+            paymentStatus: existingReservation.onlinePayment?.status as OnlinePaymentStatus | undefined
+          });
+        }
+
+        if (status === "COMPLETED" && !performedById) {
+          throw new HttpError(401, "A staff account is required to complete a reservation.");
+        }
 
         assertReservationTransition(existingReservation.status as ReservationStatus, status);
         assertPaymentAllowsReservationTransition({
@@ -864,57 +1248,61 @@ export async function updateReservationStatus(reservationId: string, status: Res
             map.set(item.productId, (map.get(item.productId) ?? 0) + item.quantity);
             return map;
           }, new Map<string, number>());
+          const releasedProducts = await tx.product.findMany({
+            where: { id: { in: Array.from(releasedQuantityByProduct.keys()) } },
+            select: {
+              id: true,
+              name: true,
+              stock: true,
+              status: true,
+              lowStockThreshold: true,
+              isActive: true
+            }
+          });
+          if (releasedProducts.length !== releasedQuantityByProduct.size) {
+            throw new HttpError(400, "One or more reserved products were not found.");
+          }
+          const releaseUpdatedAt = new Date();
+          const productReleases = releasedProducts.map((product) => {
+            const quantity = releasedQuantityByProduct.get(product.id)!;
+            const stock = product.stock + quantity;
+            const status = deriveProductStatus(stock, product.lowStockThreshold, product.status) as PrismaProductStatus;
+            return { product, quantity, stock, status };
+          });
 
-          for (const [productId, quantity] of releasedQuantityByProduct.entries()) {
-            const product = await tx.product.findUnique({
-              where: { id: productId },
-              select: {
-                id: true,
-                name: true,
-                stock: true,
-                status: true,
-                lowStockThreshold: true,
-                isActive: true
-              }
-            });
+          await tx.$executeRaw(Prisma.sql`
+            UPDATE "products" AS product
+            SET
+              "stock" = product."stock" + released."quantity",
+              "status" = released."status",
+              "updated_at" = ${releaseUpdatedAt}
+            FROM (
+              VALUES ${Prisma.join(productReleases.map((release) => Prisma.sql`
+                (${release.product.id}::uuid, ${release.quantity}::integer, ${release.status}::"product_status")
+              `))}
+            ) AS released("id", "quantity", "status")
+            WHERE product."id" = released."id"
+          `);
+          const productMovements = await tx.inventoryMovement.createManyAndReturn({
+            data: productReleases.map(({ product, quantity, stock }) => ({
+              productId: product.id,
+              type: releaseMovementType,
+              quantity,
+              previousStock: product.stock,
+              newStock: stock,
+              performedById,
+              notes: `Reservation ${existingReservation.referenceCode} ${releaseNote}`
+            })),
+            select: { id: true, productId: true }
+          });
 
-            if (!product) throw new HttpError(400, "One or more reserved products were not found.");
-
-            const newStock = product.stock + quantity;
-            const nextStatus = deriveProductStatus(newStock, product.lowStockThreshold, product.status) as PrismaProductStatus;
-
-            await tx.product.update({
-              where: { id: productId },
-              data: {
-                stock: newStock,
-                status: nextStatus,
-                updatedAt: new Date()
-              },
-              select: { id: true }
-            });
-
-            const inventoryMovement = await tx.inventoryMovement.create({
-              data: {
-                productId,
-                type: releaseMovementType,
-                quantity,
-                previousStock: product.stock,
-                newStock,
-                performedById,
-                notes: `Reservation ${existingReservation.referenceCode} ${releaseNote}`
-              },
-              select: { id: true }
-            });
-
+          for (const { product, stock, status: nextStatus } of productReleases) {
+            const inventoryMovement = productMovements.find((movement) => movement.productId === product.id)!;
             await createBackInStockNotificationsInTransaction(tx, {
-              productId,
+              productId: product.id,
               productName: product.name,
               previous: product,
-              next: {
-                ...product,
-                stock: newStock,
-                status: nextStatus
-              },
+              next: { ...product, stock, status: nextStatus },
               eventId: inventoryMovement.id
             });
           }
@@ -938,7 +1326,8 @@ export async function updateReservationStatus(reservationId: string, status: Res
               select: { id: true, name: true }
             })
           ]);
-          const releasedVariants = aggregateVariantQuantities(existingReservation.items, variants, products, { strict: false });
+          const legacyReleaseItems = existingReservation.items.filter((item) => !item.skuId);
+          const releasedVariants = aggregateVariantQuantities(legacyReleaseItems, variants, products, { strict: false });
 
           for (const { variant, quantity } of releasedVariants) {
             const newStock = variant.stock + quantity;
@@ -964,6 +1353,54 @@ export async function updateReservationStatus(reservationId: string, status: Res
                 notes: `Reservation ${existingReservation.referenceCode} ${releaseNote} (${variant.optionName}: ${variant.optionValue})`
               }
             });
+          }
+        }
+
+        if (releasesHeldStock) {
+          const skuQuantities = existingReservation.items.reduce((map, item) => {
+            if (!item.skuId) return map;
+            map.set(item.skuId, (map.get(item.skuId) ?? 0) + item.quantity);
+            return map;
+          }, new Map<string, number>());
+          if (skuQuantities.size) {
+            const skus = await tx.productSku.findMany({
+              where: { id: { in: Array.from(skuQuantities.keys()) } },
+              select: {
+                id: true,
+                productId: true,
+                stock: true,
+                optionValues: { select: { variantId: true } }
+              }
+            });
+            for (const sku of skus) {
+              const quantity = skuQuantities.get(sku.id) ?? 0;
+              if (!quantity) continue;
+              const newStock = sku.stock + quantity;
+              await tx.productSku.update({
+                where: { id: sku.id },
+                data: { stock: newStock, updatedAt: new Date() },
+                select: { id: true }
+              });
+              for (const link of sku.optionValues) {
+                await tx.productVariant.update({
+                  where: { id: link.variantId },
+                  data: { stock: { increment: quantity }, updatedAt: new Date() },
+                  select: { id: true }
+                });
+              }
+              await tx.inventoryMovement.create({
+                data: {
+                  productId: sku.productId,
+                  skuId: sku.id,
+                  type: releaseMovementType,
+                  quantity,
+                  previousStock: sku.stock,
+                  newStock,
+                  performedById,
+                  notes: `Reservation ${existingReservation.referenceCode} ${releaseNote} (SKU)`
+                }
+              });
+            }
           }
         }
 
@@ -993,42 +1430,83 @@ export async function updateReservationStatus(reservationId: string, status: Res
               }
             })
           ]);
-          const completedVariants = aggregateVariantQuantities(existingReservation.items, variants, products, { strict: false });
-
+          const legacyCompletedItems = existingReservation.items.filter((item) => !item.skuId);
+          const completedVariants = aggregateVariantQuantities(legacyCompletedItems, variants, products, { strict: false });
+          const saleMovements: Prisma.InventoryMovementCreateManyInput[] = [];
           for (const [productId, quantity] of completedQuantityByProduct.entries()) {
             const product = products.find((entry) => entry.id === productId);
             if (!product) continue;
-
-            await tx.inventoryMovement.create({
-              data: {
-                productId,
-                type: "SALE",
-                quantity,
-                previousStock: product.stock,
-                newStock: product.stock,
-                performedById,
-                notes: `Reservation ${existingReservation.referenceCode} completed`
-              }
+            saleMovements.push({
+              productId,
+              type: "SALE",
+              quantity,
+              previousStock: product.stock,
+              newStock: product.stock,
+              performedById,
+              notes: `Reservation ${existingReservation.referenceCode} completed`
             });
           }
-
           for (const { variant, quantity } of completedVariants) {
-            await tx.inventoryMovement.create({
-              data: {
-                productId: variant.productId,
-                variantId: variant.id,
-                type: "SALE",
-                quantity,
-                previousStock: variant.stock,
-                newStock: variant.stock,
-                performedById,
-                notes: `Reservation ${existingReservation.referenceCode} completed (${variant.optionName}: ${variant.optionValue})`
-              }
+            saleMovements.push({
+              productId: variant.productId,
+              variantId: variant.id,
+              type: "SALE",
+              quantity,
+              previousStock: variant.stock,
+              newStock: variant.stock,
+              performedById,
+              notes: `Reservation ${existingReservation.referenceCode} completed (${variant.optionName}: ${variant.optionValue})`
             });
+          }
+          if (saleMovements.length) await tx.inventoryMovement.createMany({ data: saleMovements });
+        }
+
+        if (status === "COMPLETED" && existingReservation.status !== "COMPLETED") {
+          const skuQuantities = existingReservation.items.reduce((map, item) => {
+            if (!item.skuId) return map;
+            map.set(item.skuId, (map.get(item.skuId) ?? 0) + item.quantity);
+            return map;
+          }, new Map<string, number>());
+          if (skuQuantities.size) {
+            const skus = await tx.productSku.findMany({
+              where: { id: { in: Array.from(skuQuantities.keys()) } },
+              select: { id: true, productId: true, stock: true }
+            });
+            const skuSaleMovements = skus.flatMap((sku) => {
+              const quantity = skuQuantities.get(sku.id) ?? 0;
+              return quantity ? [{
+                productId: sku.productId,
+                skuId: sku.id,
+                type: "SALE" as const,
+                quantity,
+                previousStock: sku.stock,
+                newStock: sku.stock,
+                performedById,
+                notes: `Reservation ${existingReservation.referenceCode} completed (SKU)`
+              }] : [];
+            });
+            if (skuSaleMovements.length) await tx.inventoryMovement.createMany({ data: skuSaleMovements });
           }
         }
 
-        let pushNotification: ReservationPushNotification | null = null;
+        let generatedReceipt: Awaited<ReturnType<typeof ensureReceiptForCompletedReservationInTransaction>>["receipt"] | null = null;
+        let receiptCreated = false;
+        if (status === "COMPLETED") {
+          const ensuredReceipt = await ensureReceiptForCompletedReservationInTransaction(tx, {
+            reservation: {
+              id: existingReservation.id,
+              studentId: existingReservation.studentId,
+              referenceCode: existingReservation.referenceCode,
+              status: "COMPLETED",
+              paymentMethod: existingReservation.paymentMethod as PaymentMethod,
+              totalAmount: existingReservation.totalAmount
+            },
+            issuedById: performedById!
+          });
+          generatedReceipt = ensuredReceipt.receipt;
+          receiptCreated = ensuredReceipt.created;
+        }
+
         let policyOutcome: NoShowPolicyOutcome | null = null;
 
         if (statusChanged && status === "NO_SHOW") {
@@ -1040,23 +1518,72 @@ export async function updateReservationStatus(reservationId: string, status: Res
           });
         }
 
-        if (statusChanged && status !== "NO_SHOW") {
-          pushNotification = {
-            userId: existingReservation.studentId,
-            role: "STUDENT",
-            type: "RESERVATION",
-            title: `Reservation ${reservationStatusLabel(status)}`,
-            message: `${existingReservation.referenceCode} is now ${reservationStatusLabel(status).toLowerCase()}.`
-          };
+        if (statusChanged) {
+          await tx.outboxEvent.create({
+            data: {
+              type: OUTBOX_EVENT_TYPES.reservationStatusChanged,
+              entityId: existingReservation.id,
+              payload: {
+                actorId: performedById ?? null,
+                studentId: existingReservation.studentId,
+                referenceCode: existingReservation.referenceCode,
+                previousStatus: existingReservation.status,
+                nextStatus: status,
+                notificationTitle: policyOutcome?.notificationTitle ?? `Reservation ${reservationStatusLabel(status)}`,
+                notificationMessage: policyOutcome?.notificationMessage
+                  ?? `${existingReservation.referenceCode} is now ${reservationStatusLabel(status).toLowerCase()}.`,
+                notificationType: status === "NO_SHOW" ? "SYSTEM" : "RESERVATION"
+              }
+            },
+            select: { id: true }
+          });
+
+          await publishRealtimeEvents(tx, [
+            {
+              topic: REALTIME_TOPICS.reservations,
+              entityId: existingReservation.id,
+              audienceUserIds: [existingReservation.studentId],
+              audienceRoles: ["STAFF", "ADMIN"],
+              payload: {
+                action: "status-changed",
+                previousStatus: existingReservation.status,
+                nextStatus: status
+              }
+            },
+            {
+              topic: REALTIME_TOPICS.dashboard,
+              entityId: existingReservation.id,
+              audienceRoles: ["STAFF", "ADMIN"],
+              payload: { action: "reservation-status-changed", nextStatus: status }
+            },
+            ...((status === "CANCELLED" || status === "NO_SHOW")
+              ? [{
+                  topic: REALTIME_TOPICS.inventory,
+                  entityId: existingReservation.id,
+                  audienceRoles: ["STUDENT" as const, "STAFF" as const, "ADMIN" as const],
+                  payload: { action: "reservation-stock-released" }
+                }]
+              : []),
+            ...(status === "NO_SHOW"
+              ? [{
+                  topic: REALTIME_TOPICS.restrictions,
+                  entityId: existingReservation.studentId,
+                  audienceUserIds: [existingReservation.studentId],
+                  audienceRoles: ["STAFF" as const, "ADMIN" as const],
+                  payload: { action: "no-show-recorded" }
+                }]
+              : [])
+          ]);
         }
 
         return {
           previousStatus: existingReservation.status as ReservationStatus,
           nextStatus: status,
           referenceCode: existingReservation.referenceCode,
-          pushNotification,
           policyOutcome,
-          paymentCleanupAttemptIds
+          paymentCleanupAttemptIds,
+          generatedReceipt,
+          receiptCreated
         };
       },
       {
@@ -1064,7 +1591,7 @@ export async function updateReservationStatus(reservationId: string, status: Res
         maxWait: 10000,
         timeout: 20000
       }
-    )
+    ))
     .catch((error) => {
       if (error instanceof HttpError) throw error;
       if (
@@ -1081,6 +1608,8 @@ export async function updateReservationStatus(reservationId: string, status: Res
       throw error;
     });
 
+  if (result.previousStatus !== result.nextStatus || result.receiptCreated) wakeRealtimeBroker();
+
   if (result.paymentCleanupAttemptIds.length) {
     await Promise.allSettled(
       result.paymentCleanupAttemptIds.map((attemptId) =>
@@ -1088,47 +1617,11 @@ export async function updateReservationStatus(reservationId: string, status: Res
       )
     );
   }
-  await createReservationStatusNotification(result.pushNotification);
-  if (result.policyOutcome) await notifyStudentOfPolicyOutcome(result.policyOutcome);
+  const reservation = await loadReservationCommandResult(reservationId);
 
-  let generatedReceipt: Awaited<ReturnType<typeof createReceiptForReservation>> | null = null;
+  return { reservation, receipt: result.generatedReceipt, policyOutcome: result.policyOutcome };
+}
 
-  if (result.nextStatus === "COMPLETED" && result.previousStatus !== "COMPLETED" && performedById) {
-    generatedReceipt = await createReceiptForReservation(reservationId, performedById);
-
-    await safelyRecordAuditLog({
-      actorId: performedById,
-      action: "RESERVATION_COMPLETED_RECEIPT_GENERATED",
-      entityType: "reservation",
-      entityId: reservationId,
-      summary: `Completed reservation ${result.referenceCode} and generated receipt ${generatedReceipt.receiptCode}.`,
-      metadata: {
-        referenceCode: result.referenceCode,
-        receiptCode: generatedReceipt.receiptCode,
-        receiptId: generatedReceipt.id
-      }
-    });
-  }
-
-  const { data, error } = await supabaseAdmin.from("reservations").select(reservationSelect).eq("id", reservationId).single();
-  if (error) throw HttpError.fromSupabase(error);
-
-  const reservation = mapReservation(data as RawReservation);
-
-  if (result.previousStatus !== result.nextStatus) {
-    await safelyRecordAuditLog({
-      actorId: performedById,
-      action: "RESERVATION_STATUS_UPDATED",
-      entityType: "reservation",
-      entityId: reservationId,
-      summary: `Updated reservation ${result.referenceCode} from ${reservationStatusLabel(result.previousStatus)} to ${reservationStatusLabel(result.nextStatus)}.`,
-      metadata: {
-        referenceCode: result.referenceCode,
-        previousStatus: result.previousStatus,
-        nextStatus: result.nextStatus
-      }
-    });
-  }
-
-  return { reservation, receipt: generatedReceipt, policyOutcome: result.policyOutcome };
+export function cancelStudentReservation(reservationId: string, studentId: string) {
+  return updateReservationStatus(reservationId, "CANCELLED", studentId, "STUDENT");
 }

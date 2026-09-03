@@ -56,17 +56,17 @@ function supabaseApiProjectRef(value: string) {
 }
 
 /**
- * Vercel can create many short-lived function instances. Keep each Prisma
- * client deliberately small and let Supavisor multiplex those connections.
- * Explicit URL values still win so production can be tuned without a code
- * change.
+ * The backend runs with Fluid Compute and serves concurrent requests. Keep a
+ * bounded local pool large enough for independent dashboard/report reads while
+ * Supavisor transaction mode multiplexes database sessions. Explicit URL
+ * values still win so production can be tuned without a code change.
  */
 export function buildRuntimeDatabaseUrl(value: string, serverless: boolean) {
   const parsed = parsePostgresUrl(value, "DATABASE_URL");
   if (!serverless) return parsed.toString();
 
   const serverlessDefaults: Record<string, string> = {
-    connection_limit: "1",
+    connection_limit: "5",
     pool_timeout: "10",
     connect_timeout: "10"
   };

@@ -12,7 +12,8 @@ const productQuerySchema = z.object({
   query: z.string().trim().max(120).optional(),
   category: z.string().trim().max(120).optional(),
   status: z.enum(PRODUCT_STATUSES).optional(),
-  sort: z.string().trim().max(40).optional()
+  sort: z.string().trim().max(40).optional(),
+  fresh: z.string().trim().max(40).optional()
 });
 
 const productIdSchema = z.string().uuid();
@@ -27,8 +28,15 @@ productsRoutes.get(
   "/",
   publicProductLimiter,
   asyncHandler(async (request, response) => {
-    const filters = productQuerySchema.parse(request.query);
-    const products = await listProducts(filters);
+    const { fresh, ...filters } = productQuerySchema.parse(request.query);
+    const products = await listProducts(filters, { bypassCache: Boolean(fresh) });
+    response.setHeader(
+      "Cache-Control",
+      fresh
+        ? "private, no-store, max-age=0"
+        : "public, max-age=0, s-maxage=30, stale-while-revalidate=60"
+    );
+    if (!fresh) response.setHeader("Vercel-Cache-Tag", "products");
     response.json({ products });
   })
 );
@@ -39,6 +47,8 @@ productsRoutes.get(
   asyncHandler(async (request, response) => {
     const product = await getProduct(productIdSchema.parse(request.params.id));
     if (!product) throw new HttpError(404, "Product not found.");
+    response.setHeader("Cache-Control", "public, max-age=0, s-maxage=30, stale-while-revalidate=60");
+    response.setHeader("Vercel-Cache-Tag", "products");
     response.json({ product });
   })
 );

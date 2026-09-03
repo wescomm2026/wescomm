@@ -5,7 +5,7 @@ export type PendingReservationRequest = {
   key: string;
 };
 
-const RESERVATION_REQUEST_KEY_PREFIX = "wescomm_reservation_request:v3";
+const RESERVATION_REQUEST_KEY_PREFIX = "wescomm_reservation_request:v4";
 const RESERVATION_REQUEST_TTL_MS = 24 * 60 * 60 * 1000;
 
 type StoredReservationRequest = PendingReservationRequest & {
@@ -22,15 +22,18 @@ function createRequestKey() {
 function requestFingerprint(payload: CreateReservationPayload) {
   const canonicalPayload = JSON.stringify({
     paymentMethod: payload.paymentMethod,
-    pickupStart: payload.pickupStart ?? null,
-    pickupEnd: payload.pickupEnd ?? null,
+    pickupDate: payload.pickupDate,
+    pickupSlotId: payload.pickupSlotId,
+    pickupPolicyVersion: payload.pickupPolicyVersion,
+    policyVersion: payload.policyAcceptance.version,
     items: [...payload.items]
       .map((item) => ({
         productId: item.productId,
+        skuId: item.skuId ?? "",
         variantSummary: item.variantSummary?.trim() ?? "",
         quantity: item.quantity
       }))
-      .sort((left, right) => `${left.productId}:${left.variantSummary}:${left.quantity}`.localeCompare(`${right.productId}:${right.variantSummary}:${right.quantity}`))
+      .sort((left, right) => `${left.productId}:${left.skuId}:${left.variantSummary}:${left.quantity}`.localeCompare(`${right.productId}:${right.skuId}:${right.variantSummary}:${right.quantity}`))
   });
 
   const seeds = [2166136261, 2246822507, 3266489909, 668265263];

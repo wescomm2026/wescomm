@@ -1,0 +1,314 @@
+[
+  {
+    "question": "What can WesBot help me with?",
+    "variants": [
+      "Ano kayang sagutin ni WesBot?",
+      "What can you check for me?",
+      "Ano capabilities ng WesBot?"
+    ],
+    "answer": "WesBot can check products and live availability, your reservations, payment status, digital receipts, pickup information, and published WESCOMM FAQs. You can also ask to talk to Commissary Staff.",
+    "category": "GENERAL",
+    "is_published": true,
+    "source": "wesbot.service.ts capability greeting"
+  },
+  {
+    "question": "Does WesBot guess prices, stock, or reservation status?",
+    "variants": [
+      "Accurate ba stock na sinasabi ni WesBot?",
+      "Nanghuhula ba si WesBot ng presyo?",
+      "Live ba ang data ni WesBot?"
+    ],
+    "answer": "No. WesBot is designed to use verified WESCOMM records for prices, stock, reservation status, payment facts, receipt facts, dates, and policies. If it cannot verify an answer, it should ask for more details or direct you to Staff.",
+    "category": "GENERAL",
+    "is_published": true,
+    "source": "wesbot.service.ts grounded-answer rules"
+  },
+  {
+    "question": "Can I talk to Commissary Staff instead of WesBot?",
+    "variants": [
+      "Gusto ko staff mismo",
+      "Can I talk to a real person?",
+      "Paano mag human support?"
+    ],
+    "answer": "Yes. You can choose Talk to Staff. The conversation will be placed in the Commissary Staff queue and WesBot automatic replies will be paused for that conversation.",
+    "category": "SUPPORT",
+    "is_published": true,
+    "source": "message.service.ts requestStaffHandoff"
+  },
+  {
+    "question": "What happens after I request Staff support?",
+    "variants": [
+      "Ano mangyayari pag nag Talk to Staff ako?",
+      "Will WesBot still reply after handoff?",
+      "Staff queue meaning"
+    ],
+    "answer": "Your conversation moves to the Staff queue. WesBot automatic replies are paused while the conversation is waiting for or being handled by Staff.",
+    "category": "SUPPORT",
+    "is_published": true,
+    "source": "conversation modes"
+  },
+  {
+    "question": "When will WesBot recommend Staff assistance?",
+    "variants": [
+      "Bakit nire-recommend ni WesBot ang staff?",
+      "Repeated question staff handoff",
+      "Ilang ulit bago mag suggest ng staff?"
+    ],
+    "answer": "If the same concern reaches the third repeated WesBot reply, the current bot logic recommends Staff assistance. You can still ask for Staff directly at any time.",
+    "category": "SUPPORT",
+    "is_published": true,
+    "source": "shouldRecommendStaff repeatCount >= 3"
+  },
+  {
+    "question": "How can I check my reservation status?",
+    "variants": [
+      "Paano check reservation?",
+      "Nasaan status ng reservation ko?",
+      "Can WesBot check WES reference?"
+    ],
+    "answer": "Ask WesBot for your reservation status. If you provide a WES reference code, it checks that reservation in your account; otherwise it checks your active or most recent reservation.",
+    "category": "RESERVATION",
+    "is_published": true,
+    "source": "wesbot.service.ts selectReservation"
+  },
+  {
+    "question": "Can I cancel my reservation while it is Pending?",
+    "variants": [
+      "Pwede cancel pending?",
+      "Can I cancel a pending reservation?",
+      "Mali reserve ko, pwede alisin?"
+    ],
+    "answer": "A student may self-cancel their own reservation only while it is Pending and only when the payment state does not require Staff review.",
+    "category": "RESERVATION",
+    "is_published": true,
+    "source": "student-reservation-cancellation.ts"
+  },
+  {
+    "question": "Can I directly cancel a Confirmed reservation?",
+    "variants": [
+      "Pwede cancel confirmed?",
+      "Confirmed na, cancel ko pa ba?",
+      "Can I cancel after confirmation?"
+    ],
+    "answer": "No. Once a reservation is no longer Pending, the student cannot self-cancel it directly. Cancellation review must be handled by authorized Staff or an Administrator.",
+    "category": "RESERVATION",
+    "is_published": true,
+    "source": "student-reservation-cancellation.ts"
+  },
+  {
+    "question": "Can I cancel a reservation that already has a successful Online GCash payment?",
+    "variants": [
+      "Paid GCash reservation cancel",
+      "Nagbayad na online, pwede cancel?",
+      "Cancel paid PayMongo GCash"
+    ],
+    "answer": "Do not self-cancel a reservation with a successful Online GCash payment. Authorized Staff or an Administrator must review the cancellation and any required refund handling.",
+    "category": "PAYMENT",
+    "is_published": true,
+    "source": "wesbot.service.ts cancellationAnswer"
+  },
+  {
+    "question": "How does WesBot check my payment status?",
+    "variants": [
+      "Paano check payment?",
+      "Can WesBot verify GCash?",
+      "Payment status saan galing?"
+    ],
+    "answer": "WesBot checks the payment record linked to your reservation. It reports only the recorded payment status and, when available, the verified paid time.",
+    "category": "PAYMENT",
+    "is_published": true,
+    "source": "wesbot.service.ts paymentAnswer"
+  },
+  {
+    "question": "What does Pay at Commissary mean?",
+    "variants": [
+      "Pay at commissary meaning",
+      "Cash sa commissary ba?",
+      "May online payment ba pag pay at commissary?"
+    ],
+    "answer": "For a reservation set to Pay at Commissary, WesBot reports that no online payment is recorded for that reservation.",
+    "category": "PAYMENT",
+    "is_published": true,
+    "source": "wesbot.service.ts paymentAnswer"
+  },
+  {
+    "question": "What payment statuses can appear for Online GCash?",
+    "variants": [
+      "Ano payment statuses?",
+      "GCash status meanings",
+      "PayMongo payment states"
+    ],
+    "answer": "The current system can record these online payment states: Initializing, Awaiting Payment, Paid, Expired, Cancelled, Staff Refund Review Required, Partially Refunded, and Refunded.",
+    "category": "PAYMENT",
+    "is_published": true,
+    "source": "OnlinePaymentStatus enum and paymentStatusLabel"
+  },
+  {
+    "question": "How can I check my digital receipt?",
+    "variants": [
+      "Paano check receipt?",
+      "Nasaan resibo ko?",
+      "Can WesBot check RCT code?"
+    ],
+    "answer": "Ask WesBot about your receipt. If you provide an RCT receipt code, it checks that receipt in your account; otherwise it checks your most recent receipt.",
+    "category": "RECEIPT",
+    "is_published": true,
+    "source": "wesbot.service.ts receiptAnswer"
+  },
+  {
+    "question": "What receipt statuses are used by WESCOMM?",
+    "variants": [
+      "Ano receipt statuses?",
+      "Pending verified voided meaning",
+      "Receipt status options"
+    ],
+    "answer": "The current receipt states are Pending, Verified, and Voided.",
+    "category": "RECEIPT",
+    "is_published": true,
+    "source": "ReceiptStatus enum"
+  },
+  {
+    "question": "How do I know my pickup schedule?",
+    "variants": [
+      "Kailan pickup ko?",
+      "Where can I see pickup window?",
+      "Claim schedule"
+    ],
+    "answer": "WesBot can check the pickup start and end time recorded on your reservation. It also reports the reservation status together with the pickup window.",
+    "category": "PICKUP",
+    "is_published": true,
+    "source": "wesbot.service.ts pickupAnswer"
+  },
+  {
+    "question": "What if my reservation has no pickup window yet?",
+    "variants": [
+      "Walang pickup schedule",
+      "No assigned pickup time",
+      "Kailan pickup if no schedule?"
+    ],
+    "answer": "If no pickup window has been assigned yet, wait for confirmation or ask Commissary Staff for help.",
+    "category": "PICKUP",
+    "is_published": true,
+    "source": "wesbot.service.ts pickupAnswer"
+  },
+  {
+    "question": "Can WesBot check live product stock and price?",
+    "variants": [
+      "Live ba stock?",
+      "Check price and stock",
+      "May size ba?"
+    ],
+    "answer": "Yes. Product questions are checked against the current WESCOMM catalog. When a product has variants, WesBot can report the available options and their current stock.",
+    "category": "PRODUCT",
+    "is_published": true,
+    "source": "wesbot.service.ts productAnswer"
+  },
+  {
+    "question": "What should I include when asking about a product?",
+    "variants": [
+      "Ano ilalagay sa product inquiry?",
+      "Paano magtanong ng stock?",
+      "Need ba item and size?"
+    ],
+    "answer": "For the best match, include the item name and, when applicable, the course or department and preferred size or option.",
+    "category": "PRODUCT",
+    "is_published": true,
+    "source": "wesbot.service.ts productAnswer fallback"
+  },
+  {
+    "question": "Can I add or remove products from my wishlist?",
+    "variants": [
+      "Paano wishlist?",
+      "Can I remove wishlist item?",
+      "Add to wishlist"
+    ],
+    "answer": "Signed-in student accounts can add active products to the wishlist and remove them later.",
+    "category": "WISHLIST",
+    "is_published": true,
+    "source": "wishlist.routes.ts"
+  },
+  {
+    "question": "Can WESCOMM notify me when a wished product is back in stock?",
+    "variants": [
+      "Back in stock notification",
+      "Notify me pag may stock",
+      "Wishlist stock alert"
+    ],
+    "answer": "WESCOMM includes back-in-stock notification support for wishlist products when inventory availability changes.",
+    "category": "WISHLIST",
+    "is_published": true,
+    "source": "wishlist-notification.service.ts / NotificationType BACK_IN_STOCK"
+  },
+  {
+    "question": "Can I mark notifications as read?",
+    "variants": [
+      "Paano mark as read?",
+      "Read all notifications",
+      "Unread count"
+    ],
+    "answer": "Yes. The current notification API supports viewing notifications, checking the unread count, marking one notification as read, and marking all notifications as read.",
+    "category": "NOTIFICATION",
+    "is_published": true,
+    "source": "notifications.routes.ts"
+  },
+  {
+    "question": "What profile information can I update myself?",
+    "variants": [
+      "Pwede ko palitan phone number?",
+      "Can I edit my address?",
+      "Update department"
+    ],
+    "answer": "You can update your full name, phone number, department, and address in your own profile. Student number is not included in the self-editable profile fields.",
+    "category": "ACCOUNT",
+    "is_published": true,
+    "source": "profile-update.ts / profile.service.ts"
+  },
+  {
+    "question": "What happens on the first and second confirmed no-show?",
+    "variants": [
+      "First no show penalty",
+      "Second no show warning",
+      "No show warnings"
+    ],
+    "answer": "Under the current automatic no-show policy, the first consecutive confirmed no-show creates warning 1 and the second creates warning 2. The second warning is the final warning before reservation access may be suspended.",
+    "category": "POLICY",
+    "is_published": true,
+    "source": "reservation-policy.ts / restriction.service.ts"
+  },
+  {
+    "question": "When can repeated no-shows suspend reservation access?",
+    "variants": [
+      "Ilang no show bago restriction?",
+      "Third no show penalty",
+      "Reservation suspension"
+    ],
+    "answer": "The current policy starts the first automatic reservation restriction at 3 consecutive confirmed no-shows. The first restriction lasts 7 days, the next restriction level lasts 30 days, and a level 3 restriction is indefinite pending Administrator review.",
+    "category": "POLICY",
+    "is_published": true,
+    "source": "RESERVATION_RESTRICTION_POLICY"
+  },
+  {
+    "question": "Is there a grace period before a reservation can be recorded as no-show?",
+    "variants": [
+      "No show grace period",
+      "Kailan magiging no show?",
+      "Late pickup grace"
+    ],
+    "answer": "The current no-show policy uses a 24-hour grace period after the recorded pickup end time before the reservation becomes eligible for no-show processing.",
+    "category": "POLICY",
+    "is_published": true,
+    "source": "RESERVATION_RESTRICTION_POLICY.noShowGraceHours"
+  },
+  {
+    "question": "What can I still access if my reservation access is restricted?",
+    "variants": [
+      "Restricted account ano pwede?",
+      "Can I still see receipts when restricted?",
+      "Support while restricted"
+    ],
+    "answer": "A reservation restriction blocks reservation access, but the student can still view receipts and contact Support.",
+    "category": "POLICY",
+    "is_published": true,
+    "source": "restriction.service.ts assertReservationAccessInTransaction"
+  }
+]

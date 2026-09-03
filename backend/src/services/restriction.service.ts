@@ -11,8 +11,10 @@ import {
   runRestrictionReadTransaction,
   runRestrictionWriteTransaction
 } from "../utils/restriction-transaction.js";
+import { createPage, decodeCursor, normalizePageLimit } from "../utils/cursor-pagination.js";
 import { safelyRecordAuditLog } from "./audit-log.service.js";
 import { createNotification } from "./notification.service.js";
+import { OUTBOX_EVENT_TYPES } from "./outbox.service.js";
 
 export { RESERVATION_RESTRICTION_POLICY } from "../domain/reservation-policy.js";
 
@@ -106,22 +108,7 @@ function mapOffense(row: {
   };
 }
 
-async function expireRestrictions(tx: Prisma.TransactionClient, studentId?: string, now = new Date()) {
-  await tx.accountRestriction.updateMany({
-    where: {
-      ...(studentId ? { studentId } : {}),
-      status: "ACTIVE",
-      endsAt: { lte: now }
-    },
-    data: {
-      status: "EXPIRED",
-      updatedAt: now
-    }
-  });
-}
-
 async function findActiveRestriction(tx: Prisma.TransactionClient, studentId: string, now = new Date()) {
-  await expireRestrictions(tx, studentId, now);
   return tx.accountRestriction.findFirst({
     where: {
       studentId,
@@ -150,7 +137,18 @@ async function consecutiveOffenseCount(tx: Prisma.TransactionClient, studentId: 
 }
 
 export async function assertReservationAccessInTransaction(tx: Prisma.TransactionClient, studentId: string) {
-  const restriction = await findActiveRestriction(tx, studentId);
+  const now = new Date();
+  // Reservation creation only needs to know whether access is blocked. Expiring
+  // historical rows here added a write to every checkout transaction and made
+  // otherwise independent reservations contend on the restrictions table.
+  const restriction = await tx.accountRestriction.findFirst({
+    where: {
+      studentId,
+      status: "ACTIVE",
+      OR: [{ endsAt: null }, { endsAt: { gt: now } }]
+    },
+    orderBy: [{ level: "desc" }, { createdAt: "desc" }]
+  });
   if (!restriction) return;
 
   const endMessage = restriction.endsAt
@@ -320,19 +318,62 @@ export async function getStudentRestrictionSummary(studentId: string) {
   });
 }
 
-export async function listRestrictionOverview(filters: { query?: string; status?: "ALL" | "RESTRICTED" | "CLEAR" } = {}) {
+export async function listRestrictionOverview(filters: {
+  query?: string;
+  status?: "ACTIONABLE" | "ALL" | "RESTRICTED" | "WARNING" | "REVIEW";
+  cursor?: string;
+  limit?: number;
+} = {}) {
   return runRestrictionReadTransaction(prisma, async (tx) => {
     const now = new Date();
-    await expireRestrictions(tx, undefined, now);
-    const cutoff = new Date(now.getTime() - RESERVATION_RESTRICTION_POLICY.noShowGraceHours * 60 * 60 * 1000);
+    const limit = normalizePageLimit(filters.limit);
+    const cursorId = decodeCursor(filters.cursor);
     const activeRestrictionWhere: Prisma.AccountRestrictionWhereInput = {
       status: "ACTIVE",
       OR: [{ endsAt: null }, { endsAt: { gt: now } }]
     };
-    const restrictionStatusWhere: Prisma.ProfileWhereInput = filters.status === "RESTRICTED"
+    const requestedStatus = filters.status ?? "ACTIONABLE";
+    const actionabilityRows = await tx.$queryRaw<Array<{ id: string; hasRestriction: boolean; hasWarning: boolean; needsReview: boolean }>>`
+      SELECT
+        profile."id",
+        EXISTS (
+          SELECT 1 FROM "account_restrictions" restriction
+          WHERE restriction."student_id" = profile."id"
+            AND restriction."status" = 'ACTIVE'
+            AND (restriction."ends_at" IS NULL OR restriction."ends_at" > ${now})
+        ) AS "hasRestriction",
+        EXISTS (
+          SELECT 1 FROM "student_offenses" offense
+          WHERE offense."student_id" = profile."id"
+            AND offense."type" = 'NO_SHOW'
+            AND offense."status" = 'ACTIVE'
+            AND offense."occurred_at" > COALESCE((
+              SELECT MAX(reservation."updated_at")
+              FROM "reservations" reservation
+              WHERE reservation."student_id" = profile."id"
+                AND reservation."status" = 'COMPLETED'
+            ), '-infinity'::timestamptz)
+        ) AS "hasWarning",
+        EXISTS (
+          SELECT 1 FROM "account_restrictions" restriction
+          WHERE restriction."student_id" = profile."id"
+            AND restriction."status" = 'ACTIVE'
+            AND restriction."ends_at" IS NULL
+        ) AS "needsReview"
+      FROM "profiles" profile
+      WHERE profile."role" = 'STUDENT'
+    `;
+    const actionableIds = actionabilityRows.flatMap((row) => row.hasRestriction || row.hasWarning ? [row.id] : []);
+    const warningIds = actionabilityRows.flatMap((row) => !row.hasRestriction && row.hasWarning ? [row.id] : []);
+    const reviewIds = actionabilityRows.flatMap((row) => row.needsReview ? [row.id] : []);
+    const restrictionStatusWhere: Prisma.ProfileWhereInput = requestedStatus === "RESTRICTED"
       ? { restrictions: { some: activeRestrictionWhere } }
-      : filters.status === "CLEAR"
-        ? { restrictions: { none: activeRestrictionWhere } }
+      : requestedStatus === "WARNING"
+        ? { id: { in: warningIds } }
+        : requestedStatus === "REVIEW"
+          ? { id: { in: reviewIds } }
+          : requestedStatus === "ACTIONABLE" && !filters.query?.trim()
+            ? { id: { in: actionableIds } }
         : {};
     const students = await tx.profile.findMany({
       where: {
@@ -349,7 +390,8 @@ export async function listRestrictionOverview(filters: { query?: string; status?
           : {})
       },
       orderBy: [{ fullName: "asc" }, { email: "asc" }],
-      take: 200,
+      ...(cursorId ? { cursor: { id: cursorId }, skip: 1 } : {}),
+      take: limit + 1,
       select: {
         id: true,
         fullName: true,
@@ -375,7 +417,43 @@ export async function listRestrictionOverview(filters: { query?: string; status?
       }
     });
 
-    const studentIds = students.map((student) => student.id);
+    const [totalStudents, restrictedStudents, warningRows] = await Promise.all([
+      tx.profile.count({ where: { role: "STUDENT" } }),
+      tx.profile.count({
+        where: {
+          role: "STUDENT",
+          restrictions: { some: activeRestrictionWhere }
+        }
+      }),
+      tx.$queryRaw<Array<{ count: bigint }>>`
+        SELECT COUNT(*) AS "count"
+        FROM "profiles" profile
+        WHERE profile."role" = 'STUDENT'
+          AND NOT EXISTS (
+            SELECT 1
+            FROM "account_restrictions" restriction
+            WHERE restriction."student_id" = profile."id"
+              AND restriction."status" = 'ACTIVE'
+              AND (restriction."ends_at" IS NULL OR restriction."ends_at" > ${now})
+          )
+          AND EXISTS (
+            SELECT 1
+            FROM "student_offenses" offense
+            WHERE offense."student_id" = profile."id"
+              AND offense."type" = 'NO_SHOW'
+              AND offense."status" = 'ACTIVE'
+              AND offense."occurred_at" > COALESCE((
+                SELECT MAX(reservation."updated_at")
+                FROM "reservations" reservation
+                WHERE reservation."student_id" = profile."id"
+                  AND reservation."status" = 'COMPLETED'
+              ), '-infinity'::timestamptz)
+          )
+      `
+    ]);
+
+    const studentPage = createPage(students, limit);
+    const studentIds = studentPage.items.map((student) => student.id);
     const activeNoShowOffenses = studentIds.length > 0
       ? await tx.studentOffense.findMany({
           where: {
@@ -400,7 +478,7 @@ export async function listRestrictionOverview(filters: { query?: string; status?
       );
     }
 
-    const mappedStudents = students.map((student) => {
+    const mappedStudents = studentPage.items.map((student) => {
       return {
         id: student.id,
         fullName: student.fullName,
@@ -409,17 +487,100 @@ export async function listRestrictionOverview(filters: { query?: string; status?
         department: student.department,
         activeRestriction: student.restrictions[0] ? mapRestriction(student.restrictions[0]) : null,
         consecutiveOffenses: consecutiveOffenseCountByStudent.get(student.id) ?? 0,
+        caseType: student.restrictions[0]?.endsAt === null
+          ? "REVIEW"
+          : student.restrictions[0]
+            ? "RESTRICTED"
+            : (consecutiveOffenseCountByStudent.get(student.id) ?? 0) > 0
+              ? "WARNING"
+              : "CLEAR",
         offenses: student.studentOffenses.map(mapOffense)
       };
     });
 
-    const candidates = await tx.reservation.findMany({
+    return {
+      policy: RESERVATION_RESTRICTION_POLICY,
+      students: mappedStudents,
+      nextCursor: studentPage.nextCursor,
+      summary: {
+        totalStudents,
+        restrictedStudents,
+        warningStudents: Number(warningRows[0]?.count ?? 0n)
+      }
+    };
+  });
+}
+
+export async function runRestrictionExpiryBatch(input: { limit?: number; now?: Date } = {}) {
+  const limit = Math.min(Math.max(input.limit ?? 50, 1), 100);
+  const now = input.now ?? new Date();
+  return prisma.$transaction(async (tx) => {
+    const due = await tx.$queryRaw<Array<{ id: string; studentId: string; endsAt: Date }>>`
+      SELECT
+        restriction."id",
+        restriction."student_id" AS "studentId",
+        restriction."ends_at" AS "endsAt"
+      FROM "account_restrictions" restriction
+      WHERE restriction."status" = 'ACTIVE'
+        AND restriction."ends_at" IS NOT NULL
+        AND restriction."ends_at" <= ${now}
+      ORDER BY restriction."ends_at" ASC, restriction."id" ASC
+      FOR UPDATE SKIP LOCKED
+      LIMIT ${limit}
+    `;
+    if (!due.length) return { expired: 0 };
+
+    await tx.accountRestriction.updateMany({
+      where: { id: { in: due.map((restriction) => restriction.id) }, status: "ACTIVE" },
+      data: { status: "EXPIRED", updatedAt: now }
+    });
+    await tx.outboxEvent.createMany({
+      data: due.map((restriction) => ({
+        type: OUTBOX_EVENT_TYPES.restrictionExpired,
+        entityId: restriction.id,
+        payload: {
+          studentId: restriction.studentId,
+          endedAt: restriction.endsAt.toISOString()
+        }
+      }))
+    });
+    return { expired: due.length };
+  });
+}
+
+export async function listNoShowCandidates(filters: {
+  query?: string;
+  cursor?: string;
+  limit?: number;
+} = {}) {
+  return runRestrictionReadTransaction(prisma, async (tx) => {
+    const now = new Date();
+    const cutoff = new Date(now.getTime() - RESERVATION_RESTRICTION_POLICY.noShowGraceHours * 60 * 60 * 1000);
+    const limit = normalizePageLimit(filters.limit);
+    const cursorId = decodeCursor(filters.cursor);
+    const where: Prisma.ReservationWhereInput = {
+      status: "READY_FOR_PICKUP",
+      pickupEnd: { not: null, lte: cutoff },
+      ...(filters.query?.trim()
+        ? {
+            OR: [
+              { referenceCode: { contains: filters.query.trim(), mode: "insensitive" } },
+              { student: { fullName: { contains: filters.query.trim(), mode: "insensitive" } } },
+              { student: { email: { contains: filters.query.trim(), mode: "insensitive" } } },
+              { student: { studentNumber: { contains: filters.query.trim(), mode: "insensitive" } } },
+              { items: { some: { product: { name: { contains: filters.query.trim(), mode: "insensitive" } } } } }
+            ]
+          }
+        : {})
+    };
+    const [candidates, totalCandidates] = await Promise.all([
+      tx.reservation.findMany({
       where: {
-        status: "READY_FOR_PICKUP",
-        pickupEnd: { not: null, lte: cutoff }
+        ...where
       },
-      orderBy: { pickupEnd: "asc" },
-      take: 100,
+      orderBy: [{ pickupEnd: "asc" }, { id: "asc" }],
+      ...(cursorId ? { cursor: { id: cursorId }, skip: 1 } : {}),
+      take: limit + 1,
       select: {
         id: true,
         referenceCode: true,
@@ -428,12 +589,14 @@ export async function listRestrictionOverview(filters: { query?: string; status?
         student: { select: { fullName: true, email: true, studentNumber: true } },
         items: { select: { quantity: true, product: { select: { name: true } } } }
       }
-    });
+      }),
+      tx.reservation.count({ where })
+    ]);
+
+    const page = createPage(candidates, limit);
 
     return {
-      policy: RESERVATION_RESTRICTION_POLICY,
-      students: mappedStudents,
-      noShowCandidates: candidates.map((reservation) => ({
+      items: page.items.map((reservation) => ({
         id: reservation.id,
         referenceCode: reservation.referenceCode,
         studentId: reservation.studentId,
@@ -443,7 +606,9 @@ export async function listRestrictionOverview(filters: { query?: string; status?
           ? new Date(reservation.pickupEnd.getTime() + RESERVATION_RESTRICTION_POLICY.noShowGraceHours * 60 * 60 * 1000).toISOString()
           : null,
         items: reservation.items.map((item) => ({ name: item.product.name, quantity: item.quantity }))
-      }))
+      })),
+      nextCursor: page.nextCursor,
+      totalCandidates
     };
   });
 }

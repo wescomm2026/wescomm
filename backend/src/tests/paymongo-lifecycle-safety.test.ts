@@ -116,7 +116,7 @@ test("maintenance is bearer-protected, bounded, and scheduled externally", () =>
   assert.match(routes, /"\/maintenance",\s*requireMaintenanceSecret,\s*maintenanceLimiter/);
   assert.match(source("src/config/env.ts"), /PAYMONGO_ENABLED[\s\S]*isProductionDeployment[\s\S]*PAYMENT_MAINTENANCE_SECRET/);
   assert.match(source("src/services/paymongo-reconciliation.service.ts"), /input\.limit - quarantinable\.length/);
-  assert.match(workflow, /cron: "17 \* \* \* \*"/);
+  assert.match(workflow, /cron: "7,22,37,52 \* \* \* \*"/);
   assert.match(workflow, /WESCOMM_PAYMENT_MAINTENANCE_SECRET/);
   assert.match(workflow, /workflow_dispatch/);
   assert.match(workflow, /https:\/\/\*\/api\/payments\/maintenance/);

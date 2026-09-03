@@ -22,7 +22,7 @@ function createReceipt({
   code,
   reservationId,
   itemName,
-  verificationHash,
+  verificationToken,
   totalAmount,
   issuedAt
 }: {
@@ -30,7 +30,7 @@ function createReceipt({
   code: string;
   reservationId: string;
   itemName: string;
-  verificationHash: string;
+  verificationToken: string;
   totalAmount: number;
   issuedAt: string;
 }): BackendReceipt {
@@ -42,7 +42,7 @@ function createReceipt({
     totalAmount,
     paymentMethod: "CASH",
     status: "VERIFIED",
-    verificationHash,
+    publicVerificationUrl: `http://127.0.0.1:3000/verify-receipt#v=${verificationToken}`,
     receiptImageUrl: null,
     receiptPdfUrl: null,
     issuedById: "20000000-0000-4000-8000-000000000099",
@@ -64,8 +64,8 @@ function createReceipt({
       id: reservationId,
       referenceCode: `RSV-${code}`,
       status: "COMPLETED",
-      pickupStart: null,
-      pickupEnd: null,
+      pickupStart: "2026-07-16T02:00:00.000Z",
+      pickupEnd: "2026-07-16T04:00:00.000Z",
       items: [
         {
           id: `${reservationId}-item`,
@@ -93,7 +93,7 @@ const receipts = [
     code: FIRST_RECEIPT_CODE,
     reservationId: "40000000-0000-4000-8000-000000000001",
     itemName: "First Receipt Item",
-    verificationHash: "11111111111111111111111111111111",
+    verificationToken: "11111111111111111111111111111111",
     totalAmount: 125,
     issuedAt: "2026-07-14T01:30:00.000Z"
   }),
@@ -102,7 +102,7 @@ const receipts = [
     code: SECOND_RECEIPT_CODE,
     reservationId: "40000000-0000-4000-8000-000000000002",
     itemName: "Second Receipt Item",
-    verificationHash: "22222222222222222222222222222222",
+    verificationToken: "22222222222222222222222222222222",
     totalAmount: 275,
     issuedAt: "2026-07-15T02:45:00.000Z"
   })
@@ -132,8 +132,29 @@ async function mockReceiptApis(page: Page) {
       return;
     }
 
+    const receiptDetailMatch = path.match(/^\/api\/backend\/receipts\/([^/]+)$/);
+    if (receiptDetailMatch) {
+      const receipt = receipts.find((item) => item.id === decodeURIComponent(receiptDetailMatch[1]));
+      await json(
+        route,
+        receipt ? { receipt } : { error: "Receipt not found." },
+        receipt ? 200 : 404
+      );
+      return;
+    }
+
     if (path === "/api/backend/notifications") {
       await json(route, { notifications: [] });
+      return;
+    }
+
+    if (path === "/api/backend/notifications/unread-count") {
+      await json(route, { unreadCount: 0 });
+      return;
+    }
+
+    if (path === "/api/backend/realtime/events") {
+      await route.fulfill({ status: 200, contentType: "text/event-stream", body: "" });
       return;
     }
 
@@ -166,6 +187,9 @@ test("View Receipt isolates the transaction selected by its unique receipt id", 
   await page.goto("/student/receipts");
   await dismissWelcomeGate(page);
 
+  const receiptNavigation = page.getByRole("link", { name: "Receipts", exact: true });
+  await expect(receiptNavigation).toHaveAttribute("href", "/student/receipts");
+
   await expect(page.getByRole("article")).toHaveCount(2);
   const selectedReceiptButton = page.getByRole("button", { name: `View receipt ${SECOND_RECEIPT_CODE}` });
   await selectedReceiptButton.click();
@@ -175,6 +199,9 @@ test("View Receipt isolates the transaction selected by its unique receipt id", 
   await expect(page.getByRole("dialog")).toHaveCount(1);
   await expect(dialog.getByRole("heading", { name: `Digital receipt ${SECOND_RECEIPT_CODE}` })).toBeVisible();
   await expect(dialog.getByText("1 x Second Receipt Item", { exact: true })).toBeVisible();
+  await expect(dialog.getByText("Pay at Commissary", { exact: true })).toBeVisible();
+  await expect(dialog.getByText("July 16, 2026, 10:00 AM–12:00 PM", { exact: true })).toBeVisible();
+  await expect(dialog.getByText(`RSV-${SECOND_RECEIPT_CODE}`, { exact: true })).toBeVisible();
   await expect(dialog.getByText(/First Receipt Item/)).toHaveCount(0);
   await expect(dialog.getByText(new RegExp(FIRST_RECEIPT_CODE))).toHaveCount(0);
 

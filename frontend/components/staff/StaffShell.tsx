@@ -1,5 +1,7 @@
 "use client";
 
+import { userFacingErrorMessage } from "@/lib/user-facing-error";
+
 import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
@@ -7,9 +9,12 @@ import { createPortal } from "react-dom";
 import { Bell, Check, ChevronDown, LogOut, Menu, Search, Settings, X } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
+import { useRealtimeRefresh } from "@/components/realtime/RealtimeProvider";
 import { AssetIcon } from "@/components/ui/AssetIcon";
+import { useAccessibleDialog } from "@/components/ui/useAccessibleDialog";
 import {
   getNotificationsFromApi,
+  getUnreadNotificationCountFromApi,
   markAllNotificationsReadFromApi,
   markNotificationReadFromApi,
   type BackendNotification,
@@ -93,14 +98,7 @@ function StaffMobileMenu({
   open: boolean;
   onClose: () => void;
 }) {
-  useEffect(() => {
-    if (!open) return;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = previousOverflow;
-    };
-  }, [open]);
+  const dialog = useAccessibleDialog<HTMLElement>(open, onClose);
 
   if (!open) return null;
 
@@ -108,16 +106,16 @@ function StaffMobileMenu({
     <div className="fixed inset-0 z-[10000] bg-[#101820]/45 lg:hidden" onMouseDown={(event) => {
       if (event.target === event.currentTarget) onClose();
     }}>
-      <aside className="flex h-[100svh] w-[min(88vw,360px)] flex-col bg-white shadow-[20px_0_60px_rgba(0,0,0,0.2)]">
+      <aside ref={dialog.dialogRef} {...dialog.dialogProps} className="flex h-[100svh] w-[min(88vw,360px)] flex-col bg-white shadow-[20px_0_60px_rgba(0,0,0,0.2)]">
         <div className="flex h-20 shrink-0 items-center border-b border-[#e5ebe6] px-5">
           <Image src="/assets/wescomm-logo.png" alt="WESCOMM" width={145} height={58} className="h-12 w-auto object-contain" />
-          <button type="button" onClick={onClose} aria-label="Close staff menu" className="ml-auto grid size-10 place-items-center rounded-md hover:bg-[#eef6ee]">
+          <button type="button" data-dialog-autofocus onClick={onClose} aria-label="Close staff menu" className="ml-auto grid size-10 place-items-center rounded-md hover:bg-[#eef6ee]">
             <X className="size-6" />
           </button>
         </div>
         <div className="border-b border-[#edf1ed] px-5 py-4">
           <p className="text-xs font-bold uppercase text-primary">{portalLabel}</p>
-          <p className="mt-1 font-extrabold text-[#17211b]">{portalTitle}</p>
+          <p id={dialog.titleId} className="mt-1 font-extrabold text-[#17211b]">{portalTitle}</p>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto p-4">
           <StaffNavigation items={items} homeHref={homeHref} onNavigate={onClose} />
@@ -133,11 +131,15 @@ function staffNotificationIcon(type: BackendNotificationType) {
   if (type === "RECEIPT") return "/assets/receipts.svg";
   if (type === "PAYMENT") return "/assets/payment.svg";
   if (type === "LOW_STOCK") return "/assets/low-stock.svg";
-  if (type === "MESSAGE") return "/assets/support.svg";
+  if (type === "MESSAGE") return "/assets/chat-with-wesbot.svg";
   return "/assets/notifications.svg";
 }
 
-function staffNotificationHref(type: BackendNotificationType, routeBase: string, homeHref: string) {
+function staffNotificationHref(notification: BackendNotification, routeBase: string, homeHref: string) {
+  if (notification.actionUrl?.startsWith("/staff/") || notification.actionUrl?.startsWith("/admin/")) {
+    return notification.actionUrl.replace(/^\/(staff|admin)/, routeBase);
+  }
+  const type = notification.type;
   if (type === "RESERVATION") return `${routeBase}/reservations`;
   if (type === "RECEIPT") return `${routeBase}/receipt-verification`;
   if (type === "PAYMENT") return `${routeBase}/reservations`;
@@ -188,6 +190,7 @@ export function StaffShell({
   const [profileOpen, setProfileOpen] = useState(false);
   const [notifications, setNotifications] = useState<BackendNotification[]>([]);
   const [notificationOwnerId, setNotificationOwnerId] = useState("");
+  const [unreadCount, setUnreadCount] = useState(0);
   const [notificationsLoading, setNotificationsLoading] = useState(false);
   const [notificationsError, setNotificationsError] = useState("");
   const notificationRef = useRef<HTMLDivElement>(null);
@@ -197,7 +200,6 @@ export function StaffShell({
   const { user, ready, openAuth, logout } = useStudentAuth();
   const accountId = user?.id ?? "";
   const visibleNotifications = notificationOwnerId === accountId ? notifications : [];
-  const unreadCount = visibleNotifications.filter((notification) => !notification.readAt).length;
   const displayName = user?.fullName || user?.email?.split("@")[0] || (role === "ADMIN" ? "Admin" : "Staff");
   const initials = displayName
     .split(/\s+/)
@@ -213,17 +215,32 @@ export function StaffShell({
     setNotificationsError("");
 
     try {
-      const rows = await getNotificationsFromApi(user.accessToken);
+      const result = await getNotificationsFromApi(user.accessToken, { limit: 20 });
       if (requestSequence !== notificationRequestRef.current) return;
-      setNotifications(rows);
+      setNotifications(result.notifications);
       setNotificationOwnerId(accountId);
     } catch (notificationError) {
       if (requestSequence !== notificationRequestRef.current) return;
-      setNotificationsError(notificationError instanceof Error ? notificationError.message : "Unable to load notifications.");
+      setNotificationsError(userFacingErrorMessage(notificationError, "Unable to load notifications."));
     } finally {
       if (requestSequence === notificationRequestRef.current) setNotificationsLoading(false);
     }
   }, [accountId, role, user?.accessToken, user?.role]);
+
+  const loadUnreadCount = useCallback(async () => {
+    if (!user?.accessToken || user.role !== role || !accountId) return;
+    try {
+      const count = await getUnreadNotificationCountFromApi(user.accessToken);
+      setUnreadCount(count);
+    } catch {
+      // Preserve the last known badge count until the next focus/reconnect refresh.
+    }
+  }, [accountId, role, user?.accessToken, user?.role]);
+
+  useRealtimeRefresh(["notifications"], () => {
+    void loadUnreadCount();
+    if (notificationsOpen) void loadNotifications();
+  });
 
   useEffect(() => {
     const closeMenus = (event: MouseEvent) => {
@@ -268,6 +285,7 @@ export function StaffShell({
   useEffect(() => {
     setNotificationsOpen(false);
     setNotifications([]);
+    setUnreadCount(0);
     setNotificationOwnerId(accountId);
     if (!user?.accessToken || user.role !== role) {
       setNotifications([]);
@@ -275,19 +293,26 @@ export function StaffShell({
       return;
     }
 
-    void loadNotifications();
-    const timer = window.setInterval(() => void loadNotifications(), 15000);
+    void loadUnreadCount();
+    const refreshWhenActive = () => {
+      if (document.visibilityState === "visible") void loadUnreadCount();
+    };
+    const timer = window.setInterval(refreshWhenActive, 5 * 60_000);
+    window.addEventListener("focus", refreshWhenActive);
+    window.addEventListener("online", refreshWhenActive);
     return () => {
       notificationRequestRef.current += 1;
       window.clearInterval(timer);
+      window.removeEventListener("focus", refreshWhenActive);
+      window.removeEventListener("online", refreshWhenActive);
     };
-  }, [accountId, loadNotifications, role, user?.accessToken, user?.role]);
+  }, [accountId, loadUnreadCount, role, user?.accessToken, user?.role]);
 
   const submitSearch = (event: FormEvent) => {
     event.preventDefault();
     const query = search.trim();
     if (!query) return;
-    router.push(`${routeBase}/inventory?query=${encodeURIComponent(query)}`);
+    router.push(`${routeBase}/search?query=${encodeURIComponent(query)}`);
   };
 
   const signOut = async () => {
@@ -303,11 +328,13 @@ export function StaffShell({
     setNotifications((current) =>
       current.map((item) => item.id === notification.id ? { ...item, readAt: new Date().toISOString() } : item)
     );
+    setUnreadCount((current) => Math.max(0, current - 1));
 
     try {
       await markNotificationReadFromApi(user.accessToken, notification.id);
     } catch {
       void loadNotifications();
+      void loadUnreadCount();
     }
   };
 
@@ -317,12 +344,15 @@ export function StaffShell({
     setNotifications((current) =>
       current.map((notification) => ({ ...notification, readAt: notification.readAt ?? new Date().toISOString() }))
     );
+    setUnreadCount(0);
 
     try {
       await markAllNotificationsReadFromApi(user.accessToken);
-      void loadNotifications();
+      void loadUnreadCount();
     } catch (notificationError) {
-      setNotificationsError(notificationError instanceof Error ? notificationError.message : "Unable to update notifications.");
+      setNotificationsError(userFacingErrorMessage(notificationError, "Unable to update notifications."));
+      void loadNotifications();
+      void loadUnreadCount();
     }
   };
 
@@ -438,7 +468,7 @@ export function StaffShell({
                     ) : visibleNotifications.length ? visibleNotifications.map((notification) => (
                       <Link
                         key={notification.id}
-                        href={staffNotificationHref(notification.type, routeBase, homeHref)}
+                        href={staffNotificationHref(notification, routeBase, homeHref)}
                         onClick={() => {
                           void markNotificationRead(notification);
                           setNotificationsOpen(false);

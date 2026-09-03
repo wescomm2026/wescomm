@@ -61,6 +61,59 @@ test("anonymous users can browse live products and use the cart without changing
   await expect(page.getByRole("button", { name: "Log in to Checkout" })).toBeVisible();
 });
 
+test("a restock refresh replaces Notify Me with ordering actions and blocks only empty options", async ({ page }) => {
+  const productId = "71000000-0000-4000-8000-000000000099";
+  let restocked = false;
+  let productRequests = 0;
+
+  await page.route(/\/api(?:\/backend)?\/products(?:\?.*)?$/, (route) => {
+    productRequests += 1;
+    return json(route, {
+      products: [{
+        id: productId,
+        name: "Realtime Restock Test Shirt",
+        description: "Restock-to-order regression fixture",
+        imageUrl: null,
+        price: "350.00",
+        oldPrice: null,
+        status: restocked ? "IN_STOCK" : "OUT_OF_STOCK",
+        stock: restocked ? 5 : 0,
+        saleMode: "OPTIONS",
+        category: { id: "72000000-0000-4000-8000-000000000001", name: "Uniforms", slug: "uniforms" },
+        variants: restocked
+          ? [
+              { optionName: "Size", optionValue: "Small", stock: 0 },
+              { optionName: "Size", optionValue: "Medium", stock: 5 }
+            ]
+          : [
+              { optionName: "Size", optionValue: "Small", stock: 0 },
+              { optionName: "Size", optionValue: "Medium", stock: 0 }
+            ]
+      }]
+    });
+  });
+
+  await page.goto("/student/shop");
+  await dismissWelcomeGate(page);
+  await expect(page.getByRole("button", { name: /Notify me about Realtime Restock Test Shirt restock/ })).toBeVisible();
+
+  restocked = true;
+  await page.evaluate(() => window.dispatchEvent(new Event("wescomm:products-refresh")));
+
+  await expect(page.getByRole("button", { name: /Notify me about Realtime Restock Test Shirt restock/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Add to Cart" }).first()).toBeVisible();
+  await expect(page.getByRole("button", { name: "Buy Now" }).first()).toBeVisible();
+  expect(productRequests).toBeGreaterThanOrEqual(2);
+
+  await page.getByRole("button", { name: "Add to Cart" }).first().click();
+  const itemDialog = page.getByRole("dialog");
+  await expect(itemDialog.getByRole("button", { name: "Small — Out of stock" })).toBeDisabled();
+  const mediumOption = itemDialog.getByRole("button", { name: "Medium" });
+  await expect(mediumOption).toBeEnabled();
+  await mediumOption.click();
+  await expect(itemDialog.getByRole("button", { name: "Add to Cart" })).toBeEnabled();
+});
+
 test("shop search filters the live catalog", async ({ page }) => {
   await page.goto("/student/shop");
   await dismissWelcomeGate(page);
@@ -71,17 +124,22 @@ test("shop search filters the live catalog", async ({ page }) => {
   await expect(search).toHaveValue("uniform");
 });
 
-test("mobile student navigation opens as a web menu and changes pages", async ({ page }, testInfo) => {
+test("mobile bottom navigation changes pages and opens secondary destinations", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "mobile-chromium", "Mobile navigation is covered by the mobile project.");
 
   await page.goto("/student/faq");
   await dismissWelcomeGate(page);
-  await page.getByRole("button", { name: "Open student menu" }).click();
-
-  await expect(page.getByRole("heading", { name: "WESCOMM Menu" })).toBeVisible();
   await page.getByRole("link", { name: /Shop/ }).click();
   await expect(page).toHaveURL(/\/student\/shop$/);
   await expect(page.getByPlaceholder("Search campus items")).toBeVisible();
+
+  await expect(page.getByRole("button", { name: "Open student menu" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Open more navigation" }).click();
+  const moreNavigation = page.getByRole("dialog", { name: "More from WESCOMM" });
+  await expect(moreNavigation.getByRole("link", { name: "FAQ" })).toBeVisible();
+  await expect(moreNavigation.getByRole("link", { name: "Support" })).toBeVisible();
+  await moreNavigation.getByRole("link", { name: "FAQ" }).click();
+  await expect(page).toHaveURL(/\/student\/faq$/);
 });
 
 test("mobile shop renders wishlist controls in two columns and opens a full image preview", async ({ page }, testInfo) => {
@@ -220,6 +278,10 @@ test("student wishlist saves, removes, and enables an out-of-stock alert", async
           policy: { firstRestrictionAt: 3 }
         }
       });
+      return;
+    }
+    if (path === "/notifications/unread-count") {
+      await json(route, { unreadCount: 1 });
       return;
     }
     if (path === "/notifications") {

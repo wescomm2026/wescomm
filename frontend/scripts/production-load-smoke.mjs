@@ -1,0 +1,460 @@
+import assert from "node:assert/strict";
+import { performance } from "node:perf_hooks";
+import { createClient } from "@supabase/supabase-js";
+
+const baseURL = process.env.E2E_BASE_URL?.trim() ?? "";
+const supabaseURL = process.env.E2E_SUPABASE_URL?.trim() ?? "";
+const supabaseAnonKey = process.env.E2E_SUPABASE_ANON_KEY?.trim() ?? "";
+const supabaseServiceRoleKey = process.env.E2E_SUPABASE_SERVICE_ROLE_KEY?.trim() ?? "";
+const studentCount = Math.min(Math.max(Number(process.env.LOAD_TEST_STUDENTS ?? 8), 4), 12);
+const currentAccountPolicyAcceptance = { accepted: true, version: "2026-09-02" };
+const currentCheckoutPolicyAcceptance = { accepted: true, version: "2026-09-02" };
+
+if (
+  process.env.E2E_LIVE_LOAD_TEST !== "true"
+  || baseURL !== "https://wescomm.store"
+  || !supabaseURL
+  || !supabaseAnonKey
+  || !supabaseServiceRoleKey
+) {
+  throw new Error("Production load smoke requires the exact production URL, explicit opt-in, and local Supabase QA credentials.");
+}
+
+const service = createClient(supabaseURL, supabaseServiceRoleKey, {
+  auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
+});
+const metrics = [];
+const createdUserIds = [];
+const reservationIds = [];
+const reservationReferences = [];
+const conversationIds = [];
+const notificationActionUrls = [];
+const operationalReservations = [];
+let staffActor = null;
+let adminActor = null;
+let productId = "";
+
+function percentile(values, ratio) {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((left, right) => left - right);
+  return sorted[Math.min(Math.ceil(sorted.length * ratio) - 1, sorted.length - 1)];
+}
+
+function instrumentedServerDuration(serverTiming) {
+  if (!serverTiming) return null;
+  const durations = Array.from(serverTiming.matchAll(/(?:^|,)\s*[^,;]+;dur=([0-9.]+)/g), (match) => Number(match[1]));
+  return durations.length ? durations.reduce((sum, duration) => sum + duration, 0) : null;
+}
+
+async function timedRequest(actor, path, options = {}, label = path) {
+  const startedAt = performance.now();
+  let response;
+  let body = null;
+  let headersMs = null;
+  try {
+    response = await fetch(`${baseURL}${path}`, {
+      ...options,
+      headers: {
+        ...(actor?.cookie ? { Cookie: actor.cookie } : {}),
+        ...(options.method && options.method !== "GET" ? { Origin: new URL(baseURL).origin } : {}),
+        ...(options.body ? { "Content-Type": "application/json" } : {}),
+        ...options.headers
+      }
+    });
+    headersMs = Math.round((performance.now() - startedAt) * 10) / 10;
+    body = await response.json().catch(() => null);
+    return { response, body };
+  } finally {
+    metrics.push({
+      label,
+      durationMs: Math.round((performance.now() - startedAt) * 10) / 10,
+      headersMs,
+      status: response?.status ?? 0,
+      serverTiming: response?.headers.get("server-timing") ?? null,
+      requestId: response?.headers.get("x-request-id") ?? null,
+      vercelId: response?.headers.get("x-vercel-id") ?? null
+    });
+  }
+}
+
+function expectStatus(result, allowed, label) {
+  assert.ok(allowed.includes(result.response.status), `${label} returned ${result.response.status}: ${JSON.stringify(result.body)}`);
+  return result.body;
+}
+
+async function createSession(email, expectedRole) {
+  const verifier = createClient(supabaseURL, supabaseAnonKey, {
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
+  });
+  const generated = await service.auth.admin.generateLink({ type: "magiclink", email });
+  assert.equal(generated.error, null, `Unable to generate QA login for ${email}.`);
+  const tokenHash = generated.data.properties?.hashed_token;
+  assert.ok(tokenHash, `Missing QA token for ${email}.`);
+  const verified = await verifier.auth.verifyOtp({ type: "magiclink", token_hash: tokenHash });
+  assert.equal(verified.error, null, `Unable to verify QA login for ${email}.`);
+  const accessToken = verified.data.session?.access_token;
+  assert.ok(accessToken, `Missing access token for ${email}.`);
+
+  const result = await timedRequest(null, "/api/auth/session", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}` },
+    body: JSON.stringify({ policyAcceptance: currentAccountPolicyAcceptance })
+  }, `session:${expectedRole.toLowerCase()}`);
+  const body = expectStatus(result, [201], `session:${email}`);
+  assert.equal(body.profile.role, expectedRole, `${email} has the wrong QA role.`);
+  const cookie = result.response.headers.get("set-cookie")?.split(";")[0];
+  assert.ok(cookie, `Backend session cookie was not issued for ${email}.`);
+  return { id: body.profile.id, email, role: expectedRole, cookie };
+}
+
+async function createTemporaryStudents(runId) {
+  const actors = [];
+  for (let index = 0; index < studentCount; index += 1) {
+    const email = `wescomm.load.${runId}.${index}@wesleyan.edu.ph`;
+    const created = await service.auth.admin.createUser({
+      email,
+      email_confirm: true,
+      user_metadata: { full_name: `WESCOMM Load Student ${index + 1}` }
+    });
+    assert.equal(created.error, null, `Unable to create temporary load user ${index + 1}.`);
+    assert.ok(created.data.user?.id, `Temporary load user ${index + 1} has no id.`);
+    createdUserIds.push(created.data.user.id);
+    actors.push(await createSession(email, "STUDENT"));
+  }
+  return actors;
+}
+
+async function createLoadProduct(runId) {
+  const categories = expectStatus(
+    await timedRequest(staffActor, "/api/staff/products/categories", {}, "staff:categories"),
+    [200],
+    "staff categories"
+  ).categories;
+  assert.ok(categories.length, "Production has no category for the isolated load product.");
+  const result = await timedRequest(staffActor, "/api/staff/products", {
+    method: "POST",
+    body: JSON.stringify({
+      categoryId: categories[0].id,
+      name: `WESCOMM Load Probe ${runId}`,
+      description: "Temporary controlled production concurrency probe.",
+      price: 1,
+      status: "IN_STOCK",
+      stock: 1,
+      lowStockThreshold: 0,
+      notes: `Automated load probe ${runId}`
+    })
+  }, "staff:product-create");
+  const body = expectStatus(result, [201], "load product create");
+  productId = body.product.id;
+  notificationActionUrls.push(`/staff/inventory?productId=${encodeURIComponent(productId)}`);
+}
+
+
+function futurePickupWindow(days = 2) {
+  const target = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Manila",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(target);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  const date = `${values.year}-${values.month}-${values.day}`;
+  return {
+    pickupStart: new Date(`${date}T10:00:00+08:00`).toISOString(),
+    pickupEnd: new Date(`${date}T12:00:00+08:00`).toISOString()
+  };
+}
+
+async function createReservation(actor, suffix) {
+  const result = await timedRequest(actor, "/api/reservations", {
+    method: "POST",
+    headers: { "Idempotency-Key": `load-${suffix}-${crypto.randomUUID()}` },
+    body: JSON.stringify({
+      paymentMethod: "PAY_AT_COMMISSARY",
+      ...futurePickupWindow(),
+      policyAcceptance: currentCheckoutPolicyAcceptance,
+      items: [{ productId, quantity: 1 }]
+    })
+  }, "command:reservation-create");
+  if (result.response.status < 400 && result.body?.reservation) {
+    reservationIds.push(result.body.reservation.id);
+    reservationReferences.push(result.body.reservation.referenceCode);
+    notificationActionUrls.push(`/staff/reservations?query=${encodeURIComponent(result.body.reservation.referenceCode)}`);
+  }
+  return result;
+}
+
+async function runReadBurst(students) {
+  const requests = students.flatMap((student) => [
+    timedRequest(student, "/api/auth/me", {}, "read:student-auth"),
+    timedRequest(student, "/api/products", {}, "read:catalog"),
+    timedRequest(student, "/api/reservations?limit=20", {}, "read:student-reservations"),
+    timedRequest(student, "/api/receipts?limit=20", {}, "read:student-receipts")
+  ]);
+  const results = await Promise.all(requests);
+  results.forEach((result) => expectStatus(result, [200], "student read burst"));
+}
+
+async function runLastStockContention(students, runId) {
+  const attempts = await Promise.all(students.map((student, index) => createReservation(student, `${runId}-last-${index}`)));
+  const winners = attempts.filter((result) => result.response.status === 201);
+  const controlledRejections = attempts.filter((result) => [400, 409].includes(result.response.status));
+  const statusCounts = attempts.reduce((counts, result) => {
+    const status = String(result.response.status);
+    counts[status] = (counts[status] ?? 0) + 1;
+    return counts;
+  }, {});
+  console.log(JSON.stringify({ lastStockContention: statusCounts }));
+  assert.equal(winners.length, 1, `Last-stock contention produced ${winners.length} successful reservations.`);
+  assert.equal(
+    controlledRejections.length,
+    students.length - 1,
+    "Every losing last-stock request must return a controlled stock validation response."
+  );
+  assert.equal(attempts.some((result) => result.response.status >= 500), false, "Last-stock contention produced a server error.");
+
+  const winner = winners[0];
+  const winnerActor = students[attempts.indexOf(winner)];
+  const winnerId = winner.body.reservation.id;
+  const cancelled = await timedRequest(winnerActor, `/api/reservations/${winnerId}/cancel`, {
+    method: "POST"
+  }, "command:last-stock-cancel");
+  expectStatus(cancelled, [200], "last-stock winner cancellation");
+}
+
+async function runOperationalConcurrency(students, runId) {
+  const restock = await timedRequest(staffActor, `/api/staff/products/${productId}/restock`, {
+    method: "POST",
+    body: JSON.stringify({ mode: "add", quantity: students.length - 1, notes: `Operational load phase ${runId}` })
+  }, "command:load-product-restock");
+  expectStatus(restock, [200], "load product restock");
+
+  const [reservationResults, reportResults] = await Promise.all([
+    Promise.all(students.map((student, index) => createReservation(student, `${runId}-ops-${index}`))),
+    Promise.all([
+      ...Array.from({ length: 6 }, () => timedRequest(adminActor, "/api/admin/reports/summary", {}, "read:admin-reports")),
+      ...students.map((student) => timedRequest(student, "/api/reservations?limit=20", {}, "read:active-student-dashboard"))
+    ])
+  ]);
+  reservationResults.forEach((result) => expectStatus(result, [201], "operational reservation create"));
+  reportResults.forEach((result) => expectStatus(result, [200], "report/dashboard during reservations"));
+
+  reservationResults.forEach((result, index) => operationalReservations.push({
+    id: result.body.reservation.id,
+    actor: students[index],
+    status: "PENDING"
+  }));
+
+  const [confirmResults, concurrentReports] = await Promise.all([
+    Promise.all(operationalReservations.map((reservation) => timedRequest(
+      staffActor,
+      `/api/reservations/${reservation.id}/status`,
+      { method: "PATCH", body: JSON.stringify({ status: "CONFIRMED" }) },
+      "command:staff-confirm"
+    ))),
+    Promise.all(Array.from({ length: 4 }, () => timedRequest(adminActor, "/api/admin/reports/summary", {}, "read:admin-reports-active")))
+  ]);
+  confirmResults.forEach((result, index) => {
+    expectStatus(result, [200], "concurrent staff confirm");
+    operationalReservations[index].status = "CONFIRMED";
+  });
+  concurrentReports.forEach((result) => expectStatus(result, [200], "reports during staff updates"));
+
+  const cancellations = await Promise.all(operationalReservations.map((reservation) => timedRequest(
+    staffActor,
+    `/api/reservations/${reservation.id}/status`,
+    { method: "PATCH", body: JSON.stringify({ status: "CANCELLED" }) },
+    "command:staff-cancel"
+  )));
+  cancellations.forEach((result, index) => {
+    expectStatus(result, [200], "concurrent staff cancellation");
+    operationalReservations[index].status = "CANCELLED";
+  });
+}
+
+async function runSupportConcurrency(students, runId) {
+  const participants = students.slice(0, Math.min(students.length, 4));
+  const created = await Promise.all(participants.map((student, index) => timedRequest(student, "/api/conversations", {
+    method: "POST",
+    body: JSON.stringify({ subject: `Load support ${runId}-${index}`, message: "Controlled simultaneous support probe." })
+  }, "command:support-create")));
+  const conversations = created.map((result) => {
+    const body = expectStatus(result, [201], "support conversation create");
+    conversationIds.push(body.conversation.id);
+    notificationActionUrls.push(`/staff/messages?conversationId=${encodeURIComponent(body.conversation.id)}`);
+    return body.conversation;
+  });
+
+  const handoffs = await Promise.all(conversations.map((conversation, index) => timedRequest(
+    participants[index],
+    `/api/conversations/${conversation.id}/handoff`,
+    { method: "POST", body: JSON.stringify({ reason: "Controlled production load test." }) },
+    "command:support-handoff"
+  )));
+  handoffs.forEach((result) => expectStatus(result, [200], "support handoff"));
+
+  const accepts = await Promise.all(conversations.map((conversation) => timedRequest(
+    staffActor,
+    `/api/conversations/${conversation.id}/accept`,
+    { method: "POST" },
+    "command:support-accept"
+  )));
+  accepts.forEach((result) => expectStatus(result, [200], "support accept"));
+
+  const simultaneousMessages = conversations.flatMap((conversation, index) => [
+    timedRequest(participants[index], `/api/conversations/${conversation.id}/messages`, {
+      method: "POST", body: JSON.stringify({ message: "Student-side simultaneous reply." })
+    }, "command:support-student-message"),
+    timedRequest(staffActor, `/api/conversations/${conversation.id}/messages`, {
+      method: "POST", body: JSON.stringify({ message: "Staff-side simultaneous reply." })
+    }, "command:support-staff-message")
+  ]);
+  (await Promise.all(simultaneousMessages)).forEach((result) => expectStatus(result, [201], "simultaneous support message"));
+
+  const resolves = await Promise.all(conversations.map((conversation) => timedRequest(
+    staffActor,
+    `/api/conversations/${conversation.id}/status`,
+    { method: "PATCH", body: JSON.stringify({ status: "RESOLVED" }) },
+    "command:support-resolve"
+  )));
+  resolves.forEach((result) => expectStatus(result, [200], "support resolve"));
+}
+
+async function cleanupQuery(query, label) {
+  const result = await query;
+  if (result.error) throw new Error(`${label}: ${result.error.message}`);
+  return result.data ?? [];
+}
+
+async function cleanup() {
+  if (staffActor) {
+    for (const reservation of operationalReservations) {
+      if (!["CANCELLED", "COMPLETED", "NO_SHOW"].includes(reservation.status)) {
+        await timedRequest(staffActor, `/api/reservations/${reservation.id}/status`, {
+          method: "PATCH", body: JSON.stringify({ status: "CANCELLED" })
+        }, "cleanup:reservation-cancel").catch(() => undefined);
+      }
+    }
+  }
+
+  await new Promise((resolve) => setTimeout(resolve, 3_000));
+  const notificationIds = [];
+  if (notificationActionUrls.length) {
+    const notificationRows = await cleanupQuery(service
+      .from("notifications")
+      .select("id")
+      .in("action_url", [...new Set(notificationActionUrls)]), "load notifications lookup");
+    notificationIds.push(...notificationRows.map((row) => row.id));
+    await cleanupQuery(
+      service.from("notifications").delete().in("action_url", [...new Set(notificationActionUrls)]).select("id"),
+      "load notifications delete"
+    );
+  }
+  const entityIds = [...new Set([
+    ...reservationIds,
+    ...conversationIds,
+    ...notificationIds,
+    ...(productId ? [productId] : [])
+  ])];
+  if (entityIds.length) {
+    await cleanupQuery(service.from("audit_logs").delete().in("entity_id", entityIds).select("id"), "load audit logs");
+    await cleanupQuery(service.from("outbox_events").delete().in("entity_id", entityIds).select("id"), "load outbox events");
+    await cleanupQuery(service.from("realtime_events").delete().in("entity_id", entityIds).select("id"), "load realtime events");
+  }
+
+  if (conversationIds.length) {
+    await cleanupQuery(service.from("conversations").delete().in("id", conversationIds).select("id"), "load conversations");
+  }
+  if (createdUserIds.length) {
+    await cleanupQuery(service.from("conversations").delete().in("student_id", createdUserIds).select("id"), "load student conversations");
+    await cleanupQuery(service.from("profiles").delete().in("id", createdUserIds).select("id"), "load profiles");
+  }
+
+  for (const userId of createdUserIds) {
+    let lastError = null;
+    for (let attempt = 1; attempt <= 6; attempt += 1) {
+      const result = await service.auth.admin.deleteUser(userId);
+      if (!result.error || /not found/i.test(result.error.message)) {
+        lastError = null;
+        break;
+      }
+      lastError = result.error;
+      await new Promise((resolve) => setTimeout(resolve, attempt * 750));
+    }
+    if (lastError) throw new Error(`load auth user ${userId}: ${lastError.message}`);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  }
+
+  if (productId) {
+    await cleanupQuery(service.from("inventory_movements").delete().eq("product_id", productId).select("id"), "load inventory movements");
+    await cleanupQuery(service.from("product_variants").delete().eq("product_id", productId).select("id"), "load product variants");
+    await cleanupQuery(service.from("products").delete().eq("id", productId).select("id"), "load product");
+  }
+}
+
+function printAndValidateMetrics() {
+  const failed = metrics.filter((metric) => metric.status === 0 || metric.status >= 500);
+  assert.equal(failed.length, 0, `Production load probe saw server/network failures: ${JSON.stringify(failed)}`);
+  const groups = new Map();
+  for (const metric of metrics) {
+    const values = groups.get(metric.label) ?? [];
+    values.push(metric.durationMs);
+    groups.set(metric.label, values);
+  }
+  const summary = Array.from(groups, ([label, values]) => ({
+    label,
+    count: values.length,
+    p50Ms: percentile(values, 0.5),
+    p95Ms: percentile(values, 0.95),
+    maxMs: Math.max(...values)
+  })).sort((left, right) => right.p95Ms - left.p95Ms);
+  const readP95 = percentile(metrics.filter((metric) => metric.label.startsWith("read:")).map((metric) => metric.durationMs), 0.95);
+  const commandP95 = percentile(metrics.filter((metric) => metric.label.startsWith("command:")).map((metric) => metric.durationMs), 0.95);
+  const instrumentedDurations = metrics
+    .map((metric) => instrumentedServerDuration(metric.serverTiming))
+    .filter((duration) => duration !== null);
+  const instrumentedPhaseP95 = percentile(instrumentedDurations, 0.95);
+  const instrumentedPhaseMax = instrumentedDurations.length ? Math.max(...instrumentedDurations) : 0;
+  const ingressRegions = Array.from(new Set(metrics
+    .map((metric) => metric.vercelId?.split("::")[0] ?? null)
+    .filter(Boolean)));
+  const slowRequests = metrics
+    .filter((metric) => metric.durationMs >= 2_500)
+    .sort((left, right) => right.durationMs - left.durationMs)
+    .slice(0, 30);
+  console.log(JSON.stringify({
+    ok: true,
+    students: studentCount,
+    requests: metrics.length,
+    readP95Ms: readP95,
+    commandP95Ms: commandP95,
+    fiveSecondEndToEndTargetMet: readP95 < 5_000 && commandP95 < 5_000,
+    instrumentedPhaseP95Ms: instrumentedPhaseP95,
+    instrumentedPhaseMaxMs: instrumentedPhaseMax,
+    ingressRegions,
+    slowestOperations: summary.slice(0, 12),
+    slowRequests
+  }, null, 2));
+  assert.ok(instrumentedPhaseP95 < 3_000, `Instrumented backend phase p95 ${instrumentedPhaseP95}ms exceeded 3s.`);
+  assert.ok(instrumentedPhaseMax < 5_000, `An instrumented backend request reached ${instrumentedPhaseMax}ms.`);
+  assert.ok(readP95 < 10_000, `Production read p95 ${readP95}ms exceeded the remote-ingress 10s safety ceiling.`);
+  assert.ok(commandP95 < 10_000, `Production command p95 ${commandP95}ms exceeded the remote-ingress 10s safety ceiling.`);
+}
+
+const runId = `${Date.now()}`;
+try {
+  [staffActor, adminActor] = await Promise.all([
+    createSession("staff@wesleyan.edu.ph", "STAFF"),
+    createSession("admin@wesleyan.edu.ph", "ADMIN")
+  ]);
+  const students = await createTemporaryStudents(runId);
+  await createLoadProduct(runId);
+  await runReadBurst(students);
+  await runLastStockContention(students, runId);
+  await runOperationalConcurrency(students, runId);
+  await runSupportConcurrency(students, runId);
+  printAndValidateMetrics();
+} finally {
+  await cleanup();
+}

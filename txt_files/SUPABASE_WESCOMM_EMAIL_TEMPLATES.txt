@@ -29,6 +29,10 @@ Important:
   6 digits so the email, mobile autofill, and verification UI stay aligned.
 - If you want OTP only, do not place {{ .ConfirmationURL }} in the email template.
 - The first-time email may still be under "Confirm signup", but the wording can be WESCOMM OTP.
+- The official logo is loaded over HTTPS from:
+  https://wescomm.vercel.app/assets/wescomm-logo.png
+- Keep the WESCOMM text under the image as a fallback because some email clients
+  hide remote images until the recipient allows them.
 
 Subject for Confirm signup
 --------------------------
@@ -37,6 +41,7 @@ Your WESCOMM verification code
 HTML template for Confirm signup
 --------------------------------
 <div style="margin:0;padding:0;background:#f6faf7;font-family:Arial,Helvetica,sans-serif;color:#17211b;">
+  <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">Your 6-digit WESCOMM verification code is ready.</div>
   <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f6faf7;padding:28px 12px;">
     <tr>
       <td align="center">
@@ -45,9 +50,10 @@ HTML template for Confirm signup
             <td style="height:6px;background:#006633;"></td>
           </tr>
           <tr>
-            <td style="padding:28px 28px 12px 28px;text-align:left;">
-              <h1 style="margin:0;color:#006633;font-size:28px;line-height:1.1;font-weight:800;">WESCOMM</h1>
-              <p style="margin:6px 0 0 0;color:#5f6d66;font-size:13px;">Wesleyan Integrated Commissary Management System</p>
+            <td align="center" style="padding:28px 28px 12px 28px;text-align:center;">
+              <img src="https://wescomm.vercel.app/assets/wescomm-logo.png" width="210" alt="WESCOMM" style="display:block;width:210px;max-width:100%;height:auto;margin:0 auto;border:0;outline:none;text-decoration:none;" />
+              <p style="margin:10px 0 0 0;color:#006633;font-size:18px;line-height:1.2;font-weight:800;">WESCOMM</p>
+              <p style="margin:5px 0 0 0;color:#5f6d66;font-size:13px;line-height:1.5;">Wesleyan Integrated Commissary Management System</p>
             </td>
           </tr>
           <tr>
@@ -72,6 +78,7 @@ HTML template for Confirm signup
           <tr>
             <td style="padding:6px 28px 28px 28px;">
               <p style="margin:0;color:#6b766f;font-size:13px;line-height:1.6;">If you did not request this code, you can safely ignore this email.</p>
+              <p style="margin:10px 0 0 0;color:#6b766f;font-size:13px;line-height:1.6;">For your security, WESCOMM staff will never ask you to share this code.</p>
             </td>
           </tr>
           <tr>

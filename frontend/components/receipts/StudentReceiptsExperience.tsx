@@ -1,14 +1,29 @@
 "use client";
 
+import { userFacingErrorMessage } from "@/lib/user-facing-error";
+
 import Image from "next/image";
-import { useCallback, useEffect, useRef, useState, type MutableRefObject } from "react";
+import Link from "next/link";
+import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import { createPortal } from "react-dom";
+import QRCode from "qrcode";
 import { Download, Eye, ShieldCheck, X } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
+import { useRealtimeRefresh } from "@/components/realtime/RealtimeProvider";
 import { AssetIcon } from "@/components/ui/AssetIcon";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
-import { getReceiptsFromApi, type BackendPaymentMethod, type BackendReceipt, type BackendReceiptStatus } from "@/lib/api";
+import { getReceiptFromApi, getReceiptPageFromApi, type BackendReceipt, type BackendReceiptStatus } from "@/lib/api";
+import { paymentMethodLabel } from "@/lib/payment-method";
+import {
+  mergeCursorPage,
+  readServerState,
+  receiptCacheKey,
+  type CursorPage,
+  upsertCursorItem,
+  useServerState,
+  writeServerState
+} from "@/lib/server-state";
 
 type Receipt = {
   id: string;
@@ -19,7 +34,10 @@ type Receipt = {
   time: string;
   status: string;
   paymentMethod: string;
+  pickupSchedule: string | null;
+  reservationReference: string | null;
   transactionReference: string;
+  verificationUrl: string | null;
   verifiedBy: string;
   items: Array<{
     name: string;
@@ -37,14 +55,6 @@ function formatCurrency(value: number) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2
   })}`;
-}
-
-function formatPaymentMethod(value: BackendPaymentMethod) {
-  if (value === "E_WALLET_AT_PICKUP") return "E-wallet at Pickup";
-  if (value === "PAYMONGO_GCASH") return "GCash (Online)";
-  if (value === "GCASH") return "GCash";
-  if (value === "CASH") return "Cash";
-  return "Pay at Commissary";
 }
 
 function formatReceiptStatus(value: BackendReceiptStatus) {
@@ -105,8 +115,15 @@ function mapBackendReceipt(receipt: BackendReceipt): Receipt {
     date: issued.date,
     time: issued.time,
     status: formatReceiptStatus(receipt.status),
-    paymentMethod: formatPaymentMethod(receipt.paymentMethod),
-    transactionReference: receipt.verificationHash.slice(0, 24).toUpperCase(),
+    paymentMethod: paymentMethodLabel(receipt.paymentMethod),
+    pickupSchedule: receipt.reservation?.pickupStart
+      ? formatReceiptDateTime(receipt.reservation.pickupStart).date + (receipt.reservation.pickupEnd
+        ? `, ${formatReceiptDateTime(receipt.reservation.pickupStart).time}–${formatReceiptDateTime(receipt.reservation.pickupEnd).time}`
+        : "")
+      : null,
+    reservationReference: receipt.reservation?.referenceCode ?? null,
+    transactionReference: receipt.receiptCode,
+    verificationUrl: receipt.publicVerificationUrl,
     verifiedBy: receipt.status === "VERIFIED" ? receipt.issuedBy?.fullName ?? "" : "",
     items,
     subtotal,
@@ -151,176 +168,26 @@ function loadImage(src: string) {
   });
 }
 
-async function downloadReceiptPngLegacy(receipt: Receipt) {
-  const width = 900;
-  const itemHeight = receipt.items.reduce((height) => height + 84, 0);
-  const height = 900 + itemHeight;
-  const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
-  const context = canvas.getContext("2d");
-  if (!context) return;
+function ReceiptQrCode({ value, label }: { value: string | null; label: string }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
 
-  context.fillStyle = "#f3f6f3";
-  context.fillRect(0, 0, width, height);
-  context.fillStyle = "#ffffff";
-  context.fillRect(65, 40, width - 130, height - 80);
+  useEffect(() => {
+    if (!value || !canvasRef.current) return;
+    void QRCode.toCanvas(canvasRef.current, value, {
+      width: 168,
+      margin: 1,
+      errorCorrectionLevel: "M",
+      color: { dark: "#17211b", light: "#ffffff" }
+    });
+  }, [value]);
 
-  try {
-    const logo = await loadImage("/assets/wescomm-logo.png");
-    context.drawImage(logo, 285, 75, 330, 115);
-  } catch {
-    context.fillStyle = "#00652f";
-    context.font = "700 42px Arial";
-    context.textAlign = "center";
-    context.fillText("WESCOMM", width / 2, 130);
-  }
-
-  context.textAlign = "center";
-  context.fillStyle = "#17211b";
-  context.font = "700 24px Arial";
-  context.fillText("Wesleyan University-Philippines", width / 2, 215);
-  context.font = "18px Arial";
-  context.fillStyle = "#5c6860";
-  context.fillText("Integrated Commissary Management System", width / 2, 246);
-  context.fillText("Cabanatuan City, Nueva Ecija", width / 2, 274);
-
-  context.strokeStyle = "#9eaaa2";
-  context.setLineDash([8, 8]);
-  context.beginPath();
-  context.moveTo(110, 305);
-  context.lineTo(790, 305);
-  context.stroke();
-  context.setLineDash([]);
-
-  context.fillStyle = "#17211b";
-  context.font = "700 30px Arial";
-  context.fillText("OFFICIAL DIGITAL RECEIPT", width / 2, 350);
-  context.font = "700 22px Arial";
-  context.fillStyle = "#00652f";
-  context.fillText(receipt.code, width / 2, 383);
-
-  context.textAlign = "left";
-  context.fillStyle = "#68746d";
-  context.font = "18px Arial";
-  context.fillText("Student", 120, 430);
-  context.fillText("Student Number", 120, 462);
-  context.fillText("Transaction Date", 120, 494);
-  context.fillText("Payment Method", 120, 526);
-  context.textAlign = "right";
-  context.fillStyle = "#17211b";
-  context.font = "700 18px Arial";
-  context.fillText(receipt.student, 780, 430);
-  context.fillText(receipt.studentNumber, 780, 462);
-  context.fillText(`${receipt.date} - ${receipt.time}`, 780, 494);
-  context.fillText(receipt.paymentMethod, 780, 526);
-
-  context.strokeStyle = "#d5ddd6";
-  context.beginPath();
-  context.moveTo(110, 555);
-  context.lineTo(790, 555);
-  context.stroke();
-
-  let y = 600;
-  context.textAlign = "left";
-  context.fillStyle = "#68746d";
-  context.font = "700 16px Arial";
-  context.fillText("ITEM", 120, y);
-  context.textAlign = "center";
-  context.fillText("QTY", 590, y);
-  context.textAlign = "right";
-  context.fillText("AMOUNT", 780, y);
-  y += 35;
-
-  receipt.items.forEach((item) => {
-    context.textAlign = "left";
-    context.fillStyle = "#17211b";
-    context.font = "700 19px Arial";
-    const lastTextY = drawWrappedText(context, item.name, 120, y, 400, 24);
-    context.font = "16px Arial";
-    context.fillStyle = "#68746d";
-    context.fillText(item.detail, 120, lastTextY + 24);
-    context.textAlign = "center";
-    context.fillStyle = "#17211b";
-    context.font = "18px Arial";
-    context.fillText(String(item.quantity), 590, y);
-    context.textAlign = "right";
-    context.font = "700 18px Arial";
-    context.fillText(formatCurrency(item.unitPrice * item.quantity), 780, y);
-    y += 84;
-  });
-
-  context.strokeStyle = "#d5ddd6";
-  context.beginPath();
-  context.moveTo(110, y);
-  context.lineTo(790, y);
-  context.stroke();
-  y += 40;
-
-  context.textAlign = "left";
-  context.fillStyle = "#68746d";
-  context.font = "18px Arial";
-  context.fillText("Subtotal", 480, y);
-  context.textAlign = "right";
-  context.fillStyle = "#17211b";
-  context.fillText(formatCurrency(receipt.subtotal), 780, y);
-  y += 34;
-  context.textAlign = "left";
-  context.fillStyle = "#68746d";
-  context.fillText("Discount", 480, y);
-  context.textAlign = "right";
-  context.fillStyle = "#17211b";
-  context.fillText(formatCurrency(receipt.discount), 780, y);
-  y += 45;
-
-  context.fillStyle = "#edf7ee";
-  context.fillRect(455, y - 28, 335, 64);
-  context.textAlign = "left";
-  context.fillStyle = "#00652f";
-  context.font = "700 22px Arial";
-  context.fillText("TOTAL", 480, y + 12);
-  context.textAlign = "right";
-  context.font = "700 27px Arial";
-  context.fillText(formatCurrency(receipt.total), 770, y + 12);
-  y += 90;
-
-  context.textAlign = "center";
-  const statusDisplay = receiptStatusDisplay(receipt.status);
-  context.fillStyle = statusDisplay.color;
-  context.font = "700 20px Arial";
-  context.fillText(statusDisplay.label, width / 2, y);
-  context.fillStyle = "#68746d";
-  context.font = "16px Arial";
-  context.fillText(`Verification reference: ${receipt.transactionReference}`, width / 2, y + 30);
-  if (receipt.verifiedBy) {
-    context.fillText(`Verified by: ${receipt.verifiedBy}`, width / 2, y + 56);
-  }
-
-  const barcodeY = y + 90;
-  context.fillStyle = "#17211b";
-  let barcodeX = 260;
-  Array.from(receipt.transactionReference).forEach((character, index) => {
-    const barWidth = ((character.charCodeAt(0) + index) % 4) + 2;
-    const barHeight = index % 3 === 0 ? 62 : 50;
-    context.fillRect(barcodeX, barcodeY, barWidth, barHeight);
-    barcodeX += barWidth + 4;
-  });
-
-  context.fillStyle = "#68746d";
-  context.font = "15px Arial";
-  context.fillText("Keep this receipt for commissary verification and record purposes.", width / 2, barcodeY + 95);
-  context.fillText("Thank you for using WESCOMM.", width / 2, barcodeY + 120);
-
-  canvas.toBlob((blob) => {
-    if (!blob) return;
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `WESCOMM-${receipt.code}.png`;
-    anchor.click();
-    URL.revokeObjectURL(url);
-  }, "image/png");
+  return value ? (
+    <canvas ref={canvasRef} role="img" aria-label={label} className="mx-auto mt-4 size-[168px] rounded-md bg-white" />
+  ) : (
+    <p className="mx-auto mt-4 max-w-xs rounded-md bg-[#f3f6f3] px-3 py-4 text-xs font-semibold text-[#68746d]">Secure QR verification is being prepared.</p>
+  );
 }
+
 
 async function downloadReceiptPng(receipt: Receipt) {
   const width = 640;
@@ -388,7 +255,9 @@ async function downloadReceiptPng(receipt: Receipt) {
   const details = [
     ["Date", receipt.date],
     ["Time", receipt.time],
-    ["Student", receipt.student]
+    ["Student", receipt.student],
+    ["Payment", receipt.paymentMethod],
+    ...(receipt.pickupSchedule ? [["Pickup", receipt.pickupSchedule]] : [])
   ];
   details.forEach(([label, value]) => {
     context.textAlign = "left";
@@ -487,23 +356,17 @@ async function downloadReceiptPng(receipt: Receipt) {
     y += 22;
   }
 
-  const barcodeHeight = 58;
-  const barcodeGap = 4;
-  const barWidths = Array.from(receipt.transactionReference).map(
-    (character, index) => ((character.charCodeAt(0) + index) % 3) + 2
-  );
-  const barcodeWidth =
-    barWidths.reduce((total, barWidth) => total + barWidth, 0) +
-    Math.max(0, barWidths.length - 1) * barcodeGap;
-  let barcodeX = (width - barcodeWidth) / 2;
-  const barcodeY = y + 8;
-  context.fillStyle = "#17211b";
-  barWidths.forEach((barWidth, index) => {
-    const barHeight = index % 3 === 0 ? barcodeHeight : 44;
-    context.fillRect(barcodeX, barcodeY, barWidth, barHeight);
-    barcodeX += barWidth + barcodeGap;
-  });
-  y = barcodeY + barcodeHeight + 35;
+  if (receipt.verificationUrl) {
+    const qrDataUrl = await QRCode.toDataURL(receipt.verificationUrl, { width: 180, margin: 1, errorCorrectionLevel: "M" });
+    const qrImage = await loadImage(qrDataUrl);
+    context.drawImage(qrImage, (width - 150) / 2, y + 6, 150, 150);
+    y += 176;
+  } else {
+    context.fillStyle = "#68746d";
+    context.font = "13px Arial";
+    context.fillText("Secure QR verification is being prepared.", width / 2, y + 25);
+    y += 55;
+  }
 
   context.fillStyle = "#68746d";
   context.font = "13px Arial";
@@ -574,6 +437,20 @@ function ReceiptPaper({
         <dd className="text-right font-semibold">{receipt.time}</dd>
         <dt className="text-[#68746d]">Student</dt>
         <dd className="text-right font-semibold">{receipt.student}</dd>
+        <dt className="text-[#68746d]">Payment</dt>
+        <dd className="text-right font-semibold">{receipt.paymentMethod}</dd>
+        {receipt.pickupSchedule ? (
+          <>
+            <dt className="text-[#68746d]">Pickup</dt>
+            <dd className="text-right font-semibold">{receipt.pickupSchedule}</dd>
+          </>
+        ) : null}
+        {receipt.reservationReference ? (
+          <>
+            <dt className="text-[#68746d]">Reservation</dt>
+            <dd className="break-all text-right font-mono text-xs font-bold">{receipt.reservationReference}</dd>
+          </>
+        ) : null}
       </dl>
 
       <div className="my-4 border-t border-dashed border-[#bfc9c1]" />
@@ -727,18 +604,7 @@ function ReceiptModal({
             <div className="border-t border-dashed border-[#bfc9c1] pt-5 text-center">
               <p className="text-xs font-bold uppercase text-[#68746d]">Verification Reference</p>
               <p className="mt-1 break-all text-sm font-extrabold text-primary">{receipt.transactionReference}</p>
-              <div className="mx-auto mt-4 flex h-14 max-w-[280px] items-end justify-center gap-[3px] overflow-hidden">
-                {Array.from(receipt.transactionReference).map((character, index) => (
-                  <span
-                    key={`${character}-${index}`}
-                    className="block bg-[#17211b]"
-                    style={{
-                      width: `${((character.charCodeAt(0) + index) % 3) + 2}px`,
-                      height: index % 3 === 0 ? "52px" : "40px"
-                    }}
-                  />
-                ))}
-              </div>
+              <ReceiptQrCode value={receipt.verificationUrl} label={`Secure verification QR for receipt ${receipt.code}`} />
               <p className="mt-4 text-xs leading-5 text-[#77817b]">Keep this digital receipt for verification and record purposes.</p>
             </div>
           </div>
@@ -755,66 +621,95 @@ function ReceiptModal({
 
 export function StudentReceiptsExperience() {
   const { user, ready: authReady, openAuth } = useStudentAuth();
-  const [receipts, setReceipts] = useState<Receipt[]>([]);
-  const [receiptsOwnerId, setReceiptsOwnerId] = useState("");
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
   const [selectedReceiptId, setSelectedReceiptId] = useState<string | null>(null);
   const receiptTriggerRef = useRef<HTMLButtonElement | null>(null);
   const requestSequenceRef = useRef(0);
+  const openedDeepLinkRef = useRef<string | null>(null);
   const accountId = user?.id ?? "";
-  const visibleReceipts = receiptsOwnerId === accountId ? receipts : [];
+  const cacheKey = receiptCacheKey(accountId);
+  const receiptPage = useServerState<CursorPage<BackendReceipt>>(cacheKey);
+  const visibleReceipts = useMemo(() => (receiptPage?.items ?? []).map(mapBackendReceipt), [receiptPage]);
   const selectedReceipt = selectedReceiptId
     ? visibleReceipts.find((receipt) => receipt.id === selectedReceiptId) ?? null
     : null;
   const closeReceipt = useCallback(() => setSelectedReceiptId(null), []);
 
-  const loadReceipts = useCallback(async ({ background = false }: { background?: boolean } = {}) => {
+  const loadReceipts = useCallback(async ({
+    background = false,
+    cursor
+  }: { background?: boolean; cursor?: string } = {}) => {
     if (!authReady) return;
     const requestSequence = ++requestSequenceRef.current;
 
     if (!user?.accessToken || !accountId) {
-      setReceipts([]);
-      setReceiptsOwnerId(accountId);
       setSelectedReceiptId(null);
       setLoading(false);
       return;
     }
 
-    if (!background) {
+    if (cursor) setLoadingMore(true);
+    else if (!background) {
       setLoading(true);
       setError("");
     }
 
     try {
-      const rows = await getReceiptsFromApi(user.accessToken);
+      const page = await getReceiptPageFromApi(user.accessToken, { limit: 20, cursor });
       if (requestSequence !== requestSequenceRef.current) return;
-      const nextReceipts = rows.map(mapBackendReceipt);
-      setReceipts(nextReceipts);
-      setReceiptsOwnerId(accountId);
-      setSelectedReceiptId((currentId) => (
-        currentId && nextReceipts.some((receipt) => receipt.id === currentId) ? currentId : null
-      ));
+      writeServerState<CursorPage<BackendReceipt>>(cacheKey, (current) =>
+        mergeCursorPage(current, page, cursor ? "append" : background ? "prepend" : "replace")
+      );
     } catch (receiptError) {
       if (requestSequence === requestSequenceRef.current && !background) {
-        setReceipts([]);
         setSelectedReceiptId(null);
-        setError(receiptError instanceof Error ? receiptError.message : "Unable to load receipts.");
+        setError(userFacingErrorMessage(receiptError, "Unable to load receipts."));
       }
     } finally {
+      if (requestSequence === requestSequenceRef.current && cursor) setLoadingMore(false);
       if (requestSequence === requestSequenceRef.current && !background) setLoading(false);
     }
-  }, [accountId, authReady, user?.accessToken]);
+  }, [accountId, authReady, cacheKey, user?.accessToken]);
+
+  useRealtimeRefresh(["receipts"], () => {
+    void loadReceipts({ background: true });
+  });
 
   useEffect(() => {
-    setReceipts([]);
-    setReceiptsOwnerId(accountId);
     setSelectedReceiptId(null);
-    void loadReceipts();
+    const cached = readServerState<CursorPage<BackendReceipt>>(cacheKey);
+    if (cached) {
+      setLoading(false);
+      if (Date.now() - cached.updatedAt >= 60_000) void loadReceipts({ background: true });
+    } else {
+      void loadReceipts();
+    }
     return () => {
       requestSequenceRef.current += 1;
     };
-  }, [accountId, loadReceipts]);
+  }, [accountId, cacheKey, loadReceipts]);
+
+  useEffect(() => {
+    if (!authReady || !user?.accessToken || !accountId) return;
+    const parameters = new URLSearchParams(window.location.search);
+    const receiptId = parameters.get("receiptId")?.trim();
+    if (!receiptId || openedDeepLinkRef.current === receiptId) return;
+    openedDeepLinkRef.current = receiptId;
+    parameters.delete("receiptId");
+    const nextQuery = parameters.toString();
+    window.history.replaceState(null, "", `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ""}`);
+
+    void getReceiptFromApi(user.accessToken, receiptId)
+      .then((receipt) => {
+        upsertCursorItem(cacheKey, receipt, true);
+        setSelectedReceiptId(receipt.id);
+      })
+      .catch((receiptError) => {
+        setError(userFacingErrorMessage(receiptError, "Unable to open this receipt."));
+      });
+  }, [accountId, authReady, cacheKey, user?.accessToken]);
 
   useEffect(() => {
     if (!authReady || !user?.accessToken) return;
@@ -823,7 +718,7 @@ export function StudentReceiptsExperience() {
       if (document.visibilityState === "visible") void loadReceipts({ background: true });
     };
 
-    const interval = window.setInterval(refreshInBackground, 15000);
+    const interval = window.setInterval(refreshInBackground, 5 * 60_000);
     window.addEventListener("focus", refreshInBackground);
     document.addEventListener("visibilitychange", refreshInBackground);
 
@@ -863,7 +758,15 @@ export function StudentReceiptsExperience() {
           <p className="mt-2 max-w-xl text-sm leading-6 text-[#68746d]">
             Use your Wesleyan account to access official receipt copies, verification references, and downloads.
           </p>
-          <Button className="mt-5 h-11" onClick={openAuth}>Log in with Wesleyan account</Button>
+          <div className="mt-5 flex flex-wrap gap-3">
+            <Link
+              href="/verify-receipt"
+              className="inline-flex h-11 items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground shadow-[0_8px_18px_rgba(0,91,43,0.22)] transition-colors hover:bg-[#004320] focus:outline-none focus:ring-2 focus:ring-primary/30"
+            >
+              Search Receipt Code
+            </Link>
+            <Button className="h-11" variant="secondary" onClick={openAuth}>Log in with Wesleyan account</Button>
+          </div>
         </section>
       ) : (
         <>
@@ -872,9 +775,10 @@ export function StudentReceiptsExperience() {
           ) : null}
 
           {visibleReceipts.length ? (
+            <>
             <div className="grid gap-6 lg:grid-cols-2 xl:grid-cols-3">
               {visibleReceipts.map((receipt) => (
-                <article key={receipt.id} className="overflow-hidden rounded-lg border border-[#dce5dd] bg-[#edf2ed] p-3 shadow-sm">
+                <article key={receipt.id} className="content-visibility-auto overflow-hidden rounded-lg border border-[#dce5dd] bg-[#edf2ed] p-3 shadow-sm">
                   <div className="overflow-hidden shadow-[0_8px_24px_rgba(0,0,0,0.09)]">
                     <ReceiptPaper receipt={receipt} compact />
                   </div>
@@ -889,6 +793,11 @@ export function StudentReceiptsExperience() {
                         // before the dialog takes focus on the next animation frame.
                         event.currentTarget.blur();
                         setSelectedReceiptId(receipt.id);
+                        if (user?.accessToken) {
+                          void getReceiptFromApi(user.accessToken, receipt.id)
+                            .then((detail) => upsertCursorItem(cacheKey, detail))
+                            .catch(() => undefined);
+                        }
                       }}
                     >
                       <Eye className="size-4" />
@@ -906,6 +815,19 @@ export function StudentReceiptsExperience() {
                 </article>
               ))}
             </div>
+            {receiptPage?.nextCursor ? (
+              <div className="mt-5 flex justify-center">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={loadingMore}
+                  onClick={() => void loadReceipts({ cursor: receiptPage.nextCursor ?? undefined })}
+                >
+                  {loadingMore ? "Loading more..." : "Load more receipts"}
+                </Button>
+              </div>
+            ) : null}
+            </>
           ) : (
             <section className="rounded-lg border border-[#dce5dd] bg-white p-6 shadow-sm">
               <p className="font-extrabold text-[#17211b]">No receipts yet</p>

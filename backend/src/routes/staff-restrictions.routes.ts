@@ -6,10 +6,12 @@ import { requireRole } from "../middleware/require-role.js";
 import {
   createManualRestriction,
   liftRestriction,
+  listNoShowCandidates,
   listRestrictionOverview,
   overturnOffense
 } from "../services/restriction.service.js";
 import { asyncHandler } from "../utils/async-handler.js";
+import { publishRealtimeEventsBestEffort, REALTIME_TOPICS } from "../services/realtime-event.service.js";
 
 export const staffRestrictionsRoutes = Router();
 
@@ -17,7 +19,14 @@ const identifierSchema = z.string().uuid();
 const reasonSchema = z.string().trim().min(5).max(500);
 const overviewQuerySchema = z.object({
   query: z.string().trim().max(120).optional(),
-  status: z.enum(["ALL", "RESTRICTED", "CLEAR"]).default("ALL")
+  status: z.enum(["ACTIONABLE", "ALL", "RESTRICTED", "WARNING", "REVIEW"]).default("ACTIONABLE"),
+  cursor: z.string().trim().min(1).max(512).optional(),
+  limit: z.coerce.number().int().min(1).max(50).optional()
+});
+const noShowQuerySchema = z.object({
+  query: z.string().trim().max(120).optional(),
+  cursor: z.string().trim().min(1).max(512).optional(),
+  limit: z.coerce.number().int().min(1).max(50).optional()
 });
 const createRestrictionSchema = z.object({
   studentId: identifierSchema,
@@ -34,6 +43,16 @@ const restrictionWriteLimiter = createRateLimiter({
   message: "Student access review limit reached. Please wait before making more changes."
 });
 
+async function publishRestrictionChange(studentId: string, entityId: string, action: string) {
+  await publishRealtimeEventsBestEffort([{
+    topic: REALTIME_TOPICS.restrictions,
+    entityId,
+    audienceUserIds: [studentId],
+    audienceRoles: ["STAFF", "ADMIN"],
+    payload: { action, studentId }
+  }]);
+}
+
 staffRestrictionsRoutes.use(requireAuth, requireRole("STAFF", "ADMIN"));
 
 staffRestrictionsRoutes.get(
@@ -42,6 +61,14 @@ staffRestrictionsRoutes.get(
     const filters = overviewQuerySchema.parse(request.query);
     const overview = await listRestrictionOverview(filters);
     response.json({ overview });
+  })
+);
+
+staffRestrictionsRoutes.get(
+  "/no-shows",
+  asyncHandler(async (request, response) => {
+    const page = await listNoShowCandidates(noShowQuerySchema.parse(request.query));
+    response.json({ page });
   })
 );
 
@@ -55,6 +82,7 @@ staffRestrictionsRoutes.post(
       createdById: request.auth!.id,
       actorRole: request.auth!.role
     });
+    await publishRestrictionChange(restriction.studentId, restriction.id, "created");
     response.status(201).json({ restriction });
   })
 );
@@ -70,6 +98,7 @@ staffRestrictionsRoutes.patch(
       liftedById: request.auth!.id,
       actorRole: request.auth!.role
     });
+    await publishRestrictionChange(restriction.studentId, restriction.id, "lifted");
     response.json({ restriction });
   })
 );
@@ -85,6 +114,7 @@ staffRestrictionsRoutes.patch(
       reason: input.reason,
       overturnedById: request.auth!.id
     });
+    await publishRestrictionChange(offense.studentId, offense.id, "offense-overturned");
     response.json({ offense });
   })
 );

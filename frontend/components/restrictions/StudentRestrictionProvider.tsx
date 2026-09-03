@@ -1,5 +1,7 @@
 "use client";
 
+import { userFacingErrorMessage } from "@/lib/user-facing-error";
+
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -14,6 +16,7 @@ import {
 } from "react";
 import { Clock3, ShieldAlert } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
+import { useRealtimeRefresh } from "@/components/realtime/RealtimeProvider";
 import { getMyRestrictionSummaryFromApi, type BackendRestrictionSummary } from "@/lib/api";
 
 type StudentRestrictionContextValue = {
@@ -69,11 +72,15 @@ export function StudentRestrictionProvider({ children }: { children: ReactNode }
       setError("");
     } catch (requestError) {
       if (requestSequence !== requestSequenceRef.current) return;
-      setError(requestError instanceof Error ? requestError.message : "Unable to check reservation access.");
+      setError(userFacingErrorMessage(requestError, "Unable to check reservation access."));
     } finally {
       if (requestSequence === requestSequenceRef.current) setLoading(false);
     }
   }, [accountId, user?.accessToken, user?.role]);
+
+  useRealtimeRefresh(["restrictions"], () => {
+    void refresh();
+  });
 
   useEffect(() => {
     if (!ready) return;
@@ -93,7 +100,7 @@ export function StudentRestrictionProvider({ children }: { children: ReactNode }
     };
     const refreshOnFocus = () => void refresh();
     const refreshFromEvent = () => void refresh();
-    const timer = window.setInterval(refreshWhenVisible, 60_000);
+    const timer = window.setInterval(refreshWhenVisible, 5 * 60_000);
 
     window.addEventListener("focus", refreshOnFocus);
     window.addEventListener("wescomm:restriction-refresh", refreshFromEvent);

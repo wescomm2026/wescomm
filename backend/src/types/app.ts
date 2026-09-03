@@ -6,6 +6,9 @@ export type AppRole = (typeof APP_ROLES)[number];
 export const PRODUCT_STATUSES = ["IN_STOCK", "RESTOCK_SOON", "OUT_OF_STOCK", "ON_SALE"] as const;
 export type ProductStatus = (typeof PRODUCT_STATUSES)[number];
 
+export const PRODUCT_SALE_MODES = ["SIMPLE", "CLOTH_ONLY", "OPTIONS"] as const;
+export type ProductSaleMode = (typeof PRODUCT_SALE_MODES)[number];
+
 export const PAYMENT_METHODS = ["PAY_AT_COMMISSARY", "E_WALLET_AT_PICKUP", "CASH", "GCASH", "PAYMONGO_GCASH"] as const;
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
 
@@ -53,6 +56,12 @@ export type NotificationType = (typeof NOTIFICATION_TYPES)[number];
 
 export const CONVERSATION_STATUSES = ["OPEN", "RESOLVED"] as const;
 export type ConversationStatus = (typeof CONVERSATION_STATUSES)[number];
+
+export const CONVERSATION_MODES = ["BOT_ACTIVE", "WAITING_FOR_STAFF", "STAFF_ACTIVE", "RESOLVED"] as const;
+export type ConversationMode = (typeof CONVERSATION_MODES)[number];
+
+export const CONVERSATION_MESSAGE_SENDER_TYPES = ["STUDENT", "BOT", "STAFF", "SYSTEM"] as const;
+export type ConversationMessageSenderType = (typeof CONVERSATION_MESSAGE_SENDER_TYPES)[number];
 
 export type RawProfile = {
   id: string;

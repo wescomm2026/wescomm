@@ -2,11 +2,30 @@ import { expect, type Page } from "@playwright/test";
 
 export const TEST_PASSWORD = process.env.E2E_TEST_PASSWORD?.trim() ?? "";
 
+export async function authorizeMockedWorkspace(page: Page, role: "STAFF" | "ADMIN") {
+  const frontendPort = Number(process.env.E2E_FRONTEND_PORT ?? 3100);
+  const baseURL = process.env.E2E_BASE_URL ?? `http://127.0.0.1:${frontendPort}`;
+  await page.context().addCookies([{
+    name: "wescomm_e2e_workspace_role",
+    value: role,
+    url: baseURL,
+    sameSite: "Lax"
+  }]);
+}
+
 export async function dismissWelcomeGate(page: Page) {
   const gate = page.locator(".welcome-gate-overlay");
   const appeared = await gate.waitFor({ state: "visible", timeout: 4_000 }).then(() => true).catch(() => false);
   if (!appeared) return;
 
+  const skipButton = gate.getByRole("button", { name: "Skip welcome animation and continue" });
+  const canSkip = await Promise.all([
+    skipButton.isVisible().catch(() => false),
+    skipButton.isEnabled().catch(() => false)
+  ]).then(([visible, enabled]) => visible && enabled);
+  if (canSkip) {
+    await skipButton.click({ timeout: 1_000 }).catch(() => undefined);
+  }
   await expect(gate).toBeHidden({ timeout: 18_000 });
 }
 
@@ -21,6 +40,7 @@ export async function loginWithDevelopmentAccount(
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByRole("heading", { name: "Log in with your school email" })).toBeVisible();
   await dialog.getByRole("textbox").fill(email.split("@")[0]);
+  await dialog.getByRole("checkbox", { name: /I agree to the Terms & Conditions/ }).check();
   await dialog.getByRole("button", { name: "Continue to password" }).click();
 
   await expect(dialog.getByRole("heading", { name: "Enter account password" })).toBeVisible();

@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#006633" />
     <title>WESCOMM is offline</title>
     <style>
-      :root { color-scheme: light; font-family: Arial, Helvetica, sans-serif; }
+      :root { color-scheme: light; font-family: Inter, Arial, Helvetica, sans-serif; }
       * { box-sizing: border-box; }
       body {
         min-height: 100vh;
@@ -14,37 +14,48 @@
         margin: 0;
         display: grid;
         place-items: center;
-        padding: max(24px, env(safe-area-inset-top)) 24px max(24px, env(safe-area-inset-bottom));
-        background: linear-gradient(180deg, #f8fbf8, #eef7f0);
+        padding: max(20px, env(safe-area-inset-top)) 20px max(20px, env(safe-area-inset-bottom));
+        background: radial-gradient(circle at 50% 0%, rgba(0, 102, 51, 0.11), transparent 40%), #f4f8f4;
         color: #17211b;
       }
       main {
-        width: min(100%, 460px);
-        border: 1px solid #dce8de;
+        width: min(100%, 440px);
+        border: 1px solid #d8e5da;
         border-radius: 24px;
-        padding: 32px 28px;
-        background: #fff;
-        box-shadow: 0 20px 55px rgba(0, 91, 43, 0.1);
+        padding: 26px 24px 24px;
+        background: rgba(255, 255, 255, 0.97);
+        box-shadow: 0 24px 64px rgba(0, 79, 37, 0.12);
         text-align: center;
       }
-      img { width: min(240px, 80%); height: auto; }
+      .logo { width: 138px; height: auto; }
+      .illustration {
+        display: grid;
+        width: 116px;
+        height: 116px;
+        margin: 20px auto 0;
+        place-items: center;
+        border-radius: 50%;
+        background: #eef6ef;
+        color: #006633;
+      }
+      .illustration svg { width: 62px; height: 62px; }
       .status {
         display: inline-flex;
-        margin-top: 24px;
+        margin-top: 20px;
         border-radius: 999px;
-        padding: 7px 12px;
+        padding: 6px 11px;
         background: #fff2d8;
         color: #805600;
-        font-size: 12px;
-        font-weight: 800;
-        letter-spacing: 0.03em;
-        text-transform: uppercase;
+        font-size: 11px;
+        font-weight: 900;
+        letter-spacing: 0.1em;
       }
-      h1 { margin: 14px 0 8px; font-size: clamp(24px, 7vw, 32px); }
+      h1 { margin: 12px 0 8px; font-size: clamp(26px, 7vw, 34px); line-height: 1.15; }
       p { margin: 0; color: #5e6b63; font-size: 15px; line-height: 1.65; }
+      .checking { margin-top: 14px; font-size: 12px; font-weight: 700; color: #78837c; }
       button {
         width: 100%;
-        margin-top: 24px;
+        margin-top: 22px;
         border: 0;
         border-radius: 12px;
         padding: 13px 18px;
@@ -59,14 +70,26 @@
   </head>
   <body>
     <main>
-      <img src="/icons/wescomm-icon-512.png" alt="WESCOMM" />
-      <div class="status">Offline</div>
-      <h1>Internet connection required</h1>
-      <p>
-        WESCOMM keeps reservations, stock, receipts, and account information online so they stay current.
-        Connect to the internet, then try again.
-      </p>
+      <img class="logo" src="/assets/wescomm-logo.png" alt="WESCOMM" />
+      <div class="illustration" aria-hidden="true">
+        <svg viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round">
+          <path d="M10 24c13-12 31-12 44 0" />
+          <path d="M18 34c8-8 20-8 28 0" />
+          <path d="M27 44c3-3 7-3 10 0" />
+          <path d="M9 9l46 46" stroke="#b77900" />
+        </svg>
+      </div>
+      <div class="status">OFFLINE</div>
+      <h1>You&rsquo;re offline</h1>
+      <p>Connect to the internet to load current stock, reservations, payments, and receipts.</p>
       <button type="button" onclick="window.location.reload()">Try again</button>
+      <p class="checking" id="connection-status" role="status">Checking your connection automatically&hellip;</p>
     </main>
+    <script>
+      window.addEventListener("online", function () {
+        document.getElementById("connection-status").textContent = "Connection restored. Reloading&hellip;";
+        window.location.reload();
+      });
+    </script>
   </body>
 </html>

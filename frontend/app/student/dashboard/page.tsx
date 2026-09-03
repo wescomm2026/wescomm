@@ -1,5 +1,5 @@
-import { StudentDashboard } from "@/components/ui/ModulePages";
+import { StudentDashboardPage } from "@/components/student/StudentDashboardPage";
 
 export default function Page() {
-  return <StudentDashboard />;
+  return <StudentDashboardPage />;
 }

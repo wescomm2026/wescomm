@@ -49,7 +49,8 @@ export default defineConfig({
             ...process.env,
             PORT: String(backendPort),
             FRONTEND_ORIGIN: baseURL,
-            FRONTEND_ORIGINS: baseURL
+            FRONTEND_ORIGINS: baseURL,
+            PAYMONGO_RETURN_ORIGIN: baseURL
           },
           url: backendHealthURL,
           reuseExistingServer: !process.env.CI,
@@ -66,6 +67,7 @@ export default defineConfig({
             ...process.env,
             NEXT_PUBLIC_ENABLE_DEV_LOGIN: "true",
             NEXT_PUBLIC_E2E_TEST: "true",
+            E2E_WORKSPACE_BYPASS_TOKEN: "playwright-local-workspace-mocks",
             BACKEND_API_URL: `http://127.0.0.1:${backendPort}/api`,
             NEXT_PUBLIC_SUPABASE_URL: "https://wescomm-otp-e2e.invalid",
             NEXT_PUBLIC_SUPABASE_ANON_KEY: "e2e-public-key",

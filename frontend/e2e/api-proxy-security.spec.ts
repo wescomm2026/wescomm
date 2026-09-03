@@ -31,3 +31,10 @@ test("cookie-authenticated API proxy writes require a present trusted Origin", a
   });
   expect(trustedRequest.status()).toBe(404);
 });
+
+test("anonymous staff workspace navigation fails closed as not found", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "Workspace route boundary only needs one Chromium project.");
+  await page.goto("/staff");
+  await expect(page.getByRole("heading", { name: "Oops! This page is not available." })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Sign in/i })).toHaveCount(0);
+});

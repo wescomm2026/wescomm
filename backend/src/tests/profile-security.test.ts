@@ -41,6 +41,20 @@ test("database migration makes public application data access backend-only", () 
     "prisma/migrations/20260718120000_lock_down_direct_application_writes/migration.sql"
   );
   const sql = readFileSync(migrationPath, "utf8");
+  const extensionHardeningPath = path.resolve(
+    process.cwd(),
+    "prisma/migrations/20260828010000_lock_down_trigram_function_privileges/migration.sql"
+  );
+  const extensionHardeningSql = readFileSync(extensionHardeningPath, "utf8");
+  const baselineVerifier = readFileSync(
+    path.resolve(process.cwd(), "scripts/verify-existing-database-baseline.mjs"),
+    "utf8"
+  );
+  const migrationStatusVerifier = readFileSync(
+    path.resolve(process.cwd(), "scripts/verify-prisma-migration-status.mjs"),
+    "utf8"
+  );
+  const packageJson = JSON.parse(readFileSync(path.resolve(process.cwd(), "package.json"), "utf8"));
 
   assert.match(sql, /ARRAY\['anon', 'authenticated'\]/);
   assert.match(sql, /REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public/);
@@ -67,6 +81,24 @@ test("database migration makes public application data access backend-only", () 
   assert.match(sql, /DROP POLICY IF EXISTS "avatars_user_read_own" ON storage\.objects/);
   assert.match(sql, /DROP POLICY IF EXISTS "receipts_staff_read" ON storage\.objects/);
   assert.doesNotMatch(sql, /REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM service_role/i);
+  assert.match(extensionHardeningSql, /ARRAY\['anon', 'authenticated'\]/);
+  assert.match(extensionHardeningSql, /REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA public FROM PUBLIC/);
+  assert.match(extensionHardeningSql, /ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC/);
+  assert.match(extensionHardeningSql, /GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO service_role/);
+  assert.match(baselineVerifier, /dependency\.deptype = 'e'/);
+  assert.match(baselineVerifier, /installed_extension\.extname = 'pg_trgm'/);
+  assert.doesNotMatch(baselineVerifier, /installed_extension\.extname IN/);
+  assert.match(baselineVerifier, /const columnRows = await prisma\.\$queryRaw/);
+  assert.doesNotMatch(baselineVerifier, /Promise\.all/);
+  assert.match(baselineVerifier, /DATABASE_VERIFICATION_MAX_ATTEMPTS = 3/);
+  assert.match(baselineVerifier, /await waitForDatabaseConnection\(\)/);
+  assert.match(migrationStatusVerifier, /PRISMA_STATUS_MAX_ATTEMPTS = 3/);
+  assert.match(migrationStatusVerifier, /"migrate", "status"/);
+  assert.match(migrationStatusVerifier, /Schema engine error:\\s\*\$/);
+  assert.equal(
+    packageJson.scripts["prisma:migrate:verify"],
+    "node scripts/verify-existing-database-baseline.mjs --after-deploy && node scripts/verify-prisma-migration-status.mjs"
+  );
 });
 
 test("Supabase bootstrap guides preserve the backend-only database boundary", () => {

@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
-import { getProductsFromApi } from "@/lib/api";
+import { getProductsFromApi, PRODUCTS_REFRESH_EVENT } from "@/lib/api";
 import { markWelcomeContentReady } from "@/lib/welcome-readiness";
 
 export type DashboardProducts = Awaited<ReturnType<typeof getProductsFromApi>>;
@@ -13,17 +13,6 @@ type DashboardProductsContextValue = {
 };
 
 const DashboardProductsContext = createContext<DashboardProductsContextValue | null>(null);
-let pendingProductsRequest: Promise<DashboardProducts> | null = null;
-
-function loadDashboardProducts() {
-  if (!pendingProductsRequest) {
-    pendingProductsRequest = getProductsFromApi().finally(() => {
-      pendingProductsRequest = null;
-    });
-  }
-
-  return pendingProductsRequest;
-}
 
 export function DashboardProductsProvider({ children }: { children: ReactNode }) {
   const [products, setProducts] = useState<DashboardProducts>([]);
@@ -31,8 +20,10 @@ export function DashboardProductsProvider({ children }: { children: ReactNode })
 
   useEffect(() => {
     let cancelled = false;
+    let requestSequence = 0;
+    let latestAppliedSequence = 0;
 
-    const refreshProducts = (background = false) => {
+    const refreshProducts = (background = false, fresh = false) => {
       if (!navigator.onLine) {
         if (!background) {
           setStatus("error");
@@ -41,9 +32,11 @@ export function DashboardProductsProvider({ children }: { children: ReactNode })
         return;
       }
 
-      void loadDashboardProducts()
+      const currentRequest = ++requestSequence;
+      void getProductsFromApi({ fresh })
         .then((nextProducts) => {
-          if (cancelled) return;
+          if (cancelled || currentRequest < latestAppliedSequence) return;
+          latestAppliedSequence = currentRequest;
           setProducts(nextProducts);
           setStatus("success");
         })
@@ -57,13 +50,25 @@ export function DashboardProductsProvider({ children }: { children: ReactNode })
         });
     };
 
-    const onProductsRefresh = () => refreshProducts(true);
+    const onProductsRefresh = () => refreshProducts(true, true);
+    const refreshFromLifecycle = () => refreshProducts(true, false);
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") refreshFromLifecycle();
+    };
     refreshProducts();
-    window.addEventListener("wescomm:products-refresh", onProductsRefresh);
+    const fallbackRefresh = window.setInterval(refreshWhenVisible, 5 * 60_000);
+    window.addEventListener(PRODUCTS_REFRESH_EVENT, onProductsRefresh);
+    window.addEventListener("focus", refreshFromLifecycle);
+    window.addEventListener("online", refreshFromLifecycle);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
 
     return () => {
       cancelled = true;
-      window.removeEventListener("wescomm:products-refresh", onProductsRefresh);
+      window.clearInterval(fallbackRefresh);
+      window.removeEventListener(PRODUCTS_REFRESH_EVENT, onProductsRefresh);
+      window.removeEventListener("focus", refreshFromLifecycle);
+      window.removeEventListener("online", refreshFromLifecycle);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
   }, []);
 

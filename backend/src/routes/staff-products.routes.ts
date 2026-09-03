@@ -12,12 +12,20 @@ import {
   listCategories,
   listInventory,
   restockProduct,
+  restoreProduct,
+  syncProductVariants,
   updateProduct,
+  updateProductSaleMode,
   updateProductVariant
 } from "../services/inventory.service.js";
-import { PRODUCT_STATUSES } from "../types/app.js";
+import { PRODUCT_SALE_MODES, PRODUCT_STATUSES } from "../types/app.js";
 import { asyncHandler } from "../utils/async-handler.js";
 import { HttpError } from "../utils/http-error.js";
+import { publishRealtimeEventsBestEffort, REALTIME_TOPICS } from "../services/realtime-event.service.js";
+import { reconcileProductSkuInventory, restockProductSkus } from "../services/sku-inventory.service.js";
+import { invalidateOperationalReadCaches } from "../services/operational-cache.service.js";
+import { getProductDeletionEligibility, permanentlyDeleteProduct } from "../services/product-deletion.service.js";
+import { scheduleOutboxProcessing } from "../services/outbox.service.js";
 
 export const staffProductsRoutes = Router();
 
@@ -34,6 +42,14 @@ const optionalMoneySchema = z.preprocess(
   z.coerce.number().nonnegative().max(10_000_000).nullable().optional()
 );
 
+const optionalImageStoragePathSchema = z
+  .string()
+  .trim()
+  .max(300)
+  .regex(/^products\/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}-[a-z0-9._-]+\.(?:jpg|png|webp)$/)
+  .nullable()
+  .optional();
+
 const categorySchema = {
   categoryId: z.string().uuid().optional(),
   categorySlug: z.string().trim().min(1).max(120).optional(),
@@ -41,10 +57,25 @@ const categorySchema = {
   categoryIconUrl: optionalTextSchema
 };
 
+const inventoryIntegerSchema = z.preprocess(
+  (value) => typeof value === "string" && value.trim() === "" ? Number.NaN : value,
+  z.coerce.number().int().nonnegative().max(10_000_000)
+);
+
 const variantSchema = z.object({
   optionName: z.string().trim().min(1).max(80),
   optionValue: z.string().trim().min(1).max(120),
-  stock: z.coerce.number().int().nonnegative().max(10_000_000).default(0)
+  stock: inventoryIntegerSchema.default(0),
+  lowStockThreshold: inventoryIntegerSchema.default(2)
+});
+
+const syncVariantsSchema = z.object({
+  optionName: z.string().trim().min(1).max(80),
+  variants: z.array(z.object({
+    id: z.string().uuid().optional(),
+    optionValue: z.string().trim().min(1).max(120),
+    lowStockThreshold: inventoryIntegerSchema
+  })).max(100)
 });
 
 const createProductSchema = z
@@ -53,17 +84,42 @@ const createProductSchema = z
     name: z.string().trim().min(2).max(160),
     description: optionalTextSchema,
     imageUrl: optionalTextSchema,
+    imageStoragePath: optionalImageStoragePathSchema,
     price: z.coerce.number().nonnegative().max(10_000_000),
     oldPrice: optionalMoneySchema,
     status: z.enum(PRODUCT_STATUSES).optional(),
-    stock: z.coerce.number().int().nonnegative().max(10_000_000).default(0),
-    lowStockThreshold: z.coerce.number().int().nonnegative().max(10_000_000).default(10),
+    saleMode: z.enum(PRODUCT_SALE_MODES).default("SIMPLE"),
+    stock: inventoryIntegerSchema.default(0),
+    lowStockThreshold: inventoryIntegerSchema.default(10),
     variants: z.array(variantSchema).max(100).optional(),
     notes: z.string().trim().max(500).optional()
   })
   .refine((input) => input.categoryId || input.categorySlug || input.categoryName, {
     message: "Category is required.",
     path: ["categoryName"]
+  })
+  .superRefine((input, context) => {
+    if (input.saleMode !== "OPTIONS" && (input.variants?.length ?? 0) > 0) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Only products sold with sizes/options can define selectable options.",
+        path: ["variants"]
+      });
+    }
+    if (input.saleMode === "OPTIONS" && (input.variants?.length ?? 0) === 0 && input.stock > 0) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Add at least one option before opening stock for an option-based product.",
+        path: ["variants"]
+      });
+    }
+    if (input.status === "ON_SALE") {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "On Sale is derived automatically when old price is greater than selling price.",
+        path: ["status"]
+      });
+    }
   });
 
 const updateProductSchema = z.object({
@@ -71,19 +127,32 @@ const updateProductSchema = z.object({
   name: z.string().trim().min(2).max(160).optional(),
   description: optionalTextSchema,
   imageUrl: optionalTextSchema,
+  imageStoragePath: optionalImageStoragePathSchema,
   price: z.coerce.number().nonnegative().max(10_000_000).optional(),
   oldPrice: optionalMoneySchema,
   status: z.enum(PRODUCT_STATUSES).optional(),
-  stock: z.coerce.number().int().nonnegative().max(10_000_000).optional(),
-  lowStockThreshold: z.coerce.number().int().nonnegative().max(10_000_000).optional(),
+  stock: inventoryIntegerSchema.optional(),
+  lowStockThreshold: inventoryIntegerSchema.optional(),
   isActive: z.boolean().optional(),
   notes: z.string().trim().max(500).optional()
+}).superRefine((input, context) => {
+  if (input.status === "ON_SALE") {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "On Sale is derived automatically when old price is greater than selling price.",
+      path: ["status"]
+    });
+  }
 });
 
 const restockSchema = z
   .object({
     mode: z.enum(["add", "set"]).default("add"),
-    quantity: z.coerce.number().int().nonnegative().max(10_000_000),
+    quantity: inventoryIntegerSchema,
+    variantQuantities: z.array(z.object({
+      variantId: z.string().uuid(),
+      quantity: inventoryIntegerSchema
+    })).max(100).optional(),
     notes: z.string().trim().max(500).optional()
   })
   .superRefine((input, context) => {
@@ -96,9 +165,83 @@ const restockSchema = z
     }
   });
 
+const inventoryStructureKeySchema = z.string().trim().min(1).max(100).regex(/^[A-Za-z0-9:_-]+$/);
+
+const skuDefinitionSchema = z
+  .object({
+    variantIds: z.array(z.string().uuid()).max(12).optional(),
+    optionValueKeys: z.array(inventoryStructureKeySchema).max(12).optional(),
+    stock: inventoryIntegerSchema,
+    lowStockThreshold: inventoryIntegerSchema.default(2)
+  })
+  .superRefine((input, context) => {
+    if ((input.variantIds === undefined) === (input.optionValueKeys === undefined)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Use exactly one option reference format for each inventory combination.",
+        path: ["variantIds"]
+      });
+    }
+  });
+
+const skuOptionGroupSchema = z.object({
+  key: inventoryStructureKeySchema,
+  optionName: z.string().trim().min(1).max(80),
+  values: z.array(z.object({
+    key: inventoryStructureKeySchema,
+    id: z.string().uuid().optional(),
+    optionValue: z.string().trim().min(1).max(120),
+    lowStockThreshold: inventoryIntegerSchema.default(2)
+  })).min(1).max(100)
+});
+
+const reconcileSkuInventorySchema = z
+  .object({
+    optionGroups: z.array(skuOptionGroupSchema).min(1).max(12).optional(),
+    skus: z.array(skuDefinitionSchema).min(1).max(500),
+    notes: z.string().trim().max(500).optional()
+  })
+  .superRefine((input, context) => {
+    const valueCount = input.optionGroups?.reduce((total, group) => total + group.values.length, 0) ?? 0;
+    if (valueCount > 100) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Inventory structure may contain at most 100 option values.",
+        path: ["optionGroups"]
+      });
+    }
+  });
+
+const saleModeSchema = z.object({
+  saleMode: z.enum(PRODUCT_SALE_MODES)
+});
+
+const restockSkuInventorySchema = z.object({
+  mode: z.enum(["add", "set"]).default("add"),
+  quantities: z.array(z.object({
+    skuId: z.string().uuid(),
+    quantity: inventoryIntegerSchema
+  })).min(1).max(500),
+  notes: z.string().trim().max(500).optional()
+});
+
 const updateVariantSchema = variantSchema.partial();
 const productIdSchema = z.string().uuid();
 const variantIdSchema = z.string().uuid();
+const inventoryListQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(50).optional(),
+  cursor: z.string().trim().min(1).max(512).optional(),
+  query: z.string().trim().max(120).optional(),
+  categoryId: z.string().uuid().optional(),
+  productId: z.string().uuid().optional(),
+  status: z.enum(PRODUCT_STATUSES).optional(),
+  visibility: z.enum(["ACTIVE", "ARCHIVED"]).default("ACTIVE"),
+  includeCategories: z.literal("1").optional()
+});
+const permanentDeleteSchema = z.object({
+  confirmation: z.string().trim().min(1).max(160),
+  reason: z.string().trim().min(10).max(500)
+});
 const inventoryWriteLimiter = createRateLimiter({
   namespace: "inventory-write",
   windowMs: 10 * 60 * 1000,
@@ -107,13 +250,32 @@ const inventoryWriteLimiter = createRateLimiter({
   message: "Inventory update limit reached. Please wait before making more changes."
 });
 
+async function publishInventoryChange(productId: string, action: string) {
+  await invalidateOperationalReadCaches();
+  await publishRealtimeEventsBestEffort([{
+    topic: REALTIME_TOPICS.inventory,
+    entityId: productId,
+    audienceRoles: ["STUDENT", "STAFF", "ADMIN"],
+    payload: { action }
+  }, {
+    topic: REALTIME_TOPICS.dashboard,
+    entityId: productId,
+    audienceRoles: ["STAFF", "ADMIN"],
+    payload: { action: `inventory-${action}` }
+  }]);
+}
+
 staffProductsRoutes.use(requireAuth, requireRole("STAFF", "ADMIN"));
 
 staffProductsRoutes.get(
   "/",
-  asyncHandler(async (_request, response) => {
-    const products = await listInventory();
-    response.json({ products });
+  asyncHandler(async (request, response) => {
+    const { includeCategories, ...filters } = inventoryListQuerySchema.parse(request.query);
+    const [page, categories] = await Promise.all([
+      listInventory(filters),
+      includeCategories ? listCategories() : Promise.resolve(undefined)
+    ]);
+    response.json({ products: page.items, nextCursor: page.nextCursor, categories });
   })
 );
 
@@ -140,6 +302,7 @@ staffProductsRoutes.post(
   asyncHandler(async (request: AuthenticatedRequest, response) => {
     const input = createProductSchema.parse(request.body);
     const product = await createProduct(input, request.auth!.id);
+    await publishInventoryChange(product.id, "created");
     response.status(201).json({ product });
   })
 );
@@ -150,6 +313,22 @@ staffProductsRoutes.patch(
   asyncHandler(async (request: AuthenticatedRequest, response) => {
     const input = updateProductSchema.parse(request.body);
     const product = await updateProduct(productIdSchema.parse(request.params.id), input, request.auth!.id);
+    await publishInventoryChange(product.id, "updated");
+    response.json({ product });
+  })
+);
+
+staffProductsRoutes.put(
+  "/:id/sale-mode",
+  inventoryWriteLimiter,
+  asyncHandler(async (request: AuthenticatedRequest, response) => {
+    const input = saleModeSchema.parse(request.body);
+    const product = await updateProductSaleMode(
+      productIdSchema.parse(request.params.id),
+      input.saleMode,
+      request.auth!.id
+    );
+    await publishInventoryChange(product.id, "sale-mode-updated");
     response.json({ product });
   })
 );
@@ -159,7 +338,44 @@ staffProductsRoutes.delete(
   inventoryWriteLimiter,
   asyncHandler(async (request: AuthenticatedRequest, response) => {
     const product = await archiveProduct(productIdSchema.parse(request.params.id), request.auth!.id);
+    await publishInventoryChange(product.id, "archived");
     response.json({ product });
+  })
+);
+
+staffProductsRoutes.post(
+  "/:id/restore",
+  inventoryWriteLimiter,
+  asyncHandler(async (request: AuthenticatedRequest, response) => {
+    const product = await restoreProduct(productIdSchema.parse(request.params.id), request.auth!.id);
+    await publishInventoryChange(product.id, "restored");
+    response.json({ product });
+  })
+);
+
+staffProductsRoutes.get(
+  "/:id/deletion-eligibility",
+  requireRole("ADMIN"),
+  asyncHandler(async (request, response) => {
+    const eligibility = await getProductDeletionEligibility(productIdSchema.parse(request.params.id));
+    response.json({ eligibility });
+  })
+);
+
+staffProductsRoutes.delete(
+  "/:id/permanent",
+  requireRole("ADMIN"),
+  inventoryWriteLimiter,
+  asyncHandler(async (request: AuthenticatedRequest, response) => {
+    const input = permanentDeleteSchema.parse(request.body);
+    const deletedProduct = await permanentlyDeleteProduct({
+      productId: productIdSchema.parse(request.params.id),
+      actorId: request.auth!.id,
+      ...input
+    });
+    await publishInventoryChange(deletedProduct.id, "permanently-deleted");
+    scheduleOutboxProcessing();
+    response.json({ deletedProduct });
   })
 );
 
@@ -172,9 +388,61 @@ staffProductsRoutes.post(
       productId: productIdSchema.parse(request.params.id),
       quantity: input.quantity,
       mode: input.mode,
+      variantQuantities: input.variantQuantities,
       notes: input.notes,
       performedById: request.auth!.id
     });
+    await publishInventoryChange(product.id, "restocked");
+    response.json({ product });
+  })
+);
+
+staffProductsRoutes.put(
+  "/:id/variants",
+  inventoryWriteLimiter,
+  asyncHandler(async (request: AuthenticatedRequest, response) => {
+    const input = syncVariantsSchema.parse(request.body);
+    const product = await syncProductVariants(
+      productIdSchema.parse(request.params.id),
+      input.optionName,
+      input.variants,
+      request.auth!.id
+    );
+    await publishInventoryChange(product.id, "variants-synced");
+    response.json({ product });
+  })
+);
+
+staffProductsRoutes.put(
+  "/:id/sku-inventory",
+  inventoryWriteLimiter,
+  asyncHandler(async (request: AuthenticatedRequest, response) => {
+    const input = reconcileSkuInventorySchema.parse(request.body);
+    const product = await reconcileProductSkuInventory({
+      productId: productIdSchema.parse(request.params.id),
+      skus: input.skus,
+      optionGroups: input.optionGroups,
+      performedById: request.auth!.id,
+      notes: input.notes
+    });
+    await publishInventoryChange(product.id, "sku-reconciled");
+    response.json({ product });
+  })
+);
+
+staffProductsRoutes.post(
+  "/:id/skus/restock",
+  inventoryWriteLimiter,
+  asyncHandler(async (request: AuthenticatedRequest, response) => {
+    const input = restockSkuInventorySchema.parse(request.body);
+    const product = await restockProductSkus({
+      productId: productIdSchema.parse(request.params.id),
+      mode: input.mode,
+      quantities: input.quantities,
+      performedById: request.auth!.id,
+      notes: input.notes
+    });
+    await publishInventoryChange(product.id, "sku-restocked");
     response.json({ product });
   })
 );
@@ -185,6 +453,7 @@ staffProductsRoutes.post(
   asyncHandler(async (request: AuthenticatedRequest, response) => {
     const input = variantSchema.parse(request.body);
     const product = await createProductVariant(productIdSchema.parse(request.params.id), input, request.auth!.id);
+    await publishInventoryChange(product.id, "variant-created");
     response.status(201).json({ product });
   })
 );
@@ -200,6 +469,7 @@ staffProductsRoutes.patch(
       input,
       request.auth!.id
     );
+    await publishInventoryChange(product.id, "variant-updated");
     response.json({ product });
   })
 );
@@ -213,6 +483,7 @@ staffProductsRoutes.delete(
       variantIdSchema.parse(request.params.variantId),
       request.auth!.id
     );
+    await publishInventoryChange(product.id, "variant-deleted");
     response.json({ product });
   })
 );

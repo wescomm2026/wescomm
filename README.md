@@ -8,6 +8,8 @@ monitoring through one responsive web platform.
 
 - `frontend/` - Next.js 14 App Router web application
 - `backend/` - Express, Prisma, and Supabase API
+- [`system-design-diagrams/`](system-design-diagrams/README.md) - as-built
+  business rules, analysis/design, UML, DFD, and ERD package
 - `txt_files/` - database SQL, setup notes, security guides, and QA runbooks
 
 Design-source mockups, local archives, dependencies, build output, and secret
@@ -45,15 +47,25 @@ Run these checks before opening a pull request or deploying:
 
 ```powershell
 cd backend
-npm run typecheck
-npm test
-npm run build
+npm run release:preflight
+npm run test:ci
 ```
 
 ```powershell
 cd frontend
+npm run lint
 npm run typecheck
+npm run test:config
 npm run build
+npm run test:e2e:release
+```
+
+Before a Production merge, authenticate the Vercel CLI to the owning team and
+validate the actual Production environment without downloading or printing
+secret values:
+
+```powershell
+vercel env run -e production -- npm --prefix backend run release:production:verify
 ```
 
 ## Deployment and QA

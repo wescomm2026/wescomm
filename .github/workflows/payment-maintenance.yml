@@ -1,10 +1,10 @@
-name: PayMongo payment maintenance
+name: WESCOMM durable maintenance
 
 on:
   schedule:
     # GitHub schedules can be delayed. The backend uses its own timestamps and
     # bounded batches, so reruns are safe and no exact hourly timing is assumed.
-    - cron: "17 * * * *"
+    - cron: "7,22,37,52 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -22,7 +22,7 @@ jobs:
       MAINTENANCE_URL: ${{ secrets.WESCOMM_PAYMENT_MAINTENANCE_URL }}
       MAINTENANCE_TOKEN: ${{ secrets.WESCOMM_PAYMENT_MAINTENANCE_SECRET }}
     steps:
-      - name: Reconcile and expire bounded payment attempts
+      - name: Reconcile payments and process durable events
         shell: bash
         run: |
           set -euo pipefail

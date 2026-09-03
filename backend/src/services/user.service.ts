@@ -5,6 +5,8 @@ import type { AppRole } from "../types/app.js";
 import { HttpError } from "../utils/http-error.js";
 import { decryptSensitiveText } from "../utils/field-encryption.js";
 import { withTransientPrismaReadRetry } from "../utils/prisma-retry.js";
+import { createPage, decodeCursor, normalizePageLimit } from "../utils/cursor-pagination.js";
+import { publishRealtimeEventsBestEffort, REALTIME_TOPICS } from "./realtime-event.service.js";
 
 const ADMIN_ROLE_LOCK_NAMESPACE = 1_464_161_091;
 const ADMIN_ROLE_LOCK_KEY = 1;
@@ -32,8 +34,8 @@ function mapUser(row: {
   department: string | null;
   role: PrismaAppRole;
   avatarUrl: string | null;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt: Date | string;
+  updatedAt: Date | string;
 }) {
   return {
     id: row.id,
@@ -44,29 +46,84 @@ function mapUser(row: {
     department: row.department,
     role: row.role,
     avatarUrl: row.avatarUrl,
-    createdAt: row.createdAt.toISOString(),
-    updatedAt: row.updatedAt.toISOString()
+    createdAt: typeof row.createdAt === "string" ? row.createdAt : row.createdAt.toISOString(),
+    updatedAt: typeof row.updatedAt === "string" ? row.updatedAt : row.updatedAt.toISOString()
   };
 }
 
-export async function listUsers() {
-  const users = await withTransientPrismaReadRetry(() => prisma.profile.findMany({
-    orderBy: { createdAt: "desc" },
-    select: {
-      id: true,
-      fullName: true,
-      email: true,
-      studentNumber: true,
-      phone: true,
-      department: true,
-      role: true,
-      avatarUrl: true,
-      createdAt: true,
-      updatedAt: true
-    }
-  }));
+export async function listUsers(options: {
+  query?: string;
+  role?: AppRole;
+  cursor?: string;
+  limit?: number;
+} = {}) {
+  const limit = normalizePageLimit(options.limit);
+  const cursorId = decodeCursor(options.cursor);
+  const conditions: Prisma.Sql[] = [];
+  if (options.role) {
+    conditions.push(Prisma.sql`profile.role = CAST(${options.role} AS "app_role")`);
+  }
+  if (options.query?.trim()) {
+    const pattern = `%${options.query.trim()}%`;
+    conditions.push(Prisma.sql`(
+      profile.full_name ILIKE ${pattern}
+      OR profile.email ILIKE ${pattern}
+      OR profile.student_number ILIKE ${pattern}
+      OR profile.department ILIKE ${pattern}
+    )`);
+  }
+  if (cursorId) {
+    conditions.push(Prisma.sql`(profile.created_at, profile.id) < (
+      SELECT cursor_profile.created_at, cursor_profile.id
+      FROM profiles cursor_profile
+      WHERE cursor_profile.id = CAST(${cursorId} AS uuid)
+    )`);
+  }
+  const whereSql = conditions.length
+    ? Prisma.sql`WHERE ${Prisma.join(conditions, " AND ")}`
+    : Prisma.empty;
 
-  return users.map(mapUser);
+  type UserPayloadRow = {
+    users: Array<Parameters<typeof mapUser>[0]>;
+    roleCounts: { students: number; staff: number; admins: number };
+  };
+  const payloadRows = await withTransientPrismaReadRetry(() => prisma.$queryRaw<UserPayloadRow[]>`
+    SELECT
+      jsonb_build_object(
+        'students', COUNT(*) FILTER (WHERE role = 'STUDENT')::integer,
+        'staff', COUNT(*) FILTER (WHERE role = 'STAFF')::integer,
+        'admins', COUNT(*) FILTER (WHERE role = 'ADMIN')::integer
+      ) AS "roleCounts",
+      COALESCE((
+        SELECT jsonb_agg(to_jsonb(user_row))
+        FROM (
+          SELECT
+            profile.id,
+            profile.full_name AS "fullName",
+            profile.email,
+            profile.student_number AS "studentNumber",
+            profile.phone,
+            profile.department,
+            profile.role::text AS role,
+            profile.avatar_url AS "avatarUrl",
+            profile.created_at AS "createdAt",
+            profile.updated_at AS "updatedAt"
+          FROM profiles profile
+          ${whereSql}
+          ORDER BY profile.created_at DESC, profile.id DESC
+          LIMIT ${limit + 1}
+        ) user_row
+      ), '[]'::jsonb) AS users
+    FROM profiles
+  `);
+  const payload = payloadRows[0] ?? {
+    users: [],
+    roleCounts: { students: 0, staff: 0, admins: 0 }
+  };
+  return {
+    ...createPage(payload.users.map(mapUser), limit),
+    roleCounts: payload.roleCounts
+  };
 }
 
 export async function listStaffVisibleUsers() {
@@ -107,7 +164,8 @@ export async function updateUserRoleWithDependencies(
     // commits. The lock is released automatically on commit or rollback and is
     // safe with transaction-pooled PostgreSQL connections.
     await transaction.$queryRaw`
-      SELECT pg_advisory_xact_lock(
+      SELECT 1::integer AS "locked"
+      FROM pg_advisory_xact_lock(
         CAST(${ADMIN_ROLE_LOCK_NAMESPACE} AS integer),
         CAST(${ADMIN_ROLE_LOCK_KEY} AS integer)
       )
@@ -192,5 +250,13 @@ const userRoleUpdateDependencies: UserRoleUpdateDependencies = {
 };
 
 export async function updateUserRole(userId: string, role: AppRole, performedById: string) {
-  return updateUserRoleWithDependencies(userId, role, performedById, userRoleUpdateDependencies);
+  const user = await updateUserRoleWithDependencies(userId, role, performedById, userRoleUpdateDependencies);
+  await publishRealtimeEventsBestEffort([{
+    topic: REALTIME_TOPICS.users,
+    entityId: userId,
+    audienceUserIds: [userId],
+    audienceRoles: ["ADMIN"],
+    payload: { action: "role-changed", role: user.role }
+  }]);
+  return user;
 }

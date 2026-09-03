@@ -104,6 +104,72 @@ test("disabled PayMongo configuration does not require provider secrets", () => 
   assert.equal(result.status, 0, result.stderr);
 });
 
+test("database-grounded WesBot works without a Gemini credential", () => {
+  const result = loadConfig({
+    WESBOT_ENABLED: "true",
+    WESBOT_AI_ENABLED: "false",
+    GEMINI_API_KEY: ""
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test("semantic routing and AI rewrites stay fail-closed behind the AI feature boundary", () => {
+  const semanticWithoutAi = loadConfig({
+    WESBOT_ENABLED: "true",
+    WESBOT_AI_ENABLED: "false",
+    WESBOT_SEMANTIC_MODE: "active"
+  });
+  assert.notEqual(semanticWithoutAi.status, 0);
+  assert.match(`${semanticWithoutAi.stdout}\n${semanticWithoutAi.stderr}`, /WESBOT_SEMANTIC_MODE/);
+
+  const rewriteWithoutAi = loadConfig({
+    WESBOT_ENABLED: "true",
+    WESBOT_AI_ENABLED: "false",
+    WESBOT_AI_REWRITE_ENABLED: "true"
+  });
+  assert.notEqual(rewriteWithoutAi.status, 0);
+  assert.match(`${rewriteWithoutAi.stdout}\n${rewriteWithoutAi.stderr}`, /WESBOT_AI_REWRITE_ENABLED/);
+
+  const boundedTimeout = loadConfig({ WESBOT_AI_TIMEOUT_MS: "999" });
+  assert.notEqual(boundedTimeout.status, 0);
+});
+
+test("optional WesBot AI polish fails closed without Gemini authentication", () => {
+  const botDisabled = loadConfig({
+    WESBOT_ENABLED: "false",
+    WESBOT_AI_ENABLED: "true",
+    GEMINI_API_KEY: "wesbot-test-key"
+  });
+  assert.notEqual(botDisabled.status, 0);
+  assert.match(`${botDisabled.stdout}\n${botDisabled.stderr}`, /requires WESBOT_ENABLED/);
+
+  const missingGemini = loadConfig({
+    WESBOT_ENABLED: "true",
+    WESBOT_AI_ENABLED: "true",
+    GEMINI_API_KEY: ""
+  });
+  assert.notEqual(missingGemini.status, 0);
+  assert.match(`${missingGemini.stdout}\n${missingGemini.stderr}`, /GEMINI_API_KEY is required/);
+
+  const invalidModel = loadConfig({
+    WESBOT_ENABLED: "true",
+    WESBOT_AI_ENABLED: "true",
+    WESBOT_MODEL: "invalid-model",
+    GEMINI_API_KEY: "wesbot-test-key"
+  });
+  assert.notEqual(invalidModel.status, 0);
+  assert.match(`${invalidModel.stdout}\n${invalidModel.stderr}`, /Gemini model identifier/);
+
+  const authenticated = loadConfig({
+    WESBOT_ENABLED: "true",
+    WESBOT_AI_ENABLED: "true",
+    WESBOT_MODEL: "gemini-3.5-flash-lite",
+    GEMINI_API_KEY: "wesbot-test-key"
+  });
+  assert.equal(authenticated.status, 0, authenticated.stderr);
+});
+
 test("disabled checkout still validates webhook mode and any configured signing secret", () => {
   const weakSecret = loadConfig({
     PAYMONGO_ENABLED: "false",

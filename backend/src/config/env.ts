@@ -59,6 +59,21 @@ const envSchema = z.object({
   VAPID_PUBLIC_KEY: z.string().trim().optional(),
   VAPID_PRIVATE_KEY: z.string().trim().optional(),
   VAPID_SUBJECT: z.string().trim().default("mailto:wescomm@wesleyan.edu.ph"),
+  WESBOT_ENABLED: booleanEnv.default(false),
+  WESBOT_AI_ENABLED: booleanEnv.default(false),
+  WESBOT_AI_REWRITE_ENABLED: booleanEnv.default(false),
+  WESBOT_CONVERSATIONAL_MODE: booleanEnv.default(true),
+  WESBOT_SEMANTIC_MODE: z.enum(["off", "shadow", "active"]).default("off"),
+  WESBOT_AI_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(15_000).default(12_000),
+  WESBOT_MODEL: z.string().trim().min(3).default("gemini-3.5-flash-lite"),
+  WESBOT_BUDGET_ENFORCEMENT_ENABLED: booleanEnv.default(true),
+  WESBOT_MONTHLY_BUDGET_USD: z.coerce.number().min(0.5).max(10_000).default(10),
+  WESBOT_REQUEST_RESERVE_USD: z.coerce.number().min(0.001).max(1).default(0.01),
+  WESBOT_PRICING_VERSION: z.string().trim().min(3).max(120).default("gemini-3.5-flash-lite-standard-2026-08"),
+  WESBOT_INPUT_USD_PER_1M_TOKENS: z.coerce.number().min(0).max(1_000).default(0.3),
+  WESBOT_CACHED_INPUT_USD_PER_1M_TOKENS: z.coerce.number().min(0).max(1_000).default(0.03),
+  WESBOT_OUTPUT_USD_PER_1M_TOKENS: z.coerce.number().min(0).max(1_000).default(2.5),
+  GEMINI_API_KEY: optionalTrimmedString,
   PAYMONGO_ENABLED: booleanEnv.default(false),
   PAYMONGO_SECRET_KEY: optionalTrimmedString,
   PAYMONGO_WEBHOOK_SECRET: optionalTrimmedString,
@@ -131,6 +146,25 @@ if (parsedEnv.PAYMONGO_ENABLED) {
 
 if (parsedEnv.PAYMONGO_LIVEMODE && !isProductionDeployment) {
   throw new Error("Live PayMongo payment processing is allowed only in the production deployment.");
+}
+
+if (parsedEnv.WESBOT_AI_ENABLED) {
+  if (!parsedEnv.WESBOT_ENABLED) {
+    throw new Error("WESBOT_AI_ENABLED requires WESBOT_ENABLED to be true.");
+  }
+  if (!/^gemini-[a-z0-9.-]+$/i.test(parsedEnv.WESBOT_MODEL)) {
+    throw new Error("WESBOT_MODEL must be a Gemini model identifier such as gemini-3.5-flash-lite.");
+  }
+  if (!parsedEnv.GEMINI_API_KEY) {
+    throw new Error("GEMINI_API_KEY is required when WesBot AI is enabled.");
+  }
+}
+
+if (parsedEnv.WESBOT_AI_REWRITE_ENABLED && !parsedEnv.WESBOT_AI_ENABLED) {
+  throw new Error("WESBOT_AI_REWRITE_ENABLED requires WESBOT_AI_ENABLED to be true.");
+}
+if (parsedEnv.WESBOT_SEMANTIC_MODE !== "off" && !parsedEnv.WESBOT_AI_ENABLED) {
+  throw new Error("WESBOT_SEMANTIC_MODE shadow/active requires WESBOT_AI_ENABLED to be true.");
 }
 
 function validateEncryptionKeys(value: string | undefined, currentVersion: string) {

@@ -1,6 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { userFacingErrorMessage } from "@/lib/user-facing-error";
+
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import {
   Ban,
   CheckCircle2,
@@ -15,16 +17,20 @@ import {
   X
 } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
+import { useRealtimeRefresh } from "@/components/realtime/RealtimeProvider";
 import { ActionLoadingOverlay } from "@/components/ui/ActionLoadingOverlay";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
+import { useAccessibleDialog } from "@/components/ui/useAccessibleDialog";
 import {
   confirmReservationNoShowFromApi,
   createStudentRestrictionFromApi,
+  getNoShowCandidatesFromApi,
   getRestrictionOverviewFromApi,
   liftStudentRestrictionFromApi,
   overturnStudentOffenseFromApi,
   type BackendNoShowCandidate,
+  type BackendNoShowPage,
   type BackendRestrictionOverview,
   type BackendRestrictionStudent,
   type BackendStudentOffense
@@ -65,42 +71,102 @@ function durationLabel(duration: Duration) {
 export function StaffRestrictionManagement({ role }: { role: "STAFF" | "ADMIN" }) {
   const { user } = useStudentAuth();
   const [overview, setOverview] = useState<BackendRestrictionOverview | null>(null);
+  const [noShowPage, setNoShowPage] = useState<BackendNoShowPage | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadingNoShows, setLoadingNoShows] = useState(true);
+  const [loadingMoreStudents, setLoadingMoreStudents] = useState(false);
+  const [loadingMoreNoShows, setLoadingMoreNoShows] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [search, setSearch] = useState("");
-  const [status, setStatus] = useState<"ALL" | "RESTRICTED" | "CLEAR">("ALL");
+  const [noShowSearch, setNoShowSearch] = useState("");
+  const [status, setStatus] = useState<"ACTIONABLE" | "ALL" | "RESTRICTED" | "WARNING" | "REVIEW">("ACTIONABLE");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [selectedStudent, setSelectedStudent] = useState<BackendRestrictionStudent | null>(null);
   const [noShowCandidate, setNoShowCandidate] = useState<BackendNoShowCandidate | null>(null);
+  const noShowDialog = useAccessibleDialog<HTMLElement>(Boolean(noShowCandidate), () => setNoShowCandidate(null));
+  const studentDialog = useAccessibleDialog<HTMLElement>(Boolean(selectedStudent), () => setSelectedStudent(null));
   const [offenseToOverturn, setOffenseToOverturn] = useState<BackendStudentOffense | null>(null);
   const [duration, setDuration] = useState<Duration>("7_DAYS");
   const [reason, setReason] = useState("");
 
-  const loadOverview = useCallback(async ({ background = false }: { background?: boolean } = {}) => {
+  const loadOverview = useCallback(async ({
+    background = false,
+    cursor
+  }: { background?: boolean; cursor?: string } = {}) => {
     if (!user?.accessToken || (user.role !== "STAFF" && user.role !== "ADMIN")) return;
-    if (!background) setLoading(true);
+    if (cursor) setLoadingMoreStudents(true);
+    else if (!background) setLoading(true);
 
     try {
-      setOverview(await getRestrictionOverviewFromApi(user.accessToken));
+      const next = await getRestrictionOverviewFromApi(user.accessToken, {
+        query: search,
+        status,
+        cursor,
+        limit: 25
+      });
+      setOverview((current) => cursor && current
+        ? { ...next, students: [...current.students, ...next.students] }
+        : next);
       setError("");
     } catch (requestError) {
-      if (!background) setError(requestError instanceof Error ? requestError.message : "Unable to load student access records.");
+      if (!background) setError(userFacingErrorMessage(requestError, "Unable to load student access records."));
     } finally {
       if (!background) setLoading(false);
+      setLoadingMoreStudents(false);
     }
-  }, [user?.accessToken, user?.role]);
+  }, [search, status, user?.accessToken, user?.role]);
+
+  const loadNoShows = useCallback(async ({
+    background = false,
+    cursor
+  }: { background?: boolean; cursor?: string } = {}) => {
+    if (!user?.accessToken || (user.role !== "STAFF" && user.role !== "ADMIN")) return;
+    if (cursor) setLoadingMoreNoShows(true);
+    else if (!background) setLoadingNoShows(true);
+
+    try {
+      const next = await getNoShowCandidatesFromApi(user.accessToken, {
+        query: noShowSearch,
+        cursor,
+        limit: 20
+      });
+      setNoShowPage((current) => cursor && current
+        ? { ...next, items: [...current.items, ...next.items] }
+        : next);
+      setError("");
+    } catch (requestError) {
+      if (!background) setError(userFacingErrorMessage(requestError, "Unable to load eligible no-show reviews."));
+    } finally {
+      if (!background) setLoadingNoShows(false);
+      setLoadingMoreNoShows(false);
+    }
+  }, [noShowSearch, user?.accessToken, user?.role]);
+
+  useRealtimeRefresh(["restrictions", "reservations"], () => {
+    void loadOverview({ background: true });
+    void loadNoShows({ background: true });
+  });
 
   useEffect(() => {
-    void loadOverview();
+    const timer = window.setTimeout(() => void loadOverview(), 300);
+    return () => window.clearTimeout(timer);
   }, [loadOverview]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => void loadNoShows(), 300);
+    return () => window.clearTimeout(timer);
+  }, [loadNoShows]);
 
   useEffect(() => {
     if (!user?.accessToken) return undefined;
     const refresh = () => {
-      if (document.visibilityState === "visible") void loadOverview({ background: true });
+      if (document.visibilityState === "visible") {
+        void loadOverview({ background: true });
+        void loadNoShows({ background: true });
+      }
     };
-    const timer = window.setInterval(refresh, 30_000);
+    const timer = window.setInterval(refresh, 5 * 60_000);
     window.addEventListener("focus", refresh);
     document.addEventListener("visibilitychange", refresh);
     return () => {
@@ -108,24 +174,20 @@ export function StaffRestrictionManagement({ role }: { role: "STAFF" | "ADMIN" }
       window.removeEventListener("focus", refresh);
       document.removeEventListener("visibilitychange", refresh);
     };
-  }, [loadOverview, user?.accessToken]);
+  }, [loadNoShows, loadOverview, user?.accessToken]);
 
-  const visibleStudents = useMemo(() => {
-    const query = search.trim().toLowerCase();
-    return (overview?.students ?? []).filter((student) => {
-      const matchesQuery = !query || `${student.fullName} ${student.email} ${student.studentNumber ?? ""} ${student.department ?? ""}`.toLowerCase().includes(query);
-      const matchesStatus = status === "ALL" || (status === "RESTRICTED" ? Boolean(student.activeRestriction) : !student.activeRestriction);
-      return matchesQuery && matchesStatus;
-    });
-  }, [overview?.students, search, status]);
-
-  const restrictedCount = (overview?.students ?? []).filter((student) => student.activeRestriction).length;
-  const warningCount = (overview?.students ?? []).filter((student) => !student.activeRestriction && student.consecutiveOffenses > 0).length;
+  const visibleStudents = overview?.students ?? [];
+  const restrictedCount = overview?.summary.restrictedStudents ?? 0;
+  const warningCount = overview?.summary.warningStudents ?? 0;
 
   const refreshAndReselect = async (studentId?: string) => {
     if (!user?.accessToken) return;
-    const next = await getRestrictionOverviewFromApi(user.accessToken);
+    const [next, nextNoShows] = await Promise.all([
+      getRestrictionOverviewFromApi(user.accessToken, { query: search, status, limit: 25 }),
+      getNoShowCandidatesFromApi(user.accessToken, { query: noShowSearch, limit: 20 })
+    ]);
     setOverview(next);
+    setNoShowPage(nextNoShows);
     if (studentId) setSelectedStudent(next.students.find((student) => student.id === studentId) ?? null);
   };
 
@@ -152,7 +214,7 @@ export function StaffRestrictionManagement({ role }: { role: "STAFF" | "ADMIN" }
       setReason("");
       setNotice(`${studentName(selectedStudent)} can no longer submit reservations for ${durationLabel(duration).toLowerCase()}.`);
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Unable to apply the restriction.");
+      setError(userFacingErrorMessage(requestError, "Unable to apply the restriction."));
     } finally {
       setSubmitting(false);
     }
@@ -170,7 +232,7 @@ export function StaffRestrictionManagement({ role }: { role: "STAFF" | "ADMIN" }
       setReason("");
       setNotice(`${studentName(selectedStudent)} can submit reservations again.`);
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Unable to restore reservation access.");
+      setError(userFacingErrorMessage(requestError, "Unable to restore reservation access."));
     } finally {
       setSubmitting(false);
     }
@@ -189,7 +251,7 @@ export function StaffRestrictionManagement({ role }: { role: "STAFF" | "ADMIN" }
       setNotice(message);
       setNoShowCandidate(null);
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Unable to confirm this no-show.");
+      setError(userFacingErrorMessage(requestError, "Unable to confirm this no-show."));
     } finally {
       setSubmitting(false);
     }
@@ -207,7 +269,7 @@ export function StaffRestrictionManagement({ role }: { role: "STAFF" | "ADMIN" }
       setOffenseToOverturn(null);
       setReason("");
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Unable to remove this offense.");
+      setError(userFacingErrorMessage(requestError, "Unable to remove this offense."));
     } finally {
       setSubmitting(false);
     }
@@ -221,8 +283,8 @@ export function StaffRestrictionManagement({ role }: { role: "STAFF" | "ADMIN" }
           <h1 className="mt-1 text-3xl font-extrabold text-[#101820]">Reservation access review</h1>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-[#68746d]">Review confirmed unclaimed reservations and pause only reservation access. Students keep access to receipts, support, and their account.</p>
         </div>
-        <Button variant="secondary" onClick={() => void loadOverview()} disabled={loading}>
-          <RefreshCw className={`size-4 ${loading ? "animate-spin" : ""}`} /> Refresh
+        <Button variant="secondary" onClick={() => { void loadOverview(); void loadNoShows(); }} disabled={loading || loadingNoShows}>
+          <RefreshCw className={`size-4 ${loading || loadingNoShows ? "animate-spin" : ""}`} /> Refresh
         </Button>
       </header>
 
@@ -238,10 +300,10 @@ export function StaffRestrictionManagement({ role }: { role: "STAFF" | "ADMIN" }
 
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {[
-          { label: "Student accounts", value: overview?.students.length ?? 0, detail: "Available for review", icon: UserRoundCheck, tone: "bg-[#e8f4e8] text-primary" },
+          { label: "Student accounts", value: overview?.summary.totalStudents ?? 0, detail: "Available for review", icon: UserRoundCheck, tone: "bg-[#e8f4e8] text-primary" },
           { label: "Access paused", value: restrictedCount, detail: "Active reservation restrictions", icon: Ban, tone: "bg-[#fde8e8] text-[#a22b2b]" },
           { label: "Active warnings", value: warningCount, detail: "Before automatic suspension", icon: TriangleAlert, tone: "bg-[#fff0c7] text-[#8a5b00]" },
-          { label: "No-shows to review", value: overview?.noShowCandidates.length ?? 0, detail: "Grace period already passed", icon: Clock3, tone: "bg-[#e9f1fb] text-[#245b8f]" }
+          { label: "No-shows to review", value: noShowPage?.totalCandidates ?? 0, detail: "Grace period already passed", icon: Clock3, tone: "bg-[#e9f1fb] text-[#245b8f]" }
         ].map((card) => (
           <article key={card.label} className="flex items-center gap-4 rounded-lg border border-[#dce5dd] bg-white p-4 shadow-sm">
             <span className={`grid size-12 shrink-0 place-items-center rounded-full ${card.tone}`}><card.icon className="size-6" /></span>
@@ -261,13 +323,20 @@ export function StaffRestrictionManagement({ role }: { role: "STAFF" | "ADMIN" }
       <details className="overflow-hidden rounded-lg border border-[#dce5dd] bg-white shadow-sm">
         <summary className="flex cursor-pointer list-none items-center gap-3 px-4 py-4 sm:px-5">
           <span className="grid size-10 place-items-center rounded-md bg-[#fff0c7] text-[#8a5b00]"><Clock3 className="size-5" /></span>
-          <div><p className="font-extrabold text-[#17211b]">Eligible no-show reviews</p><p className="text-xs text-[#68746d]">{overview?.noShowCandidates.length ?? 0} pickup{overview?.noShowCandidates.length === 1 ? "" : "s"} passed the grace period</p></div>
+          <div><p className="font-extrabold text-[#17211b]">Eligible no-show reviews</p><p className="text-xs text-[#68746d]">{noShowPage?.totalCandidates ?? 0} pickup{noShowPage?.totalCandidates === 1 ? "" : "s"} passed the grace period</p></div>
           <ChevronDown className="ml-auto size-5 text-primary" />
         </summary>
         <div className="border-t border-[#e7ece8] p-3 sm:p-4">
-          {overview?.noShowCandidates.length ? (
-            <div className="grid gap-3 lg:grid-cols-2">
-              {overview.noShowCandidates.map((candidate) => (
+          <label className="mb-3 flex h-11 min-w-0 items-center rounded-md border border-[#d7e1d8] px-3 focus-within:border-primary">
+            <Search className="mr-2 size-5 text-[#68746d]" />
+            <input type="search" value={noShowSearch} onChange={(event) => setNoShowSearch(event.target.value)} placeholder="Search reference, student, or item" className="min-w-0 flex-1 bg-transparent text-sm outline-none" />
+          </label>
+          {loadingNoShows ? (
+            <p className="px-2 py-5 text-sm font-semibold text-[#68746d]">Loading eligible no-show reviews...</p>
+          ) : noShowPage?.items.length ? (
+            <>
+              <div className="grid gap-3 lg:grid-cols-2">
+              {noShowPage.items.map((candidate) => (
                 <article key={candidate.id} className="rounded-lg border border-[#e2e8e2] p-4">
                   <div className="flex items-start gap-3">
                     <div className="min-w-0 flex-1"><p className="font-extrabold text-[#17211b]">{candidate.referenceCode}</p><p className="mt-1 text-sm font-semibold text-primary">{candidate.student.fullName || candidate.student.email}</p><p className="text-xs text-[#68746d]">Pickup ended {formatDateTime(candidate.pickupEnd)}</p></div>
@@ -276,7 +345,15 @@ export function StaffRestrictionManagement({ role }: { role: "STAFF" | "ADMIN" }
                   <p className="mt-3 text-xs leading-5 text-[#68746d]">{candidate.items.map((item) => `${item.name} x${item.quantity}`).join(", ")}</p>
                 </article>
               ))}
-            </div>
+              </div>
+              {noShowPage.nextCursor ? (
+                <div className="mt-4 flex justify-center">
+                  <Button variant="secondary" disabled={loadingMoreNoShows} onClick={() => void loadNoShows({ cursor: noShowPage.nextCursor ?? undefined })}>
+                    {loadingMoreNoShows ? "Loading more..." : "Load more no-show reviews"}
+                  </Button>
+                </div>
+              ) : null}
+            </>
           ) : <p className="px-2 py-5 text-sm font-semibold text-[#68746d]">No reservations currently qualify for no-show review.</p>}
         </div>
       </details>
@@ -288,7 +365,7 @@ export function StaffRestrictionManagement({ role }: { role: "STAFF" | "ADMIN" }
             <input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search student name, email, number, or department" className="min-w-0 flex-1 bg-transparent text-sm outline-none" />
           </label>
           <select value={status} onChange={(event) => setStatus(event.target.value as typeof status)} className="h-11 rounded-md border border-[#d7e1d8] bg-white px-3 text-sm font-semibold outline-none focus:border-primary">
-            <option value="ALL">All students</option><option value="RESTRICTED">Access paused</option><option value="CLEAR">No active restriction</option>
+            <option value="ACTIONABLE">Needs attention</option><option value="RESTRICTED">Access paused</option><option value="WARNING">Warnings</option><option value="REVIEW">Review cases</option><option value="ALL">All students</option>
           </select>
         </div>
 
@@ -316,19 +393,26 @@ export function StaffRestrictionManagement({ role }: { role: "STAFF" | "ADMIN" }
                 </article>
               ))}
             </div>
+            {overview?.nextCursor ? (
+              <div className="flex justify-center border-t border-[#e8ede9] p-4">
+                <Button variant="secondary" disabled={loadingMoreStudents} onClick={() => void loadOverview({ cursor: overview.nextCursor ?? undefined })}>
+                  {loadingMoreStudents ? "Loading more..." : "Load more students"}
+                </Button>
+              </div>
+            ) : null}
           </>
         ) : <p className="p-6 text-sm font-semibold text-[#68746d]">No matching student accounts found.</p>}
       </section>
 
       {noShowCandidate ? (
         <div className="fixed inset-0 z-[10000] grid place-items-center overflow-y-auto bg-[#101820]/55 p-3" onMouseDown={(event) => { if (!submitting && event.target === event.currentTarget) setNoShowCandidate(null); }}>
-          <section role="dialog" aria-modal="true" aria-labelledby="no-show-title" className="relative w-full max-w-lg overflow-hidden rounded-lg border border-[#e0e6e0] bg-white p-5 shadow-2xl sm:p-6">
+          <section ref={noShowDialog.dialogRef} {...noShowDialog.dialogProps} className="relative w-full max-w-lg overflow-hidden rounded-lg border border-[#e0e6e0] bg-white p-5 shadow-2xl sm:p-6">
             <ActionLoadingOverlay
               active={submitting}
               title="Recording unclaimed pickup"
               detail="We are updating the reservation, stock, and student access record."
             />
-            <div className="flex items-start gap-3"><span className="grid size-11 shrink-0 place-items-center rounded-md bg-red-50 text-red-700"><TriangleAlert className="size-6" /></span><div><p className="text-xs font-bold uppercase text-red-700">Staff confirmation required</p><h2 id="no-show-title" className="mt-1 text-xl font-extrabold text-[#17211b]">Record this pickup as unclaimed?</h2></div><button type="button" onClick={() => setNoShowCandidate(null)} disabled={submitting} className="ml-auto grid size-9 place-items-center rounded-md hover:bg-[#f1f5f1] disabled:opacity-50" aria-label="Close"><X className="size-5" /></button></div>
+            <div className="flex items-start gap-3"><span className="grid size-11 shrink-0 place-items-center rounded-md bg-red-50 text-red-700"><TriangleAlert className="size-6" /></span><div><p className="text-xs font-bold uppercase text-red-700">Staff confirmation required</p><h2 id={noShowDialog.titleId} className="mt-1 text-xl font-extrabold text-[#17211b]">Record this pickup as unclaimed?</h2></div><button type="button" data-dialog-autofocus onClick={() => setNoShowCandidate(null)} disabled={submitting} className="ml-auto grid size-9 place-items-center rounded-md hover:bg-[#f1f5f1] disabled:opacity-50" aria-label="Close"><X className="size-5" /></button></div>
             <div className="mt-5 rounded-lg border border-[#e2e8e2] bg-[#f8faf8] p-4 text-sm"><p className="font-extrabold">{noShowCandidate.referenceCode}</p><p className="mt-1 text-primary">{noShowCandidate.student.fullName || noShowCandidate.student.email}</p><p className="mt-2 text-[#68746d]">Pickup ended {formatDateTime(noShowCandidate.pickupEnd)}. The 24-hour grace period has passed.</p></div>
             <p className="mt-4 text-sm leading-6 text-[#5f6b64]">Use this only after checking that the student did not collect the items. It records an offense, returns held stock to inventory, and may trigger a reservation restriction.</p>
             <div className="mt-6 grid grid-cols-2 gap-3"><Button variant="secondary" onClick={() => setNoShowCandidate(null)} disabled={submitting}>Go back</Button><Button onClick={() => void confirmNoShow()} disabled={submitting} className="bg-red-700 hover:bg-red-800"><Ban className="size-4" />Confirm no-show</Button></div>
@@ -338,13 +422,13 @@ export function StaffRestrictionManagement({ role }: { role: "STAFF" | "ADMIN" }
 
       {selectedStudent ? (
         <div className="fixed inset-0 z-[9999] grid place-items-center overflow-y-auto bg-[#101820]/55 p-3" onMouseDown={(event) => { if (!submitting && event.target === event.currentTarget) setSelectedStudent(null); }}>
-          <section role="dialog" aria-modal="true" aria-labelledby="student-access-title" className="relative my-4 w-full max-w-2xl overflow-hidden rounded-lg border border-[#e0e6e0] bg-white shadow-2xl">
+          <section ref={studentDialog.dialogRef} {...studentDialog.dialogProps} className="relative my-4 w-full max-w-2xl overflow-hidden rounded-lg border border-[#e0e6e0] bg-white shadow-2xl">
             <ActionLoadingOverlay
               active={submitting}
               title="Updating reservation access"
               detail="We are saving the review and refreshing the student's access."
             />
-            <header className="flex items-start gap-3 border-b border-[#e7ece8] p-5 sm:p-6"><span className="grid size-11 shrink-0 place-items-center rounded-md bg-[#e8f4e8] text-primary">{selectedStudent.activeRestriction ? <Ban className="size-6" /> : <UserRoundCheck className="size-6" />}</span><div className="min-w-0"><p className="text-xs font-bold uppercase text-primary">Student reservation access</p><h2 id="student-access-title" className="mt-1 text-xl font-extrabold text-[#17211b]">{studentName(selectedStudent)}</h2><p className="truncate text-sm text-[#68746d]">{selectedStudent.email}</p></div><button type="button" onClick={() => setSelectedStudent(null)} disabled={submitting} aria-label="Close" className="ml-auto grid size-9 place-items-center rounded-md hover:bg-[#f1f5f1] disabled:opacity-50"><X className="size-5" /></button></header>
+            <header className="flex items-start gap-3 border-b border-[#e7ece8] p-5 sm:p-6"><span className="grid size-11 shrink-0 place-items-center rounded-md bg-[#e8f4e8] text-primary">{selectedStudent.activeRestriction ? <Ban className="size-6" /> : <UserRoundCheck className="size-6" />}</span><div className="min-w-0"><p className="text-xs font-bold uppercase text-primary">Student reservation access</p><h2 id={studentDialog.titleId} className="mt-1 text-xl font-extrabold text-[#17211b]">{studentName(selectedStudent)}</h2><p className="truncate text-sm text-[#68746d]">{selectedStudent.email}</p></div><button type="button" data-dialog-autofocus onClick={() => setSelectedStudent(null)} disabled={submitting} aria-label="Close" className="ml-auto grid size-9 place-items-center rounded-md hover:bg-[#f1f5f1] disabled:opacity-50"><X className="size-5" /></button></header>
             <div className="max-h-[calc(100svh-170px)] space-y-5 overflow-y-auto p-5 sm:p-6">
               <div className="grid gap-3 sm:grid-cols-3"><div className="rounded-md bg-[#f5f8f5] p-3"><p className="text-xs text-[#68746d]">Status</p><span className="mt-2 inline-block"><StatusBadge status={restrictionStatus(selectedStudent)} /></span></div><div className="rounded-md bg-[#f5f8f5] p-3"><p className="text-xs text-[#68746d]">Consecutive warnings</p><p className="mt-1 text-xl font-extrabold">{selectedStudent.consecutiveOffenses} / {overview?.policy.firstRestrictionAt ?? 3}</p></div><div className="rounded-md bg-[#f5f8f5] p-3"><p className="text-xs text-[#68746d]">Student number</p><p className="mt-1 font-extrabold">{selectedStudent.studentNumber || "Not provided"}</p></div></div>
 

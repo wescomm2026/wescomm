@@ -1,0 +1,62 @@
+[
+  {
+    "text": "Mali yung reservation ko, pwede ko bang alisin?",
+    "intended": "CANCELLATION_ELIGIBILITY",
+    "current_detected": "RESERVATION_STATUS"
+  },
+  {
+    "text": "Ano rules ng reservation?",
+    "intended": "POLICY_QUESTION",
+    "current_detected": "RESERVATION_STATUS"
+  },
+  {
+    "text": "Bawal ba multiple reservations?",
+    "intended": "POLICY_QUESTION",
+    "current_detected": "RESERVATION_STATUS"
+  },
+  {
+    "text": "Allowed ba late pickup?",
+    "intended": "POLICY_QUESTION",
+    "current_detected": "PICKUP_INFORMATION"
+  },
+  {
+    "text": "Pwede ba mag reserve ulit after no show?",
+    "intended": "POLICY_QUESTION",
+    "current_detected": "RESERVATION_STATUS"
+  },
+  {
+    "text": "May policy ba sa cancelled reservation?",
+    "intended": "POLICY_QUESTION",
+    "current_detected": "CANCELLATION_ELIGIBILITY"
+  },
+  {
+    "text": "Pwede ba ako mag-reserve habang restricted?",
+    "intended": "POLICY_QUESTION",
+    "current_detected": "RESERVATION_STATUS"
+  },
+  {
+    "text": "Bawal ba mag claim after schedule?",
+    "intended": "POLICY_QUESTION",
+    "current_detected": "PICKUP_INFORMATION"
+  },
+  {
+    "text": "What are the reservation rules?",
+    "intended": "POLICY_QUESTION",
+    "current_detected": "RESERVATION_STATUS"
+  },
+  {
+    "text": "Allowed ba student cancellation?",
+    "intended": "POLICY_QUESTION",
+    "current_detected": "CANCELLATION_ELIGIBILITY"
+  },
+  {
+    "text": "Paano gamitin yung website?",
+    "intended": "GENERAL_SUPPORT",
+    "current_detected": "PRODUCT_INQUIRY"
+  },
+  {
+    "text": "Website help please",
+    "intended": "GENERAL_SUPPORT",
+    "current_detected": "PRODUCT_INQUIRY"
+  }
+]

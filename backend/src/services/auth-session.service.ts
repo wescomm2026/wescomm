@@ -2,6 +2,10 @@ import { createHash, randomBytes } from "node:crypto";
 import type { Request, Response } from "express";
 import { env } from "../config/env.js";
 import {
+  assertCurrentAccountPolicyAcceptance,
+  type SubmittedPolicyAcceptance
+} from "../domain/policy-acceptance.js";
+import {
   isTemporaryProductionStaffIdentity,
   temporaryStaffLoginExpirationMs
 } from "../domain/temporary-staff-login-policy.js";
@@ -18,6 +22,16 @@ const DEVELOPMENT_COOKIE_NAME = "wescomm_session";
 const PRODUCTION_COOKIE_NAME = "__Host-wescomm_session";
 const LAST_SEEN_WRITE_INTERVAL_MS = 15 * 60 * 1000;
 const TEMPORARY_STAFF_SESSION_TOKEN_PREFIX = "tmp_staff.";
+
+type ResolvedAuthSession = {
+  sessionId: string;
+  profile: Profile;
+} | null;
+
+// Initial page load opens several authenticated requests at once (page data,
+// notifications, restrictions and realtime). Share only the in-flight lookup;
+// completed results are not cached, so logout/revocation stays immediate.
+const pendingSessionResolutions = new Map<string, Promise<ResolvedAuthSession>>();
 
 export type AuthSessionKind = "STANDARD" | "TEMPORARY_STAFF";
 
@@ -136,9 +150,11 @@ export async function issueAuthSession(input: {
   request: Request;
   response: Response;
   userId: string;
+  policyAcceptance?: SubmittedPolicyAcceptance;
   maximumExpiresAt?: Date;
   kind?: AuthSessionKind;
 }) {
+  const policyVersion = assertCurrentAccountPolicyAcceptance(input.policyAcceptance);
   const tokenEntropy = randomBytes(32).toString("base64url");
   const rawToken = input.kind === "TEMPORARY_STAFF"
     ? `${TEMPORARY_STAFF_SESSION_TOKEN_PREFIX}${tokenEntropy}`
@@ -182,6 +198,14 @@ export async function issueAuthSession(input: {
           expiresAt
         }
       });
+      await tx.policyAcceptance.createMany({
+        data: [{
+          userId: input.userId,
+          policyVersion,
+          acceptedAt: now
+        }],
+        skipDuplicates: true
+      });
     }, AUTH_SESSION_TRANSACTION_OPTIONS);
   } catch (error) {
     // Retrying a write transaction after an ambiguous connection failure can
@@ -196,11 +220,12 @@ export async function issueAuthSession(input: {
   );
 }
 
-export async function resolveAuthSession(rawToken: string) {
+async function resolveAuthSessionUncached(rawToken: string, tokenHash: string): Promise<ResolvedAuthSession> {
   const now = new Date();
   const session = await withTransientPrismaReadRetry(() => prisma.authSession.findUnique({
-    where: { tokenHash: hashToken(rawToken) },
-    include: { user: true }
+    where: { tokenHash },
+    include: { user: true },
+    relationLoadStrategy: "join"
   }));
 
   if (!session || session.revokedAt || session.expiresAt <= now) return null;
@@ -229,6 +254,20 @@ export async function resolveAuthSession(rawToken: string) {
     sessionId: session.id,
     profile: mapSessionProfile(session.user as Parameters<typeof mapSessionProfile>[0])
   };
+}
+
+export async function resolveAuthSession(rawToken: string): Promise<ResolvedAuthSession> {
+  const tokenHash = hashToken(rawToken);
+  const pending = pendingSessionResolutions.get(tokenHash);
+  if (pending) return pending;
+
+  const resolution = resolveAuthSessionUncached(rawToken, tokenHash).finally(() => {
+    if (pendingSessionResolutions.get(tokenHash) === resolution) {
+      pendingSessionResolutions.delete(tokenHash);
+    }
+  });
+  pendingSessionResolutions.set(tokenHash, resolution);
+  return resolution;
 }
 
 export async function revokeAuthSession(rawToken: string | null) {

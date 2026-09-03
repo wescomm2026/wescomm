@@ -1,4 +1,4 @@
-import { AdminDashboardExperience } from "@/components/admin/AdminExperiences";
+import { AdminDashboardExperience } from "@/components/admin/AdminDashboardExperience";
 
 export default function Page() {
   return <AdminDashboardExperience />;
