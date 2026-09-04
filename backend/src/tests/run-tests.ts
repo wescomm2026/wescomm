@@ -124,5 +124,7 @@ if (process.env.RUN_DATABASE_INTEGRATION_TESTS === "true") {
   await import("./rate-limit-postgres.integration.test.js");
   await import("./receipt-postgres.integration.test.js");
   await import("./wishlist-postgres.integration.test.js");
+  await import("./conversation-archive-postgres.integration.test.js");
+  await import("./conversation-message-edit-postgres.integration.test.js");
 }
 await import("./security.test.js");

@@ -1435,7 +1435,7 @@ export async function editConversationMessage(input: {
     if (input.role === "STUDENT" && conversation.studentId !== input.userId) {
       throw new HttpError(403, "You do not have access to this conversation.");
     }
-    if (conversation.status !== "OPEN" || !["WAITING_FOR_STAFF", "STAFF_ACTIVE"].includes(conversation.mode)) {
+    if (conversation.status !== "OPEN") {
       throw new HttpError(409, "This message can no longer be edited.", "MESSAGE_EDIT_LOCKED");
     }
     if (input.role !== "STUDENT" && conversation.assignedStaffId !== input.userId) {
@@ -1471,15 +1471,6 @@ export async function editConversationMessage(input: {
     if (now.getTime() - message.createdAt.getTime() > 30 * 60 * 1000) {
       throw new HttpError(409, "The 30-minute edit window has ended.", "MESSAGE_EDIT_WINDOW_ENDED");
     }
-    const latest = await tx.conversationMessage.findFirst({
-      where: { conversationId: input.conversationId },
-      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-      select: { id: true }
-    });
-    if (latest?.id !== message.id) {
-      throw new HttpError(409, "A newer message already exists, so this message can no longer be edited.", "MESSAGE_EDIT_LOCKED");
-    }
-
     const nextVersion = message.editVersion + 1;
     await tx.conversationMessageRevision.create({
       data: {

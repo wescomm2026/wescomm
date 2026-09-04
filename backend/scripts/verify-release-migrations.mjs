@@ -45,6 +45,15 @@ const releaseMigrations = [
       /"student_archived_at" = NULL/,
       /SECURITY DEFINER/
     ]
+  },
+  {
+    directory: "20260904010000_allow_open_student_conversation_archive",
+    required: [
+      /DROP CONSTRAINT "conversations_archive_requires_resolved_check"/,
+      /ADD CONSTRAINT "conversations_operations_archive_requires_resolved_check"/,
+      /CHECK \(\s*"operations_archived_at" IS NULL\s*OR "status" = 'RESOLVED'/,
+      /VALIDATE CONSTRAINT "conversations_operations_archive_requires_resolved_check"/
+    ]
   }
 ];
 

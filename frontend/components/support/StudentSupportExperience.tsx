@@ -191,9 +191,7 @@ function canEditSupportMessage(
 ) {
   return message.senderType === "STUDENT"
     && message.senderId === userId
-    && conversation.messages.at(-1)?.id === message.id
     && conversation.status === "OPEN"
-    && (conversation.mode === "WAITING_FOR_STAFF" || conversation.mode === "STAFF_ACTIVE")
     && Date.now() - new Date(message.createdAt).getTime() <= 30 * 60_000;
 }
 
@@ -270,7 +268,6 @@ export function StudentSupportExperience() {
   const [savingEdit, setSavingEdit] = useState(false);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState("");
-  const [resendSourceMessageId, setResendSourceMessageId] = useState<string | null>(null);
   const [actionTarget, setActionTarget] = useState<SupportActionTarget | null>(null);
   const [toast, setToast] = useState<{ message: string; undo?: () => void } | null>(null);
   const [error, setError] = useState("");
@@ -432,7 +429,6 @@ export function StudentSupportExperience() {
     setActionTarget(null);
     setEditingMessageId(null);
     setEditDraft("");
-    setResendSourceMessageId(null);
   }, [conversationView]);
 
   useEffect(() => {
@@ -491,7 +487,6 @@ export function StudentSupportExperience() {
     setActionTarget(null);
     setEditingMessageId(null);
     setEditDraft("");
-    setResendSourceMessageId(null);
     loadedThreadIdsRef.current.clear();
   }, [user?.id]);
 
@@ -602,7 +597,6 @@ export function StudentSupportExperience() {
     setSelectedId(conversationId);
     setStartingNew(false);
     setComposer("");
-    setResendSourceMessageId(null);
     setEditingMessageId(null);
     setEditDraft("");
     setError("");
@@ -617,7 +611,6 @@ export function StudentSupportExperience() {
     setConversationView("ACTIVE");
     setStartingNew(true);
     setComposer("");
-    setResendSourceMessageId(null);
     setEditingMessageId(null);
     setEditDraft("");
     setError("");
@@ -648,7 +641,6 @@ export function StudentSupportExperience() {
 
   const chooseQuickQuestion = (message: string) => {
     setComposer(message);
-    setResendSourceMessageId(null);
     setError("");
     window.setTimeout(() => {
       const input = composerRef.current;
@@ -735,7 +727,6 @@ export function StudentSupportExperience() {
           : conversation));
         if (result.botReplyPending) void requestBotReply(conversationAtSend.id, result.message.id);
       }
-      setResendSourceMessageId(null);
     } catch (supportError) {
       setComposer(message);
       setError(userFacingErrorMessage(supportError, "Unable to send your message."));
@@ -827,22 +818,8 @@ export function StudentSupportExperience() {
   };
 
   const beginMessageEdit = (message: BackendConversationMessage) => {
-    setResendSourceMessageId(null);
     setEditingMessageId(message.id);
     setEditDraft(message.message);
-  };
-
-  const beginEditAndResend = (message: BackendConversationMessage) => {
-    setEditingMessageId(null);
-    setEditDraft("");
-    setResendSourceMessageId(message.id);
-    setComposer(message.message);
-    setError("");
-    window.setTimeout(() => {
-      const input = composerRef.current;
-      input?.focus();
-      input?.setSelectionRange(message.message.length, message.message.length);
-    }, 0);
   };
 
   const copyMessage = async (message: BackendConversationMessage) => {
@@ -912,16 +889,11 @@ export function StudentSupportExperience() {
     disabled: submitting,
     onSelect: () => void archiveConversation(actionConversation, conversationView === "ACTIVE")
   }] : actionMessageConversation && actionMessage ? [
-    ...(canEditSupportMessage(actionMessageConversation, actionMessage, user.id) ? [{
+    ...(conversationView === "ACTIVE" && canEditSupportMessage(actionMessageConversation, actionMessage, user.id) ? [{
       label: "Edit message",
-      description: "Update your latest message.",
+      description: "Update this message without sending a new one.",
       icon: <Pencil key="edit-icon" className="size-5" />,
       onSelect: () => beginMessageEdit(actionMessage)
-    }] : conversationView === "ACTIVE" ? [{
-      label: "Edit and resend",
-      description: "Create an updated follow-up without changing chat history.",
-      icon: <Pencil key="resend-icon" className="size-5" />,
-      onSelect: () => beginEditAndResend(actionMessage)
     }] : []),
     {
       label: "Copy message",
@@ -1313,20 +1285,6 @@ export function StudentSupportExperience() {
             </div>
           ) : null : (
           <div className="shrink-0 border-t border-[#e5ebe6] bg-white px-3 pt-2.5 pb-[calc(.625rem+env(safe-area-inset-bottom))] sm:px-4 sm:py-3">
-            {resendSourceMessageId ? (
-              <div className="mb-2 flex items-center gap-2 rounded-xl border border-[#cfe0d1] bg-[#f2f8f2] px-3 py-2 text-xs text-[#526058]">
-                <Pencil className="size-3.5 shrink-0 text-primary" />
-                <span className="min-w-0 flex-1">Editing a copy. Sending will create a new follow-up message.</span>
-                <button
-                  type="button"
-                  onClick={() => { setResendSourceMessageId(null); setComposer(""); }}
-                  aria-label="Cancel edit and resend"
-                  className="grid size-7 shrink-0 place-items-center rounded-full hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                >
-                  <X className="size-3.5" />
-                </button>
-              </div>
-            ) : null}
             {selectedConversation?.mode === "BOT_ACTIVE" ? (
               <div className="mb-2 flex items-center justify-between gap-2 rounded-xl bg-[#eef7ef] px-3 py-2 text-xs text-[#526058]">
                 <span className="flex items-center gap-2"><span className="size-2 rounded-full bg-emerald-500" />WesBot is replying</span>

@@ -209,11 +209,19 @@ test("WesBot opens as one messenger thread and hands the same chat to staff", as
   expect(unhandledApiPaths).toEqual([]);
 });
 
-test("student chat has truthful archive states and Messenger-style conversation and message actions", async ({ page }, testInfo) => {
+test("student chat has truthful archive states and edits existing messages in place", async ({ page }, testInfo) => {
   const unhandledApiPaths: string[] = [];
   const archiveRequests: boolean[] = [];
-  const editRequests: Array<{ message: string; expectedEditVersion: number }> = [];
-  let activeConversations: BackendConversation[] = [conversation("BOT_ACTIVE")];
+  const editRequests: Array<{ messageId: string; message: string; expectedEditVersion: number }> = [];
+  const botConversation = conversation("BOT_ACTIVE");
+  const recentCreatedAt = new Date().toISOString();
+  let activeConversations: BackendConversation[] = [{
+    ...botConversation,
+    updatedAt: recentCreatedAt,
+    messages: botConversation.messages.map((message, index) => index === 0
+      ? { ...message, createdAt: recentCreatedAt }
+      : message)
+  }];
   let archivedConversations: BackendConversation[] = [];
   const json = (route: Route, body: unknown, status = 200) => route.fulfill({
     status,
@@ -255,12 +263,14 @@ test("student chat has truthful archive states and Messenger-style conversation 
       await json(route, { messages: current?.messages ?? [], nextCursor: null, typingUsers: [] });
       return;
     }
-    if (path === `/api/backend/conversations/${conversationId}/messages/00000000-0000-4000-8000-000000000007` && request.method() === "PATCH") {
+    if (path.startsWith(`/api/backend/conversations/${conversationId}/messages/`) && request.method() === "PATCH") {
       const payload = request.postDataJSON() as { message: string; expectedEditVersion: number };
-      editRequests.push(payload);
+      const messageId = path.split("/").at(-1)!;
+      editRequests.push({ messageId, ...payload });
       const current = activeConversations[0];
+      const existingMessage = current.messages.find((message) => message.id === messageId)!;
       const updatedMessage = {
-        ...current.messages.at(-1)!,
+        ...existingMessage,
         message: payload.message,
         editedAt: new Date().toISOString(),
         editVersion: payload.expectedEditVersion + 1
@@ -353,10 +363,15 @@ test("student chat has truthful archive states and Messenger-style conversation 
   await longPress(firstOwnBubble);
   const messageActions = page.getByRole("dialog", { name: "Message actions" });
   await expect(messageActions).toBeVisible();
-  await messageActions.getByRole("button", { name: "Edit and resend" }).click();
-  await expect(page.getByText("Editing a copy. Sending will create a new follow-up message.")).toBeVisible();
-  await expect(page.getByLabel("Message WesBot or commissary staff")).toHaveValue("Available ba ang WESCOMM PE shirt?");
-  await page.getByRole("button", { name: "Cancel edit and resend" }).click();
+  await expect(messageActions.getByRole("button", { name: "Edit and resend" })).toHaveCount(0);
+  await messageActions.getByRole("button", { name: "Edit message" }).click();
+  await page.getByLabel("Edit message").fill("Available pa ba ang WESCOMM PE shirt?");
+  await page.getByRole("button", { name: "Save edited message" }).click();
+  await expect(page.getByRole("log").getByText("Available pa ba ang WESCOMM PE shirt?", { exact: true })).toBeVisible();
+  await expect(page.getByRole("log").getByText("Available ba ang WESCOMM PE shirt?", { exact: true })).toHaveCount(0);
+  expect(activeConversations[0].messages).toHaveLength(2);
+  expect(activeConversations[0].messages[0].id).toBe("00000000-0000-4000-8000-000000000003");
+  expect(activeConversations[0].messages[1].senderType).toBe("BOT");
 
   const editableCreatedAt = new Date().toISOString();
   const editable = conversation("WAITING_FOR_STAFF");
@@ -382,7 +397,18 @@ test("student chat has truthful archive states and Messenger-style conversation 
   await page.getByRole("button", { name: "Save edited message" }).click();
   await expect(page.getByRole("log").getByText("Updated editable message", { exact: true })).toBeVisible();
   await expect(page.getByRole("log").getByText("Edited", { exact: true })).toBeVisible();
-  expect(editRequests).toEqual([{ message: "Updated editable message", expectedEditVersion: 0 }]);
+  expect(editRequests).toEqual([
+    {
+      messageId: "00000000-0000-4000-8000-000000000003",
+      message: "Available pa ba ang WESCOMM PE shirt?",
+      expectedEditVersion: 0
+    },
+    {
+      messageId: "00000000-0000-4000-8000-000000000007",
+      message: "Updated editable message",
+      expectedEditVersion: 0
+    }
+  ]);
 
   if (testInfo.project.name === "mobile-chromium") {
     await page.getByRole("button", { name: "Open chat history" }).click();
