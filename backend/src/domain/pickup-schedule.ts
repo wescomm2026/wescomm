@@ -20,6 +20,12 @@ export type PickupPolicySnapshot = {
   closures: Array<{ date: Date; reason: string }>;
 };
 
+export type PickupBookingWindow = {
+  serverDate: string;
+  minDate: string;
+  maxDate: string;
+};
+
 export function manilaDateKey(value: Date) {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: PICKUP_TIMEZONE,
@@ -62,6 +68,31 @@ export function pickupDateColumnKey(value: Date) {
   return value.toISOString().slice(0, 10);
 }
 
+export function resolvePickupBookingWindow(policy: PickupPolicySnapshot, now = new Date()): PickupBookingWindow {
+  const serverDate = manilaDateKey(now);
+  const enabledWeekdays = new Set(policy.days.filter((day) => day.enabled).map((day) => day.weekday));
+  if (!enabledWeekdays.size) {
+    throw new HttpError(503, "Pickup scheduling is temporarily unavailable.", "PICKUP_POLICY_UNAVAILABLE");
+  }
+
+  const closedDates = new Set(policy.closures.map((closure) => pickupDateColumnKey(closure.date)));
+  let minDate = policy.minAdvanceDays === 0 ? serverDate : "";
+  let maxDate = policy.maxAdvanceDays === 0 ? serverDate : "";
+  let date = serverDate;
+  let openDaysAhead = 0;
+
+  while (openDaysAhead < policy.maxAdvanceDays) {
+    date = addCalendarDays(date, 1);
+    if (!enabledWeekdays.has(pickupWeekday(date)) || closedDates.has(date)) continue;
+
+    openDaysAhead += 1;
+    if (openDaysAhead === policy.minAdvanceDays) minDate = date;
+    if (openDaysAhead === policy.maxAdvanceDays) maxDate = date;
+  }
+
+  return { serverDate, minDate, maxDate };
+}
+
 export function pickupInstant(dateKey: string, minute: number) {
   const { year, month, day } = parsePickupDateKey(dateKey);
   const hour = Math.floor(minute / 60);
@@ -88,9 +119,7 @@ export function validatePickupSelection(input: {
   }
 
   parsePickupDateKey(input.pickupDate);
-  const today = manilaDateKey(now);
-  const minDate = addCalendarDays(today, input.policy.minAdvanceDays);
-  const maxDate = addCalendarDays(today, input.policy.maxAdvanceDays);
+  const { minDate, maxDate } = resolvePickupBookingWindow(input.policy, now);
   if (input.pickupDate < minDate || input.pickupDate > maxDate) {
     throw new HttpError(
       400,
@@ -129,6 +158,7 @@ export function scheduleReviewReason(input: {
   pickupStart: Date | null;
   pickupEnd: Date | null;
   now?: Date;
+  bookingWindow?: PickupBookingWindow;
 }) {
   if (!input.pickupStart || !input.pickupEnd) return "Reservation has no complete pickup schedule.";
   const dateKey = manilaDateKey(input.pickupStart);
@@ -139,9 +169,7 @@ export function scheduleReviewReason(input: {
   const closure = input.policy.closures.find((entry) => pickupDateColumnKey(entry.date) === dateKey);
   if (closure) return `Pickup date is closed: ${closure.reason}`;
 
-  const today = manilaDateKey(input.now ?? new Date());
-  const minDate = addCalendarDays(today, input.policy.minAdvanceDays);
-  const maxDate = addCalendarDays(today, input.policy.maxAdvanceDays);
+  const { minDate, maxDate } = input.bookingWindow ?? resolvePickupBookingWindow(input.policy, input.now);
   if (dateKey < minDate || dateKey > maxDate) return "Pickup date is outside the current advance-day limits.";
 
   const startMinute = Number(new Intl.DateTimeFormat("en-US", {

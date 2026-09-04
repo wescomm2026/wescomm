@@ -58,12 +58,17 @@ test("support edits retain encrypted revisions and enforce ownership, latest-mes
   assert.match(service, /SUPPORT_MESSAGE_EDITED/);
 });
 
-test("conversation archive is role-scoped and resolved-only", () => {
+test("conversation archive is role-scoped, personal for students, and resolved-only for operations", () => {
   const service = source("src/services/message.service.ts");
-  assert.match(service, /conversation\.status !== "RESOLVED"/);
+  const replyMigration = source("prisma/migrations/20260904000000_restore_student_archived_support_on_reply/migration.sql");
+  assert.match(service, /input\.archived && input\.role !== "STUDENT" && conversation\.status !== "RESOLVED"/);
+  assert.match(service, /input\.archived && input\.role !== "STUDENT" \? \{ status: "RESOLVED" as const \} : \{\}/);
   assert.match(service, /studentArchivedAt/);
   assert.match(service, /operationsArchivedAt/);
   assert.match(service, /archiveScope/);
+  assert.match(service, /status: "OPEN", student_archived_at: null, updated_at: message\.createdAt/);
+  assert.match(replyMigration, /insert_active_wesbot_reply[\s\S]*"student_archived_at" = NULL/);
+  assert.match(replyMigration, /insert_owned_staff_message[\s\S]*"student_archived_at" = NULL/);
 });
 
 test("conversation retention is Admin-only, recoverable for 90 days, and purge is preview-locked", () => {

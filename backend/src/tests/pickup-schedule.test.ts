@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { HttpError } from "../utils/http-error.js";
-import { pickupInstant, scheduleReviewReason, validatePickupSelection, type PickupPolicySnapshot } from "../domain/pickup-schedule.js";
+import {
+  pickupInstant,
+  resolvePickupBookingWindow,
+  scheduleReviewReason,
+  validatePickupSelection,
+  type PickupPolicySnapshot
+} from "../domain/pickup-schedule.js";
 import { findAutomaticPickupDestination, serializePublicPolicy } from "../services/pickup-policy.service.js";
 import { pickupCapacitySnapshot, pickupWindowKey } from "../services/pickup-capacity.service.js";
 
@@ -31,8 +37,64 @@ test("pickup selection derives exact Manila instants from the active immutable p
   assert.equal(pickupInstant("2026-08-31", 780).toISOString(), "2026-08-31T05:00:00.000Z");
 });
 
+test("booking windows count only configured open pickup days without closures", () => {
+  const threeDayPolicy = { ...policy, minAdvanceDays: 1, maxAdvanceDays: 3, closures: [] };
+
+  assert.deepEqual(
+    resolvePickupBookingWindow(threeDayPolicy, new Date("2026-09-03T04:00:00.000Z")),
+    { serverDate: "2026-09-03", minDate: "2026-09-04", maxDate: "2026-09-08" }
+  );
+  assert.deepEqual(
+    resolvePickupBookingWindow(threeDayPolicy, new Date("2026-09-04T04:00:00.000Z")),
+    { serverDate: "2026-09-04", minDate: "2026-09-07", maxDate: "2026-09-09" }
+  );
+
+  const mondayClosurePolicy = {
+    ...threeDayPolicy,
+    closures: [{ date: new Date("2026-09-07T00:00:00.000Z"), reason: "University holiday" }]
+  };
+  assert.deepEqual(
+    resolvePickupBookingWindow(mondayClosurePolicy, new Date("2026-09-04T04:00:00.000Z")),
+    { serverDate: "2026-09-04", minDate: "2026-09-08", maxDate: "2026-09-10" }
+  );
+
+  const saturdayOpenPolicy = {
+    ...threeDayPolicy,
+    days: threeDayPolicy.days.map((day) => day.weekday === 6 ? { ...day, enabled: true } : day)
+  };
+  assert.deepEqual(
+    resolvePickupBookingWindow(saturdayOpenPolicy, new Date("2026-09-04T04:00:00.000Z")),
+    { serverDate: "2026-09-04", minDate: "2026-09-05", maxDate: "2026-09-08" }
+  );
+});
+
+test("pickup validation accepts the last open day and rejects the next one", () => {
+  const threeDayPolicy = {
+    ...policy,
+    minAdvanceDays: 1,
+    maxAdvanceDays: 3,
+    closures: [{ date: new Date("2026-09-07T00:00:00.000Z"), reason: "University holiday" }]
+  };
+  const friday = new Date("2026-09-04T04:00:00.000Z");
+
+  assert.doesNotThrow(() => validatePickupSelection({
+    policy: threeDayPolicy,
+    policyVersion: 4,
+    pickupDate: "2026-09-10",
+    slotId: "slot-morning",
+    now: friday
+  }));
+  assert.equal(errorCode(() => validatePickupSelection({
+    policy: threeDayPolicy,
+    policyVersion: 4,
+    pickupDate: "2026-09-11",
+    slotId: "slot-morning",
+    now: friday
+  })), "PICKUP_DATE_OUTSIDE_POLICY");
+});
+
 test("pickup validation rejects weekends, closures, stale versions, and inactive slots", () => {
-  assert.equal(errorCode(() => validatePickupSelection({ policy, policyVersion: 4, pickupDate: "2026-08-29", slotId: "slot-morning", now })), "PICKUP_DAY_UNAVAILABLE");
+  assert.equal(errorCode(() => validatePickupSelection({ policy, policyVersion: 4, pickupDate: "2026-09-05", slotId: "slot-morning", now })), "PICKUP_DAY_UNAVAILABLE");
   assert.equal(errorCode(() => validatePickupSelection({ policy, policyVersion: 4, pickupDate: "2026-09-01", slotId: "slot-morning", now })), "PICKUP_DATE_CLOSED");
   assert.equal(errorCode(() => validatePickupSelection({ policy, policyVersion: 3, pickupDate: "2026-08-31", slotId: "slot-morning", now })), "PICKUP_POLICY_CHANGED");
   assert.equal(errorCode(() => validatePickupSelection({ policy, policyVersion: 4, pickupDate: "2026-08-31", slotId: "missing", now })), "PICKUP_SLOT_UNAVAILABLE");
@@ -66,11 +128,20 @@ test("closure auto-rescheduling preserves the time window and skips unavailable 
   assert.equal(afterWeekend?.pickupStart.toISOString(), "2026-09-07T00:00:00.000Z");
 });
 
-test("closure auto-rescheduling returns no destination outside the booking window", () => {
+test("closure auto-rescheduling uses the extended open-day booking window", () => {
   const narrowPolicy = { ...policy, maxAdvanceDays: 3 };
   const destination = findAutomaticPickupDestination(narrowPolicy, {
     pickupStart: new Date("2026-08-31T00:00:00.000Z"),
     pickupEnd: new Date("2026-08-31T02:00:00.000Z")
+  }, now);
+  assert.equal(destination?.pickupStart.toISOString(), "2026-09-02T00:00:00.000Z");
+});
+
+test("closure auto-rescheduling still stops after the last open day", () => {
+  const narrowPolicy = { ...policy, maxAdvanceDays: 3, closures: [] };
+  const destination = findAutomaticPickupDestination(narrowPolicy, {
+    pickupStart: new Date("2026-09-02T00:00:00.000Z"),
+    pickupEnd: new Date("2026-09-02T02:00:00.000Z")
   }, now);
   assert.equal(destination, null);
 });
@@ -112,7 +183,7 @@ test("public pickup availability excludes staff metadata and inactive windows", 
     version: 4,
     timezone: "Asia/Manila",
     minAdvanceDays: 1,
-    maxAdvanceDays: 30,
+    maxAdvanceDays: 3,
     effectiveAt: new Date("2026-08-01T00:00:00.000Z"),
     isActive: true,
     reason: "Internal schedule change note",
@@ -136,6 +207,8 @@ test("public pickup availability excludes staff metadata and inactive windows", 
   assert.equal("createdById" in serialized, false);
   assert.equal("reason" in serialized, false);
   assert.equal("createdAt" in serialized, false);
+  assert.equal(serialized.minDate, "2026-08-31");
+  assert.equal(serialized.maxDate, "2026-09-03");
   assert.deepEqual(serialized.timeSlots.map((slot) => slot.id), ["active"]);
   assert.equal(serialized.timeSlots[0].capacity, 20);
 });

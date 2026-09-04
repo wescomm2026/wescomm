@@ -39,7 +39,7 @@ function pickupPolicy(version = 7): BackendPickupPolicy {
     minAdvanceDays: 1,
     maxAdvanceDays: 14,
     minDate: "2026-08-03",
-    maxDate: "2026-08-17",
+    maxDate: "2026-08-21",
     serverDate: "2026-08-02",
     effectiveAt: "2026-08-02T00:00:00.000Z",
     isActive: true,
@@ -114,6 +114,11 @@ test("staff policy activation previews impact and preserves staff-review counts"
           affectedCount: 1,
           autoRescheduledCount: 0,
           needsReviewCount: 1,
+          bookingWindow: {
+            serverDate: "2026-08-02",
+            minDate: "2026-08-03",
+            maxDate: "2026-08-19"
+          },
           previewFingerprint: "a".repeat(64),
           affectedReservations: [{
             id: "93000000-0000-4000-8000-000000000001",
@@ -159,6 +164,12 @@ test("staff policy activation previews impact and preserves staff-review counts"
   await expect(saturday).toHaveAttribute("aria-pressed", "false");
   await saturday.click();
   await expect(saturday).toHaveAttribute("aria-pressed", "true");
+
+  await page.getByRole("button", { name: "Preview Student View", exact: true }).click();
+  const studentPreview = page.getByRole("dialog", { name: "Preview student availability" });
+  await expect(studentPreview.getByText("Available 2026-08-03 to 2026-08-19", { exact: true })).toBeVisible();
+  await studentPreview.getByRole("button", { name: "Close student preview" }).click();
+
   await page.getByRole("button", { name: "Save Changes", exact: true }).click();
 
   const review = page.getByRole("alertdialog", { name: "Save pickup schedule changes?" });

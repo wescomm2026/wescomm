@@ -74,12 +74,6 @@ function formatTime(minutes: number) {
   return date.toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit", timeZone: "UTC" });
 }
 
-function addDays(dateKey: string, amount: number) {
-  const date = new Date(`${dateKey}T00:00:00.000Z`);
-  date.setUTCDate(date.getUTCDate() + amount);
-  return date.toISOString().slice(0, 10);
-}
-
 function formatPickupMoment(value: string | null) {
   if (!value) return "Not scheduled";
   return new Date(value).toLocaleString("en-PH", {
@@ -113,10 +107,10 @@ function comparableDraft(draft: PickupPolicyPayload | null) {
 
 function validateDraft(draft: PickupPolicyPayload) {
   if (!Number.isInteger(draft.minAdvanceDays) || draft.minAdvanceDays < 0 || draft.minAdvanceDays > 365) {
-    return "Earliest booking must be between 0 and 365 days ahead.";
+    return "Earliest booking must be between 0 and 365 open pickup days ahead.";
   }
   if (!Number.isInteger(draft.maxAdvanceDays) || draft.maxAdvanceDays < 1 || draft.maxAdvanceDays > 3650) {
-    return "Latest booking must be between 1 and 3650 days ahead.";
+    return "Latest booking must be between 1 and 3650 open pickup days ahead.";
   }
   if (draft.maxAdvanceDays < draft.minAdvanceDays) {
     return "Latest booking cannot be earlier than the earliest booking.";
@@ -182,6 +176,7 @@ export function StaffPickupScheduleExperience() {
   const [activationKey, setActivationKey] = useState<string | null>(null);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [studentPreviewOpen, setStudentPreviewOpen] = useState(false);
+  const [studentPreviewWindow, setStudentPreviewWindow] = useState<PolicyPreview["bookingWindow"] | null>(null);
   const [studentPreviewSelection, setStudentPreviewSelection] = useState<PickupSelection | null>(null);
   const [slotEditor, setSlotEditor] = useState<SlotEditor | null>(null);
   const [closureEditor, setClosureEditor] = useState<ClosureEditor | null>(null);
@@ -189,6 +184,7 @@ export function StaffPickupScheduleExperience() {
   const [draggedSlotIndex, setDraggedSlotIndex] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [previewingStudentView, setPreviewingStudentView] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -208,6 +204,7 @@ export function StaffPickupScheduleExperience() {
         setSavedDraft(nextDraft);
         setDraft(nextDraft);
         setImpactPreview(null);
+        setStudentPreviewWindow(null);
         setActivationKey(null);
       }
     } catch (loadError) {
@@ -239,6 +236,7 @@ export function StaffPickupScheduleExperience() {
   const updateDraft = (updater: (current: PickupPolicyPayload) => PickupPolicyPayload) => {
     setDraft((current) => current ? updater(current) : current);
     setImpactPreview(null);
+    setStudentPreviewWindow(null);
     setActivationKey(null);
     setReviewOpen(false);
     setNotice("");
@@ -255,19 +253,20 @@ export function StaffPickupScheduleExperience() {
     : "No active times";
 
   const previewPolicy = useMemo<BackendPickupPolicy | null>(() => {
-    if (!active || !draft) return null;
+    if (!active || !draft || !studentPreviewWindow) return null;
     return {
       ...active,
       id: "draft-pickup-schedule",
       minAdvanceDays: draft.minAdvanceDays,
       maxAdvanceDays: draft.maxAdvanceDays,
-      minDate: addDays(active.serverDate, draft.minAdvanceDays),
-      maxDate: addDays(active.serverDate, draft.maxAdvanceDays),
+      minDate: studentPreviewWindow.minDate,
+      maxDate: studentPreviewWindow.maxDate,
+      serverDate: studentPreviewWindow.serverDate,
       days: draft.days,
       timeSlots: draft.timeSlots.map((slot, index) => ({ ...slot, id: `draft-slot-${index}`, sortOrder: index })),
       closures: draft.closures.map((closure, index) => ({ ...closure, id: `draft-closure-${index}` }))
     };
-  }, [active, draft]);
+  }, [active, draft, studentPreviewWindow]);
 
   const openSlotEditor = (index: number | null) => {
     if (!draft) return;
@@ -352,6 +351,7 @@ export function StaffPickupScheduleExperience() {
     if (!approved) return;
     setDraft(savedDraft);
     setImpactPreview(null);
+    setStudentPreviewWindow(null);
     setActivationKey(null);
     setChangeNote("");
     setError("");
@@ -392,6 +392,30 @@ export function StaffPickupScheduleExperience() {
       setError(userFacingErrorMessage(previewError, "Unable to review these schedule changes."));
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const openStudentPreview = async () => {
+    if (!user?.accessToken || !draft) return;
+    const validationMessage = validateDraft(draft);
+    if (validationMessage) {
+      setError(validationMessage);
+      return;
+    }
+    setPreviewingStudentView(true);
+    setError("");
+    try {
+      const preview = await previewPickupPolicyFromApi(user.accessToken, {
+        ...draft,
+        reason: "Student availability preview"
+      });
+      setStudentPreviewWindow(preview.bookingWindow);
+      setStudentPreviewSelection(null);
+      setStudentPreviewOpen(true);
+    } catch (previewError) {
+      setError(userFacingErrorMessage(previewError, "Unable to preview student pickup availability."));
+    } finally {
+      setPreviewingStudentView(false);
     }
   };
 
@@ -437,7 +461,7 @@ export function StaffPickupScheduleExperience() {
                 <Button variant="secondary"><History className="size-4" />View change history</Button>
               </Link>
             ) : null}
-            <Button variant="ghost" size="icon" onClick={() => void refreshSchedule()} disabled={submitting} aria-label="Refresh pickup schedule" title="Refresh pickup schedule">
+            <Button variant="ghost" size="icon" onClick={() => void refreshSchedule()} disabled={submitting || previewingStudentView} aria-label="Refresh pickup schedule" title="Refresh pickup schedule">
               <RefreshCw className="size-4" />
             </Button>
           </div>
@@ -448,23 +472,23 @@ export function StaffPickupScheduleExperience() {
       {error ? <p className="rounded-surface border border-danger/25 bg-danger/5 px-4 py-3 text-sm font-semibold text-danger" role="alert">{error}</p> : null}
 
       <section className="grid gap-3 md:grid-cols-3" aria-label="Pickup schedule summary">
-        <SummaryCard icon={<CalendarClock className="size-5" />} label="Booking window" value={`${draft.minAdvanceDays}–${draft.maxAdvanceDays} days ahead`} detail={`Students can choose dates from ${addDays(active.serverDate, draft.minAdvanceDays)} to ${addDays(active.serverDate, draft.maxAdvanceDays)}.`} />
+        <SummaryCard icon={<CalendarClock className="size-5" />} label="Booking window" value={`${draft.minAdvanceDays}–${draft.maxAdvanceDays} open days ahead`} detail="Closed weekdays and special closures do not use up this window." />
         <SummaryCard icon={<CalendarDays className="size-5" />} label="Open pickup days" value={openDays.join(", ") || "No open days"} detail={`${openDays.length} day${openDays.length === 1 ? "" : "s"} available each week.`} />
         <SummaryCard icon={<Clock3 className="size-5" />} label="Active time slots" value={`${activeSlots.length} slot${activeSlots.length === 1 ? "" : "s"}`} detail={slotSpan} />
       </section>
 
-      <SettingsSection number={1} title="Booking window" description="Choose how early and how far ahead students can reserve a pickup date.">
+      <SettingsSection number={1} title="Booking window" description="Choose how many open pickup days ahead students can reserve a date.">
         <div className="grid gap-4 sm:grid-cols-2">
-          <FormControl label="Earliest booking" htmlFor="pickup-min-days" helper={`Students can book starting ${draft.minAdvanceDays} day${draft.minAdvanceDays === 1 ? "" : "s"} from today.`}>
+          <FormControl label="Earliest booking" htmlFor="pickup-min-days" helper={`Students can book starting ${draft.minAdvanceDays} open pickup day${draft.minAdvanceDays === 1 ? "" : "s"} ahead.`}>
             <div className="relative">
               <input id="pickup-min-days" type="number" min={0} max={365} value={draft.minAdvanceDays} onChange={(event) => updateDraft((current) => ({ ...current, minAdvanceDays: Number(event.target.value) }))} className={cn(formControlClass, "pr-24")} />
-              <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs font-semibold text-muted-foreground">days ahead</span>
+              <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs font-semibold text-muted-foreground">open days</span>
             </div>
           </FormControl>
-          <FormControl label="Latest booking" htmlFor="pickup-max-days" error={draft.maxAdvanceDays < draft.minAdvanceDays ? "Must be the same as or later than the earliest booking." : undefined} helper={`Students can book up to ${draft.maxAdvanceDays} day${draft.maxAdvanceDays === 1 ? "" : "s"} from today.`}>
+          <FormControl label="Latest booking" htmlFor="pickup-max-days" error={draft.maxAdvanceDays < draft.minAdvanceDays ? "Must be the same as or later than the earliest booking." : undefined} helper={`Students can book up to ${draft.maxAdvanceDays} open pickup day${draft.maxAdvanceDays === 1 ? "" : "s"} ahead.`}>
             <div className="relative">
               <input id="pickup-max-days" type="number" min={1} max={3650} value={draft.maxAdvanceDays} onChange={(event) => updateDraft((current) => ({ ...current, maxAdvanceDays: Number(event.target.value) }))} className={cn(formControlClass, "pr-24")} />
-              <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs font-semibold text-muted-foreground">days ahead</span>
+              <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs font-semibold text-muted-foreground">open days</span>
             </div>
           </FormControl>
         </div>
@@ -527,9 +551,9 @@ export function StaffPickupScheduleExperience() {
       <div className="sticky bottom-3 z-30 flex flex-col gap-3 rounded-feature border bg-white/95 p-3 shadow-overlay backdrop-blur sm:flex-row sm:items-center sm:justify-between">
         <p className="text-sm font-semibold text-muted-foreground">{isDirty ? "You have unsaved schedule changes." : "The pickup schedule is up to date."}</p>
         <div className="flex flex-col gap-2 sm:flex-row">
-          <Button variant="ghost" onClick={() => void discardChanges()} disabled={!isDirty || submitting}>Discard Changes</Button>
-          <Button variant="secondary" onClick={() => { setStudentPreviewSelection(null); setStudentPreviewOpen(true); }} disabled={Boolean(draftError)}><Eye className="size-4" />Preview Student View</Button>
-          <Button onClick={() => void requestSaveReview()} disabled={!isDirty || Boolean(draftError)} loading={submitting}><Save className="size-4" />Save Changes</Button>
+          <Button variant="ghost" onClick={() => void discardChanges()} disabled={!isDirty || submitting || previewingStudentView}>Discard Changes</Button>
+          <Button variant="secondary" onClick={() => void openStudentPreview()} disabled={Boolean(draftError) || submitting} loading={previewingStudentView}><Eye className="size-4" />Preview Student View</Button>
+          <Button onClick={() => void requestSaveReview()} disabled={!isDirty || Boolean(draftError) || previewingStudentView} loading={submitting}><Save className="size-4" />Save Changes</Button>
         </div>
       </div>
 
@@ -579,7 +603,7 @@ export function StaffPickupScheduleExperience() {
             <div className="flex items-start gap-3 border-b p-5"><span className="grid size-11 shrink-0 place-items-center rounded-full bg-warning/10 text-warning"><TriangleAlert className="size-5" /></span><div className="min-w-0 flex-1"><h2 id={reviewDialog.titleId} className="text-xl font-extrabold text-foreground">Save pickup schedule changes?</h2><p className="mt-1 text-sm leading-6 text-muted-foreground">Review the student schedule and the effect on existing reservations before saving.</p></div><Button variant="ghost" size="icon" onClick={() => setReviewOpen(false)} disabled={submitting} aria-label="Close schedule review"><X className="size-5" /></Button></div>
             <div className="max-h-[65svh] space-y-4 overflow-y-auto p-5">
               <dl className="grid gap-3 rounded-surface border bg-surface-subtle p-4 text-sm sm:grid-cols-2">
-                <div><dt className="font-semibold text-muted-foreground">Booking window</dt><dd className="mt-1 font-extrabold text-foreground">{draft.minAdvanceDays}–{draft.maxAdvanceDays} days ahead</dd></div>
+                <div><dt className="font-semibold text-muted-foreground">Booking window</dt><dd className="mt-1 font-extrabold text-foreground">{draft.minAdvanceDays}–{draft.maxAdvanceDays} open days ahead</dd></div>
                 <div><dt className="font-semibold text-muted-foreground">Open pickup days</dt><dd className="mt-1 font-extrabold text-foreground">{openDays.join(", ")}</dd></div>
                 <div><dt className="font-semibold text-muted-foreground">Active time slots</dt><dd className="mt-1 font-extrabold text-foreground">{activeSlots.length} · {slotSpan}</dd></div>
                 <div><dt className="font-semibold text-muted-foreground">Closed dates</dt><dd className="mt-1 font-extrabold text-foreground">{draft.closures.length}</dd></div>

@@ -3,12 +3,14 @@
 import { userFacingErrorMessage } from "@/lib/user-facing-error";
 
 import Image from "next/image";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Archive, ArchiveRestore, ArrowLeft, Check, Headphones, MessageCircleMore, Pencil, Plus, RefreshCw, Send, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { createPortal } from "react-dom";
+import { Archive, ArchiveRestore, ArrowLeft, Check, Copy, Headphones, MessageCircleMore, MoreHorizontal, Pencil, Plus, RefreshCw, Send, X } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import { useRealtimeRefresh } from "@/components/realtime/RealtimeProvider";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
+import { useAccessibleDialog } from "@/components/ui/useAccessibleDialog";
 import {
   createConversationFromApi,
   editConversationMessageFromApi,
@@ -34,6 +36,93 @@ const quickQuestions = [
   { label: "Pickup schedule", message: "Kailan ko puwedeng i-pick up ang reservation ko? Reservation code: " },
   { label: "Cancellation", message: "Puwede ko pa bang i-cancel ang reservation ko? Reservation code: " }
 ];
+
+const LONG_PRESS_DELAY_MS = 500;
+const LONG_PRESS_MOVE_TOLERANCE_PX = 10;
+
+type SupportActionTarget =
+  | { kind: "CONVERSATION"; conversationId: string; trigger: HTMLElement }
+  | { kind: "MESSAGE"; conversationId: string; messageId: string; trigger: HTMLElement };
+
+type SupportAction = {
+  label: string;
+  description?: string;
+  icon: ReactNode;
+  onSelect: () => void;
+  disabled?: boolean;
+};
+
+function SupportActionSheet({
+  open,
+  title,
+  description,
+  actions,
+  returnFocus,
+  onClose
+}: {
+  open: boolean;
+  title: string;
+  description: string;
+  actions: SupportAction[];
+  returnFocus: HTMLElement | null;
+  onClose: () => void;
+}) {
+  const dialog = useAccessibleDialog<HTMLElement>(open, onClose, { returnFocus });
+  if (!open || typeof document === "undefined") return null;
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[13000] flex items-end justify-center bg-[#101820]/45 p-0 backdrop-blur-[2px] sm:items-center sm:p-4"
+      onMouseDown={(event) => {
+        if (event.currentTarget === event.target) onClose();
+      }}
+    >
+      <section
+        ref={dialog.dialogRef}
+        {...dialog.dialogProps}
+        className="w-full overflow-hidden rounded-t-[26px] border border-[#dce5dd] bg-white pb-[env(safe-area-inset-bottom)] shadow-2xl outline-none sm:max-w-sm sm:rounded-2xl sm:pb-0"
+      >
+        <div className="mx-auto mt-3 h-1.5 w-11 rounded-full bg-[#d6dfd7] sm:hidden" />
+        <div className="flex items-start gap-4 border-b border-[#e5ebe6] px-5 pb-4 pt-4 sm:pt-5">
+          <div className="min-w-0 flex-1">
+            <h2 id={dialog.titleId} className="text-lg font-extrabold text-[#17211b]">{title}</h2>
+            <p className="mt-1 line-clamp-2 text-sm leading-5 text-[#68746d]">{description}</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close actions"
+            className="grid size-10 shrink-0 place-items-center rounded-full bg-[#eef4ef] text-[#536057] transition hover:bg-[#e2ebe3] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          >
+            <X className="size-5" />
+          </button>
+        </div>
+        <div className="grid gap-1 p-3">
+          {actions.map((action, index) => (
+            <button
+              key={action.label}
+              type="button"
+              data-dialog-autofocus={index === 0 ? "true" : undefined}
+              disabled={action.disabled}
+              onClick={() => {
+                onClose();
+                action.onSelect();
+              }}
+              className="flex min-h-14 w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition hover:bg-[#eef6ef] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <span className="grid size-10 shrink-0 place-items-center rounded-full bg-[#eaf5eb] text-primary">{action.icon}</span>
+              <span className="min-w-0">
+                <span className="block text-sm font-extrabold text-[#17211b]">{action.label}</span>
+                {action.description ? <span className="mt-0.5 block text-xs leading-4 text-[#68746d]">{action.description}</span> : null}
+              </span>
+            </button>
+          ))}
+        </div>
+      </section>
+    </div>,
+    document.body
+  );
+}
 
 type WesbotSuggestedAction = {
   id: string;
@@ -93,6 +182,19 @@ function supportStatus(conversation: BackendConversation) {
   if (conversation.mode === "WAITING_FOR_STAFF") return "Waiting for Staff";
   if (conversation.mode === "STAFF_ACTIVE") return "Staff active";
   return "Resolved";
+}
+
+function canEditSupportMessage(
+  conversation: BackendConversation,
+  message: BackendConversationMessage,
+  userId: string
+) {
+  return message.senderType === "STUDENT"
+    && message.senderId === userId
+    && conversation.messages.at(-1)?.id === message.id
+    && conversation.status === "OPEN"
+    && (conversation.mode === "WAITING_FOR_STAFF" || conversation.mode === "STAFF_ACTIVE")
+    && Date.now() - new Date(message.createdAt).getTime() <= 30 * 60_000;
 }
 
 function createConversationSubject(message: string) {
@@ -168,6 +270,9 @@ export function StudentSupportExperience() {
   const [savingEdit, setSavingEdit] = useState(false);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState("");
+  const [resendSourceMessageId, setResendSourceMessageId] = useState<string | null>(null);
+  const [actionTarget, setActionTarget] = useState<SupportActionTarget | null>(null);
+  const [toast, setToast] = useState<{ message: string; undo?: () => void } | null>(null);
   const [error, setError] = useState("");
   const messagesLogRef = useRef<HTMLDivElement | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
@@ -177,12 +282,26 @@ export function StudentSupportExperience() {
   const latestMessageAtRef = useRef("");
   const typingExpiryTimersRef = useRef(new Map<string, number>());
   const stickToBottomRef = useRef(true);
+  const conversationViewRef = useRef(conversationView);
+  const longPressTimerRef = useRef<number | null>(null);
+  const longPressOriginRef = useRef<{ x: number; y: number } | null>(null);
+  const suppressClickUntilRef = useRef(0);
+  const toastTimerRef = useRef<number | null>(null);
 
   const selectedConversation = useMemo(() => {
     if (startingNew) return null;
     return conversations.find((conversation) => conversation.id === selectedId) ?? conversations[0] ?? null;
   }, [conversations, selectedId, startingNew]);
   const identity = conversationIdentity(selectedConversation);
+
+  const showToast = useCallback((message: string, undo?: () => void) => {
+    if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
+    setToast({ message, undo });
+    toastTimerRef.current = window.setTimeout(() => {
+      setToast(null);
+      toastTimerRef.current = null;
+    }, 5_000);
+  }, []);
 
   const loadConversations = useCallback(async ({ background = false }: { background?: boolean } = {}) => {
     if (!user?.accessToken || !user.id) {
@@ -309,6 +428,14 @@ export function StudentSupportExperience() {
   }, [loadConversations, ready]);
 
   useEffect(() => {
+    conversationViewRef.current = conversationView;
+    setActionTarget(null);
+    setEditingMessageId(null);
+    setEditDraft("");
+    setResendSourceMessageId(null);
+  }, [conversationView]);
+
+  useEffect(() => {
     if (!ready || !user?.accessToken) return;
 
     const refreshInBackground = () => {
@@ -361,6 +488,10 @@ export function StudentSupportExperience() {
     setConversationView("ACTIVE");
     setComposer("");
     setPendingMessage("");
+    setActionTarget(null);
+    setEditingMessageId(null);
+    setEditDraft("");
+    setResendSourceMessageId(null);
     loadedThreadIdsRef.current.clear();
   }, [user?.id]);
 
@@ -382,6 +513,8 @@ export function StudentSupportExperience() {
 
   useEffect(() => () => {
     if (typingStopTimerRef.current) window.clearTimeout(typingStopTimerRef.current);
+    if (longPressTimerRef.current) window.clearTimeout(longPressTimerRef.current);
+    if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
     typingExpiryTimersRef.current.forEach((timer) => window.clearTimeout(timer));
     typingExpiryTimersRef.current.clear();
   }, []);
@@ -391,11 +524,87 @@ export function StudentSupportExperience() {
     void updateConversationTypingFromApi(user.accessToken, conversationId, isTyping).catch(() => undefined);
   }, [user?.accessToken]);
 
+  const clearLongPressTimer = () => {
+    if (longPressTimerRef.current) window.clearTimeout(longPressTimerRef.current);
+    longPressTimerRef.current = null;
+    longPressOriginRef.current = null;
+  };
+
+  const openConversationActions = (conversationId: string, trigger: HTMLElement) => {
+    clearLongPressTimer();
+    setActionTarget({ kind: "CONVERSATION", conversationId, trigger });
+  };
+
+  const openMessageActions = (conversationId: string, messageId: string, trigger: HTMLElement) => {
+    clearLongPressTimer();
+    setActionTarget({ kind: "MESSAGE", conversationId, messageId, trigger });
+  };
+
+  const beginLongPress = (
+    event: ReactPointerEvent<HTMLElement>,
+    target: { kind: "CONVERSATION"; conversationId: string } | { kind: "MESSAGE"; conversationId: string; messageId: string }
+  ) => {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    clearLongPressTimer();
+    suppressClickUntilRef.current = 0;
+    longPressOriginRef.current = { x: event.clientX, y: event.clientY };
+    const trigger = event.currentTarget;
+    longPressTimerRef.current = window.setTimeout(() => {
+      suppressClickUntilRef.current = Date.now() + 1_000;
+      if (target.kind === "CONVERSATION") openConversationActions(target.conversationId, trigger);
+      else openMessageActions(target.conversationId, target.messageId, trigger);
+    }, LONG_PRESS_DELAY_MS);
+  };
+
+  const moveLongPress = (event: ReactPointerEvent<HTMLElement>) => {
+    const origin = longPressOriginRef.current;
+    if (!origin) return;
+    if (
+      Math.abs(event.clientX - origin.x) > LONG_PRESS_MOVE_TOLERANCE_PX
+      || Math.abs(event.clientY - origin.y) > LONG_PRESS_MOVE_TOLERANCE_PX
+    ) {
+      clearLongPressTimer();
+    }
+  };
+
+  const consumeLongPressClick = (event: ReactMouseEvent<HTMLElement>) => {
+    if (Date.now() > suppressClickUntilRef.current) {
+      suppressClickUntilRef.current = 0;
+      return false;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    suppressClickUntilRef.current = 0;
+    return true;
+  };
+
+  const openActionsFromContextMenu = (
+    event: ReactMouseEvent<HTMLElement>,
+    target: { kind: "CONVERSATION"; conversationId: string } | { kind: "MESSAGE"; conversationId: string; messageId: string }
+  ) => {
+    event.preventDefault();
+    if (target.kind === "CONVERSATION") openConversationActions(target.conversationId, event.currentTarget);
+    else openMessageActions(target.conversationId, target.messageId, event.currentTarget);
+  };
+
+  const openActionsFromKeyboard = (
+    event: ReactKeyboardEvent<HTMLElement>,
+    target: { kind: "CONVERSATION"; conversationId: string } | { kind: "MESSAGE"; conversationId: string; messageId: string }
+  ) => {
+    if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) return;
+    event.preventDefault();
+    if (target.kind === "CONVERSATION") openConversationActions(target.conversationId, event.currentTarget);
+    else openMessageActions(target.conversationId, target.messageId, event.currentTarget);
+  };
+
   const openConversation = (conversationId: string) => {
     stickToBottomRef.current = true;
     setSelectedId(conversationId);
     setStartingNew(false);
     setComposer("");
+    setResendSourceMessageId(null);
+    setEditingMessageId(null);
+    setEditDraft("");
     setError("");
     setThreadOpen(true);
   };
@@ -408,6 +617,9 @@ export function StudentSupportExperience() {
     setConversationView("ACTIVE");
     setStartingNew(true);
     setComposer("");
+    setResendSourceMessageId(null);
+    setEditingMessageId(null);
+    setEditDraft("");
     setError("");
     setThreadOpen(true);
     window.setTimeout(() => composerRef.current?.focus(), 0);
@@ -436,6 +648,7 @@ export function StudentSupportExperience() {
 
   const chooseQuickQuestion = (message: string) => {
     setComposer(message);
+    setResendSourceMessageId(null);
     setError("");
     window.setTimeout(() => {
       const input = composerRef.current;
@@ -522,6 +735,7 @@ export function StudentSupportExperience() {
           : conversation));
         if (result.botReplyPending) void requestBotReply(conversationAtSend.id, result.message.id);
       }
+      setResendSourceMessageId(null);
     } catch (supportError) {
       setComposer(message);
       setError(userFacingErrorMessage(supportError, "Unable to send your message."));
@@ -554,15 +768,30 @@ export function StudentSupportExperience() {
     }
   };
 
-  const archiveConversation = async (conversation: BackendConversation) => {
-    if (!user?.accessToken || conversation.status !== "RESOLVED") return;
+  const archiveConversation = async (
+    conversation: BackendConversation,
+    archived = conversationViewRef.current === "ACTIVE",
+    offerUndo = true
+  ) => {
+    if (!user?.accessToken || submitting) return;
     setSubmitting(true);
     setError("");
     try {
-      await setConversationArchivedFromApi(user.accessToken, conversation.id, conversationView === "ACTIVE");
-      setConversations((current) => current.filter((item) => item.id !== conversation.id));
-      setSelectedId("");
-      setThreadOpen(false);
+      const updated = await setConversationArchivedFromApi(user.accessToken, conversation.id, archived);
+      const visibleInCurrentView = conversationViewRef.current === (archived ? "ARCHIVED" : "ACTIVE");
+      setConversations((current) => visibleInCurrentView
+        ? [updated, ...current.filter((item) => item.id !== updated.id)]
+        : current.filter((item) => item.id !== updated.id));
+      setSelectedId((current) => visibleInCurrentView ? current || updated.id : current === updated.id ? "" : current);
+      setStartingNew(false);
+      if (!visibleInCurrentView) setThreadOpen(false);
+      if (offerUndo) {
+        showToast(archived ? "Chat archived." : "Chat restored to Active.", () => {
+          void archiveConversation(updated, !archived, false);
+        });
+      } else {
+        showToast(archived ? "Chat archived again." : "Chat restored to Active.");
+      }
     } catch (archiveError) {
       setError(userFacingErrorMessage(archiveError, "Unable to update the conversation archive."));
     } finally {
@@ -588,11 +817,40 @@ export function StudentSupportExperience() {
         : item));
       setEditingMessageId(null);
       setEditDraft("");
+      showToast("Message updated.");
     } catch (editError) {
       setError(userFacingErrorMessage(editError, "Unable to edit this message."));
       void loadThreadMessages(conversation.id);
     } finally {
       setSavingEdit(false);
+    }
+  };
+
+  const beginMessageEdit = (message: BackendConversationMessage) => {
+    setResendSourceMessageId(null);
+    setEditingMessageId(message.id);
+    setEditDraft(message.message);
+  };
+
+  const beginEditAndResend = (message: BackendConversationMessage) => {
+    setEditingMessageId(null);
+    setEditDraft("");
+    setResendSourceMessageId(message.id);
+    setComposer(message.message);
+    setError("");
+    window.setTimeout(() => {
+      const input = composerRef.current;
+      input?.focus();
+      input?.setSelectionRange(message.message.length, message.message.length);
+    }, 0);
+  };
+
+  const copyMessage = async (message: BackendConversationMessage) => {
+    try {
+      await navigator.clipboard.writeText(message.message);
+      showToast("Message copied.");
+    } catch {
+      setError("Unable to copy this message. Please select the text and copy it manually.");
     }
   };
 
@@ -628,8 +886,50 @@ export function StudentSupportExperience() {
     );
   }
 
-  const showWelcome = !selectedConversation;
-  const botWillReply = !selectedConversation || selectedConversation.mode === "BOT_ACTIVE";
+  const archivedEmpty = conversationView === "ARCHIVED" && !selectedConversation;
+  const showWelcome = conversationView === "ACTIVE" && !selectedConversation;
+  const botWillReply = showWelcome || selectedConversation?.mode === "BOT_ACTIVE";
+  const actionConversation = actionTarget?.kind === "CONVERSATION"
+    ? conversations.find((conversation) => conversation.id === actionTarget.conversationId) ?? null
+    : null;
+  const actionMessageConversation = actionTarget?.kind === "MESSAGE"
+    ? conversations.find((conversation) => conversation.id === actionTarget.conversationId) ?? null
+    : null;
+  const actionMessage = actionTarget?.kind === "MESSAGE"
+    ? actionMessageConversation?.messages.find((message) => message.id === actionTarget.messageId) ?? null
+    : null;
+  const actionSheetOpen = Boolean(actionTarget && (actionConversation || (actionMessageConversation && actionMessage)));
+  const actionSheetTitle = actionTarget?.kind === "CONVERSATION" ? "Conversation actions" : "Message actions";
+  const actionSheetDescription = actionConversation?.subject
+    ?? actionMessage?.message
+    ?? "Choose an action.";
+  const actionSheetActions: SupportAction[] = actionConversation ? [{
+    label: conversationView === "ACTIVE" ? "Archive chat" : "Restore chat",
+    description: conversationView === "ACTIVE"
+      ? "Move this chat out of your Active inbox."
+      : "Return this chat to your Active inbox.",
+    icon: conversationView === "ACTIVE" ? <Archive className="size-5" /> : <ArchiveRestore className="size-5" />,
+    disabled: submitting,
+    onSelect: () => void archiveConversation(actionConversation, conversationView === "ACTIVE")
+  }] : actionMessageConversation && actionMessage ? [
+    ...(canEditSupportMessage(actionMessageConversation, actionMessage, user.id) ? [{
+      label: "Edit message",
+      description: "Update your latest message.",
+      icon: <Pencil key="edit-icon" className="size-5" />,
+      onSelect: () => beginMessageEdit(actionMessage)
+    }] : conversationView === "ACTIVE" ? [{
+      label: "Edit and resend",
+      description: "Create an updated follow-up without changing chat history.",
+      icon: <Pencil key="resend-icon" className="size-5" />,
+      onSelect: () => beginEditAndResend(actionMessage)
+    }] : []),
+    {
+      label: "Copy message",
+      description: "Copy the message text.",
+      icon: <Copy key="copy-icon" className="size-5" />,
+      onSelect: () => void copyMessage(actionMessage)
+    }
+  ] : [];
 
   return (
     <div className="space-y-4">
@@ -683,42 +983,70 @@ export function StudentSupportExperience() {
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-2">
             {conversations.length ? conversations.map((conversation) => (
-              <button
+              <div
                 key={conversation.id}
-                type="button"
-                onClick={() => openConversation(conversation.id)}
-                aria-current={selectedConversation?.id === conversation.id ? "true" : undefined}
                 className={cn(
-                  "mb-1 flex w-full items-start gap-3 rounded-xl p-3 text-left transition hover:bg-[#f0f6f1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary",
+                  "group mb-1 flex items-center rounded-xl transition hover:bg-[#f0f6f1]",
                   selectedConversation?.id === conversation.id ? "bg-[#e8f3e9]" : ""
                 )}
               >
-                <ChatAvatar kind={conversation.mode === "BOT_ACTIVE" ? "BOT" : "STAFF"} />
-                <span className="min-w-0 flex-1">
-                  <span className="flex items-start gap-2">
-                    <span className="min-w-0 flex-1 truncate text-sm font-extrabold text-[#17211b]">{conversation.subject}</span>
-                    <span className="shrink-0 text-[10px] font-semibold text-[#879089]">{formatSupportTime(conversation.updatedAt)}</span>
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    if (!consumeLongPressClick(event)) openConversation(conversation.id);
+                  }}
+                  onPointerDown={(event) => beginLongPress(event, { kind: "CONVERSATION", conversationId: conversation.id })}
+                  onPointerMove={moveLongPress}
+                  onPointerUp={clearLongPressTimer}
+                  onPointerCancel={clearLongPressTimer}
+                  onContextMenu={(event) => openActionsFromContextMenu(event, { kind: "CONVERSATION", conversationId: conversation.id })}
+                  onKeyDown={(event) => openActionsFromKeyboard(event, { kind: "CONVERSATION", conversationId: conversation.id })}
+                  aria-current={selectedConversation?.id === conversation.id ? "true" : undefined}
+                  aria-haspopup="dialog"
+                  className="flex min-w-0 flex-1 touch-pan-y items-start gap-3 rounded-xl p-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
+                >
+                  <ChatAvatar kind={conversation.mode === "BOT_ACTIVE" ? "BOT" : "STAFF"} />
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-start gap-2">
+                      <span className="min-w-0 flex-1 truncate text-sm font-extrabold text-[#17211b]">{conversation.subject}</span>
+                      <span className="shrink-0 text-[10px] font-semibold text-[#879089]">{formatSupportTime(conversation.updatedAt)}</span>
+                    </span>
+                    <span className="mt-1 block truncate text-xs text-[#68746d]">
+                      {conversation.messages.at(-1)?.message ?? "No messages yet"}
+                    </span>
+                    <span className="mt-1.5 flex items-center gap-1.5 text-[10px] font-bold text-[#68746d]">
+                      <span className={cn(
+                        "size-1.5 rounded-full",
+                        conversation.mode === "BOT_ACTIVE" ? "bg-emerald-500" : conversation.mode === "WAITING_FOR_STAFF" ? "bg-amber-500" : conversation.mode === "STAFF_ACTIVE" ? "bg-sky-500" : "bg-slate-400"
+                      )} />
+                      {conversation.mode === "STAFF_ACTIVE"
+                        ? `Handled by ${conversation.assignedStaff?.fullName || "Commissary Staff"}`
+                        : supportStatus(conversation)}
+                    </span>
                   </span>
-                  <span className="mt-1 block truncate text-xs text-[#68746d]">
-                    {conversation.messages.at(-1)?.message ?? "No messages yet"}
-                  </span>
-                  <span className="mt-1.5 flex items-center gap-1.5 text-[10px] font-bold text-[#68746d]">
-                    <span className={cn(
-                      "size-1.5 rounded-full",
-                      conversation.mode === "BOT_ACTIVE" ? "bg-emerald-500" : conversation.mode === "WAITING_FOR_STAFF" ? "bg-amber-500" : conversation.mode === "STAFF_ACTIVE" ? "bg-sky-500" : "bg-slate-400"
-                    )} />
-                    {conversation.mode === "STAFF_ACTIVE"
-                      ? `Handled by ${conversation.assignedStaff?.fullName || "Commissary Staff"}`
-                      : supportStatus(conversation)}
-                  </span>
-                </span>
-              </button>
+                </button>
+                <button
+                  type="button"
+                  onClick={(event) => openConversationActions(conversation.id, event.currentTarget)}
+                  aria-label={`More actions for ${conversation.subject}`}
+                  aria-haspopup="dialog"
+                  className="mr-2 grid size-9 shrink-0 place-items-center rounded-full text-[#657168] opacity-70 transition hover:bg-white hover:text-primary focus:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100"
+                >
+                  <MoreHorizontal className="size-4" />
+                </button>
+              </div>
             )) : (
               <div className="grid h-full min-h-56 place-items-center px-6 text-center">
                 <div>
-                  <ChatAvatar kind="BOT" size="lg" />
-                  <p className="mt-3 font-extrabold text-[#17211b]">No messages yet</p>
-                  <p className="mt-1 text-sm leading-5 text-[#68746d]">Start with WesBot and your conversation will stay here.</p>
+                  {conversationView === "ARCHIVED"
+                    ? <span className="mx-auto grid size-16 place-items-center rounded-full bg-[#eef4ef] text-primary"><Archive className="size-7" /></span>
+                    : <ChatAvatar kind="BOT" size="lg" />}
+                  <p className="mt-3 font-extrabold text-[#17211b]">{conversationView === "ARCHIVED" ? "No archived chats yet" : "No messages yet"}</p>
+                  <p className="mt-1 text-sm leading-5 text-[#68746d]">
+                    {conversationView === "ARCHIVED"
+                      ? "Chats you archive will appear here."
+                      : "Start with WesBot and your conversation will stay here."}
+                  </p>
                 </div>
               </div>
             )}
@@ -738,27 +1066,32 @@ export function StudentSupportExperience() {
             >
               <ArrowLeft className="size-5" />
             </button>
-            <ChatAvatar kind={identity.icon} />
+            {archivedEmpty ? (
+              <span className="grid size-11 shrink-0 place-items-center rounded-full bg-[#eef4ef] text-primary" aria-hidden="true">
+                <Archive className="size-5" />
+              </span>
+            ) : <ChatAvatar kind={identity.icon} />}
             <div className="min-w-0 flex-1">
-              <h2 className="truncate text-[15px] font-extrabold text-[#17211b] sm:text-base">{identity.title}</h2>
+              <h2 className="truncate text-[15px] font-extrabold text-[#17211b] sm:text-base">{archivedEmpty ? "Archived chats" : identity.title}</h2>
               <p className="flex items-center gap-1.5 truncate text-[11px] font-semibold text-[#68746d] sm:text-xs">
-                {identity.icon === "BOT" && selectedConversation?.mode !== "WAITING_FOR_STAFF" ? <span className="size-2 shrink-0 rounded-full bg-emerald-500" /> : null}
-                <span className="truncate">{identity.subtitle}</span>
+                {!archivedEmpty && identity.icon === "BOT" && selectedConversation?.mode !== "WAITING_FOR_STAFF" ? <span className="size-2 shrink-0 rounded-full bg-emerald-500" /> : null}
+                <span className="truncate">{archivedEmpty ? "Your archived conversation history" : identity.subtitle}</span>
               </p>
             </div>
             {selectedConversation ? (
               <span className="hidden shrink-0 md:inline-flex"><StatusBadge status={supportStatus(selectedConversation)} /></span>
             ) : null}
-            {selectedConversation?.status === "RESOLVED" ? (
+            {selectedConversation ? (
               <button
                 type="button"
-                onClick={() => void archiveConversation(selectedConversation)}
+                onClick={(event) => openConversationActions(selectedConversation.id, event.currentTarget)}
                 disabled={submitting}
-                aria-label={conversationView === "ACTIVE" ? "Archive conversation" : "Restore conversation"}
-                title={conversationView === "ACTIVE" ? "Archive" : "Restore"}
+                aria-label="Open conversation actions"
+                aria-haspopup="dialog"
+                title="Conversation actions"
                 className="grid size-10 shrink-0 place-items-center rounded-full text-[#5d6962] transition hover:bg-[#f0f5f1] hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
               >
-                {conversationView === "ACTIVE" ? <Archive className="size-[18px]" /> : <ArchiveRestore className="size-[18px]" />}
+                <MoreHorizontal className="size-[18px]" />
               </button>
             ) : null}
             <button
@@ -784,6 +1117,18 @@ export function StudentSupportExperience() {
           </header>
 
           <div ref={messagesLogRef} onScroll={handleMessageScroll} role="log" aria-live="polite" aria-relevant="additions" className="min-h-0 min-w-0 flex-1 space-y-3 overflow-x-hidden overflow-y-auto overscroll-contain bg-[#f4f7f4] px-3 py-4 scroll-smooth sm:px-5 sm:py-5">
+            {archivedEmpty ? (
+              <div className="grid h-full min-h-64 place-items-center px-6 text-center">
+                <div className="max-w-sm">
+                  <span className="mx-auto grid size-20 place-items-center rounded-full bg-white text-primary shadow-sm ring-1 ring-[#dfe8e0]" aria-hidden="true">
+                    <Archive className="size-8" />
+                  </span>
+                  <h2 className="mt-4 text-lg font-extrabold text-[#17211b]">No archived chats yet</h2>
+                  <p className="mt-2 text-sm leading-6 text-[#68746d]">Press and hold a chat in Active, then choose Archive. It will appear here without closing the conversation.</p>
+                </div>
+              </div>
+            ) : null}
+
             {showWelcome ? (
               <>
                 <div className="pb-2 pt-1 text-center">
@@ -826,11 +1171,6 @@ export function StudentSupportExperience() {
               const mine = message.senderType === "STUDENT" && message.senderId === user.id;
               const day = formatSupportDay(message.createdAt);
               const showDay = index === 0 || formatSupportDay(messages[index - 1].createdAt) !== day;
-              const canEdit = mine
-                && messages.at(-1)?.id === message.id
-                && selectedConversation.status === "OPEN"
-                && (selectedConversation.mode === "WAITING_FOR_STAFF" || selectedConversation.mode === "STAFF_ACTIVE")
-                && Date.now() - new Date(message.createdAt).getTime() <= 30 * 60_000;
 
               if (message.senderType === "SYSTEM") {
                 return (
@@ -852,20 +1192,35 @@ export function StudentSupportExperience() {
                   {showDay ? <p className="mb-3 text-center text-[11px] font-bold text-[#879089]">{day}</p> : null}
                   <div className={cn("flex items-end gap-2", mine ? "justify-end" : "justify-start")}>
                     {!mine ? <ChatAvatar kind={botMessage ? "BOT" : "STAFF"} size="sm" /> : null}
-                    <div className={cn("flex min-w-0 max-w-[82%] flex-col sm:max-w-[72%]", mine ? "items-end" : "items-start")}>
+                    <div className={cn("group/message flex min-w-0 max-w-[82%] flex-col sm:max-w-[72%]", mine ? "items-end" : "items-start")}>
                       {!mine ? (
                         <p className={cn("mb-1 px-1 text-[11px] font-bold", botMessage ? "text-primary" : "text-sky-800")}>
                           {botMessage ? "WesBot" : message.sender?.fullName || "Commissary staff"}
                         </p>
                       ) : null}
-                      <div className={cn(
+                      <div
+                        onClick={(event) => {
+                          if (mine && editingMessageId !== message.id) consumeLongPressClick(event);
+                        }}
+                        onPointerDown={mine && editingMessageId !== message.id
+                          ? (event) => beginLongPress(event, { kind: "MESSAGE", conversationId: selectedConversation.id, messageId: message.id })
+                          : undefined}
+                        onPointerMove={mine && editingMessageId !== message.id ? moveLongPress : undefined}
+                        onPointerUp={mine && editingMessageId !== message.id ? clearLongPressTimer : undefined}
+                        onPointerCancel={mine && editingMessageId !== message.id ? clearLongPressTimer : undefined}
+                        onContextMenu={mine && editingMessageId !== message.id
+                          ? (event) => openActionsFromContextMenu(event, { kind: "MESSAGE", conversationId: selectedConversation.id, messageId: message.id })
+                          : undefined}
+                        className={cn(
                         "rounded-[20px] px-4 py-2.5 text-sm shadow-sm",
+                        mine && editingMessageId !== message.id ? "touch-pan-y select-none" : "",
                         mine
                           ? "rounded-br-md bg-primary text-white"
                           : botMessage
                             ? "rounded-bl-md bg-white text-[#17211b] ring-1 ring-[#dfe8e0]"
                             : "rounded-bl-md bg-white text-[#17211b] ring-1 ring-sky-200"
-                      )}>
+                      )}
+                      >
                         {editingMessageId === message.id ? (
                           <textarea value={editDraft} onChange={(event) => setEditDraft(event.target.value)} maxLength={2000} rows={3} className="min-w-[220px] resize-y rounded-lg border border-white/50 bg-white/95 p-2 text-[#17211b] outline-none focus:ring-2 focus:ring-white" aria-label="Edit message" />
                         ) : <p className="whitespace-pre-wrap break-words leading-6 [overflow-wrap:anywhere]">{message.message}</p>}
@@ -879,8 +1234,19 @@ export function StudentSupportExperience() {
                           <button type="button" disabled={savingEdit || !editDraft.trim()} onClick={() => void saveMessageEdit(selectedConversation, message)} className="grid size-8 place-items-center rounded-full bg-primary text-white disabled:opacity-50" aria-label="Save edited message"><Check className="size-4" /></button>
                           <button type="button" disabled={savingEdit} onClick={() => { setEditingMessageId(null); setEditDraft(""); }} className="grid size-8 place-items-center rounded-full border bg-white text-muted-foreground" aria-label="Cancel editing"><X className="size-4" /></button>
                         </div>
-                      ) : canEdit ? (
-                        <button type="button" onClick={() => { setEditingMessageId(message.id); setEditDraft(message.message); }} className="mt-1 inline-flex min-h-8 items-center gap-1 rounded-full px-2 text-[11px] font-bold text-primary hover:bg-primary/10" aria-label="Edit your latest message"><Pencil className="size-3" />Edit</button>
+                      ) : null}
+                      {mine && editingMessageId !== message.id ? (
+                        <button
+                          type="button"
+                          onClick={(event) => openMessageActions(selectedConversation.id, message.id, event.currentTarget)}
+                          onKeyDown={(event) => openActionsFromKeyboard(event, { kind: "MESSAGE", conversationId: selectedConversation.id, messageId: message.id })}
+                          aria-label="Open actions for your message"
+                          aria-haspopup="dialog"
+                          className="mt-0.5 inline-flex min-h-8 items-center gap-1 rounded-full px-2 text-[10px] font-bold text-[#68746d] opacity-70 transition hover:bg-white hover:text-primary focus:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary sm:opacity-0 sm:group-hover/message:opacity-100 sm:group-focus-within/message:opacity-100"
+                        >
+                          <MoreHorizontal className="size-3.5" />
+                          Actions
+                        </button>
                       ) : null}
                       {suggestedActions.length ? (
                         <div className="mt-2 flex max-w-full flex-wrap gap-1.5" aria-label="Suggested WesBot replies">
@@ -934,7 +1300,33 @@ export function StudentSupportExperience() {
             ) : null}
           </div>
 
+          {conversationView === "ARCHIVED" ? selectedConversation ? (
+            <div className="flex shrink-0 items-center gap-3 border-t border-[#e5ebe6] bg-white px-4 py-3 pb-[calc(.75rem+env(safe-area-inset-bottom))] sm:px-5 sm:pb-3">
+              <span className="grid size-10 shrink-0 place-items-center rounded-full bg-[#eef4ef] text-primary" aria-hidden="true">
+                <Archive className="size-[18px]" />
+              </span>
+              <p className="min-w-0 flex-1 text-xs font-semibold leading-5 text-[#68746d]">This chat is archived. Restore it before sending another message.</p>
+              <Button type="button" variant="secondary" disabled={submitting} onClick={() => void archiveConversation(selectedConversation, false)}>
+                <ArchiveRestore className="size-4" />
+                Restore
+              </Button>
+            </div>
+          ) : null : (
           <div className="shrink-0 border-t border-[#e5ebe6] bg-white px-3 pt-2.5 pb-[calc(.625rem+env(safe-area-inset-bottom))] sm:px-4 sm:py-3">
+            {resendSourceMessageId ? (
+              <div className="mb-2 flex items-center gap-2 rounded-xl border border-[#cfe0d1] bg-[#f2f8f2] px-3 py-2 text-xs text-[#526058]">
+                <Pencil className="size-3.5 shrink-0 text-primary" />
+                <span className="min-w-0 flex-1">Editing a copy. Sending will create a new follow-up message.</span>
+                <button
+                  type="button"
+                  onClick={() => { setResendSourceMessageId(null); setComposer(""); }}
+                  aria-label="Cancel edit and resend"
+                  className="grid size-7 shrink-0 place-items-center rounded-full hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                >
+                  <X className="size-3.5" />
+                </button>
+              </div>
+            ) : null}
             {selectedConversation?.mode === "BOT_ACTIVE" ? (
               <div className="mb-2 flex items-center justify-between gap-2 rounded-xl bg-[#eef7ef] px-3 py-2 text-xs text-[#526058]">
                 <span className="flex items-center gap-2"><span className="size-2 rounded-full bg-emerald-500" />WesBot is replying</span>
@@ -989,8 +1381,39 @@ export function StudentSupportExperience() {
             </form>
             <p className="mt-2 hidden px-1 text-[11px] text-[#88918b] sm:block">WesBot uses current WESCOMM records. Press Enter to send, Shift+Enter for a new line.</p>
           </div>
+          )}
         </div>
       </section>
+
+      {toast ? (
+        <div role="status" className="fixed inset-x-4 bottom-20 z-[12000] mx-auto flex w-fit max-w-[calc(100%-2rem)] items-center gap-3 rounded-full bg-[#17211b] px-4 py-3 text-sm font-semibold text-white shadow-xl lg:bottom-6">
+          <span>{toast.message}</span>
+          {toast.undo ? (
+            <button
+              type="button"
+              onClick={() => {
+                if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
+                const undo = toast.undo;
+                setToast(null);
+                toastTimerRef.current = null;
+                undo?.();
+              }}
+              className="rounded-full px-2 py-1 font-extrabold text-[#9ee6a5] transition hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+            >
+              Undo
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
+      <SupportActionSheet
+        open={actionSheetOpen}
+        title={actionSheetTitle}
+        description={actionSheetDescription}
+        actions={actionSheetActions}
+        returnFocus={actionTarget?.trigger ?? null}
+        onClose={() => setActionTarget(null)}
+      />
     </div>
   );
 }

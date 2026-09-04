@@ -36,6 +36,15 @@ const releaseMigrations = [
       /policy_acceptances ENABLE ROW LEVEL SECURITY/,
       /REVOKE ALL PRIVILEGES ON TABLE public\.policy_acceptances FROM PUBLIC/
     ]
+  },
+  {
+    directory: "20260904000000_restore_student_archived_support_on_reply",
+    required: [
+      /CREATE OR REPLACE FUNCTION public\.insert_active_wesbot_reply/,
+      /CREATE OR REPLACE FUNCTION public\.insert_owned_staff_message/,
+      /"student_archived_at" = NULL/,
+      /SECURITY DEFINER/
+    ]
   }
 ];
 

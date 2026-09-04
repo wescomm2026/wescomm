@@ -338,6 +338,11 @@ export type BackendPickupPolicyPreview = {
   affectedCount: number;
   autoRescheduledCount: number;
   needsReviewCount: number;
+  bookingWindow: {
+    serverDate: string;
+    minDate: string;
+    maxDate: string;
+  };
   previewFingerprint: string;
   affectedReservations: BackendPickupPolicyImpact[];
   truncated: boolean;

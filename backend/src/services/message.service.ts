@@ -657,7 +657,7 @@ export async function createMessage(input: {
     });
     const { error: updateError } = await supabaseAdmin
       .from("conversations")
-      .update({ status: "OPEN", updated_at: message.createdAt })
+      .update({ status: "OPEN", student_archived_at: null, updated_at: message.createdAt })
       .eq("id", input.conversationId);
     if (updateError) throw HttpError.fromSupabase(updateError);
   } else {
@@ -992,7 +992,7 @@ export async function setConversationArchived(input: {
 }) {
   const conversation = await requireConversation(input.conversationId, input.userId);
   assertConversationAccess(conversation, input.userId, input.role);
-  if (input.archived && conversation.status !== "RESOLVED") {
+  if (input.archived && input.role !== "STUDENT" && conversation.status !== "RESOLVED") {
     throw new HttpError(409, "Resolve this conversation before archiving it.", "CONVERSATION_RESOLVE_REQUIRED");
   }
 
@@ -1003,7 +1003,7 @@ export async function setConversationArchived(input: {
   const mutation = await prisma.conversation.updateMany({
     where: {
       id: input.conversationId,
-      ...(input.archived ? { status: "RESOLVED" as const } : {})
+      ...(input.archived && input.role !== "STUDENT" ? { status: "RESOLVED" as const } : {})
     },
     data
   });

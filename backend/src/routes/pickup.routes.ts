@@ -39,7 +39,7 @@ const policySchema = z.object({
   })).max(366)
 }).superRefine((input, context) => {
   if (input.maxAdvanceDays < input.minAdvanceDays) {
-    context.addIssue({ code: z.ZodIssueCode.custom, message: "Maximum advance days must be at least the minimum.", path: ["maxAdvanceDays"] });
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Maximum open pickup days must be at least the minimum.", path: ["maxAdvanceDays"] });
   }
   if (new Set(input.days.map((day) => day.weekday)).size !== 7) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: "Configure each weekday exactly once.", path: ["days"] });

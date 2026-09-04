@@ -6,8 +6,10 @@ import {
   pickupDateColumnKey,
   pickupInstant,
   pickupWeekday,
+  resolvePickupBookingWindow,
   scheduleReviewReason,
   validatePickupSelection,
+  type PickupBookingWindow,
   type PickupPolicySnapshot
 } from "../domain/pickup-schedule.js";
 import { prisma } from "../lib/prisma.js";
@@ -87,16 +89,16 @@ function asSnapshot(policy: PickupPolicyRecord): PickupPolicySnapshot {
 }
 
 function serializePolicy(policy: PickupPolicyRecord, now = new Date()) {
-  const today = manilaDateKey(now);
+  const window = resolvePickupBookingWindow(asSnapshot(policy), now);
   return {
     id: policy.id,
     version: policy.version,
     timezone: policy.timezone,
     minAdvanceDays: policy.minAdvanceDays,
     maxAdvanceDays: policy.maxAdvanceDays,
-    minDate: addCalendarDays(today, policy.minAdvanceDays),
-    maxDate: addCalendarDays(today, policy.maxAdvanceDays),
-    serverDate: today,
+    minDate: window.minDate,
+    maxDate: window.maxDate,
+    serverDate: window.serverDate,
     effectiveAt: policy.effectiveAt.toISOString(),
     isActive: policy.isActive,
     reason: policy.reason,
@@ -115,15 +117,15 @@ function serializePolicy(policy: PickupPolicyRecord, now = new Date()) {
 }
 
 export function serializePublicPolicy(policy: PickupPolicyRecord, now = new Date()) {
-  const today = manilaDateKey(now);
+  const window = resolvePickupBookingWindow(asSnapshot(policy), now);
   return {
     version: policy.version,
     timezone: policy.timezone,
     minAdvanceDays: policy.minAdvanceDays,
     maxAdvanceDays: policy.maxAdvanceDays,
-    minDate: addCalendarDays(today, policy.minAdvanceDays),
-    maxDate: addCalendarDays(today, policy.maxAdvanceDays),
-    serverDate: today,
+    minDate: window.minDate,
+    maxDate: window.maxDate,
+    serverDate: window.serverDate,
     isActive: policy.isActive,
     days: policy.days,
     timeSlots: policy.timeSlots
@@ -317,12 +319,11 @@ export function findAutomaticPickupDestination(
   policy: PickupPolicySnapshot,
   reservation: Pick<AffectedReservation, "pickupStart" | "pickupEnd">,
   now: Date,
-  bookedByWindow: ReadonlyMap<string, number> = new Map()
+  bookedByWindow: ReadonlyMap<string, number> = new Map(),
+  bookingWindow?: PickupBookingWindow
 ) {
   if (!reservation.pickupStart || !reservation.pickupEnd) return null;
-  const today = manilaDateKey(now);
-  const minDate = addCalendarDays(today, policy.minAdvanceDays);
-  const maxDate = addCalendarDays(today, policy.maxAdvanceDays);
+  const { minDate, maxDate } = bookingWindow ?? resolvePickupBookingWindow(policy, now);
   let date = addCalendarDays(manilaDateKey(reservation.pickupStart), 1);
   if (date < minDate) date = minDate;
 
@@ -358,6 +359,7 @@ async function findAffectedReservations(
   policy: PickupPolicySnapshot,
   now = new Date()
 ) {
+  const bookingWindow = resolvePickupBookingWindow(policy, now);
   const rows = await client.reservation.findMany({
     where: {
       status: { in: [...ACTIVE_RESERVATION_STATUSES] },
@@ -421,7 +423,7 @@ async function findAffectedReservations(
         });
         continue;
       }
-      const destination = findAutomaticPickupDestination(policy, reservation, now, bookedByWindow);
+      const destination = findAutomaticPickupDestination(policy, reservation, now, bookedByWindow, bookingWindow);
       if (!destination) {
         impacts.push({
           ...reservation,
@@ -456,7 +458,8 @@ async function findAffectedReservations(
       policy,
       pickupStart: reservation.pickupStart,
       pickupEnd: reservation.pickupEnd,
-      now
+      now,
+      bookingWindow
     });
     if (!reason && reservation.pickupStart && reservation.pickupEnd) {
       const startMinute = pickupMinute(reservation.pickupStart);
@@ -531,7 +534,9 @@ function serializeImpact(reservation: PickupImpact) {
 
 export async function previewPickupPolicy(input: PickupPolicyInput) {
   const current = await requireCurrentPolicy();
-  const affected = await findAffectedReservations(prisma, inputSnapshot(input, current.version + 1));
+  const now = new Date();
+  const proposedPolicy = inputSnapshot(input, current.version + 1);
+  const affected = await findAffectedReservations(prisma, proposedPolicy, now);
   const autoRescheduledCount = affected.filter((reservation) => reservation.action === "AUTO_RESCHEDULE").length;
   const needsReviewCount = affected.length - autoRescheduledCount;
   return {
@@ -540,6 +545,7 @@ export async function previewPickupPolicy(input: PickupPolicyInput) {
     affectedCount: affected.length,
     autoRescheduledCount,
     needsReviewCount,
+    bookingWindow: resolvePickupBookingWindow(proposedPolicy, now),
     previewFingerprint: pickupImpactFingerprint(current.version, input, affected),
     affectedReservations: affected.slice(0, 100).map(serializeImpact),
     truncated: affected.length > 100
