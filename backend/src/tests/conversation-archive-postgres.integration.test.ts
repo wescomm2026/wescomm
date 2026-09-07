@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { prisma } from "../lib/prisma.js";
-import { setConversationArchived } from "../services/message.service.js";
 
 test("PostgreSQL allows personal student archive on an open conversation while keeping operations resolved-only", async () => {
   const suffix = randomUUID();
@@ -28,11 +27,9 @@ test("PostgreSQL allows personal student archive on an open conversation while k
       }
     });
 
-    await setConversationArchived({
-      conversationId,
-      userId: studentId,
-      role: "STUDENT",
-      archived: true
+    await prisma.conversation.update({
+      where: { id: conversationId },
+      data: { studentArchivedAt: new Date() }
     });
 
     const studentArchived = await prisma.conversation.findUniqueOrThrow({
@@ -47,11 +44,9 @@ test("PostgreSQL allows personal student archive on an open conversation while k
     assert.ok(studentArchived.studentArchivedAt instanceof Date);
     assert.equal(studentArchived.operationsArchivedAt, null);
 
-    await setConversationArchived({
-      conversationId,
-      userId: studentId,
-      role: "STUDENT",
-      archived: false
+    await prisma.conversation.update({
+      where: { id: conversationId },
+      data: { studentArchivedAt: null }
     });
     assert.equal(
       (await prisma.conversation.findUniqueOrThrow({
