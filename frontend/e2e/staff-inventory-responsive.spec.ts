@@ -156,8 +156,8 @@ async function mockInventory(page: Page) {
       await json(route, { unreadCount: 0 });
       return;
     }
-    if (path === "/api/backend/realtime/events" && request.method() === "GET") {
-      await route.fulfill({ status: 200, contentType: "text/event-stream", body: "" });
+    if (path === "/api/backend/realtime/updates" && request.method() === "GET") {
+      await json(route, { cursor: "0", hasMore: false, events: [] });
       return;
     }
     if (path === "/api/backend/staff/products" && request.method() === "GET") {

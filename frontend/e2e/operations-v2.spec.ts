@@ -89,8 +89,8 @@ async function handleShellRequest(route: Route, profile: BackendAuthProfile) {
     await json(route, { unreadCount: 0 });
     return true;
   }
-  if (path === "/api/backend/realtime/events") {
-    await route.fulfill({ status: 200, contentType: "text/event-stream", body: "" });
+  if (path === "/api/backend/realtime/updates") {
+    await json(route, { cursor: "0", hasMore: false, events: [] });
     return true;
   }
   return false;

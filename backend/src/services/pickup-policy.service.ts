@@ -21,7 +21,7 @@ import {
   pickupCapacitySnapshot,
   pickupWindowKey
 } from "./pickup-capacity.service.js";
-import { publishRealtimeEvents, REALTIME_TOPICS, wakeRealtimeBroker } from "./realtime-event.service.js";
+import { publishRealtimeEvents, REALTIME_TOPICS } from "./realtime-event.service.js";
 
 const pickupPolicySelect = Prisma.validator<Prisma.PickupPolicyVersionSelect>()({
   id: true,
@@ -814,7 +814,6 @@ export async function createPickupPolicyVersion(input: PickupPolicyActivationInp
     }
     throw error;
   });
-  wakeRealtimeBroker();
   return result;
 }
 
@@ -944,6 +943,5 @@ export async function rescheduleReservation(input: {
     }
     throw error;
   });
-  wakeRealtimeBroker();
   return result;
 }

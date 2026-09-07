@@ -24,8 +24,7 @@ import { createNotification, createNotificationBestEffort, createNotificationsFo
 import {
   publishRealtimeEvents,
   publishRealtimeEventsBestEffort,
-  REALTIME_TOPICS,
-  wakeRealtimeBroker
+  REALTIME_TOPICS
 } from "./realtime-event.service.js";
 import { buildWesbotHandoffSummary, resolveWesbotReply } from "./wesbot.service.js";
 import { WESBOT_CLASSIFIER_VERSION } from "./wesbot-classifier.service.js";
@@ -1113,7 +1112,6 @@ export async function setConversationDeleted(input: {
 }) {
   assertAdminRetentionAccess(input.actorRole);
 
-  let changed = false;
   try {
     await prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT "id" FROM "conversations" WHERE "id" = ${input.conversationId}::uuid FOR UPDATE`;
@@ -1175,7 +1173,6 @@ export async function setConversationDeleted(input: {
           audienceUserIds: [conversation.studentId],
           audienceRoles: ["STAFF", "ADMIN"]
         }]);
-        changed = true;
         return;
       }
 
@@ -1213,7 +1210,6 @@ export async function setConversationDeleted(input: {
         audienceUserIds: [conversation.studentId],
         audienceRoles: ["STAFF", "ADMIN"]
       }]);
-      changed = true;
     }, {
       isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
       maxWait: 5_000,
@@ -1223,7 +1219,6 @@ export async function setConversationDeleted(input: {
     mapConversationRetentionTransactionError(error);
   }
 
-  if (changed) wakeRealtimeBroker();
   return requireConversation(input.conversationId, input.actorId, { includeDeleted: input.deleted });
 }
 
@@ -1379,7 +1374,6 @@ export async function permanentlyPurgeConversation(input: {
       maxWait: 5_000,
       timeout: 10_000
     });
-    wakeRealtimeBroker();
     return result;
   } catch (error) {
     if (
@@ -1555,7 +1549,7 @@ export async function setConversationTyping(input: {
     entityId: input.conversationId,
     audienceUserIds: input.role === "STUDENT" ? [] : [conversation.studentId],
     audienceRoles: input.role === "STUDENT" ? ["STAFF", "ADMIN"] : [],
-    ttlMs: 15_000,
+    ttlMs: 45_000,
     payload: {
       conversationId: input.conversationId,
       userId: input.userId,

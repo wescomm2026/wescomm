@@ -56,8 +56,8 @@ async function mockProfileApis(page: Page) {
       await json(route, { enabled: false, publicKey: "" });
       return;
     }
-    if (path === "/api/backend/realtime/events") {
-      await route.fulfill({ status: 200, contentType: "text/event-stream", body: "" });
+    if (path === "/api/backend/realtime/updates") {
+      await json(route, { cursor: "0", hasMore: false, events: [] });
       return;
     }
 

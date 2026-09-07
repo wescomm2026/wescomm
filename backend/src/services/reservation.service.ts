@@ -33,7 +33,7 @@ import {
   type NoShowPolicyOutcome
 } from "./restriction.service.js";
 import { OUTBOX_EVENT_TYPES } from "./outbox.service.js";
-import { publishRealtimeEvents, REALTIME_TOPICS, wakeRealtimeBroker } from "./realtime-event.service.js";
+import { publishRealtimeEvents, REALTIME_TOPICS } from "./realtime-event.service.js";
 import {
   createBackInStockNotificationsInTransaction
 } from "./wishlist-notification.service.js";
@@ -1169,7 +1169,6 @@ export async function createReservation(input: {
       throw error;
     });
 
-  if (!transactionResult.idempotentReplay) wakeRealtimeBroker();
   return transactionResult;
 }
 
@@ -1657,7 +1656,6 @@ export async function updateReservationStatus(
       throw error;
     });
 
-  if (result.previousStatus !== result.nextStatus || result.receiptCreated) wakeRealtimeBroker();
 
   if (result.paymentCleanupAttemptIds.length) {
     await Promise.allSettled(

@@ -122,6 +122,24 @@ export type BackendConversationStatus = "OPEN" | "RESOLVED";
 export type BackendConversationMode = "BOT_ACTIVE" | "WAITING_FOR_STAFF" | "STAFF_ACTIVE" | "RESOLVED";
 export type BackendConversationMessageSenderType = "STUDENT" | "BOT" | "STAFF" | "SYSTEM";
 
+export type BackendRealtimeUpdate = {
+  id: string;
+  topic:
+    | "reservations"
+    | "receipts"
+    | "notifications"
+    | "conversations"
+    | "typing"
+    | "inventory"
+    | "dashboard"
+    | "reports"
+    | "restrictions"
+    | "users";
+  entityId: string | null;
+  payload: Record<string, unknown>;
+  createdAt: string;
+};
+
 export type BackendProfileSummary = {
   id: string;
   fullName: string;
@@ -1089,6 +1107,17 @@ export async function completeOnboardingFromApi(token: string, payload: Complete
     body: JSON.stringify(payload)
   });
   return data.profile;
+}
+
+export async function getRealtimeUpdatesFromApi(token: string, cursor?: string) {
+  const query = cursor && /^\d+$/.test(cursor)
+    ? `?cursor=${encodeURIComponent(cursor)}`
+    : "";
+  return authApiFetch<{
+    cursor: string;
+    hasMore: boolean;
+    events: BackendRealtimeUpdate[];
+  }>(`/realtime/updates${query}`, token, { cache: "no-store" });
 }
 
 const PRODUCT_CACHE_TTL_MS = 30_000;

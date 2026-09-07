@@ -49,7 +49,7 @@ test("first-login onboarding requires Department and Student ID and permits opti
     if (path === "/api/backend/products") return json(route, { products: [] });
     if (path === "/api/backend/reservations") return json(route, { items: [], nextCursor: null });
     if (path === "/api/backend/receipts") return json(route, { items: [], nextCursor: null });
-    if (path === "/api/backend/realtime/events") return route.fulfill({ status: 200, contentType: "text/event-stream", body: "" });
+    if (path === "/api/backend/realtime/updates") return json(route, { cursor: "0", hasMore: false, events: [] });
     return json(route, { error: `Unexpected mocked request: ${request.method()} ${path}` }, 404);
   });
 
