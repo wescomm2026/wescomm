@@ -4,6 +4,7 @@ import { userFacingErrorMessage } from "@/lib/user-facing-error";
 
 import { useEffect, useMemo, useState } from "react";
 import { CalendarDays, ChevronLeft, ChevronRight } from "lucide-react";
+import { useRealtimeRefresh } from "@/components/realtime/RealtimeProvider";
 import {
   getPickupAvailabilityFromApi,
   getPickupSlotAvailabilityFromApi,
@@ -110,8 +111,13 @@ export function PickupSchedulePicker({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [slotAvailability, setSlotAvailability] = useState<BackendPickupSlotAvailability | null>(null);
+  const [realtimeRefreshKey, setRealtimeRefreshKey] = useState(0);
   const [slotLoading, setSlotLoading] = useState(false);
   const [slotError, setSlotError] = useState("");
+
+  useRealtimeRefresh(["inventory", "reservations"], () => {
+    if (!policyOverride) setRealtimeRefreshKey((current) => current + 1);
+  });
 
   useEffect(() => {
     let active = true;
@@ -152,7 +158,7 @@ export function PickupSchedulePicker({
     return () => { active = false; };
   // The parent setter is stable; re-fetching on selection changes would reset keyboard/calendar navigation.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoSelectFirst, initialDate, onChange, onSelectionSummary, policyOverride, refreshKey]);
+  }, [autoSelectFirst, initialDate, onChange, onSelectionSummary, policyOverride, realtimeRefreshKey, refreshKey]);
 
   useEffect(() => {
     if (!policy || !selectedDate) {
@@ -174,7 +180,10 @@ export function PickupSchedulePicker({
             capacity: slot.capacity ?? null,
             booked: 0,
             remaining: slot.capacity ?? null,
-            isFull: false
+            isFull: false,
+            isExpired: false,
+            isUnavailable: false,
+            unavailableReason: null
           }))
         })
       : getPickupSlotAvailabilityFromApi(selectedDate, policy.version);
@@ -184,9 +193,12 @@ export function PickupSchedulePicker({
         if (!active) return;
         setSlotAvailability(availability);
         const availabilityBySlot = new Map(availability.slots.map((slot) => [slot.slotId, slot]));
-        const selectableSlots = policy.timeSlots.filter((slot) => (
-          slot.isActive && availabilityBySlot.get(slot.id)?.isFull !== true
-        ));
+        const selectableSlots = policy.timeSlots.filter((slot) => {
+          const slotAvailability = availabilityBySlot.get(slot.id);
+          const unavailable = slotAvailability?.isUnavailable
+            ?? (slotAvailability?.isExpired === true || slotAvailability?.isFull === true);
+          return slot.isActive && !unavailable;
+        });
         const selectedSlotId = selection?.pickupDate === selectedDate
           && selection.pickupPolicyVersion === policy.version
           && selectableSlots.some((slot) => slot.id === selection.pickupSlotId)
@@ -220,7 +232,7 @@ export function PickupSchedulePicker({
     return () => { active = false; };
   // Slot clicks should not re-fetch counts. Date and policy changes always do.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [policy, policyOverride, selectedDate, refreshKey]);
+  }, [policy, policyOverride, realtimeRefreshKey, selectedDate, refreshKey]);
 
   const cells = useMemo(() => visibleMonth ? monthCells(visibleMonth) : [], [visibleMonth]);
   const closureByDate = useMemo(() => new Map(policy?.closures.map((item) => [item.date, item.reason]) ?? []), [policy]);
@@ -301,24 +313,28 @@ export function PickupSchedulePicker({
 
       <section className="rounded-lg border border-[#d7e2d8] bg-[#f7faf7] p-4">
         <p className="text-sm font-extrabold text-[#17211b]">Available time slots</p>
-        <p className="mt-1 text-xs leading-5 text-[#68746d]">Live remaining capacity is checked for the selected date.</p>
+        <p className="mt-1 text-xs leading-5 text-[#68746d]">{policyOverride ? "Configuration preview only; live reservation counts are not shown." : "Live remaining capacity is checked for the selected date."}</p>
         {slotError ? <p className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700" role="alert">{slotError}</p> : null}
         <div className="mt-3 grid gap-2">
           {activeSlots.map((slot) => {
             const availability = slotAvailabilityById.get(slot.id);
             const isFull = availability?.isFull === true;
+            const isExpired = availability?.isExpired === true;
+            const isUnavailable = availability?.isUnavailable ?? (isExpired || isFull);
             const capacityLabel = policyOverride
               ? slot.capacity == null ? "Unlimited" : `Limit: ${slot.capacity}`
-              : availability?.capacity == null
-                ? "Unlimited"
-                : isFull
-                  ? "Full"
-                  : `${availability.remaining} spot${availability.remaining === 1 ? "" : "s"} left`;
+              : isExpired
+                ? "Time passed"
+                : availability?.capacity == null
+                  ? "Unlimited"
+                  : isFull
+                    ? "Full"
+                    : `${availability.remaining} spot${availability.remaining === 1 ? "" : "s"} left`;
             return (
               <button
                 key={slot.id}
                 type="button"
-                disabled={disabled || !selectedDate || slotLoading || slotAvailabilityPending || isFull}
+                disabled={disabled || !selectedDate || slotLoading || slotAvailabilityPending || isUnavailable}
                 aria-label={`${slot.label}, ${capacityLabel}`}
                 aria-pressed={selection?.pickupSlotId === slot.id}
                 onClick={() => {
@@ -335,7 +351,7 @@ export function PickupSchedulePicker({
                   selection?.pickupSlotId === slot.id
                     ? "border-primary bg-[#e8f4e8] text-primary ring-1 ring-primary"
                     : "border-[#d7e0d8] bg-white text-[#253129] hover:border-primary",
-                  isFull && "border-[#e4c8c8] bg-[#faf3f3] text-[#8b5c5c]"
+                  isUnavailable && "border-[#e4c8c8] bg-[#faf3f3] text-[#8b5c5c]"
                 )}
               >
                 <span className="block">{slot.label}</span>
@@ -344,8 +360,8 @@ export function PickupSchedulePicker({
             );
           })}
         </div>
-        {selectedDate && !slotLoading && slotAvailability && slotAvailability.slots.length > 0 && slotAvailability.slots.every((slot) => slot.isFull) ? (
-          <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800" role="status">All pickup times are full on this date. Choose another date.</p>
+        {selectedDate && !slotLoading && slotAvailability && slotAvailability.slots.length > 0 && slotAvailability.slots.every((slot) => slot.isUnavailable ?? (slot.isExpired === true || slot.isFull === true)) ? (
+          <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800" role="status">No pickup times remain available on this date. Choose another date.</p>
         ) : null}
         {selectedDate ? (
           <p className="mt-4 rounded-md bg-white px-3 py-2 text-xs font-semibold text-[#536058]">

@@ -18,6 +18,8 @@ const staffProfile: BackendAuthProfile = {
   email: "staff@wesleyan.edu.ph",
   phone: null,
   department: "Commissary",
+  departmentId: null,
+  onboardingCompletedAt: null,
   address: null,
   avatarUrl: null
 };
@@ -97,8 +99,8 @@ test("staff send and resolve actions show immediate progress instead of appearin
       return;
     }
 
-    if (path === "/api/backend/realtime/events" && request.method() === "GET") {
-      await route.fulfill({ status: 200, contentType: "text/event-stream", body: "" });
+    if (path === "/api/backend/realtime/updates" && request.method() === "GET") {
+      await json(route, { cursor: "0", hasMore: false, events: [] });
       return;
     }
 

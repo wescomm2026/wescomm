@@ -4,6 +4,7 @@ import { userFacingErrorMessage } from "@/lib/user-facing-error";
 
 import Image from "next/image";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { createPortal } from "react-dom";
 import { Check, ChevronLeft, ChevronRight, Minus, Plus, ShoppingBag, X } from "lucide-react";
@@ -25,7 +26,6 @@ import {
 } from "@/components/pickup/PickupSchedulePicker";
 import { useAccessibleDialog } from "@/components/ui/useAccessibleDialog";
 import {
-  BackendApiError,
   createGcashCheckoutFromApi,
   createReservationFromApi,
   requestProductsRefresh,
@@ -51,13 +51,7 @@ import {
   type PendingReservationRequest
 } from "@/lib/reservation-idempotency";
 import { currentCheckoutPolicyAcceptance } from "@/lib/policy-consent";
-
-const PICKUP_RECOVERY_CODES = new Set([
-  "PICKUP_POLICY_CHANGED",
-  "PICKUP_DATE_CLOSED",
-  "PICKUP_SLOT_UNAVAILABLE",
-  "PICKUP_SLOT_FULL"
-]);
+import { isPickupRecoveryError, pickupRecoveryMessage } from "@/lib/pickup-errors";
 
 function parsePrice(price: string) {
   return Number(price.replace(/[^0-9.]/g, ""));
@@ -90,6 +84,7 @@ function CartCheckoutSteps({ step }: { step: 1 | 2 }) {
 }
 
 export function StudentCartDrawer() {
+  const router = useRouter();
   const { items, itemCount, open, closeCart, updateQuantity, removeItem, clearCart } = useStudentCart();
   const { user, openAuth } = useStudentAuth();
   const { summary: restrictionSummary, isReservationRestricted } = useStudentRestriction();
@@ -103,7 +98,6 @@ export function StudentCartDrawer() {
   const [policyAccepted, setPolicyAccepted] = useState(false);
   const [notes, setNotes] = useState("");
   const [error, setError] = useState("");
-  const [reference, setReference] = useState("");
   const [gcashRecovery, setGcashRecovery] = useState<{
     reservationId: string;
     referenceCode: string;
@@ -132,7 +126,6 @@ export function StudentCartDrawer() {
       setPolicyAccepted(false);
       setNotes("");
       setError("");
-      setReference("");
       setGcashRecovery(null);
       setSubmitting(false);
       pendingRequestRef.current = null;
@@ -220,6 +213,7 @@ export function StudentCartDrawer() {
 
   const confirmCart = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (submittingRef.current) return;
     if (checkoutStep !== 2) {
       continueToPayment();
       return;
@@ -310,18 +304,20 @@ export function StudentCartDrawer() {
           });
         }
       } else {
-        setReference(reservation.referenceCode);
+        window.sessionStorage.setItem("wescomm:reservation-success", reservation.id);
+        closeCart();
+        router.push(`/student/reservations#reservation-${encodeURIComponent(reservation.id)}`);
       }
     } catch (reservationError) {
-      if (reservationError instanceof BackendApiError && reservationError.code === "RESERVATION_ACCESS_SUSPENDED") {
+      if (reservationError instanceof Error && "code" in reservationError && reservationError.code === "RESERVATION_ACCESS_SUSPENDED") {
         window.dispatchEvent(new Event("wescomm:restriction-refresh"));
       }
-      if (reservationError instanceof BackendApiError && reservationError.code && PICKUP_RECOVERY_CODES.has(reservationError.code)) {
+      if (isPickupRecoveryError(reservationError)) {
         setCheckoutStep(1);
         setPickupSelection(null);
         setPickupSummary(null);
         setPickupRefreshKey((current) => current + 1);
-        setError("Pickup availability changed. Please choose another date and time.");
+        setError(pickupRecoveryMessage(reservationError));
       } else {
         setError(userFacingErrorMessage(reservationError, "Unable to submit cart reservation."));
       }
@@ -382,25 +378,6 @@ export function StudentCartDrawer() {
                 {submitting ? "Opening GCash..." : "Continue Payment"}
               </Button>
             </div>
-          </div>
-        ) : reference ? (
-          <div className="flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto px-6 py-10 text-center">
-            <AssetIcon src="/assets/confirmed.svg" className="size-20" />
-            <p className="mt-5 text-sm font-bold uppercase text-primary">Cart reservation submitted</p>
-            <h3 className="mt-2 text-2xl font-extrabold text-[#17211b]">All items are awaiting confirmation</h3>
-            <p className="mt-3 text-sm leading-6 text-[#657169]">
-              Your items share the same pickup schedule and will be reviewed by commissary staff.
-            </p>
-            <div className="mt-6 rounded-md border border-[#cfe0d0] bg-[#f4faf4] px-5 py-4">
-              <p className="text-xs font-bold uppercase text-[#6b766f]">Group reference</p>
-              <p className="mt-1 text-xl font-extrabold text-primary">{reference}</p>
-            </div>
-            <Link href="/student/reservations" className="mt-7 w-full" onClick={closeCart}>
-              <Button className="h-12 w-full">
-                <AssetIcon src="/assets/my-reservations.svg" className="size-6" />
-                View My Reservations
-              </Button>
-            </Link>
           </div>
         ) : checkout ? (
           <form className="relative flex min-h-0 flex-1 flex-col" onSubmit={confirmCart}>

@@ -15,6 +15,8 @@ const staffProfile: BackendAuthProfile = {
   email: "qa.staff@wesleyan.edu.ph",
   phone: null,
   department: "Commissary",
+  departmentId: null,
+  onboardingCompletedAt: null,
   address: null,
   avatarUrl: null
 };
@@ -92,8 +94,8 @@ async function mockStaffSupport(page: Page, initialMode: "BOT_ACTIVE" | "STAFF_A
       await json(route, { unreadCount: 0 });
       return;
     }
-    if (path === "/api/backend/realtime/events" && request.method() === "GET") {
-      await route.fulfill({ status: 200, contentType: "text/event-stream", body: "" });
+    if (path === "/api/backend/realtime/updates" && request.method() === "GET") {
+      await json(route, { cursor: "0", hasMore: false, events: [] });
       return;
     }
     if (path === "/api/backend/conversations" && request.method() === "GET") {

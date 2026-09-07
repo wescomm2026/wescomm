@@ -22,6 +22,8 @@ const adminProfile: BackendAuthProfile = {
   email: "release.admin@wesleyan.edu.ph",
   phone: null,
   department: "Commissary",
+  departmentId: null,
+  onboardingCompletedAt: null,
   address: null,
   avatarUrl: null
 };
@@ -109,8 +111,8 @@ async function handleShellRequest(route: Route, profile: BackendAuthProfile) {
     await json(route, { unreadCount: 0 });
     return true;
   }
-  if (path === "/api/backend/realtime/events" && request.method() === "GET") {
-    await route.fulfill({ status: 200, contentType: "text/event-stream", body: "" });
+  if (path === "/api/backend/realtime/updates" && request.method() === "GET") {
+    await json(route, { cursor: "0", hasMore: false, events: [] });
     return true;
   }
   return false;

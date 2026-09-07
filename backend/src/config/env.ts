@@ -49,6 +49,7 @@ const envSchema = z.object({
   NEXT_PUBLIC_TEMP_PRODUCTION_STAFF_LOGIN_EXPIRES_AT: z.string().trim().optional(),
   AUTH_SESSION_TTL_HOURS: z.coerce.number().int().min(1).max(24 * 30).default(24 * 7),
   AUTH_SESSION_MAX_PER_USER: z.coerce.number().int().min(1).max(20).default(5),
+  REQUIRE_STUDENT_ONBOARDING: booleanEnv.default(false),
   DATA_ENCRYPTION_KEYS: z.string().trim().optional(),
   DATA_ENCRYPTION_CURRENT_VERSION: z.string().trim().regex(/^[A-Za-z0-9_-]{1,24}$/).default("v1"),
   NEXT_PUBLIC_SUPABASE_URL: z.string().url(),

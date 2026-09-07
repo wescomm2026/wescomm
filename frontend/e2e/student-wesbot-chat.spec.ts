@@ -138,8 +138,8 @@ test("WesBot opens as one messenger thread and hands the same chat to staff", as
       await json(route, { unreadCount: 0 });
       return;
     }
-    if (path === "/api/backend/realtime/events") {
-      await route.fulfill({ status: 200, contentType: "text/event-stream", body: "" });
+    if (path === "/api/backend/realtime/updates") {
+      await json(route, { cursor: "0", hasMore: false, events: [] });
       return;
     }
     if (path === "/api/backend/push/public-key") {
@@ -323,8 +323,8 @@ test("student chat has truthful archive states and edits existing messages in pl
       await json(route, { unreadCount: 0 });
       return;
     }
-    if (path === "/api/backend/realtime/events") {
-      await route.fulfill({ status: 200, contentType: "text/event-stream", body: "" });
+    if (path === "/api/backend/realtime/updates") {
+      await json(route, { cursor: "0", hasMore: false, events: [] });
       return;
     }
     if (path === "/api/backend/push/public-key") {

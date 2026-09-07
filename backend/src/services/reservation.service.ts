@@ -33,7 +33,7 @@ import {
   type NoShowPolicyOutcome
 } from "./restriction.service.js";
 import { OUTBOX_EVENT_TYPES } from "./outbox.service.js";
-import { publishRealtimeEvents, REALTIME_TOPICS, wakeRealtimeBroker } from "./realtime-event.service.js";
+import { publishRealtimeEvents, REALTIME_TOPICS } from "./realtime-event.service.js";
 import {
   createBackInStockNotificationsInTransaction
 } from "./wishlist-notification.service.js";
@@ -142,8 +142,10 @@ function nonOptionReservationSummary(summary?: string | null) {
 type SkuReservationRecord = {
   id: string;
   productId: string;
+  code: string | null;
   stock: number;
   lowStockThreshold: number;
+  optionSnapshot: Prisma.JsonValue;
   optionValues: Array<{ variantId: string }>;
 };
 
@@ -287,6 +289,9 @@ const reservationRecordSelect = Prisma.validator<Prisma.ReservationSelect>()({
       id: true,
       reservationId: true,
       productId: true,
+      productNameSnapshot: true,
+      skuCodeSnapshot: true,
+      optionSnapshot: true,
       variantSummary: true,
       quantity: true,
       unitPrice: true,
@@ -364,6 +369,9 @@ function mapPrismaReservation(reservation: ReservationRecord) {
       id: item.id,
       reservationId: item.reservationId,
       productId: item.productId,
+      productNameSnapshot: item.productNameSnapshot,
+      skuCodeSnapshot: item.skuCodeSnapshot,
+      optionSnapshot: item.optionSnapshot,
       variantSummary: item.variantSummary,
       quantity: item.quantity,
       unitPrice: item.unitPrice.toString(),
@@ -371,7 +379,7 @@ function mapPrismaReservation(reservation: ReservationRecord) {
       createdAt: item.createdAt.toISOString(),
       product: {
         id: item.product.id,
-        name: item.product.name,
+        name: item.productNameSnapshot,
         description: item.product.description,
         imageUrl: item.product.imageUrl,
         price: item.product.price.toString(),
@@ -424,6 +432,9 @@ const staffReservationListSelect = Prisma.validator<Prisma.ReservationSelect>()(
       id: true,
       reservationId: true,
       productId: true,
+      productNameSnapshot: true,
+      skuCodeSnapshot: true,
+      optionSnapshot: true,
       variantSummary: true,
       quantity: true,
       unitPrice: true,
@@ -482,12 +493,15 @@ function mapStaffReservationList(reservation: StaffReservationListRecord) {
       id: item.id,
       reservationId: item.reservationId,
       productId: item.productId,
+      productNameSnapshot: item.productNameSnapshot,
+      skuCodeSnapshot: item.skuCodeSnapshot,
+      optionSnapshot: item.optionSnapshot,
       variantSummary: item.variantSummary,
       quantity: item.quantity,
       unitPrice: item.unitPrice.toString(),
       subtotal: item.subtotal.toString(),
       createdAt: item.createdAt.toISOString(),
-      product: { id: item.product.id, name: item.product.name }
+      product: { id: item.product.id, name: item.productNameSnapshot }
     }))
   };
 }
@@ -526,6 +540,16 @@ export async function listReservations(userId: string, role: AppRole, options: R
               { fullName: { contains: query, mode: "insensitive" as const } },
               { email: { contains: query, mode: "insensitive" as const } },
               { studentNumber: { contains: query, mode: "insensitive" as const } }
+            ]
+          }
+        }
+      }, {
+        items: {
+          some: {
+            OR: [
+              { variantSummary: { contains: query, mode: "insensitive" as const } },
+              { productNameSnapshot: { contains: query, mode: "insensitive" as const } },
+              { skuCodeSnapshot: { contains: query, mode: "insensitive" as const } }
             ]
           }
         }
@@ -669,6 +693,19 @@ export async function createReservation(input: {
           select: { id: true }
         });
 
+        if (env.REQUIRE_STUDENT_ONBOARDING) {
+          const studentProfile = await tx.profile.findUnique({
+            where: { id: input.studentId },
+            select: { departmentId: true, studentNumber: true, onboardingCompletedAt: true }
+          });
+          if (!studentProfile?.departmentId || !studentProfile.studentNumber?.trim() || !studentProfile.onboardingCompletedAt) {
+            throw new HttpError(
+              409,
+              "Complete your Department and Student ID before making a reservation.",
+              "STUDENT_PROFILE_INCOMPLETE"
+            );
+          }
+        }
         await assertReservationAccessInTransaction(tx, input.studentId);
         const pickup = await validatePickupSelectionInTransaction(tx, input);
 
@@ -717,8 +754,10 @@ export async function createReservation(input: {
               select: {
                 id: true,
                 productId: true,
+                code: true,
                 stock: true,
                 lowStockThreshold: true,
+                optionSnapshot: true,
                 optionValues: { select: { variantId: true } }
               },
               relationLoadStrategy: "join"
@@ -806,10 +845,14 @@ export async function createReservation(input: {
           data: input.items.map((item, itemIndex) => {
             const product = products.find((entry) => entry.id === item.productId)!;
             const unitPrice = Number(product.price ?? 0);
+            const selectedSku = productSkus.find((sku) => sku.id === itemSkuIds.get(itemIndex));
             return {
               reservationId: reservation.id,
               productId: item.productId,
               skuId: itemSkuIds.get(itemIndex) ?? null,
+              productNameSnapshot: product.name,
+              skuCodeSnapshot: selectedSku?.code ?? null,
+              optionSnapshot: (selectedSku?.optionSnapshot ?? []) as Prisma.InputJsonValue,
               variantSummary: product.saleMode === "OPTIONS"
                 ? item.variantSummary ?? null
                 : nonOptionReservationSummary(item.variantSummary),
@@ -823,6 +866,9 @@ export async function createReservation(input: {
             reservationId: true,
             productId: true,
             skuId: true,
+            productNameSnapshot: true,
+            skuCodeSnapshot: true,
+            optionSnapshot: true,
             variantSummary: true,
             quantity: true,
             unitPrice: true,
@@ -1047,6 +1093,9 @@ export async function createReservation(input: {
               id: item.id,
               reservationId: item.reservationId,
               productId: item.productId,
+              productNameSnapshot: item.productNameSnapshot,
+              skuCodeSnapshot: item.skuCodeSnapshot,
+              optionSnapshot: item.optionSnapshot,
               variantSummary: item.variantSummary,
               quantity: item.quantity,
               unitPrice: item.unitPrice.toString(),
@@ -1054,7 +1103,7 @@ export async function createReservation(input: {
               createdAt: item.createdAt.toISOString(),
               product: {
                 id: product.id,
-                name: product.name,
+                name: item.productNameSnapshot,
                 description: product.description,
                 imageUrl: product.imageUrl,
                 price: product.price.toString(),
@@ -1120,7 +1169,6 @@ export async function createReservation(input: {
       throw error;
     });
 
-  if (!transactionResult.idempotentReplay) wakeRealtimeBroker();
   return transactionResult;
 }
 
@@ -1608,7 +1656,6 @@ export async function updateReservationStatus(
       throw error;
     });
 
-  if (result.previousStatus !== result.nextStatus || result.receiptCreated) wakeRealtimeBroker();
 
   if (result.paymentCleanupAttemptIds.length) {
     await Promise.allSettled(

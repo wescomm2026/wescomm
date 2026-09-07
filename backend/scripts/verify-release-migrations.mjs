@@ -54,6 +54,43 @@ const releaseMigrations = [
       /CHECK \(\s*"operations_archived_at" IS NULL\s*OR "status" = 'RESOLVED'/,
       /VALIDATE CONSTRAINT "conversations_operations_archive_requires_resolved_check"/
     ]
+  },
+  {
+    directory: "20260907000000_add_reservation_item_snapshots",
+    required: [
+      /ADD COLUMN "product_name_snapshot" TEXT/,
+      /ADD COLUMN "sku_code_snapshot" TEXT/,
+      /ADD COLUMN "option_snapshot" JSONB NOT NULL/,
+      /ALTER COLUMN "product_name_snapshot" SET NOT NULL/
+    ]
+  },
+  {
+    directory: "20260907010000_add_departments_and_product_audiences",
+    required: [
+      /CREATE TABLE "departments"/,
+      /CREATE TABLE "product_departments"/,
+      /normalized duplicates exist/,
+      /departments ENABLE ROW LEVEL SECURITY/,
+      /product_departments ENABLE ROW LEVEL SECURITY/,
+      /REVOKE ALL PRIVILEGES ON TABLE public\.departments FROM PUBLIC/
+    ]
+  },
+  {
+    directory: "20260907020000_add_pickup_advance_mode",
+    required: [
+      /CREATE TYPE "pickup_advance_mode"/,
+      /ADD COLUMN "advance_mode" "pickup_advance_mode" NOT NULL DEFAULT 'OPEN_DAYS'/
+    ]
+  },
+  {
+    directory: "20260907030000_backfill_department_product_audiences",
+    required: [
+      /CREATE TEMP TABLE "department_product_audience_backfill"/,
+      /product\."audience_scope" = 'ALL_STUDENTS'/,
+      /NOT EXISTS[\s\S]*FROM "product_departments" AS existing/,
+      /SET "audience_scope" = 'SPECIFIC_DEPARTMENTS'/,
+      /system\.cache-revision\.products/
+    ]
   }
 ];
 

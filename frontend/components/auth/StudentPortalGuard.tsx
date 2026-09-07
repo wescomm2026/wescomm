@@ -4,6 +4,7 @@ import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { type ReactNode, useEffect } from "react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
+import { StudentOnboardingGate } from "@/components/auth/StudentOnboardingGate";
 
 function roleHome(role: "STAFF" | "ADMIN") {
   return role === "ADMIN" ? "/admin/dashboard" : "/staff";
@@ -28,6 +29,15 @@ export function StudentPortalGuard({ children }: { children: ReactNode }) {
         </div>
       </div>
     );
+  }
+
+  if (
+    process.env.NEXT_PUBLIC_REQUIRE_STUDENT_ONBOARDING === "true"
+    && ready
+    && user?.role === "STUDENT"
+    && (!user.departmentId || !user.studentNumber || !user.onboardingCompletedAt)
+  ) {
+    return <StudentOnboardingGate />;
   }
 
   return children;

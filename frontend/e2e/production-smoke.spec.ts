@@ -124,29 +124,31 @@ async function logout(page: Page) {
 }
 
 async function startRealtimeProbe(page: Page) {
-  await page.evaluate(() => new Promise<void>((resolve, reject) => {
-    const events: JsonRecord[] = [];
-    const stream = new EventSource("/api/realtime/events", { withCredentials: true });
-    const timeout = window.setTimeout(() => {
-      stream.close();
-      reject(new Error("Authenticated realtime stream did not become ready."));
-    }, 15_000);
-    (window as unknown as { __wescommSmokeRealtime?: JsonRecord }).__wescommSmokeRealtime = { stream, events };
-    stream.addEventListener("update", (event) => {
-      events.push(JSON.parse((event as MessageEvent<string>).data));
-    });
-    stream.addEventListener("ready", () => {
-      window.clearTimeout(timeout);
-      resolve();
-    }, { once: true });
-  }));
+  const response = await page.request.get("/api/realtime/updates");
+  const body = await responseJson(response, "realtime-probe-start");
+  expect(body.cursor).toMatch(/^\d+$/);
+  await page.evaluate((cursor) => {
+    (window as unknown as { __wescommSmokeRealtime?: JsonRecord }).__wescommSmokeRealtime = {
+      cursor,
+      events: []
+    };
+  }, body.cursor);
 }
 
 async function expectRealtimeEvent(page: Page, topic: string, entityId: string) {
-  await expect.poll(() => page.evaluate(({ expectedTopic, expectedEntityId }) => {
+  await expect.poll(() => page.evaluate(async ({ expectedTopic, expectedEntityId }) => {
     const probe = (window as unknown as {
-      __wescommSmokeRealtime?: { events: JsonRecord[] };
+      __wescommSmokeRealtime?: { cursor: string; events: JsonRecord[] };
     }).__wescommSmokeRealtime;
+    if (!probe) return false;
+    const response = await fetch(`/api/realtime/updates?cursor=${encodeURIComponent(probe.cursor)}`, {
+      cache: "no-store",
+      credentials: "include"
+    });
+    if (!response.ok) return false;
+    const body = await response.json() as { cursor: string; events: JsonRecord[] };
+    probe.cursor = body.cursor;
+    probe.events.push(...body.events);
     return Boolean(probe?.events.some((event) => event.topic === expectedTopic && event.entityId === expectedEntityId));
   }, { expectedTopic: topic, expectedEntityId: entityId }), { timeout: 15_000 }).toBe(true);
 }
@@ -154,9 +156,8 @@ async function expectRealtimeEvent(page: Page, topic: string, entityId: string) 
 async function stopRealtimeProbe(page: Page) {
   await page.evaluate(() => {
     const holder = window as unknown as {
-      __wescommSmokeRealtime?: { stream: EventSource; events: JsonRecord[] };
+      __wescommSmokeRealtime?: { cursor: string; events: JsonRecord[] };
     };
-    holder.__wescommSmokeRealtime?.stream.close();
     delete holder.__wescommSmokeRealtime;
   });
 }

@@ -47,6 +47,8 @@ export type StaffProduct = {
   lowStockThreshold: number;
   isActive: boolean;
   saleMode: ProductSaleMode;
+  audienceScope?: "ALL_STUDENTS" | "SPECIFIC_DEPARTMENTS";
+  targetDepartments?: Array<{ id: string; code: string; displayName: string }>;
   skuInventoryEnabled?: boolean;
   inventoryReconciledAt?: string | null;
   category?: StaffCategory | null;
@@ -72,6 +74,8 @@ export type StaffProductPayload = {
     lowStockThreshold?: number;
   }>;
   notes?: string;
+  audienceScope?: "ALL_STUDENTS" | "SPECIFIC_DEPARTMENTS";
+  departmentIds?: string[];
 };
 
 

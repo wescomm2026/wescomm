@@ -3,39 +3,26 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import {
-  API_BASE_URL,
   AUTH_UNAUTHORIZED_EVENT,
-  requestProductsRefresh
+  COOKIE_SESSION_TOKEN,
+  getRealtimeUpdatesFromApi,
+  requestProductsRefresh,
+  type BackendRealtimeUpdate
 } from "@/lib/api";
 
 export const REALTIME_UPDATE_EVENT = "wescomm:realtime-update";
+const REALTIME_POLL_INTERVAL_MS = 15_000;
 
-export type RealtimeTopic =
-  | "reservations"
-  | "receipts"
-  | "notifications"
-  | "conversations"
-  | "typing"
-  | "inventory"
-  | "dashboard"
-  | "reports"
-  | "restrictions"
-  | "users";
+export type RealtimeTopic = BackendRealtimeUpdate["topic"];
+export type RealtimeUpdate = Omit<BackendRealtimeUpdate, "id">;
 
-export type RealtimeUpdate = {
-  topic: RealtimeTopic;
-  entityId: string | null;
-  payload: Record<string, unknown>;
-  createdAt: string;
-};
-
-function parseUpdate(value: string): RealtimeUpdate | null {
-  try {
-    const parsed = JSON.parse(value) as Partial<RealtimeUpdate>;
-    if (!parsed.topic || !parsed.createdAt || !parsed.payload || typeof parsed.payload !== "object") return null;
-    return parsed as RealtimeUpdate;
-  } catch {
-    return null;
+function dispatchUpdate(update: BackendRealtimeUpdate, currentUserId: string) {
+  window.dispatchEvent(new CustomEvent<RealtimeUpdate>(REALTIME_UPDATE_EVENT, { detail: update }));
+  if (update.topic === "inventory") {
+    requestProductsRefresh(update);
+  }
+  if (update.topic === "users" && update.entityId === currentUserId) {
+    window.dispatchEvent(new Event(AUTH_UNAUTHORIZED_EVENT));
   }
 }
 
@@ -46,44 +33,62 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
     if (!ready || !user?.id) return undefined;
 
     const storageKey = `wescomm:realtime-cursor:${user.id}`;
-    const url = new URL(`${API_BASE_URL}/realtime/events`, window.location.origin);
-    const savedCursor = window.sessionStorage.getItem(storageKey);
-    if (savedCursor && /^\d+$/.test(savedCursor)) url.searchParams.set("cursor", savedCursor);
+    const accessToken = user.accessToken ?? COOKIE_SESSION_TOKEN;
+    const currentUserId = user.id;
+    let active = true;
+    let polling = false;
+    let timer: number | null = null;
 
-    const stream = new EventSource(url.toString(), { withCredentials: true });
-    const handleReady = (event: MessageEvent<string>) => {
+    const clearTimer = () => {
+      if (timer !== null) window.clearTimeout(timer);
+      timer = null;
+    };
+    const schedule = (delayMs = REALTIME_POLL_INTERVAL_MS) => {
+      clearTimer();
+      if (active) timer = window.setTimeout(() => void poll(), delayMs);
+    };
+    const poll = async () => {
+      if (!active || polling) return;
+      if (document.visibilityState === "hidden" || !navigator.onLine) {
+        schedule();
+        return;
+      }
+
+      polling = true;
       try {
-        const payload = JSON.parse(event.data) as { cursor?: string };
-        if (payload.cursor && /^\d+$/.test(payload.cursor)) {
-          window.sessionStorage.setItem(storageKey, payload.cursor);
+        const savedCursor = window.sessionStorage.getItem(storageKey) ?? undefined;
+        const result = await getRealtimeUpdatesFromApi(accessToken, savedCursor);
+        if (!active) return;
+        if (/^\d+$/.test(result.cursor)) {
+          window.sessionStorage.setItem(storageKey, result.cursor);
         }
+        for (const update of result.events) {
+          dispatchUpdate(update, currentUserId);
+        }
+        schedule(result.hasMore ? 0 : REALTIME_POLL_INTERVAL_MS);
       } catch {
-        // A malformed readiness frame should not terminate browser reconnects.
+        if (active) schedule();
+      } finally {
+        polling = false;
       }
     };
-    const handleUpdate = (event: MessageEvent<string>) => {
-      const update = parseUpdate(event.data);
-      if (!update) return;
-      if (event.lastEventId && /^\d+$/.test(event.lastEventId)) {
-        window.sessionStorage.setItem(storageKey, event.lastEventId);
-      }
-      window.dispatchEvent(new CustomEvent<RealtimeUpdate>(REALTIME_UPDATE_EVENT, { detail: update }));
-      if (update.topic === "inventory") {
-        requestProductsRefresh(update);
-      }
-      if (update.topic === "users" && update.entityId === user.id) {
-        window.dispatchEvent(new Event(AUTH_UNAUTHORIZED_EVENT));
-      }
+    const pollWhenVisible = () => {
+      if (document.visibilityState !== "visible" || polling) return;
+      clearTimer();
+      void poll();
     };
 
-    stream.addEventListener("ready", handleReady as EventListener);
-    stream.addEventListener("update", handleUpdate as EventListener);
+    document.addEventListener("visibilitychange", pollWhenVisible);
+    window.addEventListener("online", pollWhenVisible);
+    void poll();
+
     return () => {
-      stream.removeEventListener("ready", handleReady as EventListener);
-      stream.removeEventListener("update", handleUpdate as EventListener);
-      stream.close();
+      active = false;
+      clearTimer();
+      document.removeEventListener("visibilitychange", pollWhenVisible);
+      window.removeEventListener("online", pollWhenVisible);
     };
-  }, [ready, user?.id]);
+  }, [ready, user?.accessToken, user?.id]);
 
   return children;
 }
