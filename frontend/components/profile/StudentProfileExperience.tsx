@@ -30,7 +30,6 @@ type ProfileDraft = StudentProfileInput;
 const emptyDraft: ProfileDraft = {
   fullName: "",
   phone: "",
-  department: "",
   address: ""
 };
 
@@ -67,7 +66,6 @@ function profileDraftFromUser(user: StudentUser): ProfileDraft {
   return {
     fullName: user.fullName,
     phone: user.phone,
-    department: user.department,
     address: user.address
   };
 }
@@ -393,7 +391,7 @@ export function StudentProfileExperience() {
           <InformationRow iconSrc="/assets/my-profile.svg" label="Full Name" value={activeDraft.fullName} editing={editing} onChange={updateDraft("fullName")} />
           <InformationRow iconSrc="/assets/contact-us.svg" label="Phone Number" value={activeDraft.phone} editing={editing} onChange={updateDraft("phone")} />
           <InformationRow iconSrc="/assets/id-accessories.svg" label="Student Number" value={user.studentNumber} />
-          <InformationRow iconSrc="/assets/textbooks.svg" label="Department" value={activeDraft.department} editing={editing} onChange={updateDraft("department")} />
+          <InformationRow iconSrc="/assets/textbooks.svg" label="Department" value={user.department} />
           <InformationRow iconSrc="/assets/messages.svg" label="Email Address" value={user.email} />
           <InformationRow iconSrc="/assets/contact-us.svg" label="Address" value={activeDraft.address} editing={editing} multiline onChange={updateDraft("address")} />
         </section>

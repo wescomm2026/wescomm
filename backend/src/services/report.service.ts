@@ -1,4 +1,5 @@
 import { getCache } from "@vercel/functions";
+import { bumpCacheRevision, readCacheRevision } from "./cache-revision.service.js";
 import { resolveReportRange, type ReportRangeInput, type ResolvedReportRange } from "../domain/report-range.js";
 import { prisma } from "../lib/prisma.js";
 import { withTransientPrismaReadRetry } from "../utils/prisma-retry.js";
@@ -247,7 +248,8 @@ const REPORT_CACHE_TTL_SECONDS = REPORT_CACHE_TTL_MS / 1_000;
 type ReportSummary = Awaited<ReturnType<typeof buildReportSummary>>;
 
 const cachedReports = new Map<string, { value: ReportSummary; expiresAt: number }>();
-const pendingReports = new Map<string, Promise<ReportSummary>>();
+const pendingReports = new Map<string, { promise: Promise<ReportSummary>; generation: number }>();
+let reportGeneration = 0;
 const reportRuntimeCache = getCache({ namespace: "wescomm-reports" });
 
 function isReportSummary(value: unknown): value is ReportSummary {
@@ -257,35 +259,46 @@ function isReportSummary(value: unknown): value is ReportSummary {
 }
 
 export async function invalidateReportSummaryCache() {
+  reportGeneration += 1;
   cachedReports.clear();
+  await bumpCacheRevision("reports");
   await reportRuntimeCache.expireTag("reports").catch(() => undefined);
 }
 
-export async function getReportSummary(options: ReportRangeInput = {}) {
+export async function getReportSummary(options: ReportRangeInput = {}, cacheOptions: { bypassCache?: boolean } = {}) {
+  if (cacheOptions.bypassCache) return buildReportSummary(options);
   const resolved = resolveReportRange(options);
-  const key = `summary:v3:${resolved.cacheKey}`;
+  const revision = await readCacheRevision("reports");
+  const generation = reportGeneration;
+  const key = `summary:v4:${revision}:${resolved.cacheKey}`;
   const localValue = cachedReports.get(key);
   if (localValue && localValue.expiresAt > Date.now()) return localValue.value;
   const pendingValue = pendingReports.get(key);
-  if (pendingValue) return pendingValue;
+  if (pendingValue?.generation === generation) return pendingValue.promise;
 
   const pending = (async () => {
     const regionalValue = await reportRuntimeCache.get(key).catch(() => null);
     if (isReportSummary(regionalValue)) {
-      cachedReports.set(key, { value: regionalValue, expiresAt: Date.now() + REPORT_CACHE_TTL_MS });
+      if (generation === reportGeneration) {
+        cachedReports.set(key, { value: regionalValue, expiresAt: Date.now() + REPORT_CACHE_TTL_MS });
+      }
       return regionalValue;
     }
 
     const value = await buildReportSummary(options);
-    cachedReports.set(key, { value, expiresAt: Date.now() + REPORT_CACHE_TTL_MS });
-    await reportRuntimeCache.set(key, value, {
-      ttl: REPORT_CACHE_TTL_SECONDS,
-      tags: ["reports"],
-      name: "WESCOMM report summary"
-    }).catch(() => undefined);
+    if (generation === reportGeneration && await readCacheRevision("reports") === revision) {
+      cachedReports.set(key, { value, expiresAt: Date.now() + REPORT_CACHE_TTL_MS });
+      await reportRuntimeCache.set(key, value, {
+        ttl: REPORT_CACHE_TTL_SECONDS,
+        tags: ["reports"],
+        name: "WESCOMM report summary"
+      }).catch(() => undefined);
+    }
     return value;
-  })().finally(() => pendingReports.delete(key));
+  })().finally(() => {
+    if (pendingReports.get(key)?.promise === pending) pendingReports.delete(key);
+  });
 
-  pendingReports.set(key, pending);
+  pendingReports.set(key, { promise: pending, generation });
   return pending;
 }

@@ -34,6 +34,20 @@ enum ProductSaleMode {
   @@map("product_sale_mode")
 }
 
+enum ProductAudienceScope {
+  ALL_STUDENTS
+  SPECIFIC_DEPARTMENTS
+
+  @@map("product_audience_scope")
+}
+
+enum PickupAdvanceMode {
+  OPEN_DAYS
+  CALENDAR_DAYS
+
+  @@map("pickup_advance_mode")
+}
+
 enum InventoryMovementType {
   RESTOCK
   SALE
@@ -197,6 +211,8 @@ model Profile {
   fullName              String                      @default("") @map("full_name")
   email                 String                      @unique
   studentNumber         String?                     @unique @map("student_number")
+  departmentId          String?                     @map("department_id") @db.Uuid
+  onboardingCompletedAt DateTime?                   @map("onboarding_completed_at") @db.Timestamptz(6)
   phone                 String?
   department            String?
   address               String?
@@ -232,11 +248,29 @@ model Profile {
   deletedConversations  Conversation[]                @relation("ConversationDeletedBy")
   conversationPurges    ConversationPurgeRecord[]     @relation("ConversationPurgedBy")
   policyAcceptances     PolicyAcceptance[]
+  departmentRelation    Department?                 @relation(fields: [departmentId], references: [id], onDelete: Restrict)
 
   @@index([createdAt(sort: Desc), id(sort: Desc)])
   @@index([role, createdAt(sort: Desc), id(sort: Desc)])
   @@index([role, fullName, email, id])
+  @@index([departmentId])
   @@map("profiles")
+}
+
+model Department {
+  id               String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code             String              @unique
+  groupName        String              @map("group_name")
+  displayName      String              @map("display_name")
+  isActive         Boolean             @default(true) @map("is_active")
+  sortOrder        Int                 @default(0) @map("sort_order")
+  createdAt        DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime            @default(now()) @map("updated_at") @db.Timestamptz(6)
+  profiles         Profile[]
+  productAudiences ProductDepartment[]
+
+  @@index([isActive, sortOrder, code])
+  @@map("departments")
 }
 
 model AuthSession {
@@ -282,6 +316,7 @@ model Product {
   lowStockThreshold     Int                 @default(10) @map("low_stock_threshold")
   isActive              Boolean             @default(true) @map("is_active")
   saleMode              ProductSaleMode     @default(SIMPLE) @map("sale_mode")
+  audienceScope         ProductAudienceScope @default(ALL_STUDENTS) @map("audience_scope")
   skuInventoryEnabled   Boolean             @default(false) @map("sku_inventory_enabled")
   inventoryReconciledAt DateTime?           @map("inventory_reconciled_at") @db.Timestamptz(6)
   createdAt             DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -293,11 +328,24 @@ model Product {
   inventoryMoves        InventoryMovement[]
   reservationItems      ReservationItem[]
   wishlistItems         WishlistItem[]
+  targetDepartments     ProductDepartment[]
 
   @@index([isActive, status])
   @@index([isActive, saleMode], map: "products_active_sale_mode_idx")
   @@index([isActive, name, id])
   @@map("products")
+}
+
+model ProductDepartment {
+  productId    String     @map("product_id") @db.Uuid
+  departmentId String     @map("department_id") @db.Uuid
+  createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  product      Product    @relation(fields: [productId], references: [id], onDelete: Cascade)
+  department   Department @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+
+  @@id([productId, departmentId])
+  @@index([departmentId, productId])
+  @@map("product_departments")
 }
 
 model ProductAlias {
@@ -444,6 +492,7 @@ model PickupPolicyVersion {
   timezone       String            @default("Asia/Manila")
   minAdvanceDays Int               @map("min_advance_days")
   maxAdvanceDays Int               @map("max_advance_days")
+  advanceMode    PickupAdvanceMode @default(OPEN_DAYS) @map("advance_mode")
   effectiveAt    DateTime          @default(now()) @map("effective_at") @db.Timestamptz(6)
   isActive       Boolean           @default(false) @map("is_active")
   reason         String
@@ -686,6 +735,9 @@ model ReservationItem {
   reservationId  String      @map("reservation_id") @db.Uuid
   productId      String      @map("product_id") @db.Uuid
   skuId          String?     @map("sku_id") @db.Uuid
+  productNameSnapshot String  @map("product_name_snapshot")
+  skuCodeSnapshot String?     @map("sku_code_snapshot")
+  optionSnapshot Json         @default("[]") @map("option_snapshot")
   variantSummary String?     @map("variant_summary")
   quantity       Int
   unitPrice      Decimal     @map("unit_price") @db.Decimal(12, 2)

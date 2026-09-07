@@ -12,6 +12,8 @@ export type BackendAuthProfile = {
   id: string;
   role: "STUDENT" | "STAFF" | "ADMIN";
   studentNumber: string | null;
+  departmentId: string | null;
+  onboardingCompletedAt: string | null;
   fullName: string;
   email: string;
   phone: string | null;
@@ -25,7 +27,20 @@ export type BackendAuthProfile = {
 export type UpdateMyProfilePayload = {
   fullName: string;
   phone: string | null;
-  department: string | null;
+  address: string | null;
+};
+
+export type BackendDepartment = {
+  id: string;
+  code: string;
+  groupName: string;
+  displayName: string;
+};
+
+export type CompleteOnboardingPayload = {
+  departmentId: string;
+  studentNumber: string;
+  phone: string | null;
   address: string | null;
 };
 
@@ -62,6 +77,8 @@ export type BackendProduct = {
   status: "IN_STOCK" | "RESTOCK_SOON" | "OUT_OF_STOCK" | "ON_SALE";
   stock: number;
   saleMode?: ProductSaleMode;
+  audienceScope?: "ALL_STUDENTS" | "SPECIFIC_DEPARTMENTS";
+  targetDepartments?: Array<{ id: string; code: string; displayName: string }>;
   category?: BackendCategory | null;
   variants?: BackendVariant[];
   skuInventoryEnabled?: boolean;
@@ -157,6 +174,9 @@ export type BackendReservation = {
   items: Array<{
     id: string;
     productId: string;
+    productNameSnapshot?: string;
+    skuCodeSnapshot?: string | null;
+    optionSnapshot?: Array<{ optionName: string; optionValue: string }>;
     variantSummary?: string | null;
     quantity: number;
     unitPrice: string | number;
@@ -280,6 +300,9 @@ export type BackendPickupSlotAvailability = {
     booked: number;
     remaining: number | null;
     isFull: boolean;
+    isExpired: boolean;
+    isUnavailable: boolean;
+    unavailableReason: "PICKUP_SLOT_EXPIRED" | "PICKUP_SLOT_FULL" | null;
   }>;
 };
 
@@ -287,6 +310,7 @@ export type BackendPickupPolicy = {
   id?: string;
   version: number;
   timezone: "Asia/Manila" | string;
+  advanceMode: "OPEN_DAYS" | "CALENDAR_DAYS";
   minAdvanceDays: number;
   maxAdvanceDays: number;
   minDate: string;
@@ -305,6 +329,7 @@ export type BackendPickupPolicy = {
 };
 
 export type PickupPolicyPayload = {
+  advanceMode: "OPEN_DAYS" | "CALENDAR_DAYS";
   minAdvanceDays: number;
   maxAdvanceDays: number;
   reason: string;
@@ -978,6 +1003,8 @@ export function mapBackendProduct(product: BackendProduct): CartProduct {
     count: String(product.stock),
     image: asset.image,
     saleMode,
+    audienceScope: product.audienceScope ?? "ALL_STUDENTS",
+    targetDepartmentIds: (product.targetDepartments ?? []).map((department) => department.id),
     inventorySetupRequired: saleMode === "OPTIONS" && Boolean(product.inventorySetupRequired),
     options: saleMode === "OPTIONS" ? groupOptions(product.variants) : [],
     skus: saleMode === "OPTIONS" && product.skuInventoryEnabled
@@ -1046,6 +1073,19 @@ export async function authApiFetch<T>(path: string, token: string, init?: Reques
 export async function updateMyProfileFromApi(token: string, payload: UpdateMyProfilePayload) {
   const data = await authApiFetch<{ profile: BackendAuthProfile }>("/auth/me", token, {
     method: "PATCH",
+    body: JSON.stringify(payload)
+  });
+  return data.profile;
+}
+
+export async function getDepartmentsFromApi(token: string) {
+  const data = await authApiFetch<{ departments: BackendDepartment[] }>("/auth/departments", token);
+  return data.departments;
+}
+
+export async function completeOnboardingFromApi(token: string, payload: CompleteOnboardingPayload) {
+  const data = await authApiFetch<{ profile: BackendAuthProfile }>("/auth/onboarding", token, {
+    method: "POST",
     body: JSON.stringify(payload)
   });
   return data.profile;
@@ -1792,17 +1832,18 @@ export async function editConversationMessageFromApi(
   return data.message;
 }
 
-function reportQuery(options: ReportRangeOptions = {}) {
+function reportQuery(options: ReportRangeOptions = {}, fresh = false) {
   const params = new URLSearchParams();
   if (options.preset) params.set("preset", options.preset);
   if (options.from) params.set("from", options.from);
   if (options.to) params.set("to", options.to);
   if (options.granularity) params.set("granularity", options.granularity);
+  if (fresh) params.set("fresh", "1");
   return params.size ? `?${params.toString()}` : "";
 }
 
-export async function getAdminReportSummaryFromApi(token: string, options: ReportRangeOptions = {}, signal?: AbortSignal) {
-  const data = await authApiFetch<{ summary: BackendReportSummary }>(`/admin/reports/summary${reportQuery(options)}`, token, { signal });
+export async function getAdminReportSummaryFromApi(token: string, options: ReportRangeOptions = {}, signal?: AbortSignal, fresh = false) {
+  const data = await authApiFetch<{ summary: BackendReportSummary }>(`/admin/reports/summary${reportQuery(options, fresh)}`, token, { signal });
   return data.summary;
 }
 
@@ -1811,13 +1852,13 @@ export async function getAdminWesbotUsageFromApi(token: string, signal?: AbortSi
   return data.usage;
 }
 
-export async function getStaffReportSummaryFromApi(token: string, options: ReportRangeOptions = {}, signal?: AbortSignal) {
-  const data = await authApiFetch<{ summary: BackendReportSummary }>(`/staff/reports/summary${reportQuery(options)}`, token, { signal });
+export async function getStaffReportSummaryFromApi(token: string, options: ReportRangeOptions = {}, signal?: AbortSignal, fresh = false) {
+  const data = await authApiFetch<{ summary: BackendReportSummary }>(`/staff/reports/summary${reportQuery(options, fresh)}`, token, { signal });
   return data.summary;
 }
 
-export async function getStaffDashboardSummaryFromApi(token: string, signal?: AbortSignal) {
-  const data = await authApiFetch<{ dashboard: BackendStaffDashboard }>("/staff/dashboard/summary", token, { signal });
+export async function getStaffDashboardSummaryFromApi(token: string, signal?: AbortSignal, fresh = false) {
+  const data = await authApiFetch<{ dashboard: BackendStaffDashboard }>(`/staff/dashboard/summary${fresh ? "?fresh=1" : ""}`, token, { signal });
   return data.dashboard;
 }
 

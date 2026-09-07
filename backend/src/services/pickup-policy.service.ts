@@ -1,4 +1,4 @@
-import { Prisma } from "@prisma/client";
+import { Prisma, type ReservationStatus } from "@prisma/client";
 import { createHash } from "node:crypto";
 import {
   addCalendarDays,
@@ -7,7 +7,7 @@ import {
   pickupInstant,
   pickupWeekday,
   resolvePickupBookingWindow,
-  scheduleReviewReason,
+  validatePickupDate,
   validatePickupSelection,
   type PickupBookingWindow,
   type PickupPolicySnapshot
@@ -29,6 +29,7 @@ const pickupPolicySelect = Prisma.validator<Prisma.PickupPolicyVersionSelect>()(
   timezone: true,
   minAdvanceDays: true,
   maxAdvanceDays: true,
+  advanceMode: true,
   effectiveAt: true,
   isActive: true,
   reason: true,
@@ -55,6 +56,7 @@ const pickupPolicySelect = Prisma.validator<Prisma.PickupPolicyVersionSelect>()(
 type PickupPolicyRecord = Prisma.PickupPolicyVersionGetPayload<{ select: typeof pickupPolicySelect }>;
 
 export type PickupPolicyInput = {
+  advanceMode: "OPEN_DAYS" | "CALENDAR_DAYS";
   minAdvanceDays: number;
   maxAdvanceDays: number;
   reason: string;
@@ -80,6 +82,7 @@ const ACTIVE_RESERVATION_STATUSES = ACTIVE_PICKUP_CAPACITY_STATUSES;
 function asSnapshot(policy: PickupPolicyRecord): PickupPolicySnapshot {
   return {
     version: policy.version,
+    advanceMode: policy.advanceMode,
     minAdvanceDays: policy.minAdvanceDays,
     maxAdvanceDays: policy.maxAdvanceDays,
     days: policy.days,
@@ -96,6 +99,7 @@ function serializePolicy(policy: PickupPolicyRecord, now = new Date()) {
     timezone: policy.timezone,
     minAdvanceDays: policy.minAdvanceDays,
     maxAdvanceDays: policy.maxAdvanceDays,
+    advanceMode: policy.advanceMode,
     minDate: window.minDate,
     maxDate: window.maxDate,
     serverDate: window.serverDate,
@@ -123,6 +127,7 @@ export function serializePublicPolicy(policy: PickupPolicyRecord, now = new Date
     timezone: policy.timezone,
     minAdvanceDays: policy.minAdvanceDays,
     maxAdvanceDays: policy.maxAdvanceDays,
+    advanceMode: policy.advanceMode,
     minDate: window.minDate,
     maxDate: window.maxDate,
     serverDate: window.serverDate,
@@ -170,11 +175,10 @@ export async function getPickupSlotAvailability(input: {
     throw new HttpError(503, "Pickup scheduling is temporarily unavailable.", "PICKUP_POLICY_UNAVAILABLE");
   }
 
-  validatePickupSelection({
+  const validatedDate = validatePickupDate({
     policy: asSnapshot(policy),
     policyVersion: input.pickupPolicyVersion,
-    pickupDate: input.pickupDate,
-    slotId: activeSlots[0].id
+    pickupDate: input.pickupDate
   });
 
   const windows = activeSlots.map((slot) => ({
@@ -185,8 +189,10 @@ export async function getPickupSlotAvailability(input: {
   const reservations = await prisma.reservation.findMany({
     where: {
       status: { in: [...ACTIVE_RESERVATION_STATUSES] },
-      pickupStart: { in: windows.map((window) => window.pickupStart) },
-      pickupEnd: { in: windows.map((window) => window.pickupEnd) }
+      OR: windows.map((window) => ({
+        pickupStart: window.pickupStart,
+        pickupEnd: window.pickupEnd
+      }))
     },
     select: { pickupStart: true, pickupEnd: true }
   });
@@ -200,10 +206,17 @@ export async function getPickupSlotAvailability(input: {
   return {
     pickupDate: input.pickupDate,
     pickupPolicyVersion: policy.version,
-    slots: windows.map(({ slot, pickupStart, pickupEnd }) => ({
-      slotId: slot.id,
-      ...pickupCapacitySnapshot(slot.capacity, bookedByWindow.get(pickupWindowKey(pickupStart, pickupEnd)) ?? 0)
-    }))
+    slots: windows.map(({ slot, pickupStart, pickupEnd }) => {
+      const capacity = pickupCapacitySnapshot(slot.capacity, bookedByWindow.get(pickupWindowKey(pickupStart, pickupEnd)) ?? 0);
+      const isExpired = pickupStart.getTime() <= validatedDate.now.getTime();
+      return {
+        slotId: slot.id,
+        ...capacity,
+        isExpired,
+        isUnavailable: isExpired || capacity.isFull,
+        unavailableReason: isExpired ? "PICKUP_SLOT_EXPIRED" : capacity.isFull ? "PICKUP_SLOT_FULL" : null
+      };
+    })
   };
 }
 
@@ -246,6 +259,7 @@ export async function validatePickupSelectionInTransaction(
 function inputSnapshot(input: PickupPolicyInput, version: number): PickupPolicySnapshot {
   return {
     version,
+    advanceMode: input.advanceMode,
     minAdvanceDays: input.minAdvanceDays,
     maxAdvanceDays: input.maxAdvanceDays,
     days: input.days,
@@ -259,6 +273,7 @@ function inputSnapshot(input: PickupPolicyInput, version: number): PickupPolicyS
 
 function normalizedPolicyInput(input: PickupPolicyInput) {
   return {
+    advanceMode: input.advanceMode,
     minAdvanceDays: input.minAdvanceDays,
     maxAdvanceDays: input.maxAdvanceDays,
     reason: input.reason.trim(),
@@ -289,6 +304,7 @@ type AffectedReservation = {
   id: string;
   studentId: string;
   referenceCode: string;
+  status: ReservationStatus;
   pickupStart: Date | null;
   pickupEnd: Date | null;
   createdAt: Date;
@@ -373,6 +389,7 @@ async function findAffectedReservations(
       id: true,
       studentId: true,
       referenceCode: true,
+      status: true,
       pickupStart: true,
       pickupEnd: true,
       createdAt: true,
@@ -391,15 +408,28 @@ async function findAffectedReservations(
   }
 
   const impacts: PickupImpact[] = [];
-  const admittedByCurrentWindow = new Map<string, number>();
   for (const reservation of rows) {
+    if (!reservation.pickupStart || !reservation.pickupEnd) {
+      impacts.push({
+        ...reservation,
+        action: "NEEDS_REVIEW",
+        reason: "Reservation has no complete pickup schedule.",
+        closureDate: null,
+        closureReason: null,
+        proposedPickupStart: null,
+        proposedPickupEnd: null,
+        proposedSlotId: null,
+        proposedSlotLabel: null
+      });
+      continue;
+    }
     const closure = proposedClosureForReservation(policy, reservation);
     if (closure) {
-      if (!reservation.pickupStart || !reservation.pickupEnd) {
+      if (reservation.pickupStart <= now) {
         impacts.push({
           ...reservation,
           action: "NEEDS_REVIEW",
-          reason: "Reservation has no complete pickup schedule.",
+          reason: `Pickup date is closed, but the pickup window already started: ${closure.reason}`,
           closureDate: closure.date,
           closureReason: closure.reason,
           proposedPickupStart: null,
@@ -409,11 +439,11 @@ async function findAffectedReservations(
         });
         continue;
       }
-      if (reservation.pickupStart <= now) {
+      if (reservation.status !== "PENDING") {
         impacts.push({
           ...reservation,
           action: "NEEDS_REVIEW",
-          reason: `Pickup date is closed, but the pickup window already started: ${closure.reason}`,
+          reason: `Pickup date is closed and this ${reservation.status === "CONFIRMED" ? "confirmed" : "ready-for-pickup"} reservation must not be moved silently: ${closure.reason}`,
           closureDate: closure.date,
           closureReason: closure.reason,
           proposedPickupStart: null,
@@ -454,41 +484,9 @@ async function findAffectedReservations(
       continue;
     }
 
-    let reason = scheduleReviewReason({
-      policy,
-      pickupStart: reservation.pickupStart,
-      pickupEnd: reservation.pickupEnd,
-      now,
-      bookingWindow
-    });
-    if (!reason && reservation.pickupStart && reservation.pickupEnd) {
-      const startMinute = pickupMinute(reservation.pickupStart);
-      const endMinute = pickupMinute(reservation.pickupEnd);
-      const configuredSlot = policy.timeSlots.find((slot) => (
-        slot.isActive && slot.startMinute === startMinute && slot.endMinute === endMinute
-      ));
-      if (configuredSlot?.capacity != null) {
-        const key = pickupWindowKey(reservation.pickupStart, reservation.pickupEnd);
-        const admitted = (admittedByCurrentWindow.get(key) ?? 0) + 1;
-        admittedByCurrentWindow.set(key, admitted);
-        if (admitted > configuredSlot.capacity) {
-          reason = `Pickup time exceeds the new limit of ${configuredSlot.capacity} active reservation${configuredSlot.capacity === 1 ? "" : "s"}.`;
-        }
-      }
-    }
-    if (reason) {
-      impacts.push({
-        ...reservation,
-        action: "NEEDS_REVIEW",
-        reason,
-        closureDate: null,
-        closureReason: null,
-        proposedPickupStart: null,
-        proposedPickupEnd: null,
-        proposedSlotId: null,
-        proposedSlotLabel: null
-      });
-    }
+    // Existing reservations are grandfathered for ordinary weekday, time-slot,
+    // advance-window, and capacity changes. A lower capacity blocks new excess
+    // bookings but never cancels or silently moves an existing commitment.
   }
   return impacts;
 }
@@ -496,6 +494,7 @@ async function findAffectedReservations(
 function pickupImpactFingerprint(currentVersion: number, input: PickupPolicyInput, affected: PickupImpact[]) {
   const normalized = normalizedPolicyInput(input);
   const schedulingInput = {
+    advanceMode: normalized.advanceMode,
     minAdvanceDays: normalized.minAdvanceDays,
     maxAdvanceDays: normalized.maxAdvanceDays,
     days: normalized.days,
@@ -604,6 +603,7 @@ export async function createPickupPolicyVersion(input: PickupPolicyActivationInp
         timezone: "Asia/Manila",
         minAdvanceDays: input.minAdvanceDays,
         maxAdvanceDays: input.maxAdvanceDays,
+        advanceMode: input.advanceMode,
         effectiveAt: now,
         isActive: true,
         reason: input.reason,
@@ -780,7 +780,7 @@ export async function createPickupPolicyVersion(input: PickupPolicyActivationInp
       {
         topic: REALTIME_TOPICS.reservations,
         entityId: policy.id,
-        audienceRoles: ["STAFF", "ADMIN"],
+        audienceRoles: ["STUDENT", "STAFF", "ADMIN"],
         payload: { action: "pickup-policy-activated", version, affectedCount: affected.length }
       },
       ...realtimeEvents

@@ -212,6 +212,8 @@ test("WesBot grounds option inventory by valid SKU combination and handles cloth
     status: "IN_STOCK" as const,
     createdAt: "2026-08-24T00:00:00.000Z",
     inventoryReconciledAt: "2026-08-24T00:00:00.000Z",
+    audienceScope: "ALL_STUDENTS" as const,
+    targetDepartments: [],
     category: { id: "category", name: "Uniforms", slug: "uniforms", iconUrl: null },
     aliases: []
   };
@@ -283,6 +285,8 @@ test("WesBot handles catalog typos and missing products without inventing facts"
     inventorySetupRequired: false,
     createdAt: "2026-08-24T00:00:00.000Z",
     inventoryReconciledAt: "2026-08-24T00:00:00.000Z",
+    audienceScope: "ALL_STUDENTS" as const,
+    targetDepartments: [],
     category: { id: "category", name: "Uniforms", slug: "uniforms", iconUrl: null },
     aliases: [],
     variants: [],

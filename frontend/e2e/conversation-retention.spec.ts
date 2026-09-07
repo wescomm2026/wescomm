@@ -22,6 +22,8 @@ const adminProfile: BackendAuthProfile = {
   email: "release.admin@wesleyan.edu.ph",
   phone: null,
   department: "Commissary",
+  departmentId: null,
+  onboardingCompletedAt: null,
   address: null,
   avatarUrl: null
 };

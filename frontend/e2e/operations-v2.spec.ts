@@ -16,6 +16,8 @@ const staffProfile: BackendAuthProfile = {
   email: "operations.qa@wesleyan.edu.ph",
   phone: null,
   department: "Commissary",
+  departmentId: null,
+  onboardingCompletedAt: null,
   address: null,
   avatarUrl: null
 };
@@ -38,6 +40,7 @@ function pickupPolicy(version = 7): BackendPickupPolicy {
     timezone: "Asia/Manila",
     minAdvanceDays: 1,
     maxAdvanceDays: 14,
+    advanceMode: "OPEN_DAYS",
     minDate: "2026-08-03",
     maxDate: "2026-08-21",
     serverDate: "2026-08-02",
@@ -72,6 +75,10 @@ async function handleShellRequest(route: Route, profile: BackendAuthProfile) {
   const path = new URL(route.request().url()).pathname;
   if (path === "/api/backend/auth/me") {
     await json(route, { profile });
+    return true;
+  }
+  if (path === "/api/backend/auth/departments") {
+    await json(route, { departments: [] });
     return true;
   }
   if (path === "/api/backend/notifications") {
@@ -170,16 +177,16 @@ test("staff policy activation previews impact and preserves staff-review counts"
   await expect(studentPreview.getByText("Available 2026-08-03 to 2026-08-19", { exact: true })).toBeVisible();
   await studentPreview.getByRole("button", { name: "Close student preview" }).click();
 
-  await page.getByRole("button", { name: "Save Changes", exact: true }).click();
+  await page.getByRole("button", { name: "Review & Activate", exact: true }).click();
 
-  const review = page.getByRole("alertdialog", { name: "Save pickup schedule changes?" });
+  const review = page.getByRole("alertdialog", { name: "Activate pickup schedule changes?" });
   await expect(review).toBeVisible();
   await expect(review.getByText(/0 will be moved automatically; 1 need staff review/)).toBeVisible();
   expect((previewPayload as unknown as { days: Array<{ weekday: number; enabled: boolean }> }).days)
     .toContainEqual({ weekday: 6, enabled: true });
 
   await review.getByLabel("Change note").fill("Open Saturday for enrollment");
-  await review.getByRole("button", { name: "Save Changes", exact: true }).click();
+  await review.getByRole("button", { name: "Activate Schedule", exact: true }).click();
   await expect(page.getByText(/Pickup schedule updated.*0 reservation.*safely moved.*1 still need staff review/)).toBeVisible();
   expect((activationPayload as unknown as { reason: string }).reason).toBe("Open Saturday for enrollment");
   expect(unhandled).toEqual([]);

@@ -4,6 +4,7 @@ import { userFacingErrorMessage } from "@/lib/user-facing-error";
 
 import Image from "next/image";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { createPortal } from "react-dom";
 import { Check, ChevronLeft, ChevronRight, Minus, Plus, X } from "lucide-react";
@@ -24,7 +25,6 @@ import {
 } from "@/components/pickup/PickupSchedulePicker";
 import { useAccessibleDialog } from "@/components/ui/useAccessibleDialog";
 import {
-  BackendApiError,
   createGcashCheckoutFromApi,
   createReservationFromApi,
   requestProductsRefresh,
@@ -54,6 +54,7 @@ import {
 } from "@/lib/reservation-idempotency";
 import { cn } from "@/lib/utils";
 import { currentCheckoutPolicyAcceptance } from "@/lib/policy-consent";
+import { isPickupRecoveryError, pickupRecoveryMessage } from "@/lib/pickup-errors";
 
 export type CheckoutProduct = {
   id?: string;
@@ -71,13 +72,6 @@ export type CheckoutProduct = {
     stockByValue?: Record<string, number>;
   }>;
 };
-
-const PICKUP_RECOVERY_CODES = new Set([
-  "PICKUP_POLICY_CHANGED",
-  "PICKUP_DATE_CLOSED",
-  "PICKUP_SLOT_UNAVAILABLE",
-  "PICKUP_SLOT_FULL"
-]);
 
 function parsePrice(price: string) {
   return Number(price.replace(/[^0-9.]/g, ""));
@@ -116,6 +110,7 @@ export function StudentCheckoutModal({
   onSwitchProduct?: (product: CheckoutProduct) => void;
   onClose: () => void;
 }) {
+  const router = useRouter();
   const { user, openAuth } = useStudentAuth();
   const { summary: restrictionSummary, isReservationRestricted } = useStudentRestriction();
   const [mounted, setMounted] = useState(false);
@@ -129,7 +124,6 @@ export function StudentCheckoutModal({
   const [notes, setNotes] = useState("");
   const [selectedOptions, setSelectedOptions] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
-  const [reference, setReference] = useState("");
   const [gcashRecovery, setGcashRecovery] = useState<{
     reservationId: string;
     referenceCode: string;
@@ -139,6 +133,7 @@ export function StudentCheckoutModal({
   const submittingRef = useRef(false);
   const stepHeadingRef = useRef<HTMLHeadingElement | null>(null);
   const pendingRequestRef = useRef<PendingReservationRequest | null>(null);
+  const productId = product?.id;
 
   useEffect(() => setMounted(true), []);
   useEffect(() => { submittingRef.current = submitting; }, [submitting]);
@@ -148,7 +143,7 @@ export function StudentCheckoutModal({
   });
 
   useEffect(() => {
-    if (!product) return;
+    if (!productId) return;
     setCheckoutStep(1);
     setQuantity(1);
     setPickupSelection(null);
@@ -159,17 +154,16 @@ export function StudentCheckoutModal({
     setNotes("");
     setSelectedOptions({});
     setError("");
-    setReference("");
     setGcashRecovery(null);
     setSubmitting(false);
     pendingRequestRef.current = null;
-  }, [product]);
+  }, [productId]);
 
   useEffect(() => {
-    if (!mounted || reference || gcashRecovery) return;
+    if (!mounted || gcashRecovery) return;
     const frame = window.requestAnimationFrame(() => stepHeadingRef.current?.focus({ preventScroll: true }));
     return () => window.cancelAnimationFrame(frame);
-  }, [checkoutStep, gcashRecovery, mounted, reference]);
+  }, [checkoutStep, gcashRecovery, mounted]);
 
   const unitPrice = product ? parsePrice(product.price) : 0;
   const stockCount = product ? productStockCount(product) : 0;
@@ -235,6 +229,7 @@ export function StudentCheckoutModal({
 
   const confirmReservation = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (submittingRef.current) return;
     setError("");
     if (checkoutStep !== 2) {
       continueToPayment();
@@ -299,18 +294,20 @@ export function StudentCheckoutModal({
           setGcashRecovery({ reservationId: reservation.id, referenceCode: reservation.referenceCode, message: userFacingErrorMessage(paymentError, "Unable to open GCash payment.") });
         }
       } else {
-        setReference(reservation.referenceCode);
+        window.sessionStorage.setItem("wescomm:reservation-success", reservation.id);
+        onClose();
+        router.push(`/student/reservations#reservation-${encodeURIComponent(reservation.id)}`);
       }
     } catch (reservationError) {
-      if (reservationError instanceof BackendApiError && reservationError.code === "RESERVATION_ACCESS_SUSPENDED") {
+      if (reservationError instanceof Error && "code" in reservationError && reservationError.code === "RESERVATION_ACCESS_SUSPENDED") {
         window.dispatchEvent(new Event("wescomm:restriction-refresh"));
       }
-      if (reservationError instanceof BackendApiError && reservationError.code && PICKUP_RECOVERY_CODES.has(reservationError.code)) {
+      if (isPickupRecoveryError(reservationError)) {
         setCheckoutStep(1);
         setPickupSelection(null);
         setPickupSummary(null);
         setPickupRefreshKey((current) => current + 1);
-        setError("Pickup availability changed. Please choose another date and time.");
+        setError(pickupRecoveryMessage(reservationError));
       } else {
         setError(userFacingErrorMessage(reservationError, "Unable to submit reservation."));
       }
@@ -335,15 +332,6 @@ export function StudentCheckoutModal({
             <div className="mt-7 rounded-surface border border-primary/20 bg-primary/5 px-7 py-5"><p className="text-xs font-bold uppercase text-muted-foreground">Reservation reference</p><p className="mt-1 text-2xl font-extrabold text-primary">{gcashRecovery.referenceCode}</p></div>
             {error ? <p className="mt-4 max-w-xl rounded-control border border-danger/25 bg-danger/5 px-4 py-3 text-sm font-semibold text-danger" role="alert">{error}</p> : null}
             <div className="mt-8 flex w-full max-w-md flex-col gap-3 sm:flex-row"><Link href="/student/reservations" className="flex-1" onClick={onClose}><Button variant="secondary" size="lg" className="w-full">View Reservation</Button></Link><Button size="lg" className="flex-1" onClick={() => void continueGcashPayment()} loading={submitting}><AssetIcon src="/assets/e-wallet.svg" className="size-6" />Continue Payment</Button></div>
-          </div>
-        ) : reference ? (
-          <div className="flex min-h-[560px] flex-col items-center justify-center overflow-y-auto px-6 py-16 text-center">
-            <span className="grid size-20 place-items-center rounded-full bg-primary/10 text-primary"><AssetIcon src="/assets/confirmed.svg" className="size-14" /></span>
-            <p className="mt-6 text-sm font-bold uppercase text-primary">Reservation submitted</p>
-            <h1 id={checkoutDialog.titleId} className="mt-2 text-3xl font-extrabold text-foreground sm:text-4xl">Your item is awaiting confirmation</h1>
-            <p className="mt-3 max-w-xl text-sm leading-6 text-muted-foreground">Commissary staff will review the stock and pickup schedule. Payment will be collected using your selected method.</p>
-            <div className="mt-7 rounded-surface border border-primary/20 bg-primary/5 px-7 py-5"><p className="text-xs font-bold uppercase text-muted-foreground">Reservation reference</p><p className="mt-1 text-2xl font-extrabold text-primary">{reference}</p></div>
-            <div className="mt-8 flex w-full max-w-md flex-col gap-3 sm:flex-row"><Button variant="secondary" size="lg" className="flex-1" onClick={onClose}><ChevronLeft className="size-4" />Continue Shopping</Button><Link href="/student/reservations" className="flex-1" onClick={onClose}><Button size="lg" className="w-full"><AssetIcon src="/assets/my-reservations.svg" className="size-6" />My Reservations</Button></Link></div>
           </div>
         ) : (
           <form className="relative flex min-h-0 flex-1 flex-col" onSubmit={confirmReservation}>

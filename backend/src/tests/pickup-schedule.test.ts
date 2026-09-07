@@ -15,6 +15,7 @@ const policy: PickupPolicySnapshot = {
   version: 4,
   minAdvanceDays: 1,
   maxAdvanceDays: 30,
+  advanceMode: "OPEN_DAYS",
   days: Array.from({ length: 7 }, (_, weekday) => ({ weekday, enabled: weekday >= 1 && weekday <= 5 })),
   timeSlots: [{ id: "slot-morning", label: "8:00 AM - 10:00 AM", startMinute: 480, endMinute: 600, isActive: true }],
   closures: [{ date: new Date("2026-09-01T00:00:00.000Z"), reason: "University holiday" }]
@@ -98,6 +99,58 @@ test("pickup validation rejects weekends, closures, stale versions, and inactive
   assert.equal(errorCode(() => validatePickupSelection({ policy, policyVersion: 4, pickupDate: "2026-09-01", slotId: "slot-morning", now })), "PICKUP_DATE_CLOSED");
   assert.equal(errorCode(() => validatePickupSelection({ policy, policyVersion: 3, pickupDate: "2026-08-31", slotId: "slot-morning", now })), "PICKUP_POLICY_CHANGED");
   assert.equal(errorCode(() => validatePickupSelection({ policy, policyVersion: 4, pickupDate: "2026-08-31", slotId: "missing", now })), "PICKUP_SLOT_UNAVAILABLE");
+});
+
+test("same-day pickup rejects only elapsed slots and keeps later slots selectable", () => {
+  const sameDayPolicy: PickupPolicySnapshot = {
+    ...policy,
+    minAdvanceDays: 0,
+    maxAdvanceDays: 0,
+    days: policy.days.map((day) => ({ ...day, enabled: true })),
+    closures: [],
+    timeSlots: [
+      { id: "elapsed", label: "8:00 AM - 9:00 AM", startMinute: 480, endMinute: 540, isActive: true },
+      { id: "later", label: "10:00 AM - 11:00 AM", startMinute: 600, endMinute: 660, isActive: true }
+    ]
+  };
+  const mondayAtNineAm = new Date("2026-08-31T01:00:00.000Z");
+
+  assert.equal(errorCode(() => validatePickupSelection({
+    policy: sameDayPolicy,
+    policyVersion: 4,
+    pickupDate: "2026-08-31",
+    slotId: "elapsed",
+    now: mondayAtNineAm
+  })), "PICKUP_SLOT_EXPIRED");
+  assert.doesNotThrow(() => validatePickupSelection({
+    policy: sameDayPolicy,
+    policyVersion: 4,
+    pickupDate: "2026-08-31",
+    slotId: "later",
+    now: mondayAtNineAm
+  }));
+});
+
+test("calendar-day policies preserve literal date offsets without changing legacy open-day policies", () => {
+  const calendarPolicy: PickupPolicySnapshot = {
+    ...policy,
+    minAdvanceDays: 1,
+    maxAdvanceDays: 3,
+    advanceMode: "CALENDAR_DAYS",
+    closures: []
+  };
+
+  assert.deepEqual(
+    resolvePickupBookingWindow(calendarPolicy, new Date("2026-09-04T04:00:00.000Z")),
+    { serverDate: "2026-09-04", minDate: "2026-09-05", maxDate: "2026-09-07" }
+  );
+  assert.equal(errorCode(() => validatePickupSelection({
+    policy: calendarPolicy,
+    policyVersion: 4,
+    pickupDate: "2026-09-05",
+    slotId: "slot-morning",
+    now: new Date("2026-09-04T04:00:00.000Z")
+  })), "PICKUP_DAY_UNAVAILABLE");
 });
 
 test("policy impact review identifies incompatible existing schedules", () => {
@@ -184,6 +237,7 @@ test("public pickup availability excludes staff metadata and inactive windows", 
     timezone: "Asia/Manila",
     minAdvanceDays: 1,
     maxAdvanceDays: 3,
+    advanceMode: "OPEN_DAYS",
     effectiveAt: new Date("2026-08-01T00:00:00.000Z"),
     isActive: true,
     reason: "Internal schedule change note",

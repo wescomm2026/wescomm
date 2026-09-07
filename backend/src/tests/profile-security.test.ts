@@ -8,12 +8,10 @@ test("profile updates accept and normalize only mutable self-service fields", ()
   assert.deepEqual(profileUpdateSchema.parse({
     fullName: "  Test Student  ",
     phone: " 09123456789 ",
-    department: "   ",
     address: null
   }), {
     fullName: "Test Student",
     phone: "09123456789",
-    department: null,
     address: null
   });
 });
@@ -23,6 +21,8 @@ test("profile updates reject protected and storage-managed fields", () => {
     "id",
     "email",
     "studentNumber",
+    "department",
+    "departmentId",
     "role",
     "avatarUrl",
     "avatarDataUrl",

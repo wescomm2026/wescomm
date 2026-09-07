@@ -121,6 +121,7 @@ separately but deploy together under one project, domain, and release.
    NEXT_PUBLIC_ENABLE_TEMP_PRODUCTION_STAFF_LOGIN=false
    AUTH_SESSION_TTL_HOURS=168
    AUTH_SESSION_MAX_PER_USER=5
+   REQUIRE_STUDENT_ONBOARDING=false
 
    NEXT_PUBLIC_SUPABASE_URL=<Supabase project URL>
    NEXT_PUBLIC_SUPABASE_ANON_KEY=<public anon key>
@@ -161,6 +162,7 @@ separately but deploy together under one project, domain, and release.
    NEXT_PUBLIC_AUTH_ALLOWED_EMAIL_DOMAIN=wesleyan.edu.ph
    NEXT_PUBLIC_ENABLE_DEV_LOGIN=false
    NEXT_PUBLIC_ENABLE_TEMP_PRODUCTION_STAFF_LOGIN=false
+   NEXT_PUBLIC_REQUIRE_STUDENT_ONBOARDING=false
    NEXT_PUBLIC_E2E_TEST=false
 
    If live GCash checkout is approved, set PAYMONGO_ENABLED=true and
@@ -332,6 +334,14 @@ Only then merge the Pull Request into main. Vercel will create the Production
 deployment from that exact reviewed commit. Configure Vercel Deployment Checks
 to require the GitHub "Release gate" check before the Production deployment is
 assigned to the live domain. Never Force Promote around a failed check.
+
+For the September 7 stabilization release, keep both onboarding flags false for
+the migration and initial application deployment. After the Department backfill
+has been audited and incomplete accounts have been identified, enable
+`REQUIRE_STUDENT_ONBOARDING=true` and
+`NEXT_PUBLIC_REQUIRE_STUDENT_ONBOARDING=true` together and redeploy. Never enable
+only one side: the frontend gate and reservation enforcement must use the same
+rollout state.
 
 For the first WesBot release, apply its Prisma migration while both WesBot flags
 remain false, deploy the combined Services artifact, verify health and messaging,

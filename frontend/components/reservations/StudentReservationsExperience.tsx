@@ -38,6 +38,7 @@ import {
   rememberPaymentCheckout
 } from "@/lib/payment-checkout";
 import { resolveShopProductAsset } from "@/lib/shop-assets";
+import { calendarDayDifference, manilaDateKey } from "@/lib/manila-date";
 
 type StoredReservationItem = {
   id: string;
@@ -92,7 +93,7 @@ function formatCreatedAt(value: string) {
   const date = new Date(value);
   return Number.isNaN(date.getTime())
     ? value
-    : date.toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" });
+    : date.toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric", timeZone: "Asia/Manila" });
 }
 
 function formatMoney(value: string | number) {
@@ -224,7 +225,7 @@ function mapBackendReservations(rows: BackendReservation[]): StoredReservation[]
       };
     }),
     total: formatMoney(reservation.totalAmount),
-    pickupDate: reservation.pickupStart?.slice(0, 10) ?? null,
+    pickupDate: reservation.pickupStart ? manilaDateKey(reservation.pickupStart) : null,
     pickupTime: formatBackendTimeRange(reservation.pickupStart, reservation.pickupEnd),
     paymentMethod: reservation.paymentMethod,
     payment: reservation.payment ?? null,
@@ -235,10 +236,8 @@ function mapBackendReservations(rows: BackendReservation[]): StoredReservation[]
 }
 
 function getPickupLabel(value: string) {
-  const pickup = new Date(`${value}T00:00:00`);
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const difference = Math.round((pickup.getTime() - today.getTime()) / 86400000);
+  const today = manilaDateKey(new Date());
+  const difference = today ? calendarDayDifference(today, value) : 0;
 
   if (difference === 0) return "Pickup today";
   if (difference === 1) return "Pickup tomorrow";
@@ -283,8 +282,9 @@ function ReservationPreviewCard({
 
   return (
     <article
+      id={`reservation-${reservation.id}`}
       data-testid="reservation-preview-card"
-      className="overflow-hidden rounded-xl border border-[#dce5dd] bg-white shadow-sm transition hover:border-[#b8cfba] hover:shadow-[0_12px_30px_rgba(0,91,43,0.08)]"
+      className="scroll-mt-24 overflow-hidden rounded-xl border border-[#dce5dd] bg-white shadow-sm transition hover:border-[#b8cfba] hover:shadow-[0_12px_30px_rgba(0,91,43,0.08)] target:border-primary target:ring-2 target:ring-primary/30"
     >
       <button
         type="button"
@@ -786,6 +786,7 @@ export function StudentReservationsExperience() {
   const [ready, setReady] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
+  const [reservationSubmitted, setReservationSubmitted] = useState(false);
   const [selectedReservationId, setSelectedReservationId] = useState<string | null>(null);
   const requestSequenceRef = useRef(0);
   const reservationTriggerRef = useRef<HTMLButtonElement | null>(null);
@@ -873,6 +874,20 @@ export function StudentReservationsExperience() {
 
   const reservations = useMemo(() => mapBackendReservations(reservationPage?.items ?? []), [reservationPage]);
 
+  useEffect(() => {
+    if (!ready || !reservations.length || !window.location.hash.startsWith("#reservation-")) return;
+    const hashId = decodeURIComponent(window.location.hash.slice(1));
+    const target = document.getElementById(hashId);
+    if (!target) return;
+    const reservationId = hashId.replace(/^reservation-/, "");
+    if (window.sessionStorage.getItem("wescomm:reservation-success") === reservationId) {
+      window.sessionStorage.removeItem("wescomm:reservation-success");
+      setReservationSubmitted(true);
+    }
+    const frame = window.requestAnimationFrame(() => target.scrollIntoView({ behavior: "smooth", block: "center" }));
+    return () => window.cancelAnimationFrame(frame);
+  }, [ready, reservations]);
+
   const filteredReservations = useMemo(
     () => activeFilter === "All"
       ? reservations
@@ -923,6 +938,7 @@ export function StudentReservationsExperience() {
         </section>
       ) : reservations.length ? (
         <>
+          {reservationSubmitted ? <p className="rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800" role="status">Reservation submitted successfully.</p> : null}
           {error ? <p className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p> : null}
           <section className="rounded-lg border border-[#cfe0d0] bg-[#f3f9f3] p-4">
             <div className="flex items-start gap-3">

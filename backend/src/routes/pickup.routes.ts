@@ -19,6 +19,7 @@ export const pickupRoutes = Router();
 
 const dateKeySchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date must use YYYY-MM-DD.");
 const policySchema = z.object({
+  advanceMode: z.enum(["OPEN_DAYS", "CALENDAR_DAYS"] as const).default("CALENDAR_DAYS"),
   minAdvanceDays: z.number().int().min(0).max(365),
   maxAdvanceDays: z.number().int().min(1).max(3650),
   reason: z.string().trim().min(5).max(500),
@@ -39,7 +40,7 @@ const policySchema = z.object({
   })).max(366)
 }).superRefine((input, context) => {
   if (input.maxAdvanceDays < input.minAdvanceDays) {
-    context.addIssue({ code: z.ZodIssueCode.custom, message: "Maximum open pickup days must be at least the minimum.", path: ["maxAdvanceDays"] });
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Maximum advance days must be at least the minimum.", path: ["maxAdvanceDays"] });
   }
   if (new Set(input.days.map((day) => day.weekday)).size !== 7) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: "Configure each weekday exactly once.", path: ["days"] });

@@ -126,5 +126,6 @@ if (process.env.RUN_DATABASE_INTEGRATION_TESTS === "true") {
   await import("./wishlist-postgres.integration.test.js");
   await import("./conversation-archive-postgres.integration.test.js");
   await import("./conversation-message-edit-postgres.integration.test.js");
+  await import("./pickup-capacity-postgres.integration.test.js");
 }
 await import("./security.test.js");

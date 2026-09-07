@@ -82,7 +82,6 @@ function formatDateTime(value: string | null | undefined) {
 
 function stockStatus(product: BackendDashboardProduct) {
   if (product.status === "OUT_OF_STOCK" || product.stock <= 0) return "Out of Stock";
-  if (product.isOnSale) return "On Sale";
   if (product.status === "RESTOCK_SOON" || product.stock <= product.lowStockThreshold) return "Needs Restock";
   return "Available";
 }
@@ -91,8 +90,7 @@ function stockPriority(product: BackendDashboardProduct) {
   const status = stockStatus(product);
   if (status === "Out of Stock") return 0;
   if (status === "Needs Restock") return 1;
-  if (status === "On Sale") return 2;
-  return 3;
+  return 2;
 }
 
 function categoryName(product: BackendDashboardProduct) {
@@ -122,11 +120,13 @@ function useStaffDashboardData() {
   const [loading, setLoading] = useState(true);
   const [initialLoadComplete, setInitialLoadComplete] = useState(false);
   const [error, setError] = useState("");
+  const [hasSuccessfulLoad, setHasSuccessfulLoad] = useState(false);
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
   const [hasCredential, setHasCredential] = useState(false);
   const requestSequenceRef = useRef(0);
   const requestAbortRef = useRef<AbortController | null>(null);
 
-  const loadDashboard = useCallback(async ({ background = false }: { background?: boolean } = {}) => {
+  const loadDashboard = useCallback(async ({ background = false, fresh = false }: { background?: boolean; fresh?: boolean } = {}) => {
     if (!ready) return;
 
     const requestId = ++requestSequenceRef.current;
@@ -155,11 +155,14 @@ function useStaffDashboardData() {
     }
 
     try {
-      const nextData = await getStaffDashboardSummaryFromApi(token, requestController.signal);
+      const nextData = await getStaffDashboardSummaryFromApi(token, requestController.signal, fresh);
       if (requestId !== requestSequenceRef.current) return;
       setData(nextData);
+      setHasSuccessfulLoad(true);
+      setLastUpdatedAt(new Date());
+      setError("");
     } catch (dashboardError) {
-      if (requestId === requestSequenceRef.current && !background && !isRequestAbortError(dashboardError)) {
+      if (requestId === requestSequenceRef.current && !isRequestAbortError(dashboardError)) {
         setError(userFacingErrorMessage(dashboardError, "Unable to load the staff dashboard."));
       }
     } finally {
@@ -198,7 +201,19 @@ function useStaffDashboardData() {
     };
   }, [hasCredential, loadDashboard]);
 
-  return { user, ready, openAuth, data, loading, initialLoadComplete, error, hasCredential, reload: loadDashboard };
+  return {
+    user,
+    ready,
+    openAuth,
+    data,
+    loading,
+    initialLoadComplete,
+    error,
+    hasCredential,
+    hasSuccessfulLoad,
+    lastUpdatedAt,
+    reload: () => loadDashboard({ fresh: true })
+  };
 }
 
 function SectionHeader({
@@ -341,7 +356,7 @@ function StaffAccessState({
 }
 
 export function StaffDashboard() {
-  const { user, ready, openAuth, data, loading, initialLoadComplete, error, hasCredential, reload } = useStaffDashboardData();
+  const { user, ready, openAuth, data, loading, initialLoadComplete, error, hasCredential, hasSuccessfulLoad, lastUpdatedAt, reload } = useStaffDashboardData();
   const accessState = (
     <StaffAccessState
       ready={ready}
@@ -409,10 +424,13 @@ export function StaffDashboard() {
       });
     }
 
+    if (error || !hasSuccessfulLoad) {
+      return [{ title: "Unable to verify operations", detail: "Live operational data could not be loaded. Retry before acting on queue status.", tone: "yellow" as const }];
+    }
     return notices.length
-      ? notices.slice(0, 2)
+      ? notices
       : [{ title: "Operations are clear", detail: "No urgent stock, reservation, receipt, or message alerts right now.", tone: "green" as const }];
-  }, [data.metrics.openConversations, data.metrics.pendingReservations, data.metrics.receiptsToVerify, itemsToRestock]);
+  }, [data.metrics.openConversations, data.metrics.pendingReservations, data.metrics.receiptsToVerify, error, hasSuccessfulLoad, itemsToRestock]);
 
   if (!ready || !hasCredential || user?.role === "STUDENT") return accessState;
 
@@ -433,7 +451,7 @@ export function StaffDashboard() {
       <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-3xl font-extrabold text-[#111a15] sm:text-4xl">Dashboard</h1>
-          <p className="mt-2 text-sm text-[#606c64] sm:text-base">Welcome back, {staffName}. Live commissary data is shown below.</p>
+          <p className="mt-2 text-sm text-[#606c64] sm:text-base">Welcome back, {staffName}. {lastUpdatedAt ? `Updated ${lastUpdatedAt.toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit", timeZone: "Asia/Manila" })}.` : "Live data is not yet verified."}</p>
         </div>
         <Button variant="secondary" onClick={() => void reload()} disabled={loading}>
           <RefreshCw className="size-4" />
@@ -499,7 +517,7 @@ export function StaffDashboard() {
                     <td className="px-4 py-3 text-[#58645d]">{categoryName(row)}</td>
                     <td className="px-4 py-3">{formatNumber(row.stock)}</td>
                     <td className="px-4 py-3">{formatNumber(row.lowStockThreshold)}</td>
-                    <td className="px-4 py-3"><StatusBadge status={stockStatus(row)} /></td>
+                    <td className="px-4 py-3"><div className="flex flex-wrap gap-1"><StatusBadge status={stockStatus(row)} />{row.isOnSale ? <StatusBadge status="On Sale" /> : null}</div></td>
                     <td className="px-4 py-3 text-[#58645d]">pcs</td>
                   </tr>
                 ))}
@@ -524,7 +542,7 @@ export function StaffDashboard() {
                       {formatNumber(row.stock)} pcs left
                       <span className="block text-[#8a6a20]">Alert at {formatNumber(row.lowStockThreshold)}</span>
                     </p>
-                    <StatusBadge status={stockStatus(row)} />
+                    <div className="flex flex-wrap gap-1"><StatusBadge status={stockStatus(row)} />{row.isOnSale ? <StatusBadge status="On Sale" /> : null}</div>
                   </Link>
                 ))}
               </div>

@@ -18,6 +18,8 @@ const staffProfile: BackendAuthProfile = {
   email: "staff@wesleyan.edu.ph",
   phone: null,
   department: "Commissary",
+  departmentId: null,
+  onboardingCompletedAt: null,
   address: null,
   avatarUrl: null
 };

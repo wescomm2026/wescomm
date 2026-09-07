@@ -18,9 +18,9 @@ test("catalog stock changes bypass the bounded public cache on realtime refresh"
 
   assert.match(productRoutes, /fresh[\s\S]*"private, no-store, max-age=0"/);
   assert.match(productRoutes, /"public, max-age=0, s-maxage=30, stale-while-revalidate=60"/);
-  assert.match(productRoutes, /listProducts\(filters, \{ bypassCache: Boolean\(fresh\) \}\)/);
+  assert.match(productRoutes, /listProducts\(filters, \{ bypassCache: fresh === "1" \}\)/);
   assert.match(productService, /PUBLIC_PRODUCT_CACHE_TTL_MS = 30_000/);
-  assert.match(productService, /if \(publicCatalogRequest\) return publicCatalogRequest/);
+  assert.match(productService, /publicCatalogRequest\?\.revision === revision[\s\S]*publicCatalogRequest\.generation === generation[\s\S]*return publicCatalogRequest\.promise/);
   assert.match(staffProductRoutes, /REALTIME_TOPICS\.inventory[\s\S]*audienceRoles: \["STUDENT", "STAFF", "ADMIN"\]/);
   assert.match(legacyInventoryRoutes, /REALTIME_TOPICS\.inventory[\s\S]*audienceRoles: \["STUDENT", "STAFF", "ADMIN"\]/);
   assert.match(reservationService, /action: "reservation-hold"/);

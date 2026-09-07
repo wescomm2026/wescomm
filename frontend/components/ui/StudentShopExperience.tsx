@@ -550,10 +550,14 @@ export function StudentShopExperience() {
       .sort((a, b) => {
         if (sort === "price-low") return parsePrice(a.price) - parsePrice(b.price);
         if (sort === "price-high") return parsePrice(b.price) - parsePrice(a.price);
-        if (sort === "name") return a.name.localeCompare(b.name);
-        return 0;
+        const audienceScore = (product: typeof a) => {
+          if (user?.departmentId && product.targetDepartmentIds?.includes(user.departmentId)) return 100;
+          if (product.audienceScope !== "SPECIFIC_DEPARTMENTS") return 50;
+          return 0;
+        };
+        return audienceScore(b) - audienceScore(a) || a.name.localeCompare(b.name) || (a.id ?? "").localeCompare(b.id ?? "");
       });
-  }, [category, products, query, sort, statuses, wishlist.productIds, wishlistOnly]);
+  }, [category, products, query, sort, statuses, user?.departmentId, wishlist.productIds, wishlistOnly]);
 
   const toggleStatus = (status: string) => {
     setStatuses((current) => (current.includes(status) ? current.filter((item) => item !== status) : [...current, status]));
@@ -731,9 +735,8 @@ export function StudentShopExperience() {
             <label htmlFor="shop-sort" className="sr-only">Sort shop items</label>
             <select id="shop-sort" value={sort} onChange={(event) => setSort(event.target.value)} className="col-span-2 h-10 rounded-xl border border-[#dfe8df] bg-white px-3 text-sm font-semibold text-primary lg:col-span-1">
               <option value="featured">Featured</option>
-              <option value="name">Name</option>
-              <option value="price-low">Price Low</option>
-              <option value="price-high">Price High</option>
+              <option value="price-low">Lowest Price</option>
+              <option value="price-high">Highest Price</option>
             </select>
           </div>
         </div>

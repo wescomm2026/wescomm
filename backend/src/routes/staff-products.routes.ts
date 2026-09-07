@@ -57,6 +57,11 @@ const categorySchema = {
   categoryIconUrl: optionalTextSchema
 };
 
+const audienceSchema = {
+  audienceScope: z.enum(["ALL_STUDENTS", "SPECIFIC_DEPARTMENTS"] as const).optional(),
+  departmentIds: z.array(z.string().uuid()).max(50).optional()
+};
+
 const inventoryIntegerSchema = z.preprocess(
   (value) => typeof value === "string" && value.trim() === "" ? Number.NaN : value,
   z.coerce.number().int().nonnegative().max(10_000_000)
@@ -81,6 +86,7 @@ const syncVariantsSchema = z.object({
 const createProductSchema = z
   .object({
     ...categorySchema,
+    ...audienceSchema,
     name: z.string().trim().min(2).max(160),
     description: optionalTextSchema,
     imageUrl: optionalTextSchema,
@@ -120,10 +126,14 @@ const createProductSchema = z
         path: ["status"]
       });
     }
+    if (input.audienceScope === "SPECIFIC_DEPARTMENTS" && !(input.departmentIds?.length)) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: "Choose at least one department.", path: ["departmentIds"] });
+    }
   });
 
 const updateProductSchema = z.object({
   ...categorySchema,
+  ...audienceSchema,
   name: z.string().trim().min(2).max(160).optional(),
   description: optionalTextSchema,
   imageUrl: optionalTextSchema,

@@ -18,6 +18,8 @@ const staffProfile: BackendAuthProfile = {
   email: "inventory.qa@wesleyan.edu.ph",
   phone: null,
   department: "Commissary",
+  departmentId: null,
+  onboardingCompletedAt: null,
   address: null,
   avatarUrl: null
 };
@@ -140,6 +142,10 @@ async function mockInventory(page: Page) {
 
     if (path === "/api/backend/auth/me" && request.method() === "GET") {
       await json(route, { profile: staffProfile });
+      return;
+    }
+    if (path === "/api/backend/auth/departments" && request.method() === "GET") {
+      await json(route, { departments: [] });
       return;
     }
     if (path === "/api/backend/notifications" && request.method() === "GET") {

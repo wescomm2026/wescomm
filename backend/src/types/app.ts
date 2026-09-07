@@ -68,6 +68,8 @@ export type RawProfile = {
   full_name: string;
   email: string;
   student_number: string | null;
+  department_id: string | null;
+  onboarding_completed_at: string | null;
   phone: string | null;
   department: string | null;
   address: string | null;
@@ -82,6 +84,8 @@ export type Profile = {
   fullName: string;
   email: string;
   studentNumber: string | null;
+  departmentId: string | null;
+  onboardingCompletedAt: string | null;
   phone: string | null;
   department: string | null;
   address: string | null;
@@ -113,6 +117,8 @@ export function mapProfile(row: RawProfile | RawProfile[] | null | undefined): P
     fullName: profile.full_name,
     email: profile.email,
     studentNumber: profile.student_number,
+    departmentId: profile.department_id,
+    onboardingCompletedAt: profile.onboarding_completed_at,
     phone: decryptSensitiveText(profile.phone, "profile.phone"),
     department: profile.department,
     address: decryptSensitiveText(profile.address, "profile.address"),

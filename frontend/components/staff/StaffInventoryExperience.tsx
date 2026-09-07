@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button";
 import { useConfirmationDialog } from "@/components/ui/ConfirmationDialogProvider";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { useAccessibleDialog } from "@/components/ui/useAccessibleDialog";
-import { isRequestAbortError } from "@/lib/api";
+import { getDepartmentsFromApi, isRequestAbortError, type BackendDepartment } from "@/lib/api";
 import {
   archiveStaffProduct,
   clearStaffSession,
@@ -70,6 +70,7 @@ export function StaffInventoryExperience() {
   const confirm = useConfirmationDialog();
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<StaffCategory[]>([]);
+  const [departments, setDepartments] = useState<BackendDepartment[]>([]);
   const [token, setToken] = useState("");
   const [staffEmail, setStaffEmail] = useState("");
   const [search, setSearch] = useState("");
@@ -101,6 +102,9 @@ export function StaffInventoryExperience() {
   const [addImageFile, setAddImageFile] = useState<File | null>(null);
   const [addImagePreview, setAddImagePreview] = useState("");
   const [addSaleMode, setAddSaleMode] = useState<ProductSaleMode>("SIMPLE");
+  const [addAudienceScope, setAddAudienceScope] = useState<"ALL_STUDENTS" | "SPECIFIC_DEPARTMENTS">("ALL_STUDENTS");
+  const [addAudienceDepartmentIds, setAddAudienceDepartmentIds] = useState<string[]>([]);
+  const [editAudienceScope, setEditAudienceScope] = useState<"ALL_STUDENTS" | "SPECIFIC_DEPARTMENTS">("ALL_STUDENTS");
   const [addSizeVariants, setAddSizeVariants] = useState<SizeVariantDraft[]>(defaultSizeVariantDrafts);
   const [editImageFile, setEditImageFile] = useState<File | null>(null);
   const [editImagePreview, setEditImagePreview] = useState("");
@@ -194,6 +198,11 @@ export function StaffInventoryExperience() {
 
     setToken(authToken);
     setStaffEmail(email);
+    if (authToken) {
+      void getDepartmentsFromApi(authToken)
+        .then(setDepartments)
+        .catch(() => setDepartments([]));
+    }
     void loadProducts(authToken, {
       query: params.get("query") ?? "",
       status: stockStatusFromQuery(params.get("status")),
@@ -221,7 +230,7 @@ export function StaffInventoryExperience() {
 
   const filtered = products.filter((product) =>
     `${product.name} ${product.category}`.toLowerCase().includes(search.toLowerCase()) &&
-    (status === "All" || product.status === status)
+    (status === "All" || (status === "On Sale" ? product.isOnSale : product.status === status))
   );
   const selectedTemplate = WUP_DEFAULT_PRODUCT_TEMPLATES.find((item) => item.id === selectedTemplateId) ?? null;
   const assetTemplates = WUP_DEFAULT_PRODUCT_TEMPLATES.filter((item) => item.source === "asset");
@@ -256,6 +265,8 @@ export function StaffInventoryExperience() {
     setAddImageFile(null);
     setAddImagePreview("");
     setAddSaleMode("SIMPLE");
+    setAddAudienceScope("ALL_STUDENTS");
+    setAddAudienceDepartmentIds([]);
     setAddSizeVariants(defaultSizeVariantDrafts());
     setAdding(true);
   };
@@ -265,6 +276,8 @@ export function StaffInventoryExperience() {
     setAddImageFile(null);
     setAddImagePreview("");
     setAddSaleMode("SIMPLE");
+    setAddAudienceScope("ALL_STUDENTS");
+    setAddAudienceDepartmentIds([]);
     setAddSizeVariants(defaultSizeVariantDrafts());
     setAdding(false);
   };
@@ -286,6 +299,7 @@ export function StaffInventoryExperience() {
     setManageSection("menu");
     setEditImageFile(null);
     setEditImagePreview(product.imageUrl);
+    setEditAudienceScope(product.audienceScope);
     const sizeOptionName = preferredSizeOptionName(product.variants);
     setEditSizeOptionName(sizeOptionName);
     setEditSizeVariants(sortSizeVariants(product.variants.filter(
@@ -754,6 +768,7 @@ export function StaffInventoryExperience() {
                         {product.saleMode === "CLOTH_ONLY" ? "Cloth only" : product.saleMode === "OPTIONS" ? "Sizes / options" : "Simple item"}
                       </span>
                       {visibility === "ARCHIVED" ? <span className="inline-flex rounded bg-slate-100 px-2 py-0.5 text-[10px] font-extrabold text-slate-700">Archived</span> : null}
+                      {product.isOnSale ? <span className="inline-flex rounded bg-rose-50 px-2 py-0.5 text-[10px] font-extrabold text-rose-700">On Sale</span> : null}
                       {product.saleMode === "OPTIONS" && !product.skuInventoryEnabled ? <span className="inline-flex rounded bg-amber-50 px-2 py-0.5 text-[10px] font-extrabold text-amber-800">Inventory setup needed</span> : null}
                     </div>
                     <p className="mt-1 text-xs text-[#68746d] lg:hidden">{product.category}</p>
@@ -791,7 +806,7 @@ export function StaffInventoryExperience() {
                     <span className="rounded-md bg-amber-50 px-2 py-1 text-[11px] font-bold text-amber-800">Physical setup required</span>
                   ) : product.saleMode === "CLOTH_ONLY" ? <span className="text-xs font-semibold text-primary">Cloth quantity only</span> : <span className="text-xs text-[#8a958e]">Single stock count</span>}
                 </div>
-                <StatusBadge status={product.status} />
+                <div className="flex flex-wrap gap-1"><StatusBadge status={product.status} />{product.isOnSale ? <StatusBadge status="On Sale" /> : null}</div>
                 <div className="flex flex-wrap gap-2 lg:w-[140px] lg:flex-col">
                   {visibility === "ARCHIVED" ? (
                     <>
@@ -885,6 +900,9 @@ export function StaffInventoryExperience() {
               if (!Number.isInteger(openingStock) || openingStock < 0) {
                 throw new Error("Opening stock must be a whole number of zero or more.");
               }
+              if (addAudienceScope === "SPECIFIC_DEPARTMENTS" && !addAudienceDepartmentIds.length) {
+                throw new Error("Choose at least one department for this product.");
+              }
 
               const createdProduct = await createStaffProduct(token, {
                 name: String(form.get("name")).trim(),
@@ -895,6 +913,8 @@ export function StaffInventoryExperience() {
                 price: Number(form.get("price")),
                 oldPrice: String(form.get("oldPrice") ?? "").trim() ? Number(form.get("oldPrice")) : null,
                 saleMode: addSaleMode,
+                audienceScope: addAudienceScope,
+                departmentIds: addAudienceScope === "SPECIFIC_DEPARTMENTS" ? addAudienceDepartmentIds : [],
                 stock: openingStock,
                 lowStockThreshold: Number(form.get("minimum")),
                 ...(sizeVariants.length ? { variants: sizeVariants } : {})
@@ -983,6 +1003,13 @@ export function StaffInventoryExperience() {
                   <summary className="cursor-pointer font-semibold text-primary">Use an image URL instead</summary>
                   <input name="imageUrl" defaultValue={selectedTemplate?.imageUrl ?? ""} placeholder="https://..." onChange={(event) => { if (!addImageFile) setAddImagePreview(event.target.value); }} className="mt-2 h-10 w-full rounded-md border bg-white px-3 text-sm text-[#253029]" />
                 </details>
+              </section>
+
+              <section className="grid gap-3 rounded-lg border border-[#dce5dd] bg-[#fbfdfb] p-4">
+                <div><h3 className="font-extrabold text-[#17211b]">Who is this item for?</h3><p className="mt-1 text-xs leading-5 text-[#68746d]">This changes Featured ranking only. Every student can still find the product through search.</p></div>
+                <label className="flex gap-3 rounded-md border bg-white p-3"><input type="radio" checked={addAudienceScope === "ALL_STUDENTS"} onChange={() => { setAddAudienceScope("ALL_STUDENTS"); setAddAudienceDepartmentIds([]); }} /><span className="text-sm font-bold">All Students</span></label>
+                <label className="flex gap-3 rounded-md border bg-white p-3"><input type="radio" checked={addAudienceScope === "SPECIFIC_DEPARTMENTS"} onChange={() => setAddAudienceScope("SPECIFIC_DEPARTMENTS")} /><span className="text-sm font-bold">Specific Department(s)</span></label>
+                {addAudienceScope === "SPECIFIC_DEPARTMENTS" ? <div className="grid gap-2 sm:grid-cols-2">{departments.map((department) => <label key={department.id} className="flex items-center gap-2 rounded-md border bg-white px-3 py-2 text-sm"><input type="checkbox" checked={addAudienceDepartmentIds.includes(department.id)} onChange={(event) => setAddAudienceDepartmentIds((current) => event.target.checked ? [...current, department.id] : current.filter((id) => id !== department.id))} />{department.code}</label>)}</div> : null}
               </section>
 
               <section className="grid gap-4 rounded-lg border border-[#dce5dd] bg-[#fbfdfb] p-4">
@@ -1120,7 +1147,7 @@ export function StaffInventoryExperience() {
                 ) : null}
                 <div className="min-w-0 flex-1">
                   <h2 id={editorDialog.titleId} className="text-xl font-extrabold text-[#17211b]">
-                    {manageSection === "menu" ? "Manage product" : manageSection === "details" ? "Edit details" : manageSection === "image" ? "Manage image" : manageSection === "selling" ? "Selling setup" : manageSection === "options" ? "Product options" : "Size settings"}
+                    {manageSection === "menu" ? "Manage product" : manageSection === "details" ? "Edit details" : manageSection === "image" ? "Manage image" : manageSection === "selling" ? "Selling setup" : manageSection === "audience" ? "Product audience" : manageSection === "options" ? "Product options" : "Size settings"}
                   </h2>
                   <p className="mt-1 text-sm text-[#68746d]">
                     {manageSection === "menu"
@@ -1129,9 +1156,11 @@ export function StaffInventoryExperience() {
                         ? "Update the product information shown in WESCOMM."
                         : manageSection === "image"
                           ? "Preview the current image or upload a replacement."
-                          : manageSection === "selling"
-                            ? "Choose whether students buy by quantity only or select sizes/options."
-                            : manageSection === "options"
+                           : manageSection === "selling"
+                             ? "Choose whether students buy by quantity only or select sizes/options."
+                             : manageSection === "audience"
+                               ? "Choose which departments see this item first in Featured sorting."
+                             : manageSection === "options"
                               ? "Manage Size, Waist, Length, Color, and other option labels without mixing them with stock counts."
                               : "Manage size labels and low-stock warning levels."}
                   </p>
@@ -1175,6 +1204,11 @@ export function StaffInventoryExperience() {
                     <button type="button" onClick={() => { setError(""); setManageSection("selling"); }} className="flex w-full items-center gap-3 border-b border-[#e7ece8] px-4 py-4 text-left hover:bg-[#f8fbf8]">
                       <span className="grid size-9 shrink-0 place-items-center rounded-md bg-[#eef6ef] text-primary"><Filter className="size-4" /></span>
                       <span className="min-w-0 flex-1"><span className="block text-sm font-extrabold text-[#253029]">Selling setup</span><span className="mt-0.5 block text-xs text-[#68746d]">{editingProduct.saleMode === "CLOTH_ONLY" ? "Cloth only — quantity only" : editingProduct.saleMode === "OPTIONS" ? "Students choose sizes/options" : "Simple item — one stock count"}</span></span>
+                      <ChevronRight className="size-4 text-[#829087]" />
+                    </button>
+                    <button type="button" onClick={() => { setError(""); setEditAudienceScope(editingProduct.audienceScope); setManageSection("audience"); }} className="flex w-full items-center gap-3 border-b border-[#e7ece8] px-4 py-4 text-left hover:bg-[#f8fbf8]">
+                      <span className="grid size-9 shrink-0 place-items-center rounded-md bg-[#eef6ef] text-primary"><Filter className="size-4" /></span>
+                      <span className="min-w-0 flex-1"><span className="block text-sm font-extrabold text-[#253029]">Product audience</span><span className="mt-0.5 block text-xs text-[#68746d]">{editingProduct.audienceScope === "ALL_STUDENTS" ? "All Students" : editingProduct.targetDepartments.map((department) => department.code).join(", ")}</span></span>
                       <ChevronRight className="size-4 text-[#829087]" />
                     </button>
                     {editingProduct.saleMode === "OPTIONS" ? <>
@@ -1241,6 +1275,41 @@ export function StaffInventoryExperience() {
                     Switching to <b>With sizes/options</b> pauses student ordering until physical combinations are configured. Switching away from options is blocked while active reservations or unsettled payments exist.
                   </div>
                   <div className="flex justify-end gap-2 border-t border-[#e1e8e2] pt-4"><Button type="button" variant="secondary" onClick={() => setManageSection("menu")} disabled={submitting}>Cancel</Button><Button type="submit" disabled={submitting}>{submitting ? "Saving..." : "Save selling setup"}</Button></div>
+                </form>
+              ) : null}
+
+              {manageSection === "audience" ? (
+                <form className="space-y-4" onSubmit={async (event) => {
+                  event.preventDefault();
+                  const form = new FormData(event.currentTarget);
+                  const departmentIds = form.getAll("departmentIds").map(String);
+                  if (editAudienceScope === "SPECIFIC_DEPARTMENTS" && !departmentIds.length) {
+                    setError("Choose at least one department.");
+                    return;
+                  }
+                  setSubmitting(true);
+                  setError("");
+                  try {
+                    const updatedProduct = await updateStaffProduct(token, editingProduct.id, {
+                      audienceScope: editAudienceScope,
+                      departmentIds: editAudienceScope === "SPECIFIC_DEPARTMENTS" ? departmentIds : [],
+                      notes: "Product audience updated from staff inventory page."
+                    });
+                    const mappedProduct = mapStaffProduct(updatedProduct);
+                    setProducts((current) => current.map((product) => product.id === mappedProduct.id ? mappedProduct : product));
+                    setEditingProduct(mappedProduct);
+                    setNotice(`${mappedProduct.name} audience updated.`);
+                    setManageSection("menu");
+                  } catch (audienceError) {
+                    setError(userFacingErrorMessage(audienceError, "Unable to update the product audience."));
+                  } finally {
+                    setSubmitting(false);
+                  }
+                }}>
+                  <label className="flex gap-3 rounded-md border bg-white p-4"><input type="radio" name="audienceScope" checked={editAudienceScope === "ALL_STUDENTS"} onChange={() => setEditAudienceScope("ALL_STUDENTS")} /><span><span className="block text-sm font-extrabold">All Students</span><span className="text-xs text-[#68746d]">General merchandise and campus-wide items.</span></span></label>
+                  <label className="flex gap-3 rounded-md border bg-white p-4"><input type="radio" name="audienceScope" checked={editAudienceScope === "SPECIFIC_DEPARTMENTS"} onChange={() => setEditAudienceScope("SPECIFIC_DEPARTMENTS")} /><span><span className="block text-sm font-extrabold">Specific Department(s)</span><span className="text-xs text-[#68746d]">Prioritize this item for one or more departments.</span></span></label>
+                  {editAudienceScope === "SPECIFIC_DEPARTMENTS" ? <div className="grid gap-2 sm:grid-cols-2">{departments.map((department) => <label key={department.id} className="flex items-center gap-2 rounded-md border bg-white px-3 py-2 text-sm"><input type="checkbox" name="departmentIds" value={department.id} defaultChecked={editingProduct.targetDepartments.some((target) => target.id === department.id)} />{department.code}</label>)}</div> : null}
+                  <div className="flex justify-end gap-2 border-t border-[#e1e8e2] pt-4"><Button type="button" variant="secondary" onClick={() => setManageSection("menu")} disabled={submitting}>Cancel</Button><Button type="submit" disabled={submitting}>{submitting ? "Saving..." : "Save audience"}</Button></div>
                 </form>
               ) : null}
 
