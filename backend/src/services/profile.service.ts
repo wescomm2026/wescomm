@@ -9,6 +9,7 @@ import { safelyRecordAuditLog } from "./audit-log.service.js";
 
 const profileFieldMap = {
   fullName: "full_name",
+  studentNumber: "student_number",
   phone: "phone",
   address: "address"
 } as const;
@@ -16,9 +17,11 @@ const profileFieldMap = {
 type MutableProfileField = keyof typeof profileFieldMap;
 
 function changedFields(current: Profile, input: ProfileUpdateInput) {
-  return (Object.keys(profileFieldMap) as MutableProfileField[]).filter((field) => (
+  const fields: Array<MutableProfileField | "departmentId"> = (Object.keys(profileFieldMap) as MutableProfileField[]).filter((field) => (
     input[field] !== undefined && input[field] !== current[field]
   ));
+  if (input.departmentId !== undefined && input.departmentId !== current.departmentId) fields.push("departmentId");
+  return fields;
 }
 
 export async function updateOwnProfile(
@@ -28,16 +31,36 @@ export async function updateOwnProfile(
   const fields = changedFields(currentProfile, input);
   if (fields.length === 0) return currentProfile;
 
+  const updatesStudentIdentity = input.departmentId !== undefined || input.studentNumber !== undefined;
+  if (updatesStudentIdentity && currentProfile.role !== "STUDENT") {
+    throw new HttpError(403, "Only student accounts can update Department and Student ID.");
+  }
+
+  const department = input.departmentId !== undefined && input.departmentId !== currentProfile.departmentId
+    ? await prisma.department.findFirst({
+        where: { id: input.departmentId, isActive: true },
+        select: { id: true, displayName: true }
+      })
+    : null;
+  if (input.departmentId !== undefined && input.departmentId !== currentProfile.departmentId && !department) {
+    throw new HttpError(400, "Choose an active department.", "DEPARTMENT_INACTIVE");
+  }
+
   const update: Record<string, string | null> = {
     updated_at: new Date().toISOString()
   };
 
-  for (const field of fields) {
+  for (const field of fields.filter((field): field is MutableProfileField => field !== "departmentId")) {
     const databaseField = profileFieldMap[field];
     const value = input[field];
     update[databaseField] = field === "phone" || field === "address"
       ? encryptSensitiveText(value, `profile.${field}`)
       : value ?? null;
+  }
+
+  if (department) {
+    update.department_id = department.id;
+    update.department = department.displayName;
   }
 
   const { data, error } = await supabaseAdmin
@@ -47,6 +70,9 @@ export async function updateOwnProfile(
     .select("*")
     .single();
 
+  if (error?.code === "23505" && fields.includes("studentNumber")) {
+    throw new HttpError(409, "That Student ID number is already registered.", "STUDENT_NUMBER_TAKEN");
+  }
   if (error) throw HttpError.fromSupabase(error);
 
   const profile = mapProfile(data as RawProfile);
@@ -58,7 +84,10 @@ export async function updateOwnProfile(
     entityType: "profile",
     entityId: currentProfile.id,
     summary: "Updated own profile information.",
-    metadata: { fields }
+    metadata: {
+      fields,
+      ...(fields.includes("departmentId") ? { departmentId: department?.id } : {})
+    }
   });
 
   return profile;

@@ -18,8 +18,11 @@ import { PwaInstallCard } from "@/components/pwa/PwaInstallCard";
 import { AssetIcon } from "@/components/ui/AssetIcon";
 import { Button } from "@/components/ui/button";
 import {
+  COOKIE_SESSION_TOKEN,
+  getDepartmentsFromApi,
   getReceiptsFromApi,
   getReservationsFromApi,
+  type BackendDepartment,
   type BackendReceipt,
   type BackendReservation
 } from "@/lib/api";
@@ -29,9 +32,13 @@ type ProfileDraft = StudentProfileInput;
 
 const emptyDraft: ProfileDraft = {
   fullName: "",
+  studentNumber: "",
+  departmentId: "",
   phone: "",
   address: ""
 };
+
+const STUDENT_NUMBER_PATTERN = /^[A-Z0-9][A-Z0-9._\/-]*$/;
 
 type AccountSummary = {
   upcoming: number;
@@ -65,6 +72,8 @@ const manilaMonthFormatter = new Intl.DateTimeFormat("en-CA", {
 function profileDraftFromUser(user: StudentUser): ProfileDraft {
   return {
     fullName: user.fullName,
+    studentNumber: user.studentNumber,
+    departmentId: user.departmentId,
     phone: user.phone,
     address: user.address
   };
@@ -101,6 +110,7 @@ function InformationRow({
   value,
   editing,
   multiline = false,
+  maxLength,
   onChange
 }: {
   iconSrc: string;
@@ -108,6 +118,7 @@ function InformationRow({
   value: string;
   editing?: boolean;
   multiline?: boolean;
+  maxLength?: number;
   onChange?: (value: string) => void;
 }) {
   return (
@@ -119,19 +130,74 @@ function InformationRow({
       {editing && onChange ? (
         multiline ? (
           <textarea
+            aria-label={label}
             value={value}
+            maxLength={maxLength}
             onChange={(event) => onChange(event.target.value)}
             className="min-h-20 min-w-0 max-w-full rounded-md border border-[#ccd8cd] bg-white px-3 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
           />
         ) : (
           <input
+            aria-label={label}
             value={value}
+            maxLength={maxLength}
             onChange={(event) => onChange(event.target.value)}
             className="h-10 min-w-0 max-w-full rounded-md border border-[#ccd8cd] bg-white px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
           />
         )
       ) : (
         <p className="min-w-0 break-words pl-8 text-sm leading-6 text-[#4a554e] [overflow-wrap:anywhere] sm:pl-0">{value}</p>
+      )}
+    </div>
+  );
+}
+
+function DepartmentInformationRow({
+  departmentId,
+  displayName,
+  departments,
+  editing,
+  loading,
+  error,
+  onChange
+}: {
+  departmentId: string;
+  displayName: string;
+  departments: BackendDepartment[];
+  editing: boolean;
+  loading: boolean;
+  error: string;
+  onChange: (value: string) => void;
+}) {
+  const currentDepartmentIsMissing = Boolean(
+    departmentId && !departments.some((department) => department.id === departmentId)
+  );
+
+  return (
+    <div className="grid min-w-0 gap-2 border-b border-[#e7ece8] py-4 sm:grid-cols-[190px_minmax(0,1fr)] sm:items-start">
+      <div className="flex min-w-0 items-center gap-3">
+        <AssetIcon src="/assets/textbooks.svg" className="size-7 shrink-0" />
+        <span className="min-w-0 break-words text-sm font-bold text-[#253029]">Department</span>
+      </div>
+      {editing ? (
+        <div className="min-w-0">
+          <select
+            aria-label="Department"
+            value={departmentId}
+            onChange={(event) => onChange(event.target.value)}
+            className="h-10 w-full min-w-0 rounded-md border border-[#ccd8cd] bg-white px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
+          >
+            <option value="">Select your department</option>
+            {currentDepartmentIsMissing ? <option value={departmentId}>{displayName || "Current department"}</option> : null}
+            {departments.map((department) => (
+              <option key={department.id} value={department.id}>{department.displayName}</option>
+            ))}
+          </select>
+          {loading ? <p className="mt-1 text-xs text-[#667169]" role="status">Loading departments...</p> : null}
+          {error ? <p className="mt-1 text-xs font-semibold text-amber-800" role="status">{error}</p> : null}
+        </div>
+      ) : (
+        <p className="min-w-0 break-words pl-8 text-sm leading-6 text-[#4a554e] [overflow-wrap:anywhere] sm:pl-0">{displayName}</p>
       )}
     </div>
   );
@@ -171,6 +237,10 @@ export function StudentProfileExperience() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [saveNotice, setSaveNotice] = useState("");
+  const [departments, setDepartments] = useState<BackendDepartment[]>([]);
+  const [departmentsOwnerId, setDepartmentsOwnerId] = useState("");
+  const [departmentsLoading, setDepartmentsLoading] = useState(false);
+  const [departmentsError, setDepartmentsError] = useState("");
   const [accountSummaryState, setAccountSummaryState] = useState<AccountSummaryState>({
     ownerId: "",
     data: emptyAccountSummary,
@@ -197,6 +267,10 @@ export function StudentProfileExperience() {
       setSaving(false);
       setSaveError("");
       setSaveNotice("");
+      setDepartments([]);
+      setDepartmentsOwnerId("");
+      setDepartmentsLoading(false);
+      setDepartmentsError("");
     }
     if (!user) {
       setDraft(emptyDraft);
@@ -206,6 +280,32 @@ export function StudentProfileExperience() {
     setDraft(profileDraftFromUser(user));
     setDraftOwnerId(user.id);
   }, [user]);
+
+  useEffect(() => {
+    if (!editing || !user?.id || user.role !== "STUDENT") return undefined;
+
+    const ownerId = user.id;
+    let active = true;
+    setDepartmentsLoading(true);
+    setDepartmentsError("");
+    void getDepartmentsFromApi(user.accessToken ?? COOKIE_SESSION_TOKEN)
+      .then((items) => {
+        if (!active || profileOwnerRef.current !== ownerId) return;
+        setDepartments(items);
+        setDepartmentsOwnerId(ownerId);
+      })
+      .catch((error) => {
+        if (!active || profileOwnerRef.current !== ownerId) return;
+        setDepartmentsError(userFacingErrorMessage(error, "Unable to load the department list."));
+      })
+      .finally(() => {
+        if (active && profileOwnerRef.current === ownerId) setDepartmentsLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [editing, user?.accessToken, user?.id, user?.role]);
 
   useEffect(() => {
     const ownerId = user?.id ?? "";
@@ -275,12 +375,21 @@ export function StudentProfileExperience() {
       setSaveError("Full name is required.");
       return;
     }
+    const normalizedStudentNumber = activeDraft.studentNumber.trim().toUpperCase().replace(/\s+/g, "");
+    if (normalizedStudentNumber.length < 3 || normalizedStudentNumber.length > 40 || !STUDENT_NUMBER_PATTERN.test(normalizedStudentNumber)) {
+      setSaveError("Enter a valid Student Number using letters, numbers, periods, slashes, underscores, or hyphens.");
+      return;
+    }
+    if (!activeDraft.departmentId) {
+      setSaveError("Department is required.");
+      return;
+    }
 
     setSaving(true);
     setSaveError("");
     setSaveNotice("");
     const ownerId = user.id;
-    const result = await updateProfile(activeDraft);
+    const result = await updateProfile({ ...activeDraft, studentNumber: normalizedStudentNumber });
     if (profileOwnerRef.current !== ownerId) return;
     setSaving(false);
     if (!result.success) {
@@ -388,12 +497,20 @@ export function StudentProfileExperience() {
             <AssetIcon src="/assets/my-profile.svg" className="size-8 shrink-0" />
             <h2 className="min-w-0 break-words text-xl font-extrabold text-[#17211b]">Account Information</h2>
           </div>
-          <InformationRow iconSrc="/assets/my-profile.svg" label="Full Name" value={activeDraft.fullName} editing={editing} onChange={updateDraft("fullName")} />
-          <InformationRow iconSrc="/assets/contact-us.svg" label="Phone Number" value={activeDraft.phone} editing={editing} onChange={updateDraft("phone")} />
-          <InformationRow iconSrc="/assets/id-accessories.svg" label="Student Number" value={user.studentNumber} />
-          <InformationRow iconSrc="/assets/textbooks.svg" label="Department" value={user.department} />
+          <InformationRow iconSrc="/assets/my-profile.svg" label="Full Name" value={activeDraft.fullName} editing={editing} maxLength={120} onChange={updateDraft("fullName")} />
+          <InformationRow iconSrc="/assets/contact-us.svg" label="Phone Number" value={activeDraft.phone} editing={editing} maxLength={32} onChange={updateDraft("phone")} />
+          <InformationRow iconSrc="/assets/id-accessories.svg" label="Student Number" value={activeDraft.studentNumber} editing={editing} maxLength={40} onChange={(value) => updateDraft("studentNumber")(value.toUpperCase())} />
+          <DepartmentInformationRow
+            departmentId={activeDraft.departmentId}
+            displayName={user.department}
+            departments={departmentsOwnerId === user.id ? departments : []}
+            editing={editing}
+            loading={departmentsLoading}
+            error={departmentsError}
+            onChange={updateDraft("departmentId")}
+          />
           <InformationRow iconSrc="/assets/messages.svg" label="Email Address" value={user.email} />
-          <InformationRow iconSrc="/assets/contact-us.svg" label="Address" value={activeDraft.address} editing={editing} multiline onChange={updateDraft("address")} />
+          <InformationRow iconSrc="/assets/contact-us.svg" label="Address" value={activeDraft.address} editing={editing} multiline maxLength={500} onChange={updateDraft("address")} />
         </section>
 
         <div className="grid min-w-0 content-start gap-5">

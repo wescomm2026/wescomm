@@ -26,6 +26,8 @@ export type BackendAuthProfile = {
 
 export type UpdateMyProfilePayload = {
   fullName: string;
+  studentNumber: string;
+  departmentId: string;
   phone: string | null;
   address: string | null;
 };

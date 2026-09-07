@@ -1,10 +1,15 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
 import { dismissWelcomeGate } from "./helpers";
 
+const currentDepartmentId = "87000000-0000-4000-8000-000000000001";
+const nursingDepartmentId = "87000000-0000-4000-8000-000000000002";
+
 const longStudentProfile = {
   id: "70000000-0000-4000-8000-000000000001",
   role: "STUDENT",
   studentNumber: "WESLEYAN-2026-VERY-LONG-STUDENT-NUMBER-000001",
+  departmentId: currentDepartmentId,
+  onboardingCompletedAt: "2026-09-01T00:00:00.000Z",
   fullName: "Alexandria Cassandra Montgomery-Wesleyan",
   email: "alexandria.cassandra.montgomery-wesleyan@wesleyan.edu.ph",
   phone: "+63 999 888 7777",
@@ -17,12 +22,35 @@ function json(route: Route, body: unknown) {
   return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
 }
 
-async function mockProfileApis(page: Page) {
+async function mockProfileApis(page: Page, onProfileUpdate?: (payload: Record<string, unknown>) => void) {
   await page.route("**/api/backend/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
 
     if (path === "/api/backend/auth/me") {
+      if (route.request().method() === "PATCH") {
+        const payload = route.request().postDataJSON() as Record<string, unknown>;
+        onProfileUpdate?.(payload);
+        await json(route, {
+          profile: {
+            ...longStudentProfile,
+            ...payload,
+            department: payload.departmentId === nursingDepartmentId
+              ? "College of Nursing (CON)"
+              : longStudentProfile.department
+          }
+        });
+        return;
+      }
       await json(route, { profile: longStudentProfile });
+      return;
+    }
+    if (path === "/api/backend/auth/departments") {
+      await json(route, {
+        departments: [
+          { id: currentDepartmentId, code: "CECT", groupName: "College", displayName: longStudentProfile.department },
+          { id: nursingDepartmentId, code: "CON", groupName: "College", displayName: "College of Nursing (CON)" }
+        ]
+      });
       return;
     }
     if (path === "/api/backend/reservations") {
@@ -69,7 +97,8 @@ test("profile settings fit a narrow phone and keep install help available", asyn
   test.skip(testInfo.project.name !== "desktop-chromium", "One Chromium viewport covers this responsive regression.");
 
   await page.setViewportSize({ width: 320, height: 780 });
-  await mockProfileApis(page);
+  let submittedProfile: Record<string, unknown> | undefined;
+  await mockProfileApis(page, (payload) => { submittedProfile = payload; });
   await page.goto("/student/profile");
   await dismissWelcomeGate(page);
 
@@ -80,5 +109,19 @@ test("profile settings fit a narrow phone and keep install help available", asyn
 
   await page.getByRole("button", { name: "Show install steps" }).click();
   await expect(page.getByText("Install from your mobile browser", { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+
+  await page.getByRole("button", { name: "Edit Profile" }).click();
+  await page.getByRole("textbox", { name: "Student Number" }).fill(" 2026 - 9001 ");
+  await page.getByRole("combobox", { name: "Department" }).selectOption(nursingDepartmentId);
+  await page.getByRole("button", { name: "Save changes" }).click();
+
+  await expect(page.getByRole("status").filter({ hasText: "Profile changes saved." })).toBeVisible();
+  await expect(page.getByText("Student No. 2026-9001", { exact: true })).toBeVisible();
+  await expect(page.getByText("College of Nursing (CON)", { exact: true })).toBeVisible();
+  expect(submittedProfile).toMatchObject({
+    studentNumber: "2026-9001",
+    departmentId: nursingDepartmentId
+  });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 });

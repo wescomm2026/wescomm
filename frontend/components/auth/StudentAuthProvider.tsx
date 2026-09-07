@@ -56,7 +56,7 @@ export type StudentUser = {
   avatarDataUrl?: string;
 };
 
-export type StudentProfileInput = Pick<StudentUser, "fullName" | "phone" | "address">;
+export type StudentProfileInput = Pick<StudentUser, "fullName" | "studentNumber" | "departmentId" | "phone" | "address">;
 export type StudentOnboardingInput = Pick<StudentUser, "departmentId" | "studentNumber" | "phone" | "address">;
 
 export type AuthResult = {
@@ -727,6 +727,8 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
     try {
       const profile = await updateMyProfileFromApi(accessToken, {
         fullName: input.fullName.trim(),
+        studentNumber: input.studentNumber,
+        departmentId: input.departmentId,
         phone: input.phone.trim() || null,
         address: input.address.trim() || null
       });
