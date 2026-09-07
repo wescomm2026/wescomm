@@ -120,6 +120,7 @@ await import("./wishlist-migration.test.js");
 await import("./wishlist-policy.test.js");
 await import("./wishlist-notification.test.js");
 await import("./wishlist-service.test.js");
+await import("./department-product-audience.test.js");
 if (process.env.RUN_DATABASE_INTEGRATION_TESTS === "true") {
   await import("./rate-limit-postgres.integration.test.js");
   await import("./receipt-postgres.integration.test.js");

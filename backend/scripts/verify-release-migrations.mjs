@@ -81,6 +81,16 @@ const releaseMigrations = [
       /CREATE TYPE "pickup_advance_mode"/,
       /ADD COLUMN "advance_mode" "pickup_advance_mode" NOT NULL DEFAULT 'OPEN_DAYS'/
     ]
+  },
+  {
+    directory: "20260907030000_backfill_department_product_audiences",
+    required: [
+      /CREATE TEMP TABLE "department_product_audience_backfill"/,
+      /product\."audience_scope" = 'ALL_STUDENTS'/,
+      /NOT EXISTS[\s\S]*FROM "product_departments" AS existing/,
+      /SET "audience_scope" = 'SPECIFIC_DEPARTMENTS'/,
+      /system\.cache-revision\.products/
+    ]
   }
 ];
 

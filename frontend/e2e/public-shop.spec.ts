@@ -124,6 +124,91 @@ test("shop search filters the live catalog", async ({ page }) => {
   await expect(search).toHaveValue("uniform");
 });
 
+test("signed-in students see their department products first", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "One browser project is enough for department ranking.");
+
+  const nursingDepartmentId = "74000000-0000-4000-8000-000000000001";
+  const products = [
+    {
+      ...shopFixtures[0],
+      id: "71000000-0000-4000-8000-000000000011",
+      name: "Alpha General Notebook",
+      audienceScope: "ALL_STUDENTS",
+      targetDepartments: []
+    },
+    {
+      ...shopFixtures[0],
+      id: "71000000-0000-4000-8000-000000000012",
+      name: "Beta Criminology Uniform",
+      audienceScope: "SPECIFIC_DEPARTMENTS",
+      targetDepartments: [{ id: "74000000-0000-4000-8000-000000000002", code: "CCJE", displayName: "Criminal Justice Education (CCJE)" }]
+    },
+    {
+      ...shopFixtures[0],
+      id: "71000000-0000-4000-8000-000000000013",
+      name: "Zulu Nursing Uniform",
+      audienceScope: "SPECIFIC_DEPARTMENTS",
+      targetDepartments: [{ id: nursingDepartmentId, code: "CON", displayName: "College of Nursing (CON)" }]
+    }
+  ];
+
+  await page.route(/\/api(?:\/backend)?\/.*/, async (route) => {
+    const request = route.request();
+    const path = apiPath(request.url());
+    if (path === "/auth/me") {
+      await json(route, {
+        profile: {
+          id: "73000000-0000-4000-8000-000000000010",
+          role: "STUDENT",
+          studentNumber: "2026-0010",
+          departmentId: nursingDepartmentId,
+          onboardingCompletedAt: "2026-09-07T00:00:00.000Z",
+          fullName: "Nursing QA Student",
+          email: "nursing.qa@wesleyan.edu.ph",
+          phone: null,
+          department: "College of Nursing (CON)",
+          address: null,
+          avatarUrl: null
+        }
+      });
+      return;
+    }
+    if (path === "/products") {
+      await json(route, { products });
+      return;
+    }
+    if (path === "/wishlist") {
+      await json(route, { wishlist: [] });
+      return;
+    }
+    if (path === "/restrictions/me") {
+      await json(route, { restrictionSummary: { activeRestriction: null, consecutiveOffenses: 0, offenses: [], policy: { firstRestrictionAt: 3 } } });
+      return;
+    }
+    if (path === "/notifications") {
+      await json(route, { notifications: [] });
+      return;
+    }
+    if (path === "/push/public-key") {
+      await json(route, { enabled: false, publicKey: "" });
+      return;
+    }
+    await json(route, { error: `Unexpected mocked API request: ${request.method()} ${path}` }, 500);
+  });
+
+  await page.goto("/student/shop");
+  await dismissWelcomeGate(page);
+
+  await expect(page.getByLabel("Sort shop items")).toContainText("Recommended for your department");
+  await expect(page.getByText("Showing College of Nursing (CON) items first.")).toBeVisible();
+  const cards = page.getByTestId("shop-product-grid").getByRole("article");
+  await expect(cards).toHaveCount(3);
+  await expect(cards.nth(0)).toHaveAttribute("data-product-id", "71000000-0000-4000-8000-000000000013");
+  await expect(cards.nth(0).getByText("For your department")).toBeVisible();
+  await expect(cards.nth(1)).toHaveAttribute("data-product-id", "71000000-0000-4000-8000-000000000011");
+  await expect(cards.nth(2)).toHaveAttribute("data-product-id", "71000000-0000-4000-8000-000000000012");
+});
+
 test("mobile bottom navigation changes pages and opens secondary destinations", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "mobile-chromium", "Mobile navigation is covered by the mobile project.");
 

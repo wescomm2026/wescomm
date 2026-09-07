@@ -67,6 +67,10 @@ function optionAvailabilityText(product: Product) {
     .join(" · ");
 }
 
+function isDepartmentRecommendation(product: Product, departmentId?: string) {
+  return Boolean(departmentId && product.targetDepartmentIds?.includes(departmentId));
+}
+
 function ProductCard({
   product,
   onBuyNow,
@@ -76,7 +80,8 @@ function ProductCard({
   wishlisted,
   wishlistPending,
   wishlistDisabled,
-  highlighted
+  highlighted,
+  departmentRecommended
 }: {
   product: Product;
   onBuyNow: (product: Product) => void;
@@ -87,6 +92,7 @@ function ProductCard({
   wishlistPending: boolean;
   wishlistDisabled: boolean;
   highlighted: boolean;
+  departmentRecommended: boolean;
 }) {
   const disabled = isProductUnavailable(product);
   const clothOnly = isUniformClothOnly(product);
@@ -148,7 +154,12 @@ function ProductCard({
           </button>
         ) : null}
       </div>
-      <h3 className="mt-2 line-clamp-2 min-h-9 text-xs font-extrabold leading-[1.125rem] text-[#17211b] sm:mt-3 sm:min-h-12 sm:text-base sm:leading-6">{product.name}</h3>
+      {departmentRecommended ? (
+        <p className="mt-2 w-fit rounded-full bg-[#e8f4e8] px-2 py-1 text-[9px] font-extrabold uppercase tracking-wide text-primary sm:mt-3 sm:px-3 sm:text-[10px]">
+          For your department
+        </p>
+      ) : null}
+      <h3 className={`${departmentRecommended ? "mt-1.5" : "mt-2 sm:mt-3"} line-clamp-2 min-h-9 text-xs font-extrabold leading-[1.125rem] text-[#17211b] sm:min-h-12 sm:text-base sm:leading-6`}>{product.name}</h3>
       <p className="hidden line-clamp-2 min-h-10 text-sm leading-5 text-muted-foreground sm:block">{product.detail}</p>
       <p className="mt-1 truncate text-[10px] font-bold uppercase tracking-wide text-primary sm:text-xs">{product.category}</p>
       <div className="mt-1.5 flex min-w-0 flex-wrap items-baseline gap-x-1.5 sm:mt-2 sm:gap-2">
@@ -551,13 +562,18 @@ export function StudentShopExperience() {
         if (sort === "price-low") return parsePrice(a.price) - parsePrice(b.price);
         if (sort === "price-high") return parsePrice(b.price) - parsePrice(a.price);
         const audienceScore = (product: typeof a) => {
-          if (user?.departmentId && product.targetDepartmentIds?.includes(user.departmentId)) return 100;
+          if (isDepartmentRecommendation(product, user?.departmentId)) return 100;
           if (product.audienceScope !== "SPECIFIC_DEPARTMENTS") return 50;
           return 0;
         };
         return audienceScore(b) - audienceScore(a) || a.name.localeCompare(b.name) || (a.id ?? "").localeCompare(b.id ?? "");
       });
   }, [category, products, query, sort, statuses, user?.departmentId, wishlist.productIds, wishlistOnly]);
+
+  const departmentRecommendationCount = useMemo(
+    () => filteredProducts.filter((product) => isDepartmentRecommendation(product, user?.departmentId)).length,
+    [filteredProducts, user?.departmentId]
+  );
 
   const toggleStatus = (status: string) => {
     setStatuses((current) => (current.includes(status) ? current.filter((item) => item !== status) : [...current, status]));
@@ -734,7 +750,7 @@ export function StudentShopExperience() {
             ))}
             <label htmlFor="shop-sort" className="sr-only">Sort shop items</label>
             <select id="shop-sort" value={sort} onChange={(event) => setSort(event.target.value)} className="col-span-2 h-10 rounded-xl border border-[#dfe8df] bg-white px-3 text-sm font-semibold text-primary lg:col-span-1">
-              <option value="featured">Featured</option>
+              <option value="featured">{user?.role === "STUDENT" && user.departmentId ? "Recommended for your department" : "Featured"}</option>
               <option value="price-low">Lowest Price</option>
               <option value="price-high">Highest Price</option>
             </select>
@@ -742,7 +758,12 @@ export function StudentShopExperience() {
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="text-sm text-[#3f4a44]">Showing {filteredProducts.length} of {products.length} items</p>
+          <div>
+            <p className="text-sm text-[#3f4a44]">Showing {filteredProducts.length} of {products.length} items</p>
+            {sort === "featured" && departmentRecommendationCount > 0 ? (
+              <p className="mt-1 text-xs font-semibold text-primary">Showing {user?.department || "your department"} items first.</p>
+            ) : null}
+          </div>
           <div className="flex items-center gap-2">
             <button
               ref={wishlistFilterRef}
@@ -820,6 +841,7 @@ export function StudentShopExperience() {
                 wishlistPending={Boolean(product.id && wishlist.pendingProductIds.has(product.id))}
                 wishlistDisabled={wishlistControlsDisabled}
                 highlighted={Boolean(product.id && product.id === highlightedProductId)}
+                departmentRecommended={isDepartmentRecommendation(product, user?.departmentId)}
               />
             ))}
           </div>
