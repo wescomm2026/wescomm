@@ -3,9 +3,10 @@
 import Image from "next/image";
 import { type ClipboardEvent, type FormEvent, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { KeyRound, LockKeyhole, Mail, ShieldCheck, X } from "lucide-react";
+import { ArrowRight, Info, KeyRound, LockKeyhole, Mail, ShieldCheck, UserRound, X } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import { ActionLoadingOverlay } from "@/components/ui/ActionLoadingOverlay";
+import { useAccessibleDialog } from "@/components/ui/useAccessibleDialog";
 import { EMAIL_OTP_LENGTH, isCompleteEmailOtp, normalizeEmailOtp } from "@/lib/auth-otp";
 import { PolicyConsentCheckbox } from "@/components/legal/PolicyConsentCheckbox";
 import { currentAccountPolicyAcceptance } from "@/lib/policy-consent";
@@ -113,6 +114,9 @@ export function StudentAuthModal({ open, onClose }: { open: boolean; onClose: ()
   const [resendSeconds, setResendSeconds] = useState(0);
   const [rememberEmail, setRememberEmail] = useState(true);
   const [policyAccepted, setPolicyAccepted] = useState(false);
+  const authDialog = useAccessibleDialog<HTMLElement>(open && mounted, () => {
+    if (!loading) onClose();
+  });
 
   useEffect(() => setMounted(true), []);
 
@@ -134,18 +138,7 @@ export function StudentAuthModal({ open, onClose }: { open: boolean; onClose: ()
     setRememberEmail(rememberEnabled);
     setEmailName(rememberedEmailName);
 
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKeyDown);
-
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      window.removeEventListener("keydown", onKeyDown);
-    };
-  }, [open, onClose]);
+  }, [open]);
 
   useEffect(() => {
     if (!open || resendSeconds <= 0) return;
@@ -335,43 +328,39 @@ export function StudentAuthModal({ open, onClose }: { open: boolean; onClose: ()
       }}
     >
       <section
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="student-auth-title"
-        className="relative w-full max-w-[520px] overflow-hidden rounded-lg border border-[#dce6dc] bg-white shadow-[0_28px_90px_rgba(0,0,0,0.24)]"
+        ref={authDialog.dialogRef}
+        {...authDialog.dialogProps}
+        className="relative w-full max-w-[560px] overflow-hidden rounded-3xl border border-[#dce6dc] bg-white shadow-overlay"
       >
         <ActionLoadingOverlay
           active={Boolean(activeLoadingCopy)}
           title={activeLoadingCopy?.title ?? ""}
           detail={activeLoadingCopy?.detail ?? ""}
         />
-        <div className="h-1.5 bg-primary" />
         <button
           type="button"
           onClick={onClose}
           disabled={Boolean(loading)}
           aria-label="Close login dialog"
-          className="absolute right-4 top-4 z-20 grid size-10 place-items-center rounded-md border border-[#dce6dc] bg-white text-[#25322b] shadow-sm transition hover:bg-[#eef6ee] disabled:opacity-50"
+          className="absolute right-5 top-5 z-20 grid size-11 place-items-center rounded-xl border border-[#dce6dc] bg-white text-[#25322b] shadow-sm transition hover:bg-[#eef6ee] disabled:opacity-50"
         >
           <X className="size-5" />
         </button>
 
-        <div className="px-5 pb-6 pt-7 sm:px-8 sm:pb-8 sm:pt-8">
-          <Image src="/assets/wescomm-logo.png" alt="WESCOMM" width={155} height={62} className="h-12 w-auto object-contain object-left" />
+        <div className="px-5 pb-6 pt-8 sm:px-9 sm:pb-9 sm:pt-9">
+          <Image src="/assets/wescomm-logo-ui.webp" alt="WESCOMM" width={165} height={66} className="h-12 w-auto object-contain object-left" />
 
-          <div className="mt-7 flex items-start gap-3">
-            <span className="grid size-12 shrink-0 place-items-center rounded-md bg-[#e8f4e8] text-primary">
-              {step === "code" ? <KeyRound className="size-7" /> : step === "password" ? <LockKeyhole className="size-7" /> : <ShieldCheck className="size-7" />}
-            </span>
-            <div>
-              <p className="text-xs font-bold uppercase tracking-[0.08em] text-primary">Secure email access</p>
-              <h1 id="student-auth-title" className="mt-1 text-2xl font-extrabold leading-tight text-[#101820] sm:text-3xl">
-                {step === "code" ? "Enter verification code" : step === "password" ? "Enter account password" : "Log in with your school email"}
-              </h1>
-            </div>
+          <div className="mt-8">
+            <p className="inline-flex items-center gap-2 rounded-full bg-[#e8f4e8] px-3 py-2 text-[11px] font-extrabold uppercase tracking-wide text-primary">
+              {step === "code" ? <KeyRound className="size-4" /> : step === "password" ? <LockKeyhole className="size-4" /> : <ShieldCheck className="size-4" />}
+              Secure email access
+            </p>
+            <h1 id={authDialog.titleId} className="mt-4 text-2xl font-extrabold leading-tight text-[#101820] sm:text-3xl">
+              {step === "code" ? "Enter verification code" : step === "password" ? "Enter account password" : "Log in with your school email"}
+            </h1>
           </div>
 
-          <p className="mt-4 text-sm leading-6 text-[#657169]">
+          <p className="mt-4 text-sm leading-6 text-[#657169] sm:text-base sm:leading-7">
             {step === "code" ? (
               <>
                 We sent a code to <strong>{sentEmail}</strong>. Enter the newest code to continue.
@@ -387,7 +376,7 @@ export function StudentAuthModal({ open, onClose }: { open: boolean; onClose: ()
             )}
           </p>
 
-          <div className="mt-6">
+          <div className="mt-7">
             {error ? (
               <p id="student-auth-error" className="mb-3 rounded-md border border-[#f0b9b9] bg-[#fff3f3] px-3 py-2.5 text-sm font-medium text-[#a22828]" role="alert">
                 {error}
@@ -401,38 +390,42 @@ export function StudentAuthModal({ open, onClose }: { open: boolean; onClose: ()
             ) : null}
 
             {step === "email" ? (
-              <form onSubmit={handleSendOtp} className="space-y-3">
+              <form onSubmit={handleSendOtp} className="space-y-4">
                 <label className="block">
-                  <span className="text-xs font-bold text-[#25322b]">School email</span>
-                  <div className="mt-1 flex h-12 items-center gap-2 rounded-md border border-[#cbd8cb] px-3 transition focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/15">
-                    <Mail className="size-5 shrink-0 text-primary" />
+                  <span className="text-sm font-extrabold text-[#25322b]">School email</span>
+                  <div className="mt-2 flex h-14 items-center overflow-hidden rounded-xl border border-[#cbd8cb] transition focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/15">
+                    <UserRound className="ml-4 size-5 shrink-0 text-[#25322b]" aria-hidden="true" />
                     <input
+                      data-dialog-autofocus
                       type="text"
+                      inputMode="email"
+                      autoComplete="username"
+                      autoCapitalize="none"
                       required
                       value={emailName}
                       onChange={(event) => {
                         setEmailName(stripSchoolEmailDomain(event.target.value, allowedEmailDomain));
                       }}
                       disabled={Boolean(loading)}
-                      className="h-full min-w-0 flex-1 bg-transparent text-sm outline-none disabled:opacity-60"
+                      className="h-full min-w-0 flex-1 bg-transparent px-3 text-sm outline-none disabled:opacity-60 sm:text-base"
                       placeholder="student.name"
                     />
-                    <span className="shrink-0 border-l border-[#dce6dc] pl-2 text-xs font-bold text-primary sm:text-sm">
+                    <span className="flex h-full shrink-0 items-center border-l border-[#dce6dc] bg-[#f0faf3] px-2 text-[10px] font-extrabold text-primary sm:px-3 sm:text-sm">
                       @{allowedEmailDomain}
                     </span>
                   </div>
                 </label>
 
-                <label className="flex items-start gap-3 rounded-md border border-[#dce6dc] bg-[#fbfdfb] px-3 py-3 text-sm text-[#536158]">
+                <label className="flex items-start gap-3 rounded-xl border border-[#dce6dc] bg-[#f5faf5] px-4 py-4 text-sm text-[#536158]">
                   <input
                     type="checkbox"
                     checked={rememberEmail}
                     onChange={(event) => setRememberEmail(event.target.checked)}
-                    className="mt-0.5 size-4 accent-primary"
+                    className="mt-0.5 size-5 accent-primary"
                   />
                   <span>
                     <strong className="text-[#25322b]">Remember me on this device.</strong>
-                    <span className="block text-xs leading-5 text-[#657169]">
+                    <span className="mt-1 block text-xs leading-5 text-[#657169] sm:text-sm">
                       WESCOMM can open faster next time on this browser.
                     </span>
                   </span>
@@ -452,7 +445,7 @@ export function StudentAuthModal({ open, onClose }: { open: boolean; onClose: ()
                 <button
                   type="submit"
                   disabled={Boolean(loading) || resendSeconds > 0 || !policyAccepted}
-                  className="flex h-12 w-full items-center justify-center gap-2 rounded-md bg-primary px-5 text-sm font-bold text-white shadow-[0_12px_24px_rgba(0,102,51,0.20)] transition hover:bg-[#00552a] disabled:cursor-wait disabled:opacity-70"
+                  className="relative flex h-14 w-full items-center justify-center gap-2 rounded-xl bg-primary px-10 text-sm font-extrabold text-white shadow-soft transition hover:bg-primary-hover disabled:cursor-wait disabled:opacity-70 sm:text-base"
                 >
                   <Mail className="size-5" />
                   {loading === "send"
@@ -460,6 +453,7 @@ export function StudentAuthModal({ open, onClose }: { open: boolean; onClose: ()
                     : resendSeconds > 0
                       ? `Try again in ${resendSeconds}s`
                       : willUsePassword ? "Continue to password" : "Send verification code"}
+                  <ArrowRight className="absolute right-4 size-5" aria-hidden="true" />
                 </button>
               </form>
             ) : step === "code" ? (
@@ -567,8 +561,16 @@ export function StudentAuthModal({ open, onClose }: { open: boolean; onClose: ()
             )}
           </div>
 
-          <div className="mt-5 rounded-md bg-[#f5faf5] px-3 py-3 text-xs leading-5 text-[#657169]">
-            Access is limited to verified <strong>@{allowedEmailDomain}</strong> email accounts.
+          {step === "email" ? (
+            <div className="mt-6 flex items-center gap-4 text-[#d97706]" aria-hidden="true">
+              <span className="h-px flex-1 bg-[#dce6dc]" />
+              <ShieldCheck className="size-5" />
+              <span className="h-px flex-1 bg-[#dce6dc]" />
+            </div>
+          ) : null}
+          <div className="mt-5 flex items-center gap-3 rounded-xl bg-[#f5faf5] px-4 py-4 text-xs leading-5 text-[#657169] sm:text-sm">
+            <Info className="size-5 shrink-0 text-primary" aria-hidden="true" />
+            <span>Access is limited to verified <strong>@{allowedEmailDomain}</strong> email accounts.</span>
           </div>
         </div>
       </section>

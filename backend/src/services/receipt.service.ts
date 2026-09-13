@@ -156,6 +156,9 @@ const receiptRecordSelect = Prisma.validator<Prisma.ReceiptSelect>()({
         select: {
           id: true,
           productId: true,
+          productNameSnapshot: true,
+          skuCodeSnapshot: true,
+          optionSnapshot: true,
           variantSummary: true,
           quantity: true,
           unitPrice: true,
@@ -211,13 +214,16 @@ function mapPrismaReceipt(receipt: ReceiptRecord) {
           items: receipt.reservation.items.map((item) => ({
             id: item.id,
             productId: item.productId,
+            productNameSnapshot: item.productNameSnapshot,
+            skuCodeSnapshot: item.skuCodeSnapshot,
+            optionSnapshot: item.optionSnapshot,
             variantSummary: item.variantSummary,
             quantity: item.quantity,
             unitPrice: item.unitPrice.toString(),
             subtotal: item.subtotal.toString(),
             product: {
               id: item.product.id,
-              name: item.product.name,
+              name: item.productNameSnapshot,
               description: item.product.description,
               imageUrl: item.product.imageUrl,
               price: item.product.price.toString()

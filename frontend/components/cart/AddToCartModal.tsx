@@ -7,6 +7,7 @@ import { Minus, Plus, X } from "lucide-react";
 import type { CartProduct } from "@/components/cart/StudentCartProvider";
 import { AssetIcon } from "@/components/ui/AssetIcon";
 import { Button } from "@/components/ui/button";
+import { shopProductCardImage } from "@/lib/shop-assets";
 import {
   hasCompleteProductSelections,
   isProductUnavailable,
@@ -109,7 +110,7 @@ export function AddToCartModal({
         <div className="max-h-[calc(100svh-190px)] overflow-y-auto p-5 sm:p-7">
           <section className="grid gap-5 rounded-lg border border-[#dfe7e0] bg-[#fbfdfb] p-4 sm:grid-cols-[150px_1fr]">
             <div className="relative h-36 rounded-md bg-[#eef5ee]">
-              <Image src={product.image} alt={product.name} fill sizes="150px" className="object-contain p-3" />
+              <Image src={shopProductCardImage(product.image)} alt={product.name} fill sizes="150px" className="object-contain p-3" />
             </div>
             <div>
               <span className="inline-flex rounded-full bg-[#e1f2e3] px-3 py-1 text-xs font-bold text-primary">{product.status}</span>
@@ -145,7 +146,7 @@ export function AddToCartModal({
                     className="rounded-md border border-[#dfe7e0] p-2 text-left transition hover:border-primary hover:bg-[#f5faf5]"
                   >
                     <span className="relative block h-20 rounded bg-[#f0f6f1]">
-                      <Image src={item.image} alt="" fill sizes="120px" className="object-contain p-2" />
+                      <Image src={shopProductCardImage(item.image)} alt="" fill sizes="120px" className="object-contain p-2" />
                     </span>
                     <span className="mt-2 line-clamp-2 block min-h-9 text-xs font-bold text-[#17211b]">{item.name}</span>
                     <span className="mt-1 block text-xs font-extrabold text-primary">{item.price}</span>
@@ -240,7 +241,7 @@ export function AddToCartModal({
               if (!unavailable) onConfirm(product, selectedOptions, quantity);
             }}
           >
-            <AssetIcon src="/assets/cart.svg" className="size-6" />
+            <AssetIcon src="/assets/cart-bag.svg" className="size-6" />
             {stockUnavailable ? "Out of Stock" : !selectionsComplete ? "Select Options" : "Add to Cart"}
           </Button>
         </footer>

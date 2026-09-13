@@ -40,8 +40,11 @@ export type Product = {
   minimum: number;
   price: number;
   oldPrice: number | null;
+  isOnSale: boolean;
   status: string;
   saleMode: ProductSaleMode;
+  audienceScope: "ALL_STUDENTS" | "SPECIFIC_DEPARTMENTS";
+  targetDepartments: Array<{ id: string; code: string; displayName: string }>;
   skuInventoryEnabled: boolean;
   inventoryReconciledAt: string | null;
   skus: Array<{
@@ -73,7 +76,7 @@ export type SizeVariantDraft = {
   lowStockThreshold: string;
 };
 
-export type ManageSection = "menu" | "details" | "image" | "selling" | "sizes" | "options";
+export type ManageSection = "menu" | "details" | "image" | "selling" | "audience" | "sizes" | "options";
 
 export function variantDraftKey(value: string) {
   return `${value.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${Math.random().toString(36).slice(2, 8)}`;
@@ -112,6 +115,7 @@ export type StaffReservationRow = {
   reference: string;
   student: string;
   item: string;
+  itemDetails: string;
   quantity: number;
   pickup: string;
   payment: string;
@@ -151,7 +155,6 @@ export function numericValue(value: StaffProduct["price"]) {
 
 export function staffStatusLabel(product: StaffProduct) {
   if (product.status === "OUT_OF_STOCK") return "Out of Stock";
-  if (product.isOnSale) return "On Sale";
   if (product.status === "RESTOCK_SOON" || product.stock <= product.lowStockThreshold) return "Needs Restock";
   return "Available";
 }
@@ -187,8 +190,11 @@ export function mapStaffProduct(product: StaffProduct): Product {
     minimum: product.lowStockThreshold,
     price: numericValue(product.price),
     oldPrice: product.oldPrice === null || product.oldPrice === undefined ? null : numericValue(product.oldPrice),
+    isOnSale: Boolean(product.isOnSale),
     status: staffStatusLabel(product),
     saleMode: product.saleMode ?? "SIMPLE",
+    audienceScope: product.audienceScope ?? "ALL_STUDENTS",
+    targetDepartments: product.targetDepartments ?? [],
     skuInventoryEnabled: Boolean(product.skuInventoryEnabled),
     inventoryReconciledAt: product.inventoryReconciledAt ?? null,
     skus: (product.skus ?? []).map((sku) => ({
@@ -282,12 +288,16 @@ export function reservationMatchesStaffSearch(row: BackendReservation, value: st
     row.referenceCode,
     row.student?.fullName,
     row.student?.email,
-    row.student?.studentNumber
+    row.student?.studentNumber,
+    ...row.items.flatMap((item) => [item.product?.name, item.variantSummary])
   ].some((candidate) => candidate?.toLowerCase().includes(query));
 }
 
 export function mapStaffReservation(row: BackendReservation): StaffReservationRow {
   const items = row.items.map((item) => item.product?.name ?? "Campus Item");
+  const itemDetails = row.items
+    .map((item) => [item.product?.name ?? "Campus Item", item.variantSummary].filter(Boolean).join(" — "))
+    .join("; ");
   const quantity = row.items.reduce((total, item) => total + item.quantity, 0);
 
   return {
@@ -295,6 +305,7 @@ export function mapStaffReservation(row: BackendReservation): StaffReservationRo
     reference: row.referenceCode,
     student: row.student?.fullName || row.student?.email || "Student",
     item: items.length > 1 ? `${items[0]} + ${items.length - 1} more` : items[0] ?? "Campus Item",
+    itemDetails,
     quantity,
     pickup: formatStaffPickup(row.pickupStart, row.pickupEnd),
     payment: formatPaymentMethod(row.paymentMethod),

@@ -87,7 +87,7 @@ export function useAdminSummary(options: ReportRangeOptions = DEFAULT_REPORT_RAN
   const requestSequenceRef = useRef(0);
   const requestAbortRef = useRef<AbortController | null>(null);
 
-  const loadSummary = useCallback(async ({ background = false }: { background?: boolean } = {}) => {
+  const loadSummary = useCallback(async ({ background = false, fresh = false }: { background?: boolean; fresh?: boolean } = {}) => {
     if (!ready) return;
 
     const requestId = ++requestSequenceRef.current;
@@ -111,7 +111,7 @@ export function useAdminSummary(options: ReportRangeOptions = DEFAULT_REPORT_RAN
     }
 
     try {
-      const data = await getAdminReportSummaryFromApi(user.accessToken, options, requestController.signal);
+      const data = await getAdminReportSummaryFromApi(user.accessToken, options, requestController.signal, fresh);
       if (requestId !== requestSequenceRef.current) return;
       setSummary(data);
     } catch (summaryError) {
@@ -154,7 +154,7 @@ export function useAdminSummary(options: ReportRangeOptions = DEFAULT_REPORT_RAN
     };
   }, [loadSummary, user?.accessToken]);
 
-  return { user, ready, openAuth, summary, loading, initialLoadComplete, error, reload: loadSummary };
+  return { user, ready, openAuth, summary, loading, initialLoadComplete, error, reload: () => loadSummary({ fresh: true }) };
 }
 
 export function AdminHeader({
