@@ -74,12 +74,6 @@ function formatTime(minutes: number) {
   return date.toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit", timeZone: "UTC" });
 }
 
-function addDays(dateKey: string, amount: number) {
-  const date = new Date(`${dateKey}T00:00:00.000Z`);
-  date.setUTCDate(date.getUTCDate() + amount);
-  return date.toISOString().slice(0, 10);
-}
-
 function formatPickupMoment(value: string | null) {
   if (!value) return "Not scheduled";
   return new Date(value).toLocaleString("en-PH", {
@@ -91,6 +85,7 @@ function formatPickupMoment(value: string | null) {
 
 function draftFromPolicy(policy: BackendPickupPolicy): PickupPolicyPayload {
   return {
+    advanceMode: policy.advanceMode ?? "OPEN_DAYS",
     minAdvanceDays: policy.minAdvanceDays,
     maxAdvanceDays: policy.maxAdvanceDays,
     reason: "",
@@ -182,6 +177,7 @@ export function StaffPickupScheduleExperience() {
   const [activationKey, setActivationKey] = useState<string | null>(null);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [studentPreviewOpen, setStudentPreviewOpen] = useState(false);
+  const [studentPreviewWindow, setStudentPreviewWindow] = useState<PolicyPreview["bookingWindow"] | null>(null);
   const [studentPreviewSelection, setStudentPreviewSelection] = useState<PickupSelection | null>(null);
   const [slotEditor, setSlotEditor] = useState<SlotEditor | null>(null);
   const [closureEditor, setClosureEditor] = useState<ClosureEditor | null>(null);
@@ -189,6 +185,7 @@ export function StaffPickupScheduleExperience() {
   const [draggedSlotIndex, setDraggedSlotIndex] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [previewingStudentView, setPreviewingStudentView] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -208,6 +205,7 @@ export function StaffPickupScheduleExperience() {
         setSavedDraft(nextDraft);
         setDraft(nextDraft);
         setImpactPreview(null);
+        setStudentPreviewWindow(null);
         setActivationKey(null);
       }
     } catch (loadError) {
@@ -239,6 +237,7 @@ export function StaffPickupScheduleExperience() {
   const updateDraft = (updater: (current: PickupPolicyPayload) => PickupPolicyPayload) => {
     setDraft((current) => current ? updater(current) : current);
     setImpactPreview(null);
+    setStudentPreviewWindow(null);
     setActivationKey(null);
     setReviewOpen(false);
     setNotice("");
@@ -255,19 +254,21 @@ export function StaffPickupScheduleExperience() {
     : "No active times";
 
   const previewPolicy = useMemo<BackendPickupPolicy | null>(() => {
-    if (!active || !draft) return null;
+    if (!active || !draft || !studentPreviewWindow) return null;
     return {
       ...active,
       id: "draft-pickup-schedule",
+      advanceMode: draft.advanceMode,
       minAdvanceDays: draft.minAdvanceDays,
       maxAdvanceDays: draft.maxAdvanceDays,
-      minDate: addDays(active.serverDate, draft.minAdvanceDays),
-      maxDate: addDays(active.serverDate, draft.maxAdvanceDays),
+      minDate: studentPreviewWindow.minDate,
+      maxDate: studentPreviewWindow.maxDate,
+      serverDate: studentPreviewWindow.serverDate,
       days: draft.days,
       timeSlots: draft.timeSlots.map((slot, index) => ({ ...slot, id: `draft-slot-${index}`, sortOrder: index })),
       closures: draft.closures.map((closure, index) => ({ ...closure, id: `draft-closure-${index}` }))
     };
-  }, [active, draft]);
+  }, [active, draft, studentPreviewWindow]);
 
   const openSlotEditor = (index: number | null) => {
     if (!draft) return;
@@ -352,6 +353,7 @@ export function StaffPickupScheduleExperience() {
     if (!approved) return;
     setDraft(savedDraft);
     setImpactPreview(null);
+    setStudentPreviewWindow(null);
     setActivationKey(null);
     setChangeNote("");
     setError("");
@@ -395,6 +397,30 @@ export function StaffPickupScheduleExperience() {
     }
   };
 
+  const openStudentPreview = async () => {
+    if (!user?.accessToken || !draft) return;
+    const validationMessage = validateDraft(draft);
+    if (validationMessage) {
+      setError(validationMessage);
+      return;
+    }
+    setPreviewingStudentView(true);
+    setError("");
+    try {
+      const preview = await previewPickupPolicyFromApi(user.accessToken, {
+        ...draft,
+        reason: "Student availability preview"
+      });
+      setStudentPreviewWindow(preview.bookingWindow);
+      setStudentPreviewSelection(null);
+      setStudentPreviewOpen(true);
+    } catch (previewError) {
+      setError(userFacingErrorMessage(previewError, "Unable to preview student pickup availability."));
+    } finally {
+      setPreviewingStudentView(false);
+    }
+  };
+
   const saveChanges = async () => {
     if (!user?.accessToken || !draft || !impactPreview || !activationKey || changeNote.trim().length < 5) return;
     setSubmitting(true);
@@ -429,7 +455,7 @@ export function StaffPickupScheduleExperience() {
         eyebrow="Commissary operations"
         title="Pickup schedule"
         description="Set when students can collect their reservations. Closure conflicts are previewed first, then safely moved to the next valid schedule when possible."
-        meta={isDirty ? <span className="inline-flex rounded-full bg-warning/10 px-2.5 py-1 text-warning">Unsaved changes</span> : <span>All changes saved</span>}
+        meta={isDirty ? <span className="inline-flex rounded-full bg-warning/10 px-2.5 py-1 text-warning">Draft changes — not yet visible to students</span> : <span>Active Pickup Schedule</span>}
         action={(
           <div className="flex items-center gap-2">
             {user?.role === "ADMIN" ? (
@@ -437,7 +463,7 @@ export function StaffPickupScheduleExperience() {
                 <Button variant="secondary"><History className="size-4" />View change history</Button>
               </Link>
             ) : null}
-            <Button variant="ghost" size="icon" onClick={() => void refreshSchedule()} disabled={submitting} aria-label="Refresh pickup schedule" title="Refresh pickup schedule">
+            <Button variant="ghost" size="icon" onClick={() => void refreshSchedule()} disabled={submitting || previewingStudentView} aria-label="Refresh pickup schedule" title="Refresh pickup schedule">
               <RefreshCw className="size-4" />
             </Button>
           </div>
@@ -448,23 +474,27 @@ export function StaffPickupScheduleExperience() {
       {error ? <p className="rounded-surface border border-danger/25 bg-danger/5 px-4 py-3 text-sm font-semibold text-danger" role="alert">{error}</p> : null}
 
       <section className="grid gap-3 md:grid-cols-3" aria-label="Pickup schedule summary">
-        <SummaryCard icon={<CalendarClock className="size-5" />} label="Booking window" value={`${draft.minAdvanceDays}–${draft.maxAdvanceDays} days ahead`} detail={`Students can choose dates from ${addDays(active.serverDate, draft.minAdvanceDays)} to ${addDays(active.serverDate, draft.maxAdvanceDays)}.`} />
+        <SummaryCard icon={<CalendarClock className="size-5" />} label="Booking window" value={`${draft.minAdvanceDays}–${draft.maxAdvanceDays} ${draft.advanceMode === "CALENDAR_DAYS" ? "calendar" : "open"} days ahead`} detail={draft.advanceMode === "CALENDAR_DAYS" ? "Weekends and closures remain inside the date window but are unavailable for selection." : "Closed weekdays and special closures do not use up this legacy window."} />
         <SummaryCard icon={<CalendarDays className="size-5" />} label="Open pickup days" value={openDays.join(", ") || "No open days"} detail={`${openDays.length} day${openDays.length === 1 ? "" : "s"} available each week.`} />
         <SummaryCard icon={<Clock3 className="size-5" />} label="Active time slots" value={`${activeSlots.length} slot${activeSlots.length === 1 ? "" : "s"}`} detail={slotSpan} />
       </section>
 
-      <SettingsSection number={1} title="Booking window" description="Choose how early and how far ahead students can reserve a pickup date.">
+      <SettingsSection number={1} title="Booking window" description="Choose how advance days are counted, then set the earliest and latest reservable dates.">
+        <div className="mb-4 grid gap-2 sm:grid-cols-2">
+          <label className="flex gap-3 rounded-control border p-3 has-[:checked]:border-primary has-[:checked]:bg-primary/5"><input type="radio" checked={draft.advanceMode === "CALENDAR_DAYS"} onChange={() => updateDraft((current) => ({ ...current, advanceMode: "CALENDAR_DAYS" }))} /><span><span className="block text-sm font-extrabold">Calendar days</span><span className="text-xs text-muted-foreground">Recommended for new policies.</span></span></label>
+          <label className="flex gap-3 rounded-control border p-3 has-[:checked]:border-primary has-[:checked]:bg-primary/5"><input type="radio" checked={draft.advanceMode === "OPEN_DAYS"} onChange={() => updateDraft((current) => ({ ...current, advanceMode: "OPEN_DAYS" }))} /><span><span className="block text-sm font-extrabold">Open pickup days</span><span className="text-xs text-muted-foreground">Legacy behavior for existing policies.</span></span></label>
+        </div>
         <div className="grid gap-4 sm:grid-cols-2">
-          <FormControl label="Earliest booking" htmlFor="pickup-min-days" helper={`Students can book starting ${draft.minAdvanceDays} day${draft.minAdvanceDays === 1 ? "" : "s"} from today.`}>
+          <FormControl label="Earliest booking" htmlFor="pickup-min-days" helper={`Students can book starting ${draft.minAdvanceDays} ${draft.advanceMode === "CALENDAR_DAYS" ? "calendar" : "open pickup"} day${draft.minAdvanceDays === 1 ? "" : "s"} ahead.`}>
             <div className="relative">
               <input id="pickup-min-days" type="number" min={0} max={365} value={draft.minAdvanceDays} onChange={(event) => updateDraft((current) => ({ ...current, minAdvanceDays: Number(event.target.value) }))} className={cn(formControlClass, "pr-24")} />
-              <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs font-semibold text-muted-foreground">days ahead</span>
+              <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs font-semibold text-muted-foreground">days</span>
             </div>
           </FormControl>
-          <FormControl label="Latest booking" htmlFor="pickup-max-days" error={draft.maxAdvanceDays < draft.minAdvanceDays ? "Must be the same as or later than the earliest booking." : undefined} helper={`Students can book up to ${draft.maxAdvanceDays} day${draft.maxAdvanceDays === 1 ? "" : "s"} from today.`}>
+          <FormControl label="Latest booking" htmlFor="pickup-max-days" error={draft.maxAdvanceDays < draft.minAdvanceDays ? "Must be the same as or later than the earliest booking." : undefined} helper={`Students can book up to ${draft.maxAdvanceDays} ${draft.advanceMode === "CALENDAR_DAYS" ? "calendar" : "open pickup"} day${draft.maxAdvanceDays === 1 ? "" : "s"} ahead.`}>
             <div className="relative">
               <input id="pickup-max-days" type="number" min={1} max={3650} value={draft.maxAdvanceDays} onChange={(event) => updateDraft((current) => ({ ...current, maxAdvanceDays: Number(event.target.value) }))} className={cn(formControlClass, "pr-24")} />
-              <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs font-semibold text-muted-foreground">days ahead</span>
+              <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs font-semibold text-muted-foreground">days</span>
             </div>
           </FormControl>
         </div>
@@ -491,7 +521,7 @@ export function StaffPickupScheduleExperience() {
           {draft.timeSlots.map((slot, index) => (
             <article key={`${slot.startMinute}-${slot.endMinute}-${index}`} onDragOver={(event) => event.preventDefault()} onDrop={() => { if (draggedSlotIndex !== null) moveSlot(draggedSlotIndex, index); setDraggedSlotIndex(null); }} className="flex flex-wrap items-center gap-3 rounded-surface border bg-white p-3">
               <span draggable aria-hidden="true" onDragStart={() => setDraggedSlotIndex(index)} onDragEnd={() => setDraggedSlotIndex(null)} className="cursor-grab text-muted-foreground active:cursor-grabbing"><GripVertical className="size-5" /></span>
-              <div className="min-w-[180px] flex-1"><p className="font-extrabold text-foreground">{formatTime(slot.startMinute)} – {formatTime(slot.endMinute)}</p><p className="mt-0.5 text-xs text-muted-foreground">{slot.label} · {slot.capacity === null ? "Unlimited reservations" : `${slot.capacity} reservation${slot.capacity === 1 ? "" : "s"} maximum`}</p></div>
+              <div className="min-w-[180px] flex-1"><p className="font-extrabold text-foreground">{formatTime(slot.startMinute)} – {formatTime(slot.endMinute)}</p><p className="mt-0.5 text-xs text-muted-foreground">{slot.label} · {slot.capacity === null ? "Unlimited reservations" : `Maximum ${slot.capacity} reservation${slot.capacity === 1 ? "" : "s"} per pickup date`}</p></div>
               <button type="button" role="switch" aria-checked={slot.isActive} aria-label={`${slot.label}: ${slot.isActive ? "active" : "inactive"}`} onClick={() => updateDraft((current) => ({ ...current, timeSlots: current.timeSlots.map((item, itemIndex) => itemIndex === index ? { ...item, isActive: !item.isActive } : item) }))} className={cn("inline-flex h-8 items-center gap-2 rounded-full px-3 text-xs font-bold", slot.isActive ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground")}>
                 <span className={cn("size-2 rounded-full", slot.isActive ? "bg-primary" : "bg-muted-foreground")} />{slot.isActive ? "Active" : "Inactive"}
               </button>
@@ -527,9 +557,9 @@ export function StaffPickupScheduleExperience() {
       <div className="sticky bottom-3 z-30 flex flex-col gap-3 rounded-feature border bg-white/95 p-3 shadow-overlay backdrop-blur sm:flex-row sm:items-center sm:justify-between">
         <p className="text-sm font-semibold text-muted-foreground">{isDirty ? "You have unsaved schedule changes." : "The pickup schedule is up to date."}</p>
         <div className="flex flex-col gap-2 sm:flex-row">
-          <Button variant="ghost" onClick={() => void discardChanges()} disabled={!isDirty || submitting}>Discard Changes</Button>
-          <Button variant="secondary" onClick={() => { setStudentPreviewSelection(null); setStudentPreviewOpen(true); }} disabled={Boolean(draftError)}><Eye className="size-4" />Preview Student View</Button>
-          <Button onClick={() => void requestSaveReview()} disabled={!isDirty || Boolean(draftError)} loading={submitting}><Save className="size-4" />Save Changes</Button>
+          <Button variant="ghost" onClick={() => void discardChanges()} disabled={!isDirty || submitting || previewingStudentView}>Discard Changes</Button>
+          <Button variant="secondary" onClick={() => void openStudentPreview()} disabled={Boolean(draftError) || submitting} loading={previewingStudentView}><Eye className="size-4" />Preview Student View</Button>
+          <Button onClick={() => void requestSaveReview()} disabled={!isDirty || Boolean(draftError) || previewingStudentView} loading={submitting}><Save className="size-4" />Review &amp; Activate</Button>
         </div>
       </div>
 
@@ -541,8 +571,8 @@ export function StaffPickupScheduleExperience() {
               <FormControl label="Start time" htmlFor="slot-start" required><input id="slot-start" type="time" value={timeValue(slotEditor.startMinute)} onChange={(event) => setSlotEditor((current) => current ? { ...current, startMinute: timeMinutes(event.target.value) } : current)} className={formControlClass} data-dialog-autofocus /></FormControl>
               <FormControl label="End time" htmlFor="slot-end" required error={slotEditor.endMinute <= slotEditor.startMinute ? "End time must be later than start time." : undefined}><input id="slot-end" type="time" value={timeValue(slotEditor.endMinute)} onChange={(event) => setSlotEditor((current) => current ? { ...current, endMinute: timeMinutes(event.target.value) } : current)} className={formControlClass} /></FormControl>
               <FormControl label="Display name (optional)" htmlFor="slot-label" helper="If blank, the time range becomes the name." className="sm:col-span-2"><input id="slot-label" value={slotEditor.label} maxLength={80} onChange={(event) => setSlotEditor((current) => current ? { ...current, label: event.target.value } : current)} placeholder={`${formatTime(slotEditor.startMinute)} – ${formatTime(slotEditor.endMinute)}`} className={formControlClass} /></FormControl>
-              <label className="flex items-center gap-3 text-sm font-bold text-foreground sm:col-span-2"><input type="checkbox" checked={slotEditor.capacity !== null} onChange={(event) => setSlotEditor((current) => current ? { ...current, capacity: event.target.checked ? 20 : null } : current)} className="size-4 accent-primary" />Limit reservations for this time slot</label>
-              {slotEditor.capacity !== null ? <FormControl label="Maximum reservations" htmlFor="slot-capacity" required helper="Counts active reservations only. Canceled, completed, and no-show reservations do not use capacity." error={!Number.isInteger(slotEditor.capacity) || slotEditor.capacity < 1 || slotEditor.capacity > 500 ? "Enter a whole number from 1 to 500." : undefined} className="sm:col-span-2"><input id="slot-capacity" type="number" min={1} max={500} step={1} value={slotEditor.capacity} onChange={(event) => setSlotEditor((current) => current ? { ...current, capacity: Number(event.target.value) } : current)} className={formControlClass} /></FormControl> : null}
+              <label className="flex items-center gap-3 text-sm font-bold text-foreground sm:col-span-2"><input type="checkbox" checked={slotEditor.capacity !== null} onChange={(event) => setSlotEditor((current) => current ? { ...current, capacity: event.target.checked ? 20 : null } : current)} className="size-4 accent-primary" />Limit reservations per pickup date</label>
+              {slotEditor.capacity !== null ? <FormControl label="Maximum reservations per date" htmlFor="slot-capacity" required helper="This limit applies separately to each available pickup date and counts active reservations only." error={!Number.isInteger(slotEditor.capacity) || slotEditor.capacity < 1 || slotEditor.capacity > 500 ? "Enter a whole number from 1 to 500." : undefined} className="sm:col-span-2"><input id="slot-capacity" type="number" min={1} max={500} step={1} value={slotEditor.capacity} onChange={(event) => setSlotEditor((current) => current ? { ...current, capacity: Number(event.target.value) } : current)} className={formControlClass} /></FormControl> : null}
               <label className="flex items-center gap-3 text-sm font-bold text-foreground sm:col-span-2"><input type="checkbox" checked={slotEditor.isActive} onChange={(event) => setSlotEditor((current) => current ? { ...current, isActive: event.target.checked } : current)} className="size-4 accent-primary" />Make this slot available to students</label>
             </div>
             <div className="flex justify-end gap-2 border-t bg-surface-subtle p-4"><Button variant="secondary" onClick={() => setSlotEditor(null)}>Cancel</Button><Button onClick={saveSlot} disabled={slotEditor.endMinute <= slotEditor.startMinute || (slotEditor.capacity !== null && (!Number.isInteger(slotEditor.capacity) || slotEditor.capacity < 1 || slotEditor.capacity > 500))}>{slotEditor.index === null ? "Add Time Slot" : "Save Time Slot"}</Button></div>
@@ -576,10 +606,10 @@ export function StaffPickupScheduleExperience() {
       {reviewOpen && impactPreview ? (
         <div className="fixed inset-0 z-[12000] grid place-items-center overflow-y-auto bg-foreground/55 p-4 backdrop-blur-sm">
           <section ref={reviewDialog.dialogRef} {...reviewDialog.dialogProps} role="alertdialog" className="w-full max-w-2xl rounded-feature border bg-white shadow-overlay outline-none">
-            <div className="flex items-start gap-3 border-b p-5"><span className="grid size-11 shrink-0 place-items-center rounded-full bg-warning/10 text-warning"><TriangleAlert className="size-5" /></span><div className="min-w-0 flex-1"><h2 id={reviewDialog.titleId} className="text-xl font-extrabold text-foreground">Save pickup schedule changes?</h2><p className="mt-1 text-sm leading-6 text-muted-foreground">Review the student schedule and the effect on existing reservations before saving.</p></div><Button variant="ghost" size="icon" onClick={() => setReviewOpen(false)} disabled={submitting} aria-label="Close schedule review"><X className="size-5" /></Button></div>
+            <div className="flex items-start gap-3 border-b p-5"><span className="grid size-11 shrink-0 place-items-center rounded-full bg-warning/10 text-warning"><TriangleAlert className="size-5" /></span><div className="min-w-0 flex-1"><h2 id={reviewDialog.titleId} className="text-xl font-extrabold text-foreground">Activate pickup schedule changes?</h2><p className="mt-1 text-sm leading-6 text-muted-foreground">These are unsaved changes. Review the student schedule and the effect on existing reservations before activation.</p></div><Button variant="ghost" size="icon" onClick={() => setReviewOpen(false)} disabled={submitting} aria-label="Close schedule review"><X className="size-5" /></Button></div>
             <div className="max-h-[65svh] space-y-4 overflow-y-auto p-5">
               <dl className="grid gap-3 rounded-surface border bg-surface-subtle p-4 text-sm sm:grid-cols-2">
-                <div><dt className="font-semibold text-muted-foreground">Booking window</dt><dd className="mt-1 font-extrabold text-foreground">{draft.minAdvanceDays}–{draft.maxAdvanceDays} days ahead</dd></div>
+                <div><dt className="font-semibold text-muted-foreground">Booking window</dt><dd className="mt-1 font-extrabold text-foreground">{draft.minAdvanceDays}–{draft.maxAdvanceDays} {draft.advanceMode === "CALENDAR_DAYS" ? "calendar" : "open"} days ahead</dd></div>
                 <div><dt className="font-semibold text-muted-foreground">Open pickup days</dt><dd className="mt-1 font-extrabold text-foreground">{openDays.join(", ")}</dd></div>
                 <div><dt className="font-semibold text-muted-foreground">Active time slots</dt><dd className="mt-1 font-extrabold text-foreground">{activeSlots.length} · {slotSpan}</dd></div>
                 <div><dt className="font-semibold text-muted-foreground">Closed dates</dt><dd className="mt-1 font-extrabold text-foreground">{draft.closures.length}</dd></div>
@@ -621,7 +651,7 @@ export function StaffPickupScheduleExperience() {
                 <textarea id="schedule-change-note" value={changeNote} minLength={5} maxLength={500} onChange={(event) => setChangeNote(event.target.value)} placeholder="Example: Updated pickup hours for the new semester." className={cn(formControlClass, "min-h-24 py-2")} data-dialog-autofocus />
               </FormControl>
             </div>
-            <div className="flex flex-col-reverse gap-2 border-t bg-surface-subtle p-4 sm:flex-row sm:justify-end"><Button variant="secondary" onClick={() => setReviewOpen(false)} disabled={submitting}>Cancel</Button><Button onClick={() => void saveChanges()} disabled={changeNote.trim().length < 5} loading={submitting}><Save className="size-4" />Save Changes</Button></div>
+            <div className="flex flex-col-reverse gap-2 border-t bg-surface-subtle p-4 sm:flex-row sm:justify-end"><Button variant="secondary" onClick={() => setReviewOpen(false)} disabled={submitting}>Cancel</Button><Button onClick={() => void saveChanges()} disabled={changeNote.trim().length < 5} loading={submitting}><Save className="size-4" />Activate Schedule</Button></div>
           </section>
         </div>
       ) : null}

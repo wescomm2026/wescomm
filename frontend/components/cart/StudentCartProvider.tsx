@@ -26,6 +26,8 @@ export type CartProduct = {
   count: string;
   image: string;
   saleMode?: "SIMPLE" | "CLOTH_ONLY" | "OPTIONS";
+  audienceScope?: "ALL_STUDENTS" | "SPECIFIC_DEPARTMENTS";
+  targetDepartmentIds?: string[];
   inventorySetupRequired?: boolean;
   options: Array<{
     name: string;

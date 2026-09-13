@@ -210,7 +210,7 @@ async function downloadReceiptPng(receipt: Receipt) {
   context.fillRect(paperX, 28, paperWidth, scratch.height - 56);
 
   try {
-    const logo = await loadImage("/assets/wescomm-logo.png");
+    const logo = await loadImage("/assets/wescomm-logo.webp");
     const logoWidth = 190;
     const logoHeight = 68;
     context.drawImage(logo, (width - logoWidth) / 2, y, logoWidth, logoHeight);
@@ -410,11 +410,11 @@ function ReceiptPaper({
       <div className="absolute inset-x-0 top-0 h-2 bg-[radial-gradient(circle_at_8px_-2px,transparent_8px,#fff_9px)] bg-[length:16px_10px]" />
       <div className="text-center">
         <Image
-          src="/assets/wescomm-logo.png"
+          src="/assets/wescomm-logo.webp"
           alt="WESCOMM"
-          width={compact ? 125 : 165}
-          height={65}
-          className="mx-auto h-auto object-contain"
+          width={1589}
+          height={990}
+          className={compact ? "mx-auto h-auto w-[125px] object-contain" : "mx-auto h-auto w-[165px] object-contain"}
         />
         {!compact ? (
           <>

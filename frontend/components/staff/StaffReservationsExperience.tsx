@@ -21,6 +21,7 @@ import {
   type BackendReservationStatus
 } from "@/lib/api";
 import { getStoredStaffSession } from "@/lib/staff-api";
+import { manilaDateKey } from "@/lib/manila-date";
 import {
   mergeUniqueById,
   StaffReservationRow,
@@ -201,7 +202,12 @@ export function StaffReservationsExperience() {
     try {
       const result = await updateReservationStatusFromApi(session.token, row.id, nextStatus);
       const mappedReservation = mapStaffReservation(result.reservation);
-      setRows((current) => current.map((item) => item.id === row.id ? mappedReservation : item));
+      const activeStatus = backendReservationStatusFilter(status);
+      const shouldRemainVisible = (!activeStatus || mappedReservation.backendStatus === activeStatus)
+        && reservationMatchesStaffSearch(result.reservation, deferredSearch);
+      setRows((current) => shouldRemainVisible
+        ? current.map((item) => item.id === row.id ? mappedReservation : item)
+        : current.filter((item) => item.id !== row.id));
       setNotice(result.receipt
         ? `${row.reference} completed. Receipt ${result.receipt.receiptCode} was generated for verification.`
         : `${row.reference} updated to ${mappedReservation.status}.`);
@@ -269,7 +275,7 @@ export function StaffReservationsExperience() {
                 detail="We are saving the status and updating the reservation timeline."
               />
               <div><p className="font-extrabold">{row.reference}</p><p className="text-xs text-[#68746d]">{row.student}</p></div>
-              <div><p className="text-sm font-bold">{row.item}</p><p className="text-xs text-[#68746d]">Quantity: {row.quantity}</p></div>
+              <div><p className="text-sm font-bold">{row.item}</p><p className="mt-1 text-xs leading-5 text-[#68746d]">{row.itemDetails}</p><p className="text-xs text-[#68746d]">Quantity: {row.quantity}</p></div>
               <div><p className="text-sm"><span className="font-bold text-primary">Pickup:</span> {row.pickup}</p>{row.pickupReviewStatus === "NEEDS_REVIEW" ? <p className="mt-1 text-xs font-bold text-amber-800">Needs review: {row.pickupReviewReason}</p> : null}</div>
               <div className="text-sm">
                 <p><span className="font-bold text-primary">Payment:</span> {row.payment}</p>
@@ -347,7 +353,7 @@ export function StaffReservationsExperience() {
             </header>
             <div className="max-h-[calc(100svh-190px)] space-y-5 overflow-y-auto p-5 sm:p-6">
               {rescheduleRow.pickupReviewReason ? <p className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900">Review reason: {rescheduleRow.pickupReviewReason}</p> : null}
-              <PickupSchedulePicker selection={pickupSelection} onChange={setPickupSelection} disabled={Boolean(submittingId)} initialDate={rescheduleRow.reservation.pickupStart?.slice(0, 10)} title="Choose the new pickup date" />
+              <PickupSchedulePicker selection={pickupSelection} onChange={setPickupSelection} disabled={Boolean(submittingId)} initialDate={rescheduleRow.reservation.pickupStart ? manilaDateKey(rescheduleRow.reservation.pickupStart) ?? undefined : undefined} title="Choose the new pickup date" />
               <label className="grid gap-1.5 text-sm font-bold">Reason for rescheduling<textarea required minLength={5} maxLength={500} value={rescheduleReason} onChange={(event) => setRescheduleReason(event.target.value)} className="min-h-24 rounded-md border border-[#d3ddd4] px-3 py-2 font-normal outline-none focus:border-primary" placeholder="Explain the student-approved or operational reason." /></label>
               <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end"><Button variant="secondary" onClick={() => setRescheduleRow(null)} disabled={Boolean(submittingId)}>Cancel</Button><Button onClick={() => void saveReschedule()} disabled={Boolean(submittingId) || !pickupSelection || rescheduleReason.trim().length < 5}>Save and notify student</Button></div>
             </div>

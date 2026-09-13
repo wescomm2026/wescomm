@@ -24,8 +24,7 @@ import { createNotification, createNotificationBestEffort, createNotificationsFo
 import {
   publishRealtimeEvents,
   publishRealtimeEventsBestEffort,
-  REALTIME_TOPICS,
-  wakeRealtimeBroker
+  REALTIME_TOPICS
 } from "./realtime-event.service.js";
 import { buildWesbotHandoffSummary, resolveWesbotReply } from "./wesbot.service.js";
 import { WESBOT_CLASSIFIER_VERSION } from "./wesbot-classifier.service.js";
@@ -657,7 +656,7 @@ export async function createMessage(input: {
     });
     const { error: updateError } = await supabaseAdmin
       .from("conversations")
-      .update({ status: "OPEN", updated_at: message.createdAt })
+      .update({ status: "OPEN", student_archived_at: null, updated_at: message.createdAt })
       .eq("id", input.conversationId);
     if (updateError) throw HttpError.fromSupabase(updateError);
   } else {
@@ -992,7 +991,7 @@ export async function setConversationArchived(input: {
 }) {
   const conversation = await requireConversation(input.conversationId, input.userId);
   assertConversationAccess(conversation, input.userId, input.role);
-  if (input.archived && conversation.status !== "RESOLVED") {
+  if (input.archived && input.role !== "STUDENT" && conversation.status !== "RESOLVED") {
     throw new HttpError(409, "Resolve this conversation before archiving it.", "CONVERSATION_RESOLVE_REQUIRED");
   }
 
@@ -1003,7 +1002,7 @@ export async function setConversationArchived(input: {
   const mutation = await prisma.conversation.updateMany({
     where: {
       id: input.conversationId,
-      ...(input.archived ? { status: "RESOLVED" as const } : {})
+      ...(input.archived && input.role !== "STUDENT" ? { status: "RESOLVED" as const } : {})
     },
     data
   });
@@ -1113,7 +1112,6 @@ export async function setConversationDeleted(input: {
 }) {
   assertAdminRetentionAccess(input.actorRole);
 
-  let changed = false;
   try {
     await prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT "id" FROM "conversations" WHERE "id" = ${input.conversationId}::uuid FOR UPDATE`;
@@ -1175,7 +1173,6 @@ export async function setConversationDeleted(input: {
           audienceUserIds: [conversation.studentId],
           audienceRoles: ["STAFF", "ADMIN"]
         }]);
-        changed = true;
         return;
       }
 
@@ -1213,7 +1210,6 @@ export async function setConversationDeleted(input: {
         audienceUserIds: [conversation.studentId],
         audienceRoles: ["STAFF", "ADMIN"]
       }]);
-      changed = true;
     }, {
       isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
       maxWait: 5_000,
@@ -1223,7 +1219,6 @@ export async function setConversationDeleted(input: {
     mapConversationRetentionTransactionError(error);
   }
 
-  if (changed) wakeRealtimeBroker();
   return requireConversation(input.conversationId, input.actorId, { includeDeleted: input.deleted });
 }
 
@@ -1379,7 +1374,6 @@ export async function permanentlyPurgeConversation(input: {
       maxWait: 5_000,
       timeout: 10_000
     });
-    wakeRealtimeBroker();
     return result;
   } catch (error) {
     if (
@@ -1435,7 +1429,7 @@ export async function editConversationMessage(input: {
     if (input.role === "STUDENT" && conversation.studentId !== input.userId) {
       throw new HttpError(403, "You do not have access to this conversation.");
     }
-    if (conversation.status !== "OPEN" || !["WAITING_FOR_STAFF", "STAFF_ACTIVE"].includes(conversation.mode)) {
+    if (conversation.status !== "OPEN") {
       throw new HttpError(409, "This message can no longer be edited.", "MESSAGE_EDIT_LOCKED");
     }
     if (input.role !== "STUDENT" && conversation.assignedStaffId !== input.userId) {
@@ -1471,15 +1465,6 @@ export async function editConversationMessage(input: {
     if (now.getTime() - message.createdAt.getTime() > 30 * 60 * 1000) {
       throw new HttpError(409, "The 30-minute edit window has ended.", "MESSAGE_EDIT_WINDOW_ENDED");
     }
-    const latest = await tx.conversationMessage.findFirst({
-      where: { conversationId: input.conversationId },
-      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-      select: { id: true }
-    });
-    if (latest?.id !== message.id) {
-      throw new HttpError(409, "A newer message already exists, so this message can no longer be edited.", "MESSAGE_EDIT_LOCKED");
-    }
-
     const nextVersion = message.editVersion + 1;
     await tx.conversationMessageRevision.create({
       data: {
@@ -1564,7 +1549,7 @@ export async function setConversationTyping(input: {
     entityId: input.conversationId,
     audienceUserIds: input.role === "STUDENT" ? [] : [conversation.studentId],
     audienceRoles: input.role === "STUDENT" ? ["STAFF", "ADMIN"] : [],
-    ttlMs: 15_000,
+    ttlMs: 45_000,
     payload: {
       conversationId: input.conversationId,
       userId: input.userId,

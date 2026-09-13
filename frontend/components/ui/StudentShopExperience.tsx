@@ -6,7 +6,7 @@ import Image from "next/image";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Heart, LoaderCircle, Maximize2, ShoppingBag, X } from "lucide-react";
+import { Heart, Info, LoaderCircle, Maximize2, Tag, X } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import { AddToCartModal } from "@/components/cart/AddToCartModal";
 import { useStudentCart, type CartProduct } from "@/components/cart/StudentCartProvider";
@@ -21,12 +21,18 @@ import {
   uniformClothGroupKey
 } from "@/lib/product-display";
 import { emitShopSearch, SHOP_SEARCH_EVENT, writeShopSearchToUrl } from "@/lib/shop-search";
+import { shopProductCardImage } from "@/lib/shop-assets";
 import { useStudentWishlist } from "@/components/wishlist/useStudentWishlist";
 
 type Product = CartProduct;
 
 const allCategory = { label: "All Items", image: "/assets/all-items.svg", href: "/student/shop" };
-const statusFilters = ["In Stock", "Restock Soon", "Out of Stock", "On Sale"];
+const statusFilters = [
+  { label: "In Stock", dot: "bg-green-500", selected: "border-green-300 bg-green-50 text-green-800" },
+  { label: "Restock Soon", dot: "bg-amber-400", selected: "border-amber-300 bg-amber-50 text-amber-900" },
+  { label: "Out of Stock", dot: "bg-red-500", selected: "border-red-300 bg-red-50 text-red-800" },
+  { label: "On Sale", dot: "", selected: "border-green-300 bg-green-50 text-green-800" }
+] as const;
 const routeStatusMap: Record<string, string> = {
   "in-stock": "In Stock",
   "restock-soon": "Restock Soon",
@@ -67,6 +73,10 @@ function optionAvailabilityText(product: Product) {
     .join(" · ");
 }
 
+function isDepartmentRecommendation(product: Product, departmentId?: string) {
+  return Boolean(departmentId && product.targetDepartmentIds?.includes(departmentId));
+}
+
 function ProductCard({
   product,
   onBuyNow,
@@ -76,7 +86,8 @@ function ProductCard({
   wishlisted,
   wishlistPending,
   wishlistDisabled,
-  highlighted
+  highlighted,
+  departmentRecommended
 }: {
   product: Product;
   onBuyNow: (product: Product) => void;
@@ -87,6 +98,7 @@ function ProductCard({
   wishlistPending: boolean;
   wishlistDisabled: boolean;
   highlighted: boolean;
+  departmentRecommended: boolean;
 }) {
   const disabled = isProductUnavailable(product);
   const clothOnly = isUniformClothOnly(product);
@@ -102,32 +114,33 @@ function ProductCard({
     <article
       aria-label={product.name}
       data-product-id={product.id}
-      className={`wes-card flex h-full min-w-0 flex-col overflow-hidden p-2.5 transition sm:p-4 ${
+      className={`group flex h-full min-w-0 flex-col overflow-hidden rounded-2xl border border-[#dce6dc] bg-white p-2.5 shadow-soft transition hover:border-[#b8cfba] hover:shadow-md sm:p-4 ${
         highlighted ? "ring-2 ring-primary ring-offset-2" : ""
       }`}
     >
-      <div className="relative aspect-square w-full overflow-hidden rounded-lg bg-[#f7faf7]">
+      <div className="relative aspect-square w-full overflow-hidden rounded-xl bg-gradient-to-br from-[#f5faf5] via-white to-[#f3f8f3]">
         <button
           type="button"
           onClick={() => onViewImage(product)}
           aria-label={`View full image of ${product.name}`}
-          className="absolute inset-0 cursor-zoom-in rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
+          className="absolute inset-0 cursor-zoom-in rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
         >
           <Image
-            src={product.image}
+            src={shopProductCardImage(product.image)}
             alt={product.name}
             fill
             sizes="(max-width: 639px) 44vw, (max-width: 1279px) 30vw, 22vw"
-            className="object-contain p-2 sm:p-3"
+            className="object-contain p-3 transition-transform duration-200 group-hover:scale-[1.03] sm:p-5"
           />
           <span
             aria-hidden="true"
-            className="absolute bottom-1.5 right-1.5 grid size-7 place-items-center rounded-full border border-[#d8e4d9] bg-white/95 text-primary shadow-sm sm:bottom-2 sm:right-2 sm:size-8"
+            className="absolute bottom-2 right-2 grid size-8 place-items-center rounded-full border border-[#cfe2d1] bg-white/95 text-primary shadow-sm sm:bottom-3 sm:right-3 sm:size-10"
           >
-            <Maximize2 className="size-3.5 sm:size-4" />
+            <Maximize2 className="size-4 sm:size-5" />
           </span>
         </button>
-        <span className={`pointer-events-none absolute left-1.5 top-1.5 z-10 max-w-[calc(100%-52px)] truncate rounded-full px-2 py-1 text-[9px] font-extrabold leading-none sm:left-2 sm:top-2 sm:px-3 sm:text-xs ${tone}`}>
+        <span className={`pointer-events-none absolute left-2 top-2 z-10 inline-flex max-w-[calc(100%-56px)] items-center gap-1.5 truncate rounded-full px-2.5 py-1.5 text-[9px] font-extrabold leading-none shadow-sm sm:left-3 sm:top-3 sm:gap-2 sm:px-3 sm:py-2 sm:text-xs ${tone}`}>
+          <span className="size-1.5 shrink-0 rounded-full bg-current sm:size-2" aria-hidden="true" />
           {effectiveStatus}
         </span>
         {!disabled ? (
@@ -138,7 +151,7 @@ function ProductCard({
             aria-pressed={wishlisted}
             aria-busy={wishlistPending}
             aria-label={`${wishlisted ? "Remove" : "Add"} ${product.name} ${wishlisted ? "from" : "to"} wishlist`}
-            className="absolute right-1.5 top-1.5 z-20 grid size-10 place-items-center rounded-full border border-[#d8e4d9] bg-white/95 text-primary shadow-sm transition hover:scale-105 hover:bg-[#eef7ef] focus:outline-none focus:ring-2 focus:ring-primary/40 disabled:opacity-100 sm:right-2 sm:top-2 sm:size-11"
+            className="absolute right-2 top-2 z-20 grid size-9 place-items-center rounded-full border border-[#d8e4d9] bg-white/95 text-primary shadow-sm transition hover:scale-105 hover:bg-[#eef7ef] focus:outline-none focus:ring-2 focus:ring-primary/40 disabled:opacity-100 sm:right-3 sm:top-3 sm:size-11"
           >
             {wishlistDisabled ? (
               <LoaderCircle className="size-5 animate-spin" aria-hidden="true" />
@@ -148,21 +161,27 @@ function ProductCard({
           </button>
         ) : null}
       </div>
-      <h3 className="mt-2 line-clamp-2 min-h-9 text-xs font-extrabold leading-[1.125rem] text-[#17211b] sm:mt-3 sm:min-h-12 sm:text-base sm:leading-6">{product.name}</h3>
-      <p className="hidden line-clamp-2 min-h-10 text-sm leading-5 text-muted-foreground sm:block">{product.detail}</p>
-      <p className="mt-1 truncate text-[10px] font-bold uppercase tracking-wide text-primary sm:text-xs">{product.category}</p>
+      {departmentRecommended ? (
+        <p className="mt-2 w-fit rounded-full bg-[#e8f4e8] px-2 py-1 text-[9px] font-extrabold uppercase tracking-wide text-primary sm:mt-3 sm:px-3 sm:text-[10px]">
+          For your department
+        </p>
+      ) : null}
+      <h3 className={`${departmentRecommended ? "mt-1.5" : "mt-3 sm:mt-4"} line-clamp-2 min-h-10 text-sm font-extrabold leading-5 text-[#17211b] sm:min-h-14 sm:text-lg sm:leading-7`}>{product.name}</h3>
+      <p className="mt-1 line-clamp-2 min-h-8 text-[11px] leading-4 text-muted-foreground sm:min-h-10 sm:text-sm sm:leading-5">{product.detail}</p>
+      <p className="mt-2 truncate text-[10px] font-extrabold uppercase tracking-wide text-primary sm:text-xs">{product.category}</p>
       <div className="mt-1.5 flex min-w-0 flex-wrap items-baseline gap-x-1.5 sm:mt-2 sm:gap-2">
-        <p className="truncate text-xs font-extrabold text-primary sm:text-base">{product.price}</p>
+        <p className="truncate text-base font-extrabold text-primary sm:text-xl">{product.price}</p>
         {product.oldPrice ? <p className="truncate text-[10px] text-muted-foreground line-through sm:text-sm">{product.oldPrice}</p> : null}
       </div>
-      <p className="mt-1.5 truncate text-[10px] font-semibold text-[#506059] sm:mt-2 sm:text-sm">{availabilityText(product)}</p>
+      <p className="mt-1 truncate text-[10px] font-semibold text-[#506059] sm:mt-1.5 sm:text-sm">{availabilityText(product)}</p>
       {optionAvailabilityText(product) ? (
         <p className="mt-1 line-clamp-2 text-[9px] font-semibold leading-4 text-[#68746d] sm:text-xs sm:leading-5">
           {optionAvailabilityText(product)}
         </p>
       ) : null}
       {clothOnly ? (
-        <p className="mt-1.5 rounded-md border border-[#cfe2d1] bg-[#f5faf5] px-2 py-1 text-[9px] font-semibold leading-4 text-[#4e6255] sm:mt-2 sm:px-3 sm:py-2 sm:text-xs sm:font-medium sm:leading-5">
+        <p className="mt-2 flex items-start gap-2 rounded-lg border border-[#cfe2d1] bg-[#f5faf5] px-2 py-2 text-[9px] font-medium leading-4 text-[#4e6255] sm:px-3 sm:py-3 sm:text-xs sm:leading-5">
+          <Info className="mt-0.5 size-3.5 shrink-0 text-primary sm:size-4" aria-hidden="true" />
           <span className="sm:hidden">Cloth only · image is a preview</span>
           <span className="hidden sm:inline">Tela/material lang. Preview lang ang uniform image.</span>
         </p>
@@ -188,26 +207,26 @@ function ProductCard({
           </span>
         </Button>
       ) : (
-        <div className="mt-auto grid grid-cols-2 gap-1.5 pt-2.5 sm:gap-2 sm:pt-3">
+        <div className="mt-auto grid grid-cols-2 gap-1.5 pt-3 sm:gap-2 sm:pt-4">
           <Button
             type="button"
             variant="secondary"
             aria-label={`Add to Cart: ${product.name}`}
-            className="h-10 min-w-0 px-1 text-[10px] sm:h-11 sm:px-2 sm:text-sm"
+            className="h-10 min-w-0 gap-1 border-primary px-1 text-[10px] font-bold sm:h-12 sm:gap-1.5 sm:px-2 sm:text-sm"
             onClick={() => onAddToCart(product)}
           >
-            <AssetIcon src="/assets/cart.svg" className="hidden size-4 sm:block sm:size-5" />
+            <AssetIcon src="/assets/cart-bag.svg" className="hidden size-4 sm:block sm:size-5" />
             <span className="truncate sm:hidden">Cart</span>
-            <span className="hidden truncate sm:inline">Add to Cart</span>
+            <span className="hidden whitespace-nowrap sm:inline">Add to Cart</span>
           </Button>
           <Button
             type="button"
-            aria-label={`Buy Now: ${product.name}`}
-            className="h-10 min-w-0 px-1 text-[10px] sm:h-11 sm:px-2 sm:text-sm"
+            aria-label={`Reserve Now: ${product.name}`}
+            className="h-10 min-w-0 gap-1 px-1 text-[10px] font-bold sm:h-12 sm:gap-1.5 sm:px-2 sm:text-sm"
             onClick={() => onBuyNow(product)}
           >
-            <ShoppingBag className="hidden size-4 sm:block" aria-hidden="true" />
-            <span className="truncate">Buy Now</span>
+            <AssetIcon src="/assets/new-reserve.svg" className="hidden size-4 sm:inline-block sm:size-5" />
+            <span className="whitespace-nowrap">Reserve Now</span>
           </Button>
         </div>
       )}
@@ -550,10 +569,14 @@ export function StudentShopExperience() {
       .sort((a, b) => {
         if (sort === "price-low") return parsePrice(a.price) - parsePrice(b.price);
         if (sort === "price-high") return parsePrice(b.price) - parsePrice(a.price);
-        if (sort === "name") return a.name.localeCompare(b.name);
-        return 0;
+        const audienceScore = (product: typeof a) => {
+          if (isDepartmentRecommendation(product, user?.departmentId)) return 100;
+          if (product.audienceScope !== "SPECIFIC_DEPARTMENTS") return 50;
+          return 0;
+        };
+        return audienceScore(b) - audienceScore(a) || a.name.localeCompare(b.name) || (a.id ?? "").localeCompare(b.id ?? "");
       });
-  }, [category, products, query, sort, statuses, wishlist.productIds, wishlistOnly]);
+  }, [category, products, query, sort, statuses, user?.departmentId, wishlist.productIds, wishlistOnly]);
 
   const toggleStatus = (status: string) => {
     setStatuses((current) => (current.includes(status) ? current.filter((item) => item !== status) : [...current, status]));
@@ -687,7 +710,7 @@ export function StudentShopExperience() {
                 aria-pressed={category === item.label}
                 className={`flex w-full items-center gap-3 rounded-lg px-3 py-3 text-left text-sm font-semibold hover:bg-[#f4faf4] ${category === item.label ? "bg-[#e8f4e8] text-primary" : "text-[#26312b]"}`}
               >
-                <Image src={item.image} alt="" width={28} height={28} className="size-7 object-contain" />
+                <Image src={shopProductCardImage(item.image)} alt="" width={28} height={28} className="size-7 object-contain" />
                 {item.label}
               </button>
             ))}
@@ -711,43 +734,48 @@ export function StudentShopExperience() {
                 aria-pressed={category === item.label}
                 className={`flex min-h-[86px] min-w-[92px] flex-col items-center justify-center rounded-xl border border-[#dfe8df] p-2 text-center text-[11px] font-semibold leading-tight ${category === item.label ? "bg-[#e8f4e8] text-primary" : "bg-white"}`}
               >
-                <Image src={item.image} alt="" width={34} height={34} className="mb-1 size-8 object-contain" />
+                <Image src={shopProductCardImage(item.image)} alt="" width={34} height={34} className="mb-1 size-8 object-contain" />
                 {item.label}
               </button>
             ))}
           </div>
-          <div className="grid grid-cols-2 gap-2 lg:grid-cols-[repeat(5,max-content)]">
-            {statusFilters.map((status) => (
-              <button
-                key={status}
-                type="button"
-                onClick={() => toggleStatus(status)}
-                aria-pressed={statuses.includes(status)}
-                className={`h-10 rounded-xl border px-3 text-sm font-semibold ${statuses.includes(status) ? "border-primary bg-[#e8f4e8] text-primary" : "border-[#dfe8df] bg-white"}`}
-              >
-                {status}
-              </button>
-            ))}
+          <div className="flex min-w-0 flex-col gap-2 lg:flex-row lg:items-center lg:justify-between lg:gap-3">
+            <div role="group" aria-label="Filter by item status" className="flex max-w-full min-w-0 gap-1.5 overflow-x-auto px-0.5 pb-1 sm:gap-2 lg:overflow-visible lg:pb-0">
+              {statusFilters.map((status) => {
+                const selected = statuses.includes(status.label);
+                return (
+                  <button
+                    key={status.label}
+                    type="button"
+                    onClick={() => toggleStatus(status.label)}
+                    aria-pressed={selected}
+                    className={`inline-flex min-h-10 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full border px-2 text-[11px] font-semibold shadow-sm transition-colors hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 sm:gap-2 sm:px-3.5 sm:text-sm ${selected ? status.selected : status.label === "In Stock" ? "border-green-100 bg-green-50 text-green-900" : "border-border bg-white text-foreground"}`}
+                  >
+                    {status.label === "On Sale" ? <Tag className="size-3 shrink-0 text-green-700 sm:size-3.5" strokeWidth={2.2} aria-hidden="true" /> : <span className={`size-2 shrink-0 rounded-full sm:size-2.5 ${status.dot}`} aria-hidden="true" />}
+                    {status.label}
+                  </button>
+                );
+              })}
+            </div>
             <label htmlFor="shop-sort" className="sr-only">Sort shop items</label>
-            <select id="shop-sort" value={sort} onChange={(event) => setSort(event.target.value)} className="col-span-2 h-10 rounded-xl border border-[#dfe8df] bg-white px-3 text-sm font-semibold text-primary lg:col-span-1">
-              <option value="featured">Featured</option>
-              <option value="name">Name</option>
-              <option value="price-low">Price Low</option>
-              <option value="price-high">Price High</option>
+            <select id="shop-sort" value={sort} onChange={(event) => setSort(event.target.value)} className="h-10 w-full min-w-0 rounded-xl border border-[#dfe8df] bg-white px-3 text-sm font-semibold text-primary lg:w-[280px] lg:shrink-0">
+              <option value="featured">{user?.role === "STUDENT" && user.departmentId ? "Recommended for your department" : "Featured"}</option>
+              <option value="price-low">Lowest Price</option>
+              <option value="price-high">Highest Price</option>
             </select>
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="text-sm text-[#3f4a44]">Showing {filteredProducts.length} of {products.length} items</p>
-          <div className="flex items-center gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
+          <p className="min-w-[145px] flex-1 text-xs text-[#3f4a44] sm:text-sm">Showing {filteredProducts.length} of {products.length} items</p>
+          <div className="ml-auto flex shrink-0 items-center justify-end gap-2">
             <button
               ref={wishlistFilterRef}
               type="button"
               onClick={() => updateWishlistFilter(!wishlistOnly)}
               disabled={wishlistControlsDisabled}
               aria-pressed={wishlistOnly}
-              className={`inline-flex h-10 items-center gap-1.5 rounded-full border px-3 text-xs font-extrabold transition sm:text-sm ${
+              className={`inline-flex h-10 items-center gap-1.5 whitespace-nowrap rounded-full border px-3 text-xs font-extrabold transition sm:text-sm ${
                 wishlistOnly
                   ? "border-primary bg-[#e8f4e8] text-primary"
                   : "border-[#d8e3d8] bg-white text-[#455149] hover:border-primary"
@@ -766,7 +794,7 @@ export function StudentShopExperience() {
                 setSort("featured");
                 updateWishlistFilter(false);
               }}
-              className="h-10 px-1 text-sm font-semibold text-primary"
+              className="h-10 whitespace-nowrap px-2 text-sm font-semibold text-primary"
             >
               Reset
             </button>
@@ -804,7 +832,7 @@ export function StudentShopExperience() {
             </p>
           </div>
         ) : !error && filteredProducts.length ? (
-          <div data-testid="shop-product-grid" className="grid grid-cols-2 gap-2 sm:gap-4 md:grid-cols-3 xl:grid-cols-4">
+          <div data-testid="shop-product-grid" className="grid grid-cols-2 gap-2 sm:gap-4 xl:grid-cols-3">
             {filteredProducts.map((product) => (
               <ProductCard
                 key={product.id || product.name}
@@ -817,6 +845,7 @@ export function StudentShopExperience() {
                 wishlistPending={Boolean(product.id && wishlist.pendingProductIds.has(product.id))}
                 wishlistDisabled={wishlistControlsDisabled}
                 highlighted={Boolean(product.id && product.id === highlightedProductId)}
+                departmentRecommended={isDepartmentRecommendation(product, user?.departmentId)}
               />
             ))}
           </div>

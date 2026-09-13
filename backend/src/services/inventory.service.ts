@@ -66,6 +66,8 @@ export type ProductCreateInput = CategoryInput & {
   lowStockThreshold?: number;
   variants?: ProductVariantInput[];
   notes?: string;
+  audienceScope?: "ALL_STUDENTS" | "SPECIFIC_DEPARTMENTS";
+  departmentIds?: string[];
 };
 
 export type ProductUpdateInput = Partial<Omit<ProductCreateInput, "variants" | "saleMode">> & {
@@ -87,6 +89,7 @@ const inventoryRecordSelect = Prisma.validator<Prisma.ProductSelect>()({
   lowStockThreshold: true,
   isActive: true,
   saleMode: true,
+  audienceScope: true,
   skuInventoryEnabled: true,
   inventoryReconciledAt: true,
   createdAt: true,
@@ -114,6 +117,10 @@ const inventoryRecordSelect = Prisma.validator<Prisma.ProductSelect>()({
       }
     },
     orderBy: [{ createdAt: "asc" }, { id: "asc" }]
+  },
+  targetDepartments: {
+    select: { department: { select: { id: true, code: true, displayName: true } } },
+    orderBy: { department: { sortOrder: "asc" } }
   }
 });
 
@@ -158,6 +165,8 @@ function mapInventoryRecord(row: InventoryRecord) {
     lowStockThreshold: row.lowStockThreshold,
     isActive: row.isActive,
     saleMode: row.saleMode,
+    audienceScope: row.audienceScope,
+    targetDepartments: row.targetDepartments.map((target) => target.department),
     skuInventoryEnabled: row.skuInventoryEnabled,
     inventoryReconciledAt: row.inventoryReconciledAt,
     createdAt: row.createdAt,
@@ -435,6 +444,14 @@ export async function createProduct(input: ProductCreateInput, performedById: st
   const lowStockThreshold = input.lowStockThreshold ?? 10;
   const status = input.status ?? deriveProductStatus(stock, lowStockThreshold);
   const saleMode = input.saleMode ?? "SIMPLE";
+  const audienceScope = input.audienceScope ?? "ALL_STUDENTS";
+  const departmentIds = audienceScope === "SPECIFIC_DEPARTMENTS" ? Array.from(new Set(input.departmentIds ?? [])) : [];
+  if (audienceScope === "SPECIFIC_DEPARTMENTS") {
+    const departmentCount = await prisma.department.count({ where: { id: { in: departmentIds }, isActive: true } });
+    if (!departmentIds.length || departmentCount !== departmentIds.length) {
+      throw new HttpError(400, "Choose at least one active department.", "INVALID_PRODUCT_AUDIENCE");
+    }
+  }
   const canonicalOptionNames = new Map<string, string>();
   const variants = (input.variants ?? []).map((variant, index) => {
     const enteredOptionName = variant.optionName.trim();
@@ -496,6 +513,10 @@ export async function createProduct(input: ProductCreateInput, performedById: st
         lowStockThreshold,
         isActive: true,
         saleMode,
+        audienceScope,
+        ...(departmentIds.length ? {
+          targetDepartments: { create: departmentIds.map((departmentId) => ({ departmentId })) }
+        } : {}),
         ...(variants.length ? {
           variants: {
             create: variants.map((variant) => ({
@@ -645,7 +666,9 @@ export async function updateProduct(productId: string, input: ProductUpdateInput
     input.status !== undefined ||
     input.stock !== undefined ||
     input.lowStockThreshold !== undefined ||
-    input.isActive !== undefined
+    input.isActive !== undefined ||
+    input.audienceScope !== undefined ||
+    input.departmentIds !== undefined
   );
   if (!hasProductChanges) return initialProduct;
   const changedFields = [
@@ -659,7 +682,8 @@ export async function updateProduct(productId: string, input: ProductUpdateInput
     input.status !== undefined || input.stock !== undefined || input.lowStockThreshold !== undefined ? "status" : null,
     input.stock !== undefined ? "stock" : null,
     input.lowStockThreshold !== undefined ? "low_stock_threshold" : null,
-    input.isActive !== undefined ? "is_active" : null
+    input.isActive !== undefined ? "is_active" : null,
+    input.audienceScope !== undefined || input.departmentIds !== undefined ? "audience" : null
   ].filter((field): field is string => Boolean(field));
 
   const transactionResult = await prisma
@@ -678,10 +702,22 @@ export async function updateProduct(productId: string, input: ProductUpdateInput
           stock: true,
           lowStockThreshold: true,
           isActive: true,
+          audienceScope: true,
+          targetDepartments: { select: { departmentId: true } },
           variants: { select: { id: true }, take: 1 }
         }
       });
       if (!current) throw new HttpError(404, "Product not found.");
+      const nextAudienceScope = input.audienceScope ?? current.audienceScope;
+      const nextDepartmentIds = Array.from(new Set(
+        input.departmentIds ?? current.targetDepartments.map((target) => target.departmentId)
+      ));
+      if (nextAudienceScope === "SPECIFIC_DEPARTMENTS") {
+        const departmentCount = await transaction.department.count({ where: { id: { in: nextDepartmentIds }, isActive: true } });
+        if (!nextDepartmentIds.length || departmentCount !== nextDepartmentIds.length) {
+          throw new HttpError(400, "Choose at least one active department.", "INVALID_PRODUCT_AUDIENCE");
+        }
+      }
       const nextPrice = input.price ?? Number(current.price);
       const nextOldPrice = input.oldPrice === undefined
         ? (current.oldPrice === null ? null : Number(current.oldPrice))
@@ -721,6 +757,16 @@ export async function updateProduct(productId: string, input: ProductUpdateInput
       if (input.stock !== undefined) updates.stock = input.stock;
       if (input.lowStockThreshold !== undefined) updates.lowStockThreshold = input.lowStockThreshold;
       if (input.isActive !== undefined) updates.isActive = input.isActive;
+      if (input.audienceScope !== undefined) updates.audienceScope = input.audienceScope;
+
+      if (input.audienceScope !== undefined || input.departmentIds !== undefined) {
+        await transaction.productDepartment.deleteMany({ where: { productId } });
+        if (nextAudienceScope === "SPECIFIC_DEPARTMENTS") {
+          await transaction.productDepartment.createMany({
+            data: nextDepartmentIds.map((departmentId) => ({ productId, departmentId }))
+          });
+        }
+      }
 
       const updated = await transaction.product.update({
         where: { id: productId },

@@ -1,5 +1,5 @@
 WESCOMM QA AND STAGING RUNBOOK
-Last updated: September 1, 2026
+Last updated: September 7, 2026
 
 PURPOSE
 This runbook verifies the student, staff, and admin experiences without changing
@@ -8,8 +8,9 @@ logout, and role-based API access. Checkout, inventory writes, email OTP, push
 delivery, and database recovery remain controlled manual checks on staging.
 
 CURRENT AUTOMATED RESULT - SEPTEMBER 1, 2026
-- Backend unit/regression/integration suite: 251 passed, 0 failed.
-- Release browser acceptance suite: 17 passed, 0 failed.
+- Backend unit/regression suite: 258 passed, 0 failed.
+- Release browser acceptance suite: 21 passed, 0 failed.
+- Onboarding browser contract: 1 passed, 0 failed, with onboarding explicitly enabled.
 - Frontend production build: passed; all 49 routes generated.
 - Fresh PostgreSQL replay: all 30 migrations and post-deploy checks passed.
 - Release migration preflight: passed for all three September release migrations.
@@ -312,6 +313,9 @@ The release is additive and must use Prisma's timestamp order:
 1. 20260831000000_add_closure_qr_students_support_lifecycle
 2. 20260901000000_add_pickup_slot_capacity
 3. 20260901010000_add_conversation_retention_purge
+4. 20260907000000_add_reservation_item_snapshots
+5. 20260907010000_add_departments_and_product_audiences
+6. 20260907020000_add_pickup_advance_mode
 
 Never run db push in staging or production. Before migration:
 [ ] Confirm an encrypted off-site backup and matching DATA_ENCRYPTION_KEYS.
@@ -327,6 +331,11 @@ Apply and verify on staging:
 Then verify GET /api/health/ready before running controlled acceptance tests.
 Production migration/deployment requires a separate explicit owner approval and
 the same successful staging evidence.
+
+Keep `REQUIRE_STUDENT_ONBOARDING=false` and
+`NEXT_PUBLIC_REQUIRE_STUDENT_ONBOARDING=false` through migration and the first
+application deployment. Audit the Department/Student ID backfill first. Enable
+both flags together only after the staged onboarding smoke test passes.
 
 Fresh plain-PostgreSQL CI databases do not include Supabase's standard roles.
 Before replaying migrations in CI only, run prisma:bootstrap:ci with the exact

@@ -7,13 +7,15 @@ import { profileUpdateSchema } from "../domain/profile-update.js";
 test("profile updates accept and normalize only mutable self-service fields", () => {
   assert.deepEqual(profileUpdateSchema.parse({
     fullName: "  Test Student  ",
+    departmentId: "87000000-0000-4000-8000-000000000002",
+    studentNumber: " 2026 - 0001 ",
     phone: " 09123456789 ",
-    department: "   ",
     address: null
   }), {
     fullName: "Test Student",
+    departmentId: "87000000-0000-4000-8000-000000000002",
+    studentNumber: "2026-0001",
     phone: "09123456789",
-    department: null,
     address: null
   });
 });
@@ -22,7 +24,7 @@ test("profile updates reject protected and storage-managed fields", () => {
   for (const protectedField of [
     "id",
     "email",
-    "studentNumber",
+    "department",
     "role",
     "avatarUrl",
     "avatarDataUrl",
@@ -33,6 +35,18 @@ test("profile updates reject protected and storage-managed fields", () => {
   }
   assert.equal(profileUpdateSchema.safeParse({}).success, false);
   assert.equal(profileUpdateSchema.safeParse({ fullName: "   " }).success, false);
+  assert.equal(profileUpdateSchema.safeParse({ departmentId: "not-a-uuid" }).success, false);
+  assert.equal(profileUpdateSchema.safeParse({ studentNumber: "invalid id!" }).success, false);
+});
+
+test("student identity profile changes require an active department and preserve duplicate-ID handling", () => {
+  const service = readFileSync(path.resolve(process.cwd(), "src/services/profile.service.ts"), "utf8");
+
+  assert.match(service, /currentProfile\.role !== "STUDENT"/);
+  assert.match(service, /where: \{ id: input\.departmentId, isActive: true \}/);
+  assert.match(service, /update\.department_id = department\.id/);
+  assert.match(service, /update\.department = department\.displayName/);
+  assert.match(service, /error\?\.code === "23505"[\s\S]*STUDENT_NUMBER_TAKEN/);
 });
 
 test("database migration makes public application data access backend-only", () => {

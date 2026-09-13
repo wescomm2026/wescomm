@@ -2,7 +2,7 @@ import { Router } from "express";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { env } from "../config/env.js";
-import { profileUpdateSchema } from "../domain/profile-update.js";
+import { onboardingSchema, profileUpdateSchema } from "../domain/profile-update.js";
 import { assertCurrentAccountPolicyAcceptance } from "../domain/policy-acceptance.js";
 import {
   MAX_TEMPORARY_STAFF_SESSION_MS,
@@ -21,7 +21,7 @@ import {
   revokeAuthSession
 } from "../services/auth-session.service.js";
 import { safelyRecordAuditLog } from "../services/audit-log.service.js";
-import { updateOwnProfile } from "../services/profile.service.js";
+import { completeStudentOnboarding, listActiveDepartments, updateOwnProfile } from "../services/profile.service.js";
 import { type RawProfile, mapProfile } from "../types/app.js";
 import { isEmailAllowedForDomains, normalizeAllowedEmailDomains } from "../utils/auth-email-policy.js";
 import { asyncHandler } from "../utils/async-handler.js";
@@ -216,6 +216,26 @@ authRoutes.post(
     clearAuthSessionCookie(response);
     response.setHeader("Cache-Control", "no-store");
     response.status(204).end();
+  })
+);
+
+authRoutes.get(
+  "/departments",
+  requireAuth,
+  asyncHandler(async (_request, response) => {
+    response.setHeader("Cache-Control", "private, max-age=300");
+    response.json({ departments: await listActiveDepartments() });
+  })
+);
+
+authRoutes.post(
+  "/onboarding",
+  requireAuth,
+  profileUpdateLimiter,
+  asyncHandler(async (request: AuthenticatedRequest, response) => {
+    const profile = await completeStudentOnboarding(request.auth!.profile, onboardingSchema.parse(request.body));
+    response.setHeader("Cache-Control", "no-store");
+    response.json({ profile });
   })
 );
 

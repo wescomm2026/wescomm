@@ -227,6 +227,16 @@ npm run prisma:migrate:deploy
 npm run prisma:migrate:verify
 ```
 
+### September 7 stabilization rollout
+
+Apply the snapshot, Department/audience, and pickup advance-mode migrations in
+timestamp order before deploying the matching application build. Keep
+`REQUIRE_STUDENT_ONBOARDING=false` and
+`NEXT_PUBLIC_REQUIRE_STUDENT_ONBOARDING=false` for the initial deployment. Audit
+the Department and normalized Student ID backfill, then enable both flags
+together in a later deployment so existing accounts are not locked out midway
+through rollout.
+
 ### Receipt-integrity and distributed-rate-limit rollout
 
 Before deploying `20260830000000_enforce_reservation_receipt_integrity`, run the
