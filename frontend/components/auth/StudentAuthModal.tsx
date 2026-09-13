@@ -6,6 +6,7 @@ import { createPortal } from "react-dom";
 import { KeyRound, LockKeyhole, Mail, ShieldCheck, X } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import { ActionLoadingOverlay } from "@/components/ui/ActionLoadingOverlay";
+import { useAccessibleDialog } from "@/components/ui/useAccessibleDialog";
 import { EMAIL_OTP_LENGTH, isCompleteEmailOtp, normalizeEmailOtp } from "@/lib/auth-otp";
 import { PolicyConsentCheckbox } from "@/components/legal/PolicyConsentCheckbox";
 import { currentAccountPolicyAcceptance } from "@/lib/policy-consent";
@@ -113,6 +114,9 @@ export function StudentAuthModal({ open, onClose }: { open: boolean; onClose: ()
   const [resendSeconds, setResendSeconds] = useState(0);
   const [rememberEmail, setRememberEmail] = useState(true);
   const [policyAccepted, setPolicyAccepted] = useState(false);
+  const authDialog = useAccessibleDialog<HTMLElement>(open && mounted, () => {
+    if (!loading) onClose();
+  });
 
   useEffect(() => setMounted(true), []);
 
@@ -134,18 +138,7 @@ export function StudentAuthModal({ open, onClose }: { open: boolean; onClose: ()
     setRememberEmail(rememberEnabled);
     setEmailName(rememberedEmailName);
 
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKeyDown);
-
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      window.removeEventListener("keydown", onKeyDown);
-    };
-  }, [open, onClose]);
+  }, [open]);
 
   useEffect(() => {
     if (!open || resendSeconds <= 0) return;
@@ -335,9 +328,8 @@ export function StudentAuthModal({ open, onClose }: { open: boolean; onClose: ()
       }}
     >
       <section
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="student-auth-title"
+        ref={authDialog.dialogRef}
+        {...authDialog.dialogProps}
         className="relative w-full max-w-[520px] overflow-hidden rounded-lg border border-[#dce6dc] bg-white shadow-[0_28px_90px_rgba(0,0,0,0.24)]"
       >
         <ActionLoadingOverlay
@@ -365,7 +357,7 @@ export function StudentAuthModal({ open, onClose }: { open: boolean; onClose: ()
             </span>
             <div>
               <p className="text-xs font-bold uppercase tracking-[0.08em] text-primary">Secure email access</p>
-              <h1 id="student-auth-title" className="mt-1 text-2xl font-extrabold leading-tight text-[#101820] sm:text-3xl">
+              <h1 id={authDialog.titleId} className="mt-1 text-2xl font-extrabold leading-tight text-[#101820] sm:text-3xl">
                 {step === "code" ? "Enter verification code" : step === "password" ? "Enter account password" : "Log in with your school email"}
               </h1>
             </div>
@@ -407,6 +399,7 @@ export function StudentAuthModal({ open, onClose }: { open: boolean; onClose: ()
                   <div className="mt-1 flex h-12 items-center gap-2 rounded-md border border-[#cbd8cb] px-3 transition focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/15">
                     <Mail className="size-5 shrink-0 text-primary" />
                     <input
+                      data-dialog-autofocus
                       type="text"
                       required
                       value={emailName}
