@@ -7,7 +7,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { createPortal } from "react-dom";
-import { Check, ChevronLeft, ChevronRight, Minus, Plus, ShoppingBag, X } from "lucide-react";
+import { CalendarDays, Check, ChevronLeft, ChevronRight, Minus, Plus, ShoppingBag, X } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import { useStudentCart } from "@/components/cart/StudentCartProvider";
 import {
@@ -16,9 +16,10 @@ import {
 } from "@/components/checkout/PaymentMethodSelector";
 import { useStudentRestriction } from "@/components/restrictions/StudentRestrictionProvider";
 import { PolicyConsentCheckbox } from "@/components/legal/PolicyConsentCheckbox";
-import { ActionLoadingOverlay } from "@/components/ui/ActionLoadingOverlay";
+import { ReservationSaveOverlay } from "@/components/checkout/ReservationSaveOverlay";
 import { AssetIcon } from "@/components/ui/AssetIcon";
 import { Button } from "@/components/ui/button";
+import { shopProductCardImage } from "@/lib/shop-assets";
 import {
   PickupSchedulePicker,
   type PickupSelection,
@@ -69,14 +70,14 @@ function formatSelectedOptions(options: Record<string, string>) {
 
 function CartCheckoutSteps({ step }: { step: 1 | 2 }) {
   return (
-    <ol className="mt-3 flex items-center text-xs font-bold" aria-label="Cart checkout progress">
+    <ol className="mt-4 flex items-center text-xs font-extrabold sm:text-sm" aria-label="Cart checkout progress">
       <li className="flex items-center gap-1.5 text-primary" aria-current={step === 1 ? "step" : undefined}>
-        <span className={`grid size-6 place-items-center rounded-full ${step === 1 ? "bg-primary text-primary-foreground" : "bg-primary/10 text-primary"}`}>{step === 2 ? <Check className="size-3.5" /> : "1"}</span>
+        <span className={`grid size-8 shrink-0 place-items-center rounded-full ${step === 1 ? "bg-primary text-primary-foreground" : "bg-primary/10 text-primary"}`}>{step === 2 ? <Check className="size-4" /> : "1"}</span>
         <span>Items &amp; Pickup</span>
       </li>
-      <li className={`mx-2 h-px flex-1 ${step === 2 ? "bg-primary" : "bg-border-strong"}`} aria-hidden="true" />
+      <li className={`mx-3 h-0.5 flex-1 ${step === 2 ? "bg-primary" : "bg-border-strong"}`} aria-hidden="true" />
       <li className={`flex items-center gap-1.5 ${step === 2 ? "text-primary" : "text-muted-foreground"}`} aria-current={step === 2 ? "step" : undefined}>
-        <span className={`grid size-6 place-items-center rounded-full ${step === 2 ? "bg-primary text-primary-foreground" : "bg-muted"}`}>2</span>
+        <span className={`grid size-8 shrink-0 place-items-center rounded-full ${step === 2 ? "bg-primary text-primary-foreground" : "bg-muted"}`}>2</span>
         <span>Payment</span>
       </li>
     </ol>
@@ -104,6 +105,7 @@ export function StudentCartDrawer() {
     message: string;
   } | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [savedReservation, setSavedReservation] = useState<Pick<BackendReservation, "id" | "referenceCode"> | null>(null);
   const submittingRef = useRef(false);
   const pendingRequestRef = useRef<PendingReservationRequest | null>(null);
 
@@ -128,6 +130,7 @@ export function StudentCartDrawer() {
       setError("");
       setGcashRecovery(null);
       setSubmitting(false);
+      setSavedReservation(null);
       pendingRequestRef.current = null;
     }
   }, [open]);
@@ -213,7 +216,7 @@ export function StudentCartDrawer() {
 
   const confirmCart = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (submittingRef.current) return;
+    if (submittingRef.current || savedReservation) return;
     if (checkoutStep !== 2) {
       continueToPayment();
       return;
@@ -279,6 +282,7 @@ export function StudentCartDrawer() {
     const requestIdentity = getReservationRequestIdentity(payload, pendingRequestRef.current, user.id);
     pendingRequestRef.current = requestIdentity;
 
+    submittingRef.current = true;
     setSubmitting(true);
     try {
       const reservation = await createReservationFromApi(user.accessToken, payload, requestIdentity.key);
@@ -304,9 +308,7 @@ export function StudentCartDrawer() {
           });
         }
       } else {
-        window.sessionStorage.setItem("wescomm:reservation-success", reservation.id);
-        closeCart();
-        router.push(`/student/reservations#reservation-${encodeURIComponent(reservation.id)}`);
+        setSavedReservation({ id: reservation.id, referenceCode: reservation.referenceCode });
       }
     } catch (reservationError) {
       if (reservationError instanceof Error && "code" in reservationError && reservationError.code === "RESERVATION_ACCESS_SUSPENDED") {
@@ -322,11 +324,20 @@ export function StudentCartDrawer() {
         setError(userFacingErrorMessage(reservationError, "Unable to submit cart reservation."));
       }
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   };
 
   if (!mounted || !open) return null;
+
+  const savingReservation = submitting && !gcashRecovery && !savedReservation;
+  const saveHeadingId = `${cartDialog.titleId}-save`;
+  const viewSavedReservation = () => {
+    if (!savedReservation) return;
+    closeCart();
+    router.push(`/student/reservations#reservation-${encodeURIComponent(savedReservation.id)}`);
+  };
 
   return createPortal(
     <div className="fixed inset-0 z-[8500] bg-[#101820]/50 backdrop-blur-[2px]" role="presentation" onMouseDown={(event) => {
@@ -335,10 +346,11 @@ export function StudentCartDrawer() {
       <aside
         ref={cartDialog.dialogRef}
         {...cartDialog.dialogProps}
+        aria-labelledby={savingReservation || savedReservation ? saveHeadingId : cartDialog.titleId}
         className="relative ml-auto flex h-[100svh] w-full max-w-[520px] flex-col bg-white shadow-[-24px_0_70px_rgba(0,0,0,0.22)]"
       >
         <header className="flex h-20 shrink-0 items-center border-b border-[#e4ebe5] px-5 sm:px-6">
-          <AssetIcon src="/assets/cart.svg" className="size-9" />
+          <AssetIcon src="/assets/cart-bag.svg" className="size-9" />
           <div className="ml-3">
             <h2 id={cartDialog.titleId} className="text-xl font-extrabold text-[#17211b]">
               {checkout ? checkoutStep === 1 ? "Review Items & Pickup" : "Payment & Review" : "My Cart"}
@@ -380,8 +392,8 @@ export function StudentCartDrawer() {
             </div>
           </div>
         ) : checkout ? (
-          <form className="relative flex min-h-0 flex-1 flex-col" onSubmit={confirmCart}>
-            <ActionLoadingOverlay active={submitting} title="Submitting cart reservation" detail="We are checking each item and saving one pickup schedule." />
+          <>
+          <form className="relative flex min-h-0 flex-1 flex-col" onSubmit={confirmCart} inert={savingReservation || Boolean(savedReservation)}>
             <div className="shrink-0 border-b px-5 pb-4 sm:px-6"><CartCheckoutSteps step={checkoutStep} /></div>
             <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-5 sm:p-6">
               {checkoutStep === 1 ? (
@@ -403,13 +415,22 @@ export function StudentCartDrawer() {
                 </>
               ) : (
                 <>
-                  <section className="rounded-surface border bg-surface-subtle p-4">
-                    <p className="font-extrabold text-foreground">Reservation summary</p>
-                    <dl className="mt-3 grid gap-3 text-sm">
-                      <div className="flex justify-between gap-4"><dt className="text-muted-foreground">Items</dt><dd className="font-bold text-foreground">{itemCount}</dd></div>
-                      <div className="flex justify-between gap-4"><dt className="text-muted-foreground">Pickup</dt><dd className="max-w-[65%] text-right font-bold text-foreground">{pickupSummary ? `${pickupSummary.dateLabel} · ${pickupSummary.slotLabel}` : pickupSelection?.pickupDate}</dd></div>
-                      <div className="flex items-end justify-between gap-4 border-t pt-3"><dt className="font-bold text-foreground">Total</dt><dd className="text-2xl font-extrabold text-primary">{formatPrice(total)}</dd></div>
-                    </dl>
+                  <section className="rounded-2xl border bg-white p-4 shadow-soft">
+                    <p className="text-lg font-extrabold text-foreground">Reservation summary</p>
+                    <div className="mt-4 rounded-xl border border-[#cfe2d1] bg-[#f5faf5] p-4">
+                      <div className="space-y-3">
+                        {items.map((item) => (
+                          <div key={item.id} className="flex items-center gap-3">
+                            <div className="relative size-14 shrink-0 overflow-hidden rounded-lg bg-white"><Image src={shopProductCardImage(item.product.image)} alt="" fill sizes="56px" className="object-contain p-1" /></div>
+                            <div className="min-w-0"><p className="truncate text-sm font-extrabold text-foreground">{item.product.name}</p><p className="text-xs text-muted-foreground">Quantity: {item.quantity}</p></div>
+                          </div>
+                        ))}
+                      </div>
+                      <dl className="mt-4 grid gap-4 border-t border-[#cfe2d1] pt-4 text-sm">
+                        <div className="flex items-start justify-between gap-4"><dt className="flex items-center gap-2 text-muted-foreground"><CalendarDays className="size-5 shrink-0 text-primary" aria-hidden="true" />Pickup</dt><dd className="max-w-[65%] text-right font-bold text-foreground">{pickupSummary ? <>{pickupSummary.dateLabel}<span className="block">{pickupSummary.slotLabel}</span></> : pickupSelection?.pickupDate}</dd></div>
+                        <div className="flex items-end justify-between gap-4 border-t border-[#cfe2d1] pt-4"><dt className="font-extrabold text-foreground">Total</dt><dd className="text-2xl font-extrabold text-primary">{formatPrice(total)}</dd></div>
+                      </dl>
+                    </div>
                     {notes.trim() ? <p className="mt-3 border-t pt-3 text-sm text-muted-foreground"><strong className="text-foreground">Note:</strong> {notes.trim()}</p> : null}
                   </section>
                   <PaymentMethodSelector name="cart-payment" value={paymentMethod} onChange={setPaymentMethod} disabled={submitting} legend="How would you like to pay?" />
@@ -420,14 +441,22 @@ export function StudentCartDrawer() {
               {error ? <p className="rounded-control border border-danger/25 bg-danger/5 px-3 py-2 text-sm font-medium text-danger" role="alert">{error}</p> : checkoutStep === 1 && !pickupSelection ? <p className="rounded-control border bg-surface-subtle px-3 py-2 text-sm text-muted-foreground" role="status">Please choose a pickup date and time.</p> : null}
               {restrictionSummary?.activeRestriction ? <p className="rounded-control border border-danger/25 bg-danger/5 px-3 py-2 text-sm leading-6 text-danger"><strong>Reservation access is paused.</strong> {restrictionSummary.activeRestriction.reason}</p> : null}
             </div>
-            <footer className="grid shrink-0 grid-cols-2 gap-3 border-t p-5 sm:p-6">
+            <footer className={`grid shrink-0 gap-3 border-t p-5 sm:p-6 ${checkoutStep === 1 ? "grid-cols-2" : "grid-cols-1"}`}>
               {checkoutStep === 1 ? (
                 <><Button type="button" variant="secondary" size="lg" onClick={() => setCheckout(false)} disabled={submitting}>Back to Cart</Button><Button type="button" size="lg" onClick={continueToPayment} disabled={!pickupSelection || isReservationRestricted || hasUnavailableItems}>Next: Payment <ChevronRight className="size-4" /></Button></>
               ) : (
-                <><Button type="button" variant="secondary" size="lg" onClick={() => { setCheckoutStep(1); setError(""); }} disabled={submitting}><ChevronLeft className="size-4" />Back</Button><Button type="submit" size="lg" disabled={!paymentMethod || !policyAccepted || isReservationRestricted || hasUnavailableItems} loading={submitting}><AssetIcon src={paymentMethod === "PAYMONGO_GCASH" ? "/assets/e-wallet.svg" : "/assets/verified.svg"} className="size-6" />{paymentMethod === "PAYMONGO_GCASH" ? "Continue to GCash" : "Confirm Reservation"}</Button></>
+                <><Button type="submit" size="lg" className="h-14 w-full rounded-xl font-extrabold" disabled={!paymentMethod || !policyAccepted || isReservationRestricted || hasUnavailableItems} loading={submitting}><AssetIcon src={paymentMethod === "PAYMONGO_GCASH" ? "/assets/e-wallet.svg" : "/assets/verified.svg"} className="size-6" />{paymentMethod === "PAYMONGO_GCASH" ? "Continue to GCash" : "Confirm Reservation"}</Button><Button type="button" variant="secondary" size="lg" className="h-14 w-full rounded-xl border-primary" onClick={() => { setCheckoutStep(1); setError(""); }} disabled={submitting}><ChevronLeft className="size-5" />Back</Button></>
               )}
             </footer>
           </form>
+          <ReservationSaveOverlay
+            headingId={saveHeadingId}
+            saving={savingReservation}
+            reservation={savedReservation}
+            onView={viewSavedReservation}
+            onDone={closeCart}
+          />
+          </>
         ) : items.length ? (
           <>
             <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4 sm:p-5">
@@ -438,7 +467,7 @@ export function StudentCartDrawer() {
                 return (
                   <article key={item.id} className="grid grid-cols-[82px_1fr] gap-3 rounded-lg border border-[#dfe7e0] p-3">
                     <div className="relative h-20 overflow-hidden rounded-md bg-[#eef5ee]">
-                      <Image src={item.product.image} alt={item.product.name} fill sizes="82px" className="object-contain p-2" />
+                      <Image src={shopProductCardImage(item.product.image)} alt={item.product.name} fill sizes="82px" className="object-contain p-2" />
                     </div>
                     <div className="min-w-0">
                       <div className="flex items-start gap-2">
@@ -531,7 +560,7 @@ export function StudentCartDrawer() {
           </>
         ) : (
           <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-6 text-center">
-            <AssetIcon src="/assets/cart.svg" className="size-20" />
+            <AssetIcon src="/assets/cart-bag.svg" className="size-20" />
             <h3 className="mt-4 text-xl font-extrabold text-[#17211b]">Your cart is empty</h3>
             <p className="mt-2 text-sm leading-6 text-[#657169]">Add available campus items, then reserve them with one pickup schedule.</p>
             <Link href="/student/shop" className="mt-5" onClick={closeCart}>

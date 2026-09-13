@@ -234,6 +234,13 @@ function conversationIdentity(conversation: BackendConversation | null) {
   };
 }
 
+function clearConversationDeepLink() {
+  const url = new URL(window.location.href);
+  if (!url.searchParams.has("conversationId")) return;
+  url.searchParams.delete("conversationId");
+  window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+}
+
 function ChatAvatar({ kind, size = "md" }: { kind: "BOT" | "STAFF"; size?: "sm" | "md" | "lg" }) {
   const sizeClass = size === "sm" ? "size-8" : size === "lg" ? "size-16" : "size-11";
 
@@ -260,7 +267,7 @@ export function StudentSupportExperience() {
   const [startingNew, setStartingNew] = useState(false);
   const [composer, setComposer] = useState("");
   const [pendingMessage, setPendingMessage] = useState("");
-  const [threadOpen, setThreadOpen] = useState(true);
+  const [threadOpen, setThreadOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [botReplyPending, setBotReplyPending] = useState(false);
@@ -280,6 +287,7 @@ export function StudentSupportExperience() {
   const typingExpiryTimersRef = useRef(new Map<string, number>());
   const stickToBottomRef = useRef(true);
   const conversationViewRef = useRef(conversationView);
+  const conversationRequestRef = useRef(0);
   const longPressTimerRef = useRef<number | null>(null);
   const longPressOriginRef = useRef<{ x: number; y: number } | null>(null);
   const suppressClickUntilRef = useRef(0);
@@ -287,7 +295,7 @@ export function StudentSupportExperience() {
 
   const selectedConversation = useMemo(() => {
     if (startingNew) return null;
-    return conversations.find((conversation) => conversation.id === selectedId) ?? conversations[0] ?? null;
+    return conversations.find((conversation) => conversation.id === selectedId) ?? null;
   }, [conversations, selectedId, startingNew]);
   const identity = conversationIdentity(selectedConversation);
 
@@ -301,6 +309,7 @@ export function StudentSupportExperience() {
   }, []);
 
   const loadConversations = useCallback(async ({ background = false }: { background?: boolean } = {}) => {
+    const requestId = ++conversationRequestRef.current;
     if (!user?.accessToken || !user.id) {
       setConversations([]);
       setLoading(false);
@@ -314,6 +323,7 @@ export function StudentSupportExperience() {
 
     try {
       const rows = await getConversationsFromApi(user.accessToken, { view: conversationView });
+      if (requestId !== conversationRequestRef.current || conversationViewRef.current !== conversationView) return;
       const scopedRows = user.role === "STUDENT"
         ? rows.filter((conversation) => conversation.studentId === user.id)
         : rows;
@@ -325,15 +335,14 @@ export function StudentSupportExperience() {
       const conversationId = new URL(window.location.href).searchParams.get("conversationId");
       setSelectedId((current) => conversationId && scopedRows.some((conversation) => conversation.id === conversationId)
         ? conversationId
-        : scopedRows.some((conversation) => conversation.id === current) ? current : scopedRows[0]?.id || "");
-      if (!background && !scopedRows.length) setStartingNew(conversationView === "ACTIVE");
-      if (!background) setThreadOpen(true);
+        : scopedRows.some((conversation) => conversation.id === current) ? current : "");
+      if (conversationId && scopedRows.some((conversation) => conversation.id === conversationId)) setThreadOpen(true);
     } catch (supportError) {
-      if (!background) {
+      if (requestId === conversationRequestRef.current && !background) {
         setError(userFacingErrorMessage(supportError, "Unable to load support conversations."));
       }
     } finally {
-      if (!background) setLoading(false);
+      if (requestId === conversationRequestRef.current) setLoading(false);
     }
   }, [conversationView, user?.accessToken, user?.id, user?.role]);
 
@@ -477,7 +486,7 @@ export function StudentSupportExperience() {
   }, [loadThreadMessages, ready, selectedConversation?.id, threadOpen, user?.accessToken]);
 
   useEffect(() => {
-    setThreadOpen(true);
+    setThreadOpen(false);
     setStartingNew(false);
     setSelectedId("");
     setConversations([]);
@@ -593,6 +602,7 @@ export function StudentSupportExperience() {
   };
 
   const openConversation = (conversationId: string) => {
+    clearConversationDeepLink();
     stickToBottomRef.current = true;
     setSelectedId(conversationId);
     setStartingNew(false);
@@ -604,6 +614,7 @@ export function StudentSupportExperience() {
   };
 
   const startNewChat = () => {
+    clearConversationDeepLink();
     if (selectedConversation?.id && user?.accessToken) {
       sendTypingSignal(selectedConversation.id, false);
     }
@@ -633,10 +644,25 @@ export function StudentSupportExperience() {
   };
 
   const showConversationList = () => {
+    clearConversationDeepLink();
     if (selectedConversation?.id && user?.accessToken) {
       sendTypingSignal(selectedConversation.id, false);
     }
     setThreadOpen(false);
+    setSelectedId("");
+  };
+
+  const changeConversationView = (view: "ACTIVE" | "ARCHIVED") => {
+    if (view === conversationView) return;
+    if (selectedConversation?.id && user?.accessToken) sendTypingSignal(selectedConversation.id, false);
+    clearConversationDeepLink();
+    conversationRequestRef.current += 1;
+    conversationViewRef.current = view;
+    setConversations([]);
+    setSelectedId("");
+    setStartingNew(false);
+    setThreadOpen(false);
+    setConversationView(view);
   };
 
   const chooseQuickQuestion = (message: string) => {
@@ -950,8 +976,8 @@ export function StudentSupportExperience() {
             </button>
           </div>
           <div className="grid grid-cols-2 gap-1 border-b border-[#edf1ed] p-2" aria-label="Conversation view">
-            <button type="button" onClick={() => { setConversationView("ACTIVE"); setStartingNew(false); }} aria-pressed={conversationView === "ACTIVE"} className={cn("rounded-lg px-3 py-2 text-xs font-extrabold", conversationView === "ACTIVE" ? "bg-primary text-white" : "text-[#68746d] hover:bg-[#eef4ef]")}>Active</button>
-            <button type="button" onClick={() => { setConversationView("ARCHIVED"); setStartingNew(false); }} aria-pressed={conversationView === "ARCHIVED"} className={cn("rounded-lg px-3 py-2 text-xs font-extrabold", conversationView === "ARCHIVED" ? "bg-primary text-white" : "text-[#68746d] hover:bg-[#eef4ef]")}>Archived</button>
+            <button type="button" onClick={() => changeConversationView("ACTIVE")} aria-pressed={conversationView === "ACTIVE"} className={cn("rounded-lg px-3 py-2 text-xs font-extrabold", conversationView === "ACTIVE" ? "bg-primary text-white" : "text-[#68746d] hover:bg-[#eef4ef]")}>Active</button>
+            <button type="button" onClick={() => changeConversationView("ARCHIVED")} aria-pressed={conversationView === "ARCHIVED"} className={cn("rounded-lg px-3 py-2 text-xs font-extrabold", conversationView === "ARCHIVED" ? "bg-primary text-white" : "text-[#68746d] hover:bg-[#eef4ef]")}>Archived</button>
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-2">
             {conversations.length ? conversations.map((conversation) => (
@@ -1026,7 +1052,7 @@ export function StudentSupportExperience() {
         </aside>
 
         <div className={cn(
-          "h-full min-h-0 min-w-0 flex-col lg:flex",
+          "h-full min-h-0 min-w-0 flex-col",
           threadOpen ? "flex" : "hidden"
         )}>
           <header data-testid="conversation-header" className="flex min-h-[68px] shrink-0 items-center gap-2 border-b border-[#e5ebe6] bg-white px-3 py-2.5 sm:gap-3 sm:px-5">
@@ -1341,6 +1367,17 @@ export function StudentSupportExperience() {
           </div>
           )}
         </div>
+        {!threadOpen ? (
+          <div className="hidden h-full place-items-center bg-[#f4f7f4] p-6 text-center lg:grid">
+            <div className="max-w-sm">
+              <span className="mx-auto grid size-16 place-items-center rounded-full bg-white text-primary shadow-sm ring-1 ring-[#dce5dd]" aria-hidden="true">
+                {conversationView === "ARCHIVED" ? <Archive className="size-8" /> : <MessageCircleMore className="size-8" />}
+              </span>
+              <p className="mt-4 font-extrabold text-[#17211b]">Choose a conversation</p>
+              <p className="mt-1 text-sm leading-6 text-[#68746d]">Select a chat from {conversationView === "ARCHIVED" ? "Archived" : "Active"} to read its messages.</p>
+            </div>
+          </div>
+        ) : null}
       </section>
 
       {toast ? (

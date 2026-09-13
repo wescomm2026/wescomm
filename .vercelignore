@@ -19,6 +19,8 @@ test-results/
 # Local QA and presentation artifacts are not part of the production runtime.
 WESCOMM_*/
 system-design-diagrams/
+.codex-build/
+.codex-finalizer/
 wescomm_assets/
 
 # Untracked local media preview; production code does not reference it.

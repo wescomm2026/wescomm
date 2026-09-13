@@ -564,7 +564,7 @@ export function StudentProfileExperience() {
 
       <footer className="flex flex-col gap-3 border-t border-[#e2e8e3] py-6 text-xs text-[#6e7872] sm:flex-row sm:items-center sm:justify-between">
         <div className="flex min-w-0 items-center gap-3">
-          <Image src="/assets/wescomm-logo.png" alt="WESCOMM" width={80} height={38} className="h-9 w-auto shrink-0 object-contain" />
+          <Image src="/assets/wescomm-logo-ui.webp" alt="WESCOMM" width={80} height={38} className="h-9 w-auto shrink-0 object-contain" />
           <span className="min-w-0 [overflow-wrap:anywhere]">Wesleyan University-Philippines Integrated Commissary Management System</span>
         </div>
         <span>School account secured by email verification</span>

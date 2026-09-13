@@ -33,6 +33,7 @@ import {
   type StaffProductVisibility
 } from "@/lib/staff-api";
 import { isUniformClothOnly } from "@/lib/product-display";
+import { optimizeShopProductImage, shopProductCardImage } from "@/lib/shop-assets";
 import { WUP_DEFAULT_PRODUCT_TEMPLATES } from "@/lib/wup-default-catalog";
 import { cn } from "@/lib/utils";
 import {
@@ -759,7 +760,7 @@ export function StaffInventoryExperience() {
                 />
                 <div className="flex min-w-0 items-center gap-3">
                   <div className="relative grid size-16 shrink-0 place-items-center overflow-hidden rounded-lg border border-[#dce5dd] bg-[#f8fbf8]">
-                    <Image src={product.imageUrl} alt={product.name} fill sizes="64px" unoptimized className="object-contain p-1" />
+                    <Image src={shopProductCardImage(product.imageUrl)} alt={product.name} fill sizes="64px" unoptimized className="object-contain p-1" />
                   </div>
                   <div className="min-w-0">
                     <p className="font-extrabold leading-5 text-[#17211b]">{product.name}</p>
@@ -988,7 +989,7 @@ export function StaffInventoryExperience() {
                 </div>
                 <div className="flex items-center gap-3">
                   <div className="grid size-20 shrink-0 place-items-center overflow-hidden rounded-md border border-[#dce5dd] bg-white">
-                    {addImagePreview ? <Image src={addImagePreview} alt="Product preview" width={80} height={80} unoptimized className="size-full object-contain" /> : <Upload className="size-7 text-primary" />}
+                    {addImagePreview ? <Image src={shopProductCardImage(addImagePreview)} alt="Product preview" width={80} height={80} unoptimized className="size-full object-contain" /> : <Upload className="size-7 text-primary" />}
                   </div>
                   <div className="min-w-0 flex-1">
                     <label className="inline-flex h-10 cursor-pointer items-center gap-2 rounded-md border border-[#b9cbbb] bg-white px-3 text-sm font-bold text-primary hover:bg-[#eef6ef]">
@@ -1178,7 +1179,7 @@ export function StaffInventoryExperience() {
                 <div className="space-y-4">
                   <section className="flex items-center gap-4 rounded-lg border border-[#dce5dd] bg-[#f8fbf8] p-4">
                     <div className="relative grid size-24 shrink-0 place-items-center overflow-hidden rounded-lg border border-[#dce5dd] bg-white">
-                      <Image src={editingProduct.imageUrl} alt={editingProduct.name} fill sizes="96px" unoptimized className="object-contain p-2" />
+                      <Image src={shopProductCardImage(editingProduct.imageUrl)} alt={editingProduct.name} fill sizes="96px" unoptimized className="object-contain p-2" />
                     </div>
                     <div className="min-w-0">
                       <p className="font-extrabold leading-5 text-[#17211b]">{editingProduct.name}</p>
@@ -1341,7 +1342,7 @@ export function StaffInventoryExperience() {
                   }
                 }}>
                   <div className="flex items-center gap-3 rounded-lg border border-[#dce5dd] bg-[#f8fbf8] p-3">
-                    <div className="relative size-16 shrink-0 overflow-hidden rounded-md border border-[#dce5dd] bg-white"><Image src={editingProduct.imageUrl} alt={editingProduct.name} fill sizes="64px" unoptimized className="object-contain p-1" /></div>
+                    <div className="relative size-16 shrink-0 overflow-hidden rounded-md border border-[#dce5dd] bg-white"><Image src={shopProductCardImage(editingProduct.imageUrl)} alt={editingProduct.name} fill sizes="64px" unoptimized className="object-contain p-1" /></div>
                     <div><p className="text-sm font-bold text-[#253029]">Current stock: {editingProduct.stock} items</p><p className="mt-1 text-xs text-[#68746d]">Use Update stock from the inventory list to change quantities.</p></div>
                   </div>
                   <label className="grid gap-1.5 text-sm font-semibold">Product name<input name="name" required defaultValue={editingProduct.name} className="h-11 rounded-md border px-3 font-normal outline-none focus:border-primary" /></label>
@@ -1387,7 +1388,7 @@ export function StaffInventoryExperience() {
                 }}>
                   <div className="grid place-items-center rounded-xl border border-[#dce5dd] bg-[#f8fbf8] p-5">
                     <div className="relative size-52 overflow-hidden rounded-xl border border-[#dce5dd] bg-white shadow-sm">
-                      {editImagePreview ? <Image src={editImagePreview} alt={`${editingProduct.name} preview`} fill sizes="208px" unoptimized className="object-contain p-3" /> : <div className="grid size-full place-items-center"><Upload className="size-9 text-primary" /></div>}
+                      {editImagePreview ? <Image src={optimizeShopProductImage(editImagePreview)} alt={`${editingProduct.name} preview`} fill sizes="208px" unoptimized className="object-contain p-3" /> : <div className="grid size-full place-items-center"><Upload className="size-9 text-primary" /></div>}
                     </div>
                     <p className="mt-3 text-sm font-bold text-[#253029]">{editingProduct.name}</p>
                     <p className="mt-1 text-xs text-[#68746d]">Preview before saving</p>
@@ -1428,7 +1429,7 @@ export function StaffInventoryExperience() {
               {manageSection === "sizes" ? (
                 <div className="space-y-4">
                   <div className="flex items-center gap-3 rounded-lg border border-[#dce5dd] bg-[#f8fbf8] p-3">
-                    <div className="relative size-14 shrink-0 overflow-hidden rounded-md border border-[#dce5dd] bg-white"><Image src={editingProduct.imageUrl} alt={editingProduct.name} fill sizes="56px" unoptimized className="object-contain p-1" /></div>
+                    <div className="relative size-14 shrink-0 overflow-hidden rounded-md border border-[#dce5dd] bg-white"><Image src={shopProductCardImage(editingProduct.imageUrl)} alt={editingProduct.name} fill sizes="56px" unoptimized className="object-contain p-1" /></div>
                     <div><p className="text-sm font-bold text-[#253029]">{editSizeVariants.length ? `${editSizeVariants.length} sizes configured` : "No sizes configured"}</p><p className="mt-1 text-xs text-[#68746d]">Stock quantities are changed from Update stock.</p></div>
                   </div>
                   <div className="flex items-center justify-between gap-3">
@@ -1483,7 +1484,7 @@ export function StaffInventoryExperience() {
             <header className="border-b border-[#e1e8e2] p-5">
               <div className="flex items-start gap-3">
                 <div className="relative grid size-16 shrink-0 place-items-center overflow-hidden rounded-lg border border-[#dce5dd] bg-[#f8fbf8]">
-                  <Image src={restockingProduct.imageUrl} alt={restockingProduct.name} fill sizes="64px" unoptimized className="object-contain p-1" />
+                  <Image src={shopProductCardImage(restockingProduct.imageUrl)} alt={restockingProduct.name} fill sizes="64px" unoptimized className="object-contain p-1" />
                 </div>
                 <div className="min-w-0 flex-1">
                   <h2 id={restockDialog.titleId} className="text-xl font-extrabold text-[#17211b]">Update stock</h2>

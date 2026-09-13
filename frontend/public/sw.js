@@ -1,4 +1,4 @@
-const BUILD_ID = "cd73951b5c3a51dd";
+const BUILD_ID = "a666318346d6539b";
 const CACHE_PREFIX = "wescomm-pwa";
 const SHELL_CACHE = `${CACHE_PREFIX}-shell-${BUILD_ID}`;
 const STATIC_CACHE = `${CACHE_PREFIX}-static-${BUILD_ID}`;
@@ -123,7 +123,8 @@ self.addEventListener("fetch", (event) => {
 
   const isPublicAsset =
     url.pathname.startsWith("/icons/") ||
-    url.pathname === "/assets/wescomm-logo.png" ||
+    url.pathname === "/assets/wescomm-logo.webp" ||
+    url.pathname === "/assets/wescomm-logo-ui.webp" ||
     (url.pathname.startsWith("/assets/") && url.pathname.endsWith(".svg"));
 
   if (isPublicAsset) {

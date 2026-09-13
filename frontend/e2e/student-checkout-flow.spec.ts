@@ -76,7 +76,7 @@ function successfulReservation() {
   };
 }
 
-test("Buy Now writes only on final confirmation and recovers from a changed pickup policy", async ({ page }, testInfo) => {
+test("Reserve Now writes only on final confirmation and recovers from a changed pickup policy", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop-chromium", "One complete checkout state transition is sufficient.");
   let availabilityCalls = 0;
   let reservationCalls = 0;
@@ -119,7 +119,7 @@ test("Buy Now writes only on final confirmation and recovers from a changed pick
 
   await page.goto("/student/shop");
   await dismissWelcomeGate(page);
-  await page.getByRole("button", { name: "Buy Now" }).first().click();
+  await page.getByRole("button", { name: "Reserve Now" }).first().click();
 
   let checkout = page.getByRole("dialog", { name: "Item and pickup details" });
   await expect(checkout.getByText(/Policy v/)).toHaveCount(0);
@@ -154,8 +154,58 @@ test("Buy Now writes only on final confirmation and recovers from a changed pick
   });
 });
 
-test("Pay at Commissary closes checkout and highlights the new reservation after redirect", async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== "desktop-chromium", "One complete redirect flow is sufficient.");
+test("Pay at Commissary shows saving and saved states before View Reservation navigates", async ({ page }, testInfo) => {
+  if (testInfo.project.name === "desktop-chromium") await page.emulateMedia({ reducedMotion: "reduce" });
+  const reservation = successfulReservation();
+
+  await page.route("**/api/backend/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (path === "/api/backend/auth/me") return json(route, { profile: student });
+    if (path === "/api/backend/restrictions/me") return json(route, { restrictionSummary: { activeRestriction: null, consecutiveOffenses: 0, offenses: [], policy: { firstRestrictionAt: 3 } } });
+    if (path === "/api/backend/notifications") return json(route, { notifications: [] });
+    if (path === "/api/backend/push/public-key") return json(route, { enabled: false, publicKey: "" });
+    if (path === "/api/backend/wishlist") return json(route, { wishlist: [] });
+    if (path === "/api/backend/products") return json(route, { products: [{ id: productId, name: "Checkout QA Notebook", description: "Two-step checkout test item", imageUrl: null, price: "125.00", oldPrice: null, status: "IN_STOCK", stock: 5, category: { id: "qa-category", name: "School Supplies", slug: "school-supplies" }, variants: [] }] });
+    if (path === "/api/backend/payments/options") return json(route, { paymongoGcash: { enabled: false, livemode: false } });
+    if (path === "/api/backend/pickup/availability") return json(route, { policy: pickupPolicy(7) });
+    if (path === "/api/backend/pickup/availability/slots") return json(route, { availability: { pickupDate: "2026-08-03", pickupPolicyVersion: 7, slots: [{ slotId: pickupSlotId, capacity: 2, booked: 0, remaining: 2, isFull: false, isExpired: false, isUnavailable: false, unavailableReason: null }] } });
+    if (path === "/api/backend/reservations" && request.method() === "POST") {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      return json(route, { reservation });
+    }
+    if (path === "/api/backend/reservations" && request.method() === "GET") return json(route, { items: [reservation], nextCursor: null });
+    return json(route, { error: `Unexpected mocked request: ${request.method()} ${path}` }, 500);
+  });
+
+  await page.goto("/student/shop");
+  await dismissWelcomeGate(page);
+  await page.getByRole("button", { name: "Reserve Now" }).first().click();
+  let checkout = page.getByRole("dialog", { name: "Item and pickup details" });
+  await checkout.getByRole("button", { name: "2026-08-03, available" }).click();
+  await checkout.getByRole("button", { name: "Next: Payment" }).click();
+  checkout = page.getByRole("dialog", { name: "Choose payment method" });
+  await checkout.getByRole("radio", { name: /Pay at Commissary/ }).check();
+  await checkout.getByRole("checkbox", { name: /I agree to the Terms & Conditions/ }).check();
+  await checkout.getByRole("button", { name: "Confirm Reservation" }).click();
+
+  const savingDialog = page.getByRole("dialog", { name: "Saving Reservation" });
+  await expect(savingDialog).toBeVisible();
+  await expect(savingDialog.locator(testInfo.project.name === "desktop-chromium"
+    ? 'img[src="/assets/wescomm_saving_reservation_static.svg"]'
+    : 'img[src="/assets/wescomm_saving_reservation.svg"]')).toBeVisible();
+  await expect(page).toHaveURL(/\/student\/shop$/);
+  const savedDialog = page.getByRole("dialog", { name: "Reservation Saved" });
+  await expect(savedDialog).toBeVisible();
+  await expect(savedDialog.getByTestId("saved-reservation-reference")).toContainText(reservation.referenceCode);
+  await expect(page).toHaveURL(/\/student\/shop$/);
+  await savedDialog.getByRole("button", { name: "View Reservation" }).click();
+  await expect(page).toHaveURL(new RegExp(`/student/reservations#reservation-${reservation.id}$`));
+  await expect(page.locator(`#reservation-${reservation.id}`)).toBeVisible();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+});
+
+test("cart reservation Done closes the confirmation and stays in the shop", async ({ page }) => {
   const reservation = successfulReservation();
 
   await page.route("**/api/backend/**", async (route) => {
@@ -171,23 +221,28 @@ test("Pay at Commissary closes checkout and highlights the new reservation after
     if (path === "/api/backend/pickup/availability") return json(route, { policy: pickupPolicy(7) });
     if (path === "/api/backend/pickup/availability/slots") return json(route, { availability: { pickupDate: "2026-08-03", pickupPolicyVersion: 7, slots: [{ slotId: pickupSlotId, capacity: 2, booked: 0, remaining: 2, isFull: false, isExpired: false, isUnavailable: false, unavailableReason: null }] } });
     if (path === "/api/backend/reservations" && request.method() === "POST") return json(route, { reservation });
-    if (path === "/api/backend/reservations" && request.method() === "GET") return json(route, { items: [reservation], nextCursor: null });
     return json(route, { error: `Unexpected mocked request: ${request.method()} ${path}` }, 500);
   });
 
   await page.goto("/student/shop");
   await dismissWelcomeGate(page);
-  await page.getByRole("button", { name: "Buy Now" }).first().click();
-  let checkout = page.getByRole("dialog", { name: "Item and pickup details" });
+  await page.getByRole("button", { name: "Add to Cart" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Add to Cart" }).click();
+  await page.getByRole("button", { name: /Open cart with 1 item/ }).click();
+  await page.getByRole("button", { name: "Checkout Cart" }).click();
+  let checkout = page.getByRole("dialog", { name: "Review Items & Pickup" });
   await checkout.getByRole("button", { name: "2026-08-03, available" }).click();
   await checkout.getByRole("button", { name: "Next: Payment" }).click();
-  checkout = page.getByRole("dialog", { name: "Choose payment method" });
+  checkout = page.getByRole("dialog", { name: "Payment & Review" });
   await checkout.getByRole("radio", { name: /Pay at Commissary/ }).check();
   await checkout.getByRole("checkbox", { name: /I agree to the Terms & Conditions/ }).check();
   await checkout.getByRole("button", { name: "Confirm Reservation" }).click();
 
-  await expect(page).toHaveURL(new RegExp(`/student/reservations#reservation-${reservation.id}$`));
-  await expect(page.getByRole("status")).toContainText("Reservation submitted successfully.");
-  await expect(page.locator(`#reservation-${reservation.id}`)).toBeVisible();
+  const savedDialog = page.getByRole("dialog", { name: "Reservation Saved" });
+  await expect(savedDialog).toBeVisible();
+  await expect(savedDialog.getByTestId("saved-reservation-reference")).toContainText(reservation.referenceCode);
+  await savedDialog.getByRole("button", { name: "Done" }).click();
+  await expect(page).toHaveURL(/\/student\/shop$/);
   await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Open cart with 0 items/ })).toBeVisible();
 });

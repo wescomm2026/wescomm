@@ -41,9 +41,13 @@ function apiPath(requestUrl: string) {
 }
 
 test("anonymous users can browse live products and use the cart without changing inventory", async ({ page }) => {
+  await page.route("**/api/backend/auth/me", (route) => json(route, { error: "Not signed in" }, 401));
+  await page.route(/\/api(?:\/backend)?\/products(?:\?.*)?$/, (route) => json(route, { products: [...shopFixtures] }));
   await page.goto("/student/shop");
   await dismissWelcomeGate(page);
 
+  await expect(page.getByRole("button", { name: "Log in" })).toBeVisible();
+  await page.waitForFunction(() => window.localStorage.getItem("wescomm_student_cart:v2:guest") !== null);
   await expect(page.getByPlaceholder("Search campus items")).toBeVisible();
   await expect(page.getByText(/^Showing \d+ of \d+ items$/)).toBeVisible();
 
@@ -59,6 +63,31 @@ test("anonymous users can browse live products and use the cart without changing
   await page.getByRole("button", { name: /Open cart with 1 item/ }).click();
   await expect(page.getByRole("dialog", { name: "My Cart" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Log in to Checkout" })).toBeVisible();
+});
+
+test("desktop product actions keep their full labels and reserve icon", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "Desktop card widths are checked once.");
+  await page.route(/\/api(?:\/backend)?\/products(?:\?.*)?$/, (route) => json(route, {
+    products: [0, 1, 2].map((index) => ({ ...shopFixtures[0], id: `71000000-0000-4000-8000-00000000010${index}`, name: `Shop item ${index + 1}` }))
+  }));
+
+  for (const width of [1024, 1280, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto("/student/shop");
+    await dismissWelcomeGate(page);
+    const card = page.getByTestId("shop-product-grid").getByRole("article").first();
+    await expect(card.getByRole("button", { name: "Add to Cart" })).toBeVisible();
+    await expect(card.getByRole("button", { name: "Reserve Now" })).toBeVisible();
+    await expect(card.getByRole("button", { name: "Reserve Now" }).locator('img[src="/assets/new-reserve.svg"]')).toBeVisible();
+    const labelsFit = await card.locator('button[aria-label^="Add to Cart:"], button[aria-label^="Reserve Now:"]').evaluateAll((buttons) => buttons.length === 2 && buttons.every((button) => {
+      const label = Array.from(button.querySelectorAll("span")).at(-1);
+      if (!label) return false;
+      const buttonBounds = button.getBoundingClientRect();
+      const labelBounds = label.getBoundingClientRect();
+      return labelBounds.left >= buttonBounds.left && labelBounds.right <= buttonBounds.right;
+    }));
+    expect(labelsFit, `Action labels should fit at ${width}px`).toBe(true);
+  }
 });
 
 test("a restock refresh replaces Notify Me with ordering actions and blocks only empty options", async ({ page }) => {
@@ -102,7 +131,7 @@ test("a restock refresh replaces Notify Me with ordering actions and blocks only
 
   await expect(page.getByRole("button", { name: /Notify me about Realtime Restock Test Shirt restock/ })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Add to Cart" }).first()).toBeVisible();
-  await expect(page.getByRole("button", { name: "Buy Now" }).first()).toBeVisible();
+  await expect(page.getByRole("button", { name: "Reserve Now" }).first()).toBeVisible();
   expect(productRequests).toBeGreaterThanOrEqual(2);
 
   await page.getByRole("button", { name: "Add to Cart" }).first().click();
@@ -200,7 +229,7 @@ test("signed-in students see their department products first", async ({ page }, 
   await dismissWelcomeGate(page);
 
   await expect(page.getByLabel("Sort shop items")).toContainText("Recommended for your department");
-  await expect(page.getByText("Showing College of Nursing (CON) items first.")).toBeVisible();
+  await expect(page.getByText("Showing College of Nursing (CON) items first.")).toHaveCount(0);
   const cards = page.getByTestId("shop-product-grid").getByRole("article");
   await expect(cards).toHaveCount(3);
   await expect(cards.nth(0)).toHaveAttribute("data-product-id", "71000000-0000-4000-8000-000000000013");
@@ -236,10 +265,22 @@ test("mobile shop renders wishlist controls in two columns and opens a full imag
 
   const cards = page.getByTestId("shop-product-grid").getByRole("article");
   await expect(cards).toHaveCount(2);
+  const statusFilters = page.getByRole("group", { name: "Filter by item status" });
+  await expect(statusFilters.getByRole("button")).toHaveCount(4);
   for (const status of ["In Stock", "Restock Soon", "Out of Stock", "On Sale"]) {
-    await expect(page.getByRole("button", { name: status })).toHaveAttribute("aria-pressed", "false");
+    await expect(statusFilters.getByRole("button", { name: status })).toHaveAttribute("aria-pressed", "false");
   }
+  const firstFilter = await statusFilters.getByRole("button", { name: "In Stock" }).boundingBox();
+  const lastFilter = await statusFilters.getByRole("button", { name: "On Sale" }).boundingBox();
+  const filterGroupBox = await statusFilters.boundingBox();
+  expect(Math.abs((firstFilter?.y ?? 0) - (lastFilter?.y ?? 0))).toBeLessThanOrEqual(2);
+  expect((lastFilter?.x ?? 0) + (lastFilter?.width ?? 0)).toBeLessThanOrEqual((filterGroupBox?.x ?? 0) + (filterGroupBox?.width ?? 0) + 2);
   await expect(page.getByLabel("Sort shop items")).toHaveValue("featured");
+  const mainBox = await page.locator("main").last().boundingBox();
+  const resetBox = await page.getByRole("button", { name: "Reset" }).boundingBox();
+  expect(mainBox).not.toBeNull();
+  expect(resetBox).not.toBeNull();
+  expect(Math.abs((mainBox?.x ?? 0) + (mainBox?.width ?? 0) - (resetBox?.x ?? 0) - (resetBox?.width ?? 0))).toBeLessThanOrEqual(3);
   const [firstBox, secondBox] = await Promise.all([
     cards.nth(0).boundingBox(),
     cards.nth(1).boundingBox()
@@ -253,6 +294,11 @@ test("mobile shop renders wishlist controls in two columns and opens a full imag
 
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(overflow).toBeLessThanOrEqual(1);
+
+  await page.setViewportSize({ width: 320, height: 740 });
+  const narrowOverflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  expect(narrowOverflow).toBeLessThanOrEqual(1);
+  expect(await statusFilters.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
 
   const imagePreviewButton = page.getByRole("button", { name: "View full image of Mobile Shop Notebook" });
   await imagePreviewButton.click();
