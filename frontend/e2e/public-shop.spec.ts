@@ -65,6 +65,44 @@ test("anonymous users can browse live products and use the cart without changing
   await expect(page.getByRole("button", { name: "Log in to Checkout" })).toBeVisible();
 });
 
+test("visitor can type in sign-in email from Reserve Now", async ({ page }) => {
+  await page.route("**/api/backend/auth/me", (route) => json(route, { error: "Not signed in" }, 401));
+  await page.route(/\/api(?:\/backend)?\/products(?:\?.*)?$/, (route) => json(route, { products: [...shopFixtures] }));
+  await page.goto("/student/shop");
+  await dismissWelcomeGate(page);
+
+  await page.getByRole("button", { name: "Reserve Now: Mobile Shop Notebook" }).click();
+  const checkout = page.getByRole("dialog", { name: "Item and pickup details" });
+  await expect(checkout).toBeVisible();
+  await checkout.getByRole("button", { name: "Sign in to continue" }).click();
+
+  const signIn = page.getByRole("dialog", { name: "Log in with your school email" });
+  const email = signIn.getByRole("textbox");
+  await email.click();
+  await expect(email).toBeFocused();
+  await email.pressSequentially("student.name");
+  await expect(email).toHaveValue("student.name");
+});
+
+test("visitor can type in sign-in email from cart checkout", async ({ page }) => {
+  await page.route("**/api/backend/auth/me", (route) => json(route, { error: "Not signed in" }, 401));
+  await page.route(/\/api(?:\/backend)?\/products(?:\?.*)?$/, (route) => json(route, { products: [...shopFixtures] }));
+  await page.goto("/student/shop");
+  await dismissWelcomeGate(page);
+
+  await page.getByRole("button", { name: "Add to Cart: Mobile Shop Notebook" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Add to Cart" }).click();
+  await page.getByRole("button", { name: /Open cart with 1 item/ }).click();
+  await page.getByRole("dialog", { name: "My Cart" }).getByRole("button", { name: "Log in to Checkout" }).click();
+
+  const signIn = page.getByRole("dialog", { name: "Log in with your school email" });
+  const email = signIn.getByRole("textbox");
+  await email.click();
+  await expect(email).toBeFocused();
+  await email.pressSequentially("student.name");
+  await expect(email).toHaveValue("student.name");
+});
+
 test("desktop product actions keep their full labels and reserve icon", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop-chromium", "Desktop card widths are checked once.");
   await page.route(/\/api(?:\/backend)?\/products(?:\?.*)?$/, (route) => json(route, {
