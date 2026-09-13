@@ -13,6 +13,7 @@ import {
   formatNumber,
   useAdminSummary
 } from "@/components/admin/AdminExperienceShared";
+import { manilaDateKey } from "@/lib/manila-date";
 import type { ReportRangeOptions, ReportRangePreset } from "@/lib/api";
 
 const AdminReportsCharts = dynamic(
@@ -74,7 +75,7 @@ export function AdminReportsExperience() {
           const next = event.target.value as ReportRangePreset;
           setRangePreset(next);
           if (next === "CUSTOM") {
-            const fallback = summary.range.to || new Date().toISOString().slice(0, 10);
+            const fallback = summary.range.to || manilaDateKey(new Date()) || "";
             setCustomFrom((current) => current || summary.range.from || fallback);
             setCustomTo((current) => current || fallback);
           }

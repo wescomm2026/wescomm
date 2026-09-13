@@ -14,6 +14,7 @@ import {
   type StaffProduct
 } from "@/lib/staff-api";
 import { sortProductOptionValues } from "@/lib/product-display";
+import { shopProductCardImage } from "@/lib/shop-assets";
 
 export type SkuInventoryDialogProduct = {
   id: string;
@@ -407,7 +408,7 @@ export function SkuInventoryDialog({
       <section ref={dialog.dialogRef} {...dialog.dialogProps} className="w-full max-w-5xl overflow-hidden rounded-xl bg-white shadow-2xl">
         <header className="flex items-start gap-3 border-b border-[#e1e8e2] p-5">
           <div className="relative grid size-16 shrink-0 place-items-center overflow-hidden rounded-lg border border-[#dce5dd] bg-[#f8fbf8]">
-            <Image src={product.imageUrl} alt={product.name} fill sizes="64px" unoptimized className="object-contain p-1" />
+            <Image src={shopProductCardImage(product.imageUrl)} alt={product.name} fill sizes="64px" unoptimized className="object-contain p-1" />
           </div>
           <div className="min-w-0 flex-1">
             <h2 id={dialog.titleId} className="text-xl font-extrabold text-[#17211b]">{mode === "reconcile" ? "Set up inventory" : "Update stock"}</h2>

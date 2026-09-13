@@ -15,6 +15,7 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { getStaffReportSummaryFromApi, isRequestAbortError, type BackendReportSummary, type ReportRangeOptions, type ReportRangePreset } from "@/lib/api";
 import { exportStyledExcelWorkbook } from "@/lib/excel-export";
 import { getStoredStaffSession } from "@/lib/staff-api";
+import { manilaDateKey } from "@/lib/manila-date";
 
 const emptySummary: BackendReportSummary = {
   range: { preset: "LAST_30_DAYS", from: null, to: "", granularity: "DAILY", label: "Last 30 Days" },
@@ -84,7 +85,7 @@ function useStaffReportsSummary(options: ReportRangeOptions) {
   const requestSequenceRef = useRef(0);
   const requestAbortRef = useRef<AbortController | null>(null);
 
-  const loadSummary = useCallback(async ({ background = false }: { background?: boolean } = {}) => {
+  const loadSummary = useCallback(async ({ background = false, fresh = false }: { background?: boolean; fresh?: boolean } = {}) => {
     if (!ready) return;
 
     const requestId = ++requestSequenceRef.current;
@@ -109,7 +110,7 @@ function useStaffReportsSummary(options: ReportRangeOptions) {
     }
 
     try {
-      const data = await getStaffReportSummaryFromApi(token, options, requestController.signal);
+      const data = await getStaffReportSummaryFromApi(token, options, requestController.signal, fresh);
       if (requestId !== requestSequenceRef.current) return;
       setSummary(data);
     } catch (summaryError) {
@@ -148,7 +149,7 @@ function useStaffReportsSummary(options: ReportRangeOptions) {
     };
   }, [hasCredential, loadSummary]);
 
-  return { user, ready, openAuth, summary, loading, error, hasCredential, reload: loadSummary };
+  return { user, ready, openAuth, summary, loading, error, hasCredential, reload: () => loadSummary({ fresh: true }) };
 }
 
 function ReportStat({
@@ -385,7 +386,7 @@ export function StaffReports() {
             const next = event.target.value as ReportRangePreset;
             setRangePreset(next);
             if (next === "CUSTOM") {
-              const fallback = summary.range.to || new Date().toISOString().slice(0, 10);
+              const fallback = summary.range.to || manilaDateKey(new Date()) || "";
               setCustomFrom((current) => current || summary.range.from || fallback);
               setCustomTo((current) => current || fallback);
             }
@@ -520,7 +521,7 @@ export function StaffReports() {
 
       <footer className="flex flex-col items-center gap-4 border-t border-[#e2e8e3] py-6 text-center text-xs text-[#68736c] md:flex-row md:justify-between md:text-left">
         <div className="flex items-center justify-center gap-3 md:justify-start">
-          <AssetIcon src="/assets/wescomm-logo.png" className="h-10 w-24" />
+          <AssetIcon src="/assets/wescomm-logo-ui.webp" className="h-10 w-24" />
           <div>
             <p className="font-extrabold text-[#26322b]">Wesleyan University-Philippines</p>
             <p>Integrated Commissary Management System</p>

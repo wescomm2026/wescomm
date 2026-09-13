@@ -74,7 +74,7 @@ function StaffSidebar({ items, homeHref }: { items: NavItem[]; homeHref: string 
   return (
     <aside className="fixed inset-y-0 left-0 z-40 hidden w-[230px] flex-col border-r border-[#e3e9e4] bg-white px-4 pb-5 pt-5 lg:flex">
       <Link href={homeHref} className="relative mx-2 h-[72px]">
-        <Image src="/assets/wescomm-logo.png" alt="WESCOMM" fill priority className="object-contain object-left" />
+        <Image src="/assets/wescomm-logo-ui.webp" alt="WESCOMM" fill priority className="object-contain object-left" />
       </Link>
       <div className="mt-5 min-h-0 flex-1 overflow-y-auto">
         <StaffNavigation items={items} homeHref={homeHref} />
@@ -108,7 +108,7 @@ function StaffMobileMenu({
     }}>
       <aside ref={dialog.dialogRef} {...dialog.dialogProps} className="flex h-[100svh] w-[min(88vw,360px)] flex-col bg-white shadow-[20px_0_60px_rgba(0,0,0,0.2)]">
         <div className="flex h-20 shrink-0 items-center border-b border-[#e5ebe6] px-5">
-          <Image src="/assets/wescomm-logo.png" alt="WESCOMM" width={145} height={58} className="h-12 w-auto object-contain" />
+          <Image src="/assets/wescomm-logo-ui.webp" alt="WESCOMM" width={145} height={58} className="h-12 w-auto object-contain" />
           <button type="button" data-dialog-autofocus onClick={onClose} aria-label="Close staff menu" className="ml-auto grid size-10 place-items-center rounded-md hover:bg-[#eef6ee]">
             <X className="size-6" />
           </button>
@@ -371,7 +371,7 @@ export function StaffShell({
     return (
       <div className="grid min-h-screen place-items-center bg-[#fbfcfb] px-4">
         <div className="w-full max-w-md rounded-lg border border-[#dce5dd] bg-white p-6 text-center shadow-sm">
-          <Image src="/assets/wescomm-logo.png" alt="WESCOMM" width={155} height={64} className="mx-auto h-14 w-auto object-contain" />
+          <Image src="/assets/wescomm-logo-ui.webp" alt="WESCOMM" width={155} height={64} className="mx-auto h-14 w-auto object-contain" />
           <p className="mt-5 text-sm font-bold uppercase text-primary">Staff portal</p>
           <h1 className="mt-2 text-2xl font-extrabold text-[#101820]">Sign in with your WESCOMM account</h1>
           <p className="mt-2 text-sm leading-6 text-[#68746d]">Use the main login once. Staff accounts will open the staff dashboard automatically.</p>
@@ -418,7 +418,7 @@ export function StaffShell({
               <Menu className="size-7" />
             </button>
             <Link href={homeHref} className="relative h-12 w-[150px] shrink-0 lg:hidden">
-              <Image src="/assets/wescomm-logo.png" alt="WESCOMM" fill priority className="object-contain object-left" />
+              <Image src="/assets/wescomm-logo-ui.webp" alt="WESCOMM" fill priority className="object-contain object-left" />
             </Link>
 
             <form onSubmit={submitSearch} className="ml-auto hidden h-12 w-full max-w-[390px] items-center rounded-md border border-[#d7e0d8] bg-white px-4 focus-within:border-primary md:flex">

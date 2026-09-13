@@ -19,6 +19,7 @@ export const pickupRoutes = Router();
 
 const dateKeySchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date must use YYYY-MM-DD.");
 const policySchema = z.object({
+  advanceMode: z.enum(["OPEN_DAYS", "CALENDAR_DAYS"] as const).default("CALENDAR_DAYS"),
   minAdvanceDays: z.number().int().min(0).max(365),
   maxAdvanceDays: z.number().int().min(1).max(3650),
   reason: z.string().trim().min(5).max(500),

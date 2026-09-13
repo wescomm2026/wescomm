@@ -11,7 +11,9 @@ export default defineConfig({
     "staff-chat-takeover-responsive.spec.ts",
     "staff-inventory-responsive.spec.ts",
     "staff-message-loading.spec.ts",
-    "staff-reservation-confirmations.spec.ts"
+    "staff-reservation-confirmations.spec.ts",
+    "student-checkout-flow.spec.ts",
+    "student-wesbot-chat.spec.ts"
   ],
   fullyParallel: false,
   forbidOnly: true,

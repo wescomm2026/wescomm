@@ -18,10 +18,12 @@ reportsRoutes.get(
       preset: z.enum(REPORT_RANGE_PRESETS).optional(),
       from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
       to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-      granularity: z.enum(["AUTO", "DAILY", "MONTHLY"]).optional()
+      granularity: z.enum(["AUTO", "DAILY", "MONTHLY"]).optional(),
+      fresh: z.literal("1").optional()
     }).parse(request.query);
-    const summary = await measureRequestPhase(response, "report_aggregate", () => getReportSummary(query));
-    response.setHeader("Cache-Control", "private, max-age=15, stale-while-revalidate=15");
+    const { fresh, ...range } = query;
+    const summary = await measureRequestPhase(response, "report_aggregate", () => getReportSummary(range, { bypassCache: fresh === "1" }));
+    response.setHeader("Cache-Control", fresh === "1" ? "private, no-store, max-age=0" : "private, max-age=15, stale-while-revalidate=15");
     response.json({ summary });
   })
 );

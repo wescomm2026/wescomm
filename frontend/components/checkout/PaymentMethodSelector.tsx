@@ -89,16 +89,17 @@ export function PaymentMethodSelector({
 
   return (
     <fieldset>
-      <legend className="flex items-center gap-2 font-extrabold text-[#17211b]">
-        <AssetIcon src="/assets/payment.svg" className="size-7" />
+      <legend className="flex items-center gap-3 text-lg font-extrabold text-[#17211b] sm:text-xl">
+        <AssetIcon src="/assets/payment.svg" className="size-8" />
         {legend}
       </legend>
-      <div className="mt-3 grid gap-2">
+      <p className="mt-1 text-sm text-[#657169]">Select a payment method to continue.</p>
+      <div className="mt-4 grid gap-2.5">
         {methods.map((method) => (
           <label
             key={method.value}
-            className={`flex min-h-14 cursor-pointer items-start gap-3 rounded-md border p-3 transition focus-within:ring-2 focus-within:ring-primary/25 ${
-              value === method.value ? "border-primary bg-[#edf6ed]" : "border-[#d7e0d8] bg-white"
+            className={`flex min-h-16 cursor-pointer items-center gap-3 rounded-xl border px-4 py-3.5 transition focus-within:ring-2 focus-within:ring-primary/25 ${
+              value === method.value ? "border-primary bg-[#f0faf3] shadow-sm" : "border-[#d7e0d8] bg-white hover:border-[#b8cfba]"
             }`}
           >
             <input
@@ -108,19 +109,19 @@ export function PaymentMethodSelector({
               checked={value === method.value}
               onChange={() => onChange(method.value)}
               disabled={disabled}
-              className="mt-1 accent-primary"
+              className="size-5 shrink-0 accent-primary"
             />
-            <AssetIcon src={method.image} className="mt-0.5 size-7 shrink-0" />
+            <AssetIcon src={method.image} className="size-8 shrink-0" />
             <span className="min-w-0">
-              <span className="flex flex-wrap items-center gap-2 text-sm font-bold text-[#253029]">
+              <span className="flex flex-wrap items-center gap-2 text-sm font-extrabold text-[#253029] sm:text-base">
                 {method.label}
                 {method.value === "PAYMONGO_GCASH" && options && !options.paymongoGcash.livemode ? (
-                  <span className="rounded-full bg-[#fff4c8] px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide text-[#735400]">
+                  <span className="rounded-lg bg-[#fff4c8] px-2 py-1 text-[10px] font-extrabold uppercase tracking-wide text-[#735400]">
                     Test mode
                   </span>
                 ) : null}
               </span>
-              <span className="mt-0.5 block text-xs leading-5 text-[#6d7771]">{method.detail}</span>
+              <span className="mt-0.5 block text-xs leading-5 text-[#6d7771] sm:text-sm">{method.detail}</span>
               {method.value === "PAYMONGO_GCASH" && options && !options.paymongoGcash.livemode ? (
                 <span className="mt-1 block text-xs font-semibold text-[#735400]">No real money will be charged.</span>
               ) : null}

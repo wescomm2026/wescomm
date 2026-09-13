@@ -1,5 +1,6 @@
 import { prisma } from "../lib/prisma.js";
 import { getCache } from "@vercel/functions";
+import { bumpCacheRevision, readCacheRevision } from "./cache-revision.service.js";
 import { withTransientPrismaReadRetry } from "../utils/prisma-retry.js";
 
 type DashboardPayloadRow = {
@@ -140,11 +141,12 @@ async function buildStaffDashboardSummary() {
 
 const DASHBOARD_CACHE_TTL_MS = 10_000;
 const DASHBOARD_CACHE_TTL_SECONDS = DASHBOARD_CACHE_TTL_MS / 1_000;
-const DASHBOARD_CACHE_KEY = "staff-summary:v2";
+const DASHBOARD_CACHE_KEY = "staff-summary:v3";
 type StaffDashboardSummary = Awaited<ReturnType<typeof buildStaffDashboardSummary>>;
 
-let cachedDashboard: { value: StaffDashboardSummary; expiresAt: number } | null = null;
-let pendingDashboard: Promise<StaffDashboardSummary> | null = null;
+let cachedDashboard: { value: StaffDashboardSummary; expiresAt: number; revision: string } | null = null;
+let pendingDashboard: { promise: Promise<StaffDashboardSummary>; revision: string; generation: number } | null = null;
+let dashboardGeneration = 0;
 const dashboardRuntimeCache = getCache({ namespace: "wescomm-dashboard" });
 
 function isStaffDashboardSummary(value: unknown): value is StaffDashboardSummary {
@@ -159,36 +161,46 @@ function isStaffDashboardSummary(value: unknown): value is StaffDashboardSummary
 }
 
 export async function invalidateStaffDashboardCache() {
+  dashboardGeneration += 1;
   cachedDashboard = null;
+  await bumpCacheRevision("dashboard");
   await Promise.all([
-    dashboardRuntimeCache.delete(DASHBOARD_CACHE_KEY),
     dashboardRuntimeCache.expireTag("dashboard")
   ]).catch(() => undefined);
 }
 
-export async function getStaffDashboardSummary() {
-  if (cachedDashboard && cachedDashboard.expiresAt > Date.now()) return cachedDashboard.value;
-  if (pendingDashboard) return pendingDashboard;
+export async function getStaffDashboardSummary(options: { bypassCache?: boolean } = {}) {
+  if (options.bypassCache) return buildStaffDashboardSummary();
+  const revision = await readCacheRevision("dashboard");
+  const generation = dashboardGeneration;
+  const revisionKey = `${DASHBOARD_CACHE_KEY}:${revision}`;
+  if (cachedDashboard && cachedDashboard.revision === revision && cachedDashboard.expiresAt > Date.now()) return cachedDashboard.value;
+  if (pendingDashboard?.revision === revision && pendingDashboard.generation === generation) return pendingDashboard.promise;
 
-  pendingDashboard = (async () => {
-    const regionalValue = await dashboardRuntimeCache.get(DASHBOARD_CACHE_KEY).catch(() => null);
+  const promise = (async () => {
+    const regionalValue = await dashboardRuntimeCache.get(revisionKey).catch(() => null);
     if (isStaffDashboardSummary(regionalValue)) {
-      cachedDashboard = { value: regionalValue, expiresAt: Date.now() + DASHBOARD_CACHE_TTL_MS };
+      if (generation === dashboardGeneration) {
+        cachedDashboard = { value: regionalValue, expiresAt: Date.now() + DASHBOARD_CACHE_TTL_MS, revision };
+      }
       return regionalValue;
     }
 
     const value = await buildStaffDashboardSummary();
-    cachedDashboard = { value, expiresAt: Date.now() + DASHBOARD_CACHE_TTL_MS };
-    await dashboardRuntimeCache.set(DASHBOARD_CACHE_KEY, value, {
-      ttl: DASHBOARD_CACHE_TTL_SECONDS,
-      tags: ["dashboard"],
-      name: "WESCOMM staff dashboard summary"
-    }).catch(() => undefined);
+    if (generation === dashboardGeneration && await readCacheRevision("dashboard") === revision) {
+      cachedDashboard = { value, expiresAt: Date.now() + DASHBOARD_CACHE_TTL_MS, revision };
+      await dashboardRuntimeCache.set(revisionKey, value, {
+        ttl: DASHBOARD_CACHE_TTL_SECONDS,
+        tags: ["dashboard"],
+        name: "WESCOMM staff dashboard summary"
+      }).catch(() => undefined);
+    }
     return value;
   })()
     .finally(() => {
-      pendingDashboard = null;
+      if (pendingDashboard?.promise === promise) pendingDashboard = null;
     });
 
-  return pendingDashboard;
+  pendingDashboard = { promise, revision, generation };
+  return promise;
 }

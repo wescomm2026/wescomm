@@ -45,25 +45,37 @@ test("secure receipt token resolution requires authentication and limits student
   assert.match(service, /RECEIPT_QR_RESOLVED/);
 });
 
-test("support edits retain encrypted revisions and enforce ownership, latest-message, handler, and time-window rules", () => {
+test("support edits retain encrypted revisions and enforce ownership, handler, and time-window rules without resending", () => {
   const service = source("src/services/message.service.ts");
   const routes = source("src/routes/messages.routes.ts");
+  const studentUi = source("../frontend/components/support/StudentSupportExperience.tsx");
   assert.match(routes, /expectedEditVersion/);
   assert.match(service, /conversationMessageRevision\.create/);
   assert.match(service, /previousMessage: message\.message/);
   assert.match(service, /newMessage: encryptedMessage/);
   assert.match(service, /conversation\.assignedStaffId !== input\.userId/);
-  assert.match(service, /latest\?\.id !== message\.id/);
+  assert.doesNotMatch(service, /latest\?\.id !== message\.id/);
   assert.match(service, /30 \* 60 \* 1000/);
   assert.match(service, /SUPPORT_MESSAGE_EDITED/);
+  assert.match(studentUi, /editConversationMessageFromApi/);
+  assert.doesNotMatch(studentUi, /Edit and resend/);
 });
 
-test("conversation archive is role-scoped and resolved-only", () => {
+test("conversation archive is role-scoped, personal for students, and resolved-only for operations", () => {
   const service = source("src/services/message.service.ts");
-  assert.match(service, /conversation\.status !== "RESOLVED"/);
+  const replyMigration = source("prisma/migrations/20260904000000_restore_student_archived_support_on_reply/migration.sql");
+  const archiveConstraintMigration = source("prisma/migrations/20260904010000_allow_open_student_conversation_archive/migration.sql");
+  assert.match(service, /input\.archived && input\.role !== "STUDENT" && conversation\.status !== "RESOLVED"/);
+  assert.match(service, /input\.archived && input\.role !== "STUDENT" \? \{ status: "RESOLVED" as const \} : \{\}/);
   assert.match(service, /studentArchivedAt/);
   assert.match(service, /operationsArchivedAt/);
   assert.match(service, /archiveScope/);
+  assert.match(service, /status: "OPEN", student_archived_at: null, updated_at: message\.createdAt/);
+  assert.match(replyMigration, /insert_active_wesbot_reply[\s\S]*"student_archived_at" = NULL/);
+  assert.match(replyMigration, /insert_owned_staff_message[\s\S]*"student_archived_at" = NULL/);
+  assert.match(archiveConstraintMigration, /DROP CONSTRAINT "conversations_archive_requires_resolved_check"/);
+  assert.match(archiveConstraintMigration, /ADD CONSTRAINT "conversations_operations_archive_requires_resolved_check"/);
+  assert.match(archiveConstraintMigration, /CHECK \(\s*"operations_archived_at" IS NULL\s*OR "status" = 'RESOLVED'/);
 });
 
 test("conversation retention is Admin-only, recoverable for 90 days, and purge is preview-locked", () => {
@@ -86,7 +98,7 @@ test("conversation retention is Admin-only, recoverable for 90 days, and purge i
   assert.match(migration, /conversation_purge_records ENABLE ROW LEVEL SECURITY/);
   assert.match(migration, /REVOKE ALL PRIVILEGES ON TABLE public\.conversation_purge_records FROM PUBLIC/);
   assert.doesNotMatch(migration, /"subject"|"student_id"|"message" TEXT/);
-  assert.match(adminUi, /isAdmin \? <button[\s\S]*setConversationView\("DELETED"\)/);
+  assert.match(adminUi, /isAdmin \? <button[\s\S]*changeConversationView\("DELETED"\)/);
   assert.match(adminUi, /purgePhrase !== purgeDialog\.preview\.confirmationPhrase/);
   assert.match(adminUi, /useAccessibleDialog<HTMLElement>/);
 });

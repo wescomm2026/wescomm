@@ -18,6 +18,8 @@ const staffProfile: BackendAuthProfile = {
   email: "staff@wesleyan.edu.ph",
   phone: null,
   department: "Commissary",
+  departmentId: null,
+  onboardingCompletedAt: null,
   address: null,
   avatarUrl: null
 };
@@ -73,7 +75,7 @@ function initialConversation(): BackendConversation {
   };
 }
 
-test("staff send and resolve actions show immediate progress instead of appearing frozen", async ({ page }) => {
+test("staff send and resolve actions show immediate progress instead of appearing frozen", async ({ page }, testInfo) => {
   await authorizeMockedWorkspace(page, "STAFF");
   let conversation = initialConversation();
   const unhandledApiPaths: string[] = [];
@@ -97,8 +99,8 @@ test("staff send and resolve actions show immediate progress instead of appearin
       return;
     }
 
-    if (path === "/api/backend/realtime/events" && request.method() === "GET") {
-      await route.fulfill({ status: 200, contentType: "text/event-stream", body: "" });
+    if (path === "/api/backend/realtime/updates" && request.method() === "GET") {
+      await json(route, { cursor: "0", hasMore: false, events: [] });
       return;
     }
 
@@ -164,6 +166,11 @@ test("staff send and resolve actions show immediate progress instead of appearin
 
   await expect(page.getByRole("heading", { name: "Message center" })).toBeVisible();
   await expect(page.getByLabel("WESCOMM staff messenger")).toBeVisible();
+  if (testInfo.project.name === "desktop-chromium") await expect(page.getByText("No conversation selected")).toBeVisible();
+  await expect(page.getByTestId("staff-conversation-thread")).toHaveCount(0);
+  await page.getByRole("button", { name: "Archived", exact: true }).click();
+  await expect(page.getByTestId("staff-conversation-thread")).toHaveCount(0);
+  await page.getByRole("button", { name: "Active", exact: true }).click();
   await page.getByRole("button", { name: /Juan Dela Cruz/ }).click();
   await expect(page.getByTestId("staff-conversation-thread")).toBeVisible();
   await expect(page.getByRole("log")).toBeVisible();
