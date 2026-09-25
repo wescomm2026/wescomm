@@ -4,7 +4,8 @@
   "regions": ["icn1"],
   "git": {
     "deploymentEnabled": {
-      "agent/wescomm-stabilization": false
+      "agent/wescomm-stabilization": false,
+      "main": false
     }
   },
   "services": {
