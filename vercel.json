@@ -2,6 +2,11 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "fluid": true,
   "regions": ["icn1"],
+  "git": {
+    "deploymentEnabled": {
+      "agent/wescomm-stabilization": false
+    }
+  },
   "services": {
     "frontend": {
       "root": "frontend",
