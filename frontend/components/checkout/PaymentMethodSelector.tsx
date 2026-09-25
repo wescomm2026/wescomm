@@ -21,8 +21,8 @@ const pickupMethods: Array<{
 }> = [
   {
     value: "PAY_AT_COMMISSARY",
-    label: "Pay at Commissary",
-    detail: "Cash payment during pickup",
+    label: "Cash at Pickup",
+    detail: "Pay in cash at your selected school collection office",
     image: "/assets/cash.svg"
   },
   {
@@ -93,7 +93,7 @@ export function PaymentMethodSelector({
         <AssetIcon src="/assets/payment.svg" className="size-8" />
         {legend}
       </legend>
-      <p className="mt-1 text-sm text-[#657169]">Select a payment method to continue.</p>
+      <p className="mt-1 text-sm text-[#657169]">Choose how you plan to pay. Staff verifies the final method during release.</p>
       <div className="mt-4 grid gap-2.5">
         {methods.map((method) => (
           <label

@@ -32,6 +32,7 @@ import {
   useServerState,
   writeServerState
 } from "@/lib/server-state";
+import { collectionChannelLabel, type CollectionChannel } from "@/lib/collection-channel";
 import {
   getPaymentIdempotencyKey,
   openTrustedPaymongoCheckout,
@@ -58,6 +59,7 @@ type StoredReservation = {
   pickupDate: string | null;
   pickupTime: string | null;
   paymentMethod: BackendPaymentMethod;
+  preferredCollectionChannel: CollectionChannel;
   payment: BackendPaymentSummary | null;
   notes: string;
   status: ReservationStatus;
@@ -190,7 +192,7 @@ function formatBackendPayment(value: string) {
   if (value === "PAYMONGO_GCASH") return "GCash (Online)";
   if (value === "GCASH") return "GCash";
   if (value === "CASH") return "Cash";
-  return "Pay at Commissary";
+  return "Cash at Pickup";
 }
 
 function formatBackendTimeRange(startValue: string | null, endValue: string | null) {
@@ -228,6 +230,7 @@ function mapBackendReservations(rows: BackendReservation[]): StoredReservation[]
     pickupDate: reservation.pickupStart ? manilaDateKey(reservation.pickupStart) : null,
     pickupTime: formatBackendTimeRange(reservation.pickupStart, reservation.pickupEnd),
     paymentMethod: reservation.paymentMethod,
+    preferredCollectionChannel: reservation.preferredCollectionChannel ?? "COMMISSARY",
     payment: reservation.payment ?? null,
     notes: reservation.staffNotes?.trim() ?? "",
     status: formatBackendStatus(reservation.status),
@@ -764,7 +767,8 @@ function ReservationDetails({
         <div className="flex items-start gap-2">
           <CreditCard className="mt-0.5 size-5 shrink-0 text-primary" aria-hidden="true" />
           <div><dt className="text-xs font-semibold text-[#77817b]">Payment Method</dt>
-          <dd className="mt-1 font-bold text-[#26322b]">{formatBackendPayment(reservation.paymentMethod)}</dd></div>
+          <dd className="mt-1 font-bold text-[#26322b]">{formatBackendPayment(reservation.paymentMethod)}</dd>
+          <dd className="mt-1 text-xs text-[#68746d]">{reservation.paymentMethod === "PAYMONGO_GCASH" ? "Online · Commissary" : `Pay at ${collectionChannelLabel(reservation.preferredCollectionChannel)}`}</dd></div>
         </div>
         <div className="flex items-start gap-2">
           <Tag className="mt-0.5 size-5 shrink-0 text-primary" aria-hidden="true" />

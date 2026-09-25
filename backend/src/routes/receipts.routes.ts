@@ -13,7 +13,7 @@ import { invalidateDashboardAndReportCaches } from "../services/operational-cach
 export const receiptsRoutes = Router();
 
 const voidReceiptSchema = z.object({
-  reason: z.string().trim().max(300).optional()
+  reason: z.string().trim().min(5).max(300)
 });
 
 const receiptCodeSchema = z

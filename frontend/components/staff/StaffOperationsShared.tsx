@@ -20,6 +20,7 @@ import { type ProductSaleMode, type StaffProduct } from "@/lib/staff-api";
 import { resolveShopProductAsset } from "@/lib/shop-assets";
 import { cn } from "@/lib/utils";
 import { paymentMethodLabel } from "@/lib/payment-method";
+import { type CollectionChannel } from "@/lib/collection-channel";
 
 export function mergeUniqueById<T extends { id: string }>(items: T[]) {
   const byId = new Map<string, T>();
@@ -119,6 +120,7 @@ export type StaffReservationRow = {
   quantity: number;
   pickup: string;
   payment: string;
+  preferredCollectionChannel: CollectionChannel;
   onlineGcash: boolean;
   paymentStatus: string;
   paymentConfirmed: boolean;
@@ -309,6 +311,7 @@ export function mapStaffReservation(row: BackendReservation): StaffReservationRo
     quantity,
     pickup: formatStaffPickup(row.pickupStart, row.pickupEnd),
     payment: formatPaymentMethod(row.paymentMethod),
+    preferredCollectionChannel: row.preferredCollectionChannel ?? "COMMISSARY",
     onlineGcash: row.paymentMethod === "PAYMONGO_GCASH",
     paymentStatus: formatOnlinePaymentStatus(row.payment?.status),
     paymentConfirmed: row.paymentMethod !== "PAYMONGO_GCASH" || row.payment?.status === "PAID",

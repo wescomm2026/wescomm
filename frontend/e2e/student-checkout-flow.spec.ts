@@ -128,15 +128,17 @@ test("Reserve Now writes only on final confirmation and recovers from a changed 
   await checkout.getByRole("button", { name: "Next: Payment" }).click();
   expect(reservationCalls).toBe(0);
 
-  checkout = page.getByRole("dialog", { name: "Choose payment method" });
-  await checkout.getByRole("radio", { name: /Pay at Commissary/ }).check();
+  checkout = page.getByRole("dialog", { name: "Payment and collection" });
+  await checkout.getByRole("radio", { name: /Cash at Pickup/ }).check();
+  await checkout.getByRole("radio", { name: /Treasury/ }).check();
   await checkout.getByRole("button", { name: "Back" }).click();
 
   checkout = page.getByRole("dialog", { name: "Item and pickup details" });
   await expect(checkout.getByRole("button", { name: "2026-08-03, available" })).toHaveAttribute("aria-pressed", "true");
   await checkout.getByRole("button", { name: "Next: Payment" }).click();
-  checkout = page.getByRole("dialog", { name: "Choose payment method" });
-  await expect(checkout.getByRole("radio", { name: /Pay at Commissary/ })).toBeChecked();
+  checkout = page.getByRole("dialog", { name: "Payment and collection" });
+  await expect(checkout.getByRole("radio", { name: /Cash at Pickup/ })).toBeChecked();
+  await expect(checkout.getByRole("radio", { name: /Treasury/ })).toBeChecked();
   const availabilityBeforeConfirm = availabilityCalls;
   await checkout.getByRole("checkbox", { name: /I agree to the Terms & Conditions/ }).check();
   await checkout.getByRole("button", { name: "Confirm Reservation" }).click();
@@ -147,6 +149,7 @@ test("Reserve Now writes only on final confirmation and recovers from a changed 
   expect(reservationCalls).toBe(1);
   expect(reservationBody).toMatchObject({
     paymentMethod: "PAY_AT_COMMISSARY",
+    preferredCollectionChannel: "TREASURER",
     pickupDate: "2026-08-03",
     pickupSlotId,
     pickupPolicyVersion: 7,
@@ -154,7 +157,7 @@ test("Reserve Now writes only on final confirmation and recovers from a changed 
   });
 });
 
-test("Pay at Commissary shows saving and saved states before View Reservation navigates", async ({ page }, testInfo) => {
+test("pickup payment shows saving and saved states before View Reservation navigates", async ({ page }, testInfo) => {
   if (testInfo.project.name === "desktop-chromium") await page.emulateMedia({ reducedMotion: "reduce" });
   const reservation = successfulReservation();
 
@@ -184,8 +187,9 @@ test("Pay at Commissary shows saving and saved states before View Reservation na
   let checkout = page.getByRole("dialog", { name: "Item and pickup details" });
   await checkout.getByRole("button", { name: "2026-08-03, available" }).click();
   await checkout.getByRole("button", { name: "Next: Payment" }).click();
-  checkout = page.getByRole("dialog", { name: "Choose payment method" });
-  await checkout.getByRole("radio", { name: /Pay at Commissary/ }).check();
+  checkout = page.getByRole("dialog", { name: "Payment and collection" });
+  await checkout.getByRole("radio", { name: /Cash at Pickup/ }).check();
+  await checkout.getByRole("radio", { name: /Commissary/ }).check();
   await checkout.getByRole("checkbox", { name: /I agree to the Terms & Conditions/ }).check();
   await checkout.getByRole("button", { name: "Confirm Reservation" }).click();
 
@@ -234,7 +238,8 @@ test("cart reservation Done closes the confirmation and stays in the shop", asyn
   await checkout.getByRole("button", { name: "2026-08-03, available" }).click();
   await checkout.getByRole("button", { name: "Next: Payment" }).click();
   checkout = page.getByRole("dialog", { name: "Payment & Review" });
-  await checkout.getByRole("radio", { name: /Pay at Commissary/ }).check();
+  await checkout.getByRole("radio", { name: /Cash at Pickup/ }).check();
+  await checkout.getByRole("radio", { name: /Commissary/ }).check();
   await checkout.getByRole("checkbox", { name: /I agree to the Terms & Conditions/ }).check();
   await checkout.getByRole("button", { name: "Confirm Reservation" }).click();
 

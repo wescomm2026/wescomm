@@ -13,6 +13,7 @@ import {
   PaymentMethodSelector,
   type StudentCheckoutPaymentMethod
 } from "@/components/checkout/PaymentMethodSelector";
+import { CollectionChannelSelector } from "@/components/checkout/CollectionChannelSelector";
 import { useStudentRestriction } from "@/components/restrictions/StudentRestrictionProvider";
 import { PolicyConsentCheckbox } from "@/components/legal/PolicyConsentCheckbox";
 import { ReservationSaveOverlay } from "@/components/checkout/ReservationSaveOverlay";
@@ -32,6 +33,7 @@ import {
   type BackendReservation
 } from "@/lib/api";
 import { reservationCacheKey, upsertCursorItem } from "@/lib/server-state";
+import type { CollectionChannel } from "@/lib/collection-channel";
 import {
   getPaymentIdempotencyKey,
   openTrustedPaymongoCheckout,
@@ -121,6 +123,7 @@ export function StudentCheckoutModal({
   const [pickupSummary, setPickupSummary] = useState<PickupSelectionSummary | null>(null);
   const [pickupRefreshKey, setPickupRefreshKey] = useState(0);
   const [paymentMethod, setPaymentMethod] = useState<StudentCheckoutPaymentMethod | null>(null);
+  const [preferredCollectionChannel, setPreferredCollectionChannel] = useState<CollectionChannel | null>(null);
   const [policyAccepted, setPolicyAccepted] = useState(false);
   const [notes, setNotes] = useState("");
   const [selectedOptions, setSelectedOptions] = useState<Record<string, string>>({});
@@ -152,6 +155,7 @@ export function StudentCheckoutModal({
     setPickupSummary(null);
     setPickupRefreshKey(0);
     setPaymentMethod(null);
+    setPreferredCollectionChannel(null);
     setPolicyAccepted(false);
     setNotes("");
     setSelectedOptions({});
@@ -255,6 +259,11 @@ export function StudentCheckoutModal({
       setError("Please choose how you would like to pay.");
       return;
     }
+    const checkoutCollectionChannel = paymentMethod === "PAYMONGO_GCASH" ? "COMMISSARY" : preferredCollectionChannel;
+    if (!checkoutCollectionChannel) {
+      setError("Please choose where you will pay.");
+      return;
+    }
     if (!policyAccepted) {
       setError("Review and accept the reservation and refund terms before confirming.");
       return;
@@ -275,6 +284,7 @@ export function StudentCheckoutModal({
     const skuId = selectedProductSkuId(product, selectedOptions);
     const payload = {
       paymentMethod,
+      preferredCollectionChannel: checkoutCollectionChannel,
       ...pickupSelection,
       policyAcceptance: currentCheckoutPolicyAcceptance(),
       items: [{ productId: product.id, ...(skuId ? { skuId } : {}), variantSummary, quantity }]
@@ -350,7 +360,7 @@ export function StudentCheckoutModal({
             <header className="shrink-0 border-b px-5 pb-5 pt-6 sm:px-8">
               <p className="text-sm font-extrabold uppercase tracking-wide text-primary">Reserve item</p>
               <h1 ref={stepHeadingRef} id={checkoutDialog.titleId} tabIndex={-1} className="mt-1 pr-12 text-2xl font-extrabold text-foreground outline-none sm:text-3xl" data-dialog-autofocus={savingReservation || savedReservation ? undefined : true}>
-                {checkoutStep === 1 ? "Item and pickup details" : "Choose payment method"}
+                {checkoutStep === 1 ? "Item and pickup details" : "Payment and collection"}
               </h1>
               <CheckoutSteps step={checkoutStep} />
             </header>
@@ -405,6 +415,8 @@ export function StudentCheckoutModal({
                     {notes.trim() ? <p className="mt-3 rounded-lg border px-3 py-2 text-sm text-muted-foreground"><strong className="text-foreground">Note:</strong> {notes.trim()}</p> : null}
                   </section>
                   <PaymentMethodSelector name="payment" value={paymentMethod} onChange={setPaymentMethod} disabled={submitting} legend="How would you like to pay?" />
+                  {paymentMethod && paymentMethod !== "PAYMONGO_GCASH" ? <CollectionChannelSelector name="collection-channel" value={preferredCollectionChannel} onChange={(channel) => { setPreferredCollectionChannel(channel); setError(""); }} disabled={submitting} /> : null}
+                  {paymentMethod === "PAYMONGO_GCASH" ? <p className="rounded-control border bg-surface-subtle px-3 py-2 text-sm text-muted-foreground">Online GCash payments are recorded under the Commissary collection channel.</p> : null}
                   <PolicyConsentCheckbox id="buy-now-policy-consent" checked={policyAccepted} onCheckedChange={(checked) => { setPolicyAccepted(checked); if (checked) setError(""); }} disabled={submitting} context="checkout" />
                   {error ? <p className="rounded-control border border-danger/25 bg-danger/5 px-3 py-2.5 text-sm font-medium text-danger" role="alert">{error}</p> : null}
                   {!user ? <p className="rounded-control border border-warning/25 bg-warning/5 px-3 py-2.5 text-sm text-warning">Log in with your Wesleyan account before confirming.</p> : <p className="text-xs leading-5 text-muted-foreground">Reserving as <strong>{user.email}</strong></p>}
@@ -413,7 +425,7 @@ export function StudentCheckoutModal({
             </div>
 
             <footer className="shrink-0 border-t bg-white p-4 sm:px-8">
-              {checkoutStep === 1 ? <div className="flex flex-col gap-3 sm:flex-row sm:items-center"><div className="sm:mr-auto"><p className="text-xs font-semibold uppercase text-muted-foreground">Total</p><p className="text-xl font-extrabold text-primary">{formatPrice(total)}</p></div><Button type="button" variant="secondary" size="lg" onClick={onClose} disabled={submitting}>Cancel</Button><Button type="button" size="lg" onClick={continueToPayment} disabled={Boolean(user && stepOneBlockingMessage)}>{user ? <>Next: Payment <ChevronRight className="size-4" /></> : "Sign in to continue"}</Button></div> : <div className="mx-auto flex w-full max-w-3xl flex-col gap-3"><Button type="submit" size="lg" className="h-14 w-full rounded-xl text-base font-extrabold" disabled={!paymentMethod || !policyAccepted || isReservationRestricted} loading={submitting}><AssetIcon src={paymentMethod === "PAYMONGO_GCASH" ? "/assets/e-wallet.svg" : "/assets/verified.svg"} className="size-6" />{paymentMethod === "PAYMONGO_GCASH" ? "Continue to GCash" : "Confirm Reservation"}</Button><Button type="button" variant="secondary" size="lg" className="h-14 w-full rounded-xl border-primary font-bold" onClick={() => { setCheckoutStep(1); setError(""); }} disabled={submitting}><ChevronLeft className="size-5" />Back</Button></div>}
+              {checkoutStep === 1 ? <div className="flex flex-col gap-3 sm:flex-row sm:items-center"><div className="sm:mr-auto"><p className="text-xs font-semibold uppercase text-muted-foreground">Total</p><p className="text-xl font-extrabold text-primary">{formatPrice(total)}</p></div><Button type="button" variant="secondary" size="lg" onClick={onClose} disabled={submitting}>Cancel</Button><Button type="button" size="lg" onClick={continueToPayment} disabled={Boolean(user && stepOneBlockingMessage)}>{user ? <>Next: Payment <ChevronRight className="size-4" /></> : "Sign in to continue"}</Button></div> : <div className="mx-auto flex w-full max-w-3xl flex-col gap-3"><Button type="submit" size="lg" className="h-14 w-full rounded-xl text-base font-extrabold" disabled={!paymentMethod || (paymentMethod !== "PAYMONGO_GCASH" && !preferredCollectionChannel) || !policyAccepted || isReservationRestricted} loading={submitting}><AssetIcon src={paymentMethod === "PAYMONGO_GCASH" ? "/assets/e-wallet.svg" : "/assets/verified.svg"} className="size-6" />{paymentMethod === "PAYMONGO_GCASH" ? "Continue to GCash" : "Confirm Reservation"}</Button><Button type="button" variant="secondary" size="lg" className="h-14 w-full rounded-xl border-primary font-bold" onClick={() => { setCheckoutStep(1); setError(""); }} disabled={submitting}><ChevronLeft className="size-5" />Back</Button></div>}
             </footer>
           </form>
           <ReservationSaveOverlay

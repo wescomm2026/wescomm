@@ -19,6 +19,8 @@ reportsRoutes.get(
       from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
       to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
       granularity: z.enum(["AUTO", "DAILY", "MONTHLY"]).optional(),
+      collectionChannel: z.enum(["COMMISSARY", "TREASURER"] as const).optional(),
+      categoryId: z.string().uuid().optional(),
       fresh: z.literal("1").optional()
     }).parse(request.query);
     const { fresh, ...range } = query;

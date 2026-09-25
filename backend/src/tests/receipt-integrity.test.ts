@@ -36,6 +36,16 @@ test("completion creates or repairs its receipt inside the serializable reservat
   assert.match(outbox, /processReceiptCreated/);
 });
 
+test("receipt integrity audit validates the finalized payment instead of the reservation payment intent", () => {
+  const audit = source("scripts/audit-receipt-invariants.mjs");
+
+  assert.match(audit, /LEFT JOIN "payments" payment ON payment\."reservation_id" = reservation\."id"/);
+  assert.match(audit, /receipt\."payment_method" IS DISTINCT FROM payment\."payment_method"/);
+  assert.match(audit, /payment\."amount" IS DISTINCT FROM reservation\."total_amount"/);
+  assert.match(audit, /completedWithoutPayment/);
+  assert.doesNotMatch(audit, /receipt\."payment_method" IS DISTINCT FROM reservation\."payment_method"/);
+});
+
 test("the unsafe generic manual receipt endpoint and client-owned receipt fields are removed", () => {
   const route = source("src/routes/receipts.routes.ts");
   const service = source("src/services/receipt.service.ts");

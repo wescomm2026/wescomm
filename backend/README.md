@@ -247,11 +247,13 @@ npm run receipts:integrity:audit
 ```
 
 The audit exits non-zero whenever it finds any issue. Before deployment, the
-`duplicateReservationReceipts` and `inconsistentReservationReceipts` arrays
-must both be empty; resolve those financial records with an auditable business
-decision. `completedWithoutReceipt` may remain for the guarded post-migration
-repair described below. The migration refuses to continue while duplicate or
-inconsistent linked receipts remain. Rerun the audit to confirm those two
+`duplicateReservationReceipts`, `completedWithoutPayment`, and
+`inconsistentReservationReceipts` arrays must be empty; resolve those financial
+records with an auditable business decision. The current audit compares the
+receipt with the finalized `payments` record, not with the student's reservation
+payment intent. `completedWithoutReceipt` may remain only for the guarded
+post-migration repair described below. The migration refuses to continue while
+duplicate or inconsistent linked receipts remain. Rerun the audit to confirm the
 blocking arrays are empty, then use the standard `prisma:migrate:deploy` and
 `prisma:migrate:verify` commands. The following
 `20260830010000_add_distributed_rate_limits` migration creates the server-only,

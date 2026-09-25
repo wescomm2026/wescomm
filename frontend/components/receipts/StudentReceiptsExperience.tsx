@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { getReceiptFromApi, getReceiptPageFromApi, type BackendReceipt, type BackendReceiptStatus } from "@/lib/api";
 import { paymentMethodLabel } from "@/lib/payment-method";
+import { collectionChannelLabel } from "@/lib/collection-channel";
 import {
   mergeCursorPage,
   readServerState,
@@ -34,6 +35,8 @@ type Receipt = {
   time: string;
   status: string;
   paymentMethod: string;
+  collectionChannel: string | null;
+  officialReceiptNumber: string | null;
   pickupSchedule: string | null;
   reservationReference: string | null;
   transactionReference: string;
@@ -116,6 +119,8 @@ function mapBackendReceipt(receipt: BackendReceipt): Receipt {
     time: issued.time,
     status: formatReceiptStatus(receipt.status),
     paymentMethod: paymentMethodLabel(receipt.paymentMethod),
+    collectionChannel: receipt.collectionChannel ? collectionChannelLabel(receipt.collectionChannel) : null,
+    officialReceiptNumber: receipt.officialReceiptNumber ?? null,
     pickupSchedule: receipt.reservation?.pickupStart
       ? formatReceiptDateTime(receipt.reservation.pickupStart).date + (receipt.reservation.pickupEnd
         ? `, ${formatReceiptDateTime(receipt.reservation.pickupStart).time}–${formatReceiptDateTime(receipt.reservation.pickupEnd).time}`
@@ -256,7 +261,9 @@ async function downloadReceiptPng(receipt: Receipt) {
     ["Date", receipt.date],
     ["Time", receipt.time],
     ["Student", receipt.student],
-    ["Payment", receipt.paymentMethod],
+    ["Payment method", receipt.paymentMethod],
+    ...(receipt.collectionChannel ? [["Collected by", receipt.collectionChannel]] : []),
+    ...(receipt.officialReceiptNumber ? [["Treasury OR No.", receipt.officialReceiptNumber]] : []),
     ...(receipt.pickupSchedule ? [["Pickup", receipt.pickupSchedule]] : [])
   ];
   details.forEach(([label, value]) => {
@@ -437,8 +444,20 @@ function ReceiptPaper({
         <dd className="text-right font-semibold">{receipt.time}</dd>
         <dt className="text-[#68746d]">Student</dt>
         <dd className="text-right font-semibold">{receipt.student}</dd>
-        <dt className="text-[#68746d]">Payment</dt>
+        <dt className="text-[#68746d]">Payment method</dt>
         <dd className="text-right font-semibold">{receipt.paymentMethod}</dd>
+        {receipt.collectionChannel ? (
+          <>
+            <dt className="text-[#68746d]">Collected by</dt>
+            <dd className="text-right font-semibold">{receipt.collectionChannel}</dd>
+          </>
+        ) : null}
+        {receipt.officialReceiptNumber ? (
+          <>
+            <dt className="text-[#68746d]">Treasury OR No.</dt>
+            <dd className="break-all text-right font-mono text-xs font-bold">{receipt.officialReceiptNumber}</dd>
+          </>
+        ) : null}
         {receipt.pickupSchedule ? (
           <>
             <dt className="text-[#68746d]">Pickup</dt>

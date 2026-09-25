@@ -1,5 +1,7 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
+
+const releaseMigrationFloor = "20260831000000_add_closure_qr_students_support_lifecycle";
 
 const releaseMigrations = [
   {
@@ -91,6 +93,28 @@ const releaseMigrations = [
       /SET "audience_scope" = 'SPECIFIC_DEPARTMENTS'/,
       /system\.cache-revision\.products/
     ]
+  },
+  {
+    directory: "20260924000000_add_fifo_costing_and_collection_channels",
+    required: [
+      /CREATE TYPE "collection_channel" AS ENUM \('COMMISSARY', 'TREASURER'\)/,
+      /CREATE TABLE IF NOT EXISTS "inventory_batches"/,
+      /CREATE TABLE IF NOT EXISTS "order_item_cost_allocations"/,
+      /CREATE TABLE IF NOT EXISTS "payments"/,
+      /payments_treasurer_or_required/,
+      /"inventory_batches" ENABLE ROW LEVEL SECURITY/,
+      /"order_item_cost_allocations" ENABLE ROW LEVEL SECURITY/,
+      /"payments" ENABLE ROW LEVEL SECURITY/
+    ]
+  },
+  {
+    directory: "20260924010000_add_reservation_collection_preference",
+    requiresExplicitTransaction: false,
+    nonTransactionalReason: "Already applied as an idempotent ALTER TABLE plus COMMENT; preserve its Prisma checksum.",
+    required: [
+      /ADD COLUMN IF NOT EXISTS "preferred_collection_channel" "collection_channel" NOT NULL DEFAULT 'COMMISSARY'/,
+      /final audited channel remains payments\.collection_channel/
+    ]
   }
 ];
 
@@ -101,6 +125,19 @@ const forbiddenDestructiveStatements = [
 ];
 
 const failures = [];
+const migrationsRoot = path.resolve(process.cwd(), "prisma", "migrations");
+const configuredReleaseMigrations = new Set(releaseMigrations.map((migration) => migration.directory));
+const discoveredReleaseMigrations = readdirSync(migrationsRoot, { withFileTypes: true })
+  .filter((entry) => entry.isDirectory() && entry.name >= releaseMigrationFloor)
+  .map((entry) => entry.name)
+  .sort();
+
+for (const directory of discoveredReleaseMigrations) {
+  if (!configuredReleaseMigrations.has(directory)) {
+    failures.push(`${directory}: release migration is not registered in verify-release-migrations.mjs.`);
+  }
+}
+
 for (const migration of releaseMigrations) {
   const migrationPath = path.resolve(
     process.cwd(),
@@ -118,8 +155,12 @@ for (const migration of releaseMigrations) {
   }
 
   const normalized = sql.trim();
-  if (!/^BEGIN;/i.test(normalized) || !/COMMIT;$/i.test(normalized)) {
+  const requiresExplicitTransaction = migration.requiresExplicitTransaction !== false;
+  if (requiresExplicitTransaction && (!/^BEGIN;/i.test(normalized) || !/COMMIT;$/i.test(normalized))) {
     failures.push(`${migration.directory}: release migration must have explicit BEGIN/COMMIT boundaries.`);
+  }
+  if (!requiresExplicitTransaction && !migration.nonTransactionalReason?.trim()) {
+    failures.push(`${migration.directory}: a reviewed non-transactional migration requires a documented reason.`);
   }
   for (const pattern of migration.required) {
     if (!pattern.test(sql)) failures.push(`${migration.directory}: missing required invariant ${pattern}.`);
@@ -139,8 +180,15 @@ console.log(JSON.stringify({
   status: "passed",
   migrations: releaseMigrations.map((migration) => migration.directory),
   guarantees: [
-    "explicit-transaction-boundaries",
+    "all-release-migrations-registered",
+    "explicit-transaction-boundaries-or-reviewed-checksum-preserving-exception",
     "required-release-invariants",
     "no-destructive-ddl-or-data-deletion"
-  ]
+  ],
+  reviewedNonTransactionalMigrations: releaseMigrations
+    .filter((migration) => migration.requiresExplicitTransaction === false)
+    .map((migration) => ({
+      directory: migration.directory,
+      reason: migration.nonTransactionalReason
+    }))
 }, null, 2));

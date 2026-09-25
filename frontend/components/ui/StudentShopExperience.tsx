@@ -87,7 +87,8 @@ function ProductCard({
   wishlistPending,
   wishlistDisabled,
   highlighted,
-  departmentRecommended
+  departmentRecommended,
+  eagerImage
 }: {
   product: Product;
   onBuyNow: (product: Product) => void;
@@ -99,6 +100,7 @@ function ProductCard({
   wishlistDisabled: boolean;
   highlighted: boolean;
   departmentRecommended: boolean;
+  eagerImage: boolean;
 }) {
   const disabled = isProductUnavailable(product);
   const clothOnly = isUniformClothOnly(product);
@@ -130,6 +132,8 @@ function ProductCard({
             alt={product.name}
             fill
             sizes="(max-width: 639px) 44vw, (max-width: 1279px) 30vw, 22vw"
+            loading={eagerImage ? "eager" : "lazy"}
+            fetchPriority={eagerImage ? "high" : "auto"}
             className="object-contain p-3 transition-transform duration-200 group-hover:scale-[1.03] sm:p-5"
           />
           <span
@@ -833,7 +837,7 @@ export function StudentShopExperience() {
           </div>
         ) : !error && filteredProducts.length ? (
           <div data-testid="shop-product-grid" className="grid grid-cols-2 gap-2 sm:gap-4 xl:grid-cols-3">
-            {filteredProducts.map((product) => (
+            {filteredProducts.map((product, index) => (
               <ProductCard
                 key={product.id || product.name}
                 product={product}
@@ -846,6 +850,7 @@ export function StudentShopExperience() {
                 wishlistDisabled={wishlistControlsDisabled}
                 highlighted={Boolean(product.id && product.id === highlightedProductId)}
                 departmentRecommended={isDepartmentRecommendation(product, user?.departmentId)}
+                eagerImage={index < 2}
               />
             ))}
           </div>

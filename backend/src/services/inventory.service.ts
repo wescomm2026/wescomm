@@ -16,6 +16,7 @@ import {
   validateVariantGroupTotals
 } from "../domain/variant-stock.js";
 import { availabilityStatus, isProductOnSale } from "../domain/product-pricing.js";
+import { adjustInventoryBatchesInTransaction, createInventoryBatchInTransaction, requireRestockCost } from "./inventory-cost.service.js";
 
 type RawCategory = {
   id: string;
@@ -66,6 +67,9 @@ export type ProductCreateInput = CategoryInput & {
   lowStockThreshold?: number;
   variants?: ProductVariantInput[];
   notes?: string;
+  initialUnitCost?: number;
+  receivedAt?: Date;
+  supplierNote?: string | null;
   audienceScope?: "ALL_STUDENTS" | "SPECIFIC_DEPARTMENTS";
   departmentIds?: string[];
 };
@@ -441,6 +445,16 @@ export async function createProduct(input: ProductCreateInput, performedById: st
   await assertUniqueActiveProductName(input.name);
 
   const stock = input.stock ?? 0;
+  if (stock > 0) {
+    if (input.initialUnitCost === undefined || !input.receivedAt) {
+      throw new HttpError(
+        400,
+        "Opening stock needs a unit acquisition cost and date received. You can also create the product at zero stock, then use Add stock.",
+        "OPENING_BATCH_COST_REQUIRED"
+      );
+    }
+    requireRestockCost({ unitCost: input.initialUnitCost, receivedAt: input.receivedAt, supplierNote: input.supplierNote });
+  }
   const lowStockThreshold = input.lowStockThreshold ?? 10;
   const status = input.status ?? deriveProductStatus(stock, lowStockThreshold);
   const saleMode = input.saleMode ?? "SIMPLE";
@@ -586,6 +600,18 @@ export async function createProduct(input: ProductCreateInput, performedById: st
             select: { id: true }
           });
 
+          if (variant.stock > 0) {
+            await createInventoryBatchInTransaction(transaction, {
+              productId: product.id,
+              skuId: sku.id,
+              quantity: variant.stock,
+              unitCost: input.initialUnitCost!,
+              receivedAt: input.receivedAt!,
+              supplierNote: input.supplierNote,
+              createdById: performedById
+            });
+          }
+
           await transaction.inventoryMovement.create({
             data: {
               productId: product.id,
@@ -611,6 +637,17 @@ export async function createProduct(input: ProductCreateInput, performedById: st
           select: { id: true }
         });
       }
+    }
+
+    if (stock > 0 && !(saleMode === "OPTIONS" && product.variants.length > 0)) {
+      await createInventoryBatchInTransaction(transaction, {
+        productId: product.id,
+        quantity: stock,
+        unitCost: input.initialUnitCost!,
+        receivedAt: input.receivedAt!,
+        supplierNote: input.supplierNote,
+        createdById: performedById
+      });
     }
     return product;
   }, INVENTORY_WRITE_TRANSACTION_OPTIONS).catch((error) => {
@@ -1047,8 +1084,27 @@ export async function restockProduct(input: {
   variantQuantities?: ProductVariantQuantityInput[];
   performedById: string;
   notes?: string;
+  unitCost?: number;
+  sellingPrice?: number;
+  receivedAt?: Date;
+  supplierNote?: string;
 }) {
   const mode = input.mode ?? "add";
+  if (mode === "add") {
+    requireRestockCost({
+      unitCost: input.unitCost ?? Number.NaN,
+      receivedAt: input.receivedAt ?? new Date(Number.NaN),
+      supplierNote: input.supplierNote
+    });
+  }
+  if (input.sellingPrice !== undefined && (
+    !Number.isFinite(input.sellingPrice)
+    || input.sellingPrice < 0
+    || input.sellingPrice > 10_000_000
+    || Number(input.sellingPrice.toFixed(2)) !== input.sellingPrice
+  )) {
+    throw new HttpError(400, "Selling price must be from PHP 0.00 to PHP 10,000,000.00 with up to two decimal places.", "INVALID_SELLING_PRICE");
+  }
   if (!Number.isSafeInteger(input.quantity) || input.quantity < 0 || input.quantity > 10_000_000) {
     throw new HttpError(400, "Stock quantity must be a whole number from 0 to 10,000,000.", "INVALID_STOCK_QUANTITY");
   }
@@ -1070,6 +1126,7 @@ export async function restockProduct(input: {
           name: true,
           status: true,
           stock: true,
+          price: true,
           lowStockThreshold: true,
           isActive: true,
           saleMode: true,
@@ -1177,11 +1234,14 @@ export async function restockProduct(input: {
       );
 
       const status = deriveProductStatus(newStock, product.lowStockThreshold, product.status);
+      const previousSellingPrice = Number(product.price);
+      const nextSellingPrice = input.sellingPrice ?? previousSellingPrice;
       const updated = await transaction.product.update({
         where: { id: input.productId },
         data: {
           stock: newStock,
           status,
+          price: nextSellingPrice,
           updatedAt: new Date()
         },
         select: {
@@ -1210,6 +1270,23 @@ export async function restockProduct(input: {
           select: { id: true }
         });
         inventoryMovementId = movement.id;
+        if (mode === "add") {
+          await createInventoryBatchInTransaction(transaction, {
+            productId: input.productId,
+            quantity: difference,
+            unitCost: input.unitCost!,
+            receivedAt: input.receivedAt!,
+            supplierNote: input.supplierNote ?? input.notes,
+            createdById: input.performedById
+          });
+        } else {
+          await adjustInventoryBatchesInTransaction(transaction, {
+            productId: input.productId,
+            difference,
+            createdById: input.performedById,
+            note: input.notes
+          });
+        }
       }
 
       const variantChanges = stockVariants.flatMap((variant) => {
@@ -1260,7 +1337,7 @@ export async function restockProduct(input: {
         }
       );
 
-      return { product, updated, difference, variantChanges };
+      return { product, updated, difference, variantChanges, previousSellingPrice, nextSellingPrice };
     }, INVENTORY_WRITE_TRANSACTION_OPTIONS)
     .catch((error) => {
       throw mapInventoryTransactionError(error);
@@ -1303,6 +1380,11 @@ export async function restockProduct(input: {
       previousStock: transactionResult.product.stock,
       newStock: updatedProduct.stock,
       difference: transactionResult.difference,
+      unitCost: mode === "add" ? input.unitCost : null,
+      previousSellingPrice: transactionResult.previousSellingPrice,
+      newSellingPrice: transactionResult.nextSellingPrice,
+      sellingPriceChanged: transactionResult.previousSellingPrice !== transactionResult.nextSellingPrice,
+      receivedAt: mode === "add" ? input.receivedAt?.toISOString() : null,
       variantChanges: transactionResult.variantChanges.map((variant) => ({
         variantId: variant.id,
         optionName: variant.optionName,

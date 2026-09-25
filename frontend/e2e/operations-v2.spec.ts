@@ -339,6 +339,22 @@ function reportSummary(preset: BackendReportSummary["range"]["preset"]): Backend
       label: preset === "LAST_MONTH" ? "Last Month" : preset === "ALL_TIME" ? "All Time" : "Last 30 Days"
     },
     totalSales: 1500,
+    cogs: 900,
+    grossProfit: 600,
+    commissaryCollection: 600,
+    treasurerCollection: 900,
+    collectionChannelBreakdown: {
+      commissary: { amount: 600, payments: 2 },
+      treasurer: { amount: 900, payments: 3 }
+    },
+    commissaryPaymentBreakdown: {
+      cash: { amount: 300, payments: 1 },
+      gcash: { amount: 300, payments: 1 },
+      other: { amount: 0, payments: 0 }
+    },
+    treasurerCollections: [],
+    uncostedQuantity: 0,
+    unverifiedInventoryQuantity: 0,
     onlineGcashRevenue: 900,
     payAtCommissaryRevenue: 600,
     paymentMethodBreakdown: {
@@ -357,7 +373,20 @@ function reportSummary(preset: BackendReportSummary["range"]["preset"]): Backend
     totalReceipts: 5,
     activeConversations: 2,
     salesTrend: [{ key: "2026-07-01", day: "Jul 1", sales: 1500, receipts: 5 }],
-    categorySales: [{ category: "Uniforms", amount: 1500 }],
+    categorySales: [
+      { category: "Books", amount: 450, quantity: 3, sales: 450, cogs: 270, grossProfit: 180 },
+      { category: "Other Items", amount: 100, quantity: 1, sales: 100, cogs: 60, grossProfit: 40 },
+      { category: "Uniforms", amount: 1500, quantity: 5, sales: 1500, cogs: 900, grossProfit: 600 },
+      { category: "PE Uniforms", amount: 900, quantity: 4, sales: 900, cogs: 540, grossProfit: 360 },
+      { category: "Supplies", amount: 250, quantity: 2, sales: 250, cogs: 150, grossProfit: 100 }
+    ],
+    itemSales: [
+      { productId: "product-1", item: "PE Shirt", category: "Uniforms", quantity: 5, sales: 1500, cogs: 900, grossProfit: 600 },
+      { productId: "product-2", item: "Jogging Pants", category: "PE Uniforms", quantity: 4, sales: 900, cogs: 540, grossProfit: 360 },
+      { productId: "product-3", item: "Book A", category: "Books", quantity: 3, sales: 450, cogs: 270, grossProfit: 180 },
+      { productId: "product-4", item: "Notebook", category: "Supplies", quantity: 2, sales: 250, cogs: 150, grossProfit: 100 },
+      { productId: "product-5", item: "ID Lace", category: "Other Items", quantity: 1, sales: 100, cogs: 60, grossProfit: 40 }
+    ],
     reservationStatusDistribution: [{ status: "COMPLETED", label: "Completed", value: 5, percent: 100 }],
     inventoryInsights: []
   };
@@ -391,6 +420,13 @@ test("historical reports request the selected range and render payment-method re
   await expect(page.getByText("PHP 900.00", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("PHP 600.00", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("Range: Last Month. Exports use this exact verified-receipt range.")).toBeVisible();
+  const categorySection = page.locator("section").filter({ has: page.getByRole("heading", { name: "Sales by category" }) }).first();
+  await expect(categorySection.locator("details")).toHaveCount(3);
+  await expect(categorySection.locator("details").first()).toContainText("Uniforms");
+  await categorySection.getByRole("button", { name: "Show all categories (5)" }).click();
+  await expect(categorySection.locator("details")).toHaveCount(5);
+  await categorySection.getByRole("button", { name: "Show top 3" }).click();
+  await expect(categorySection.locator("details")).toHaveCount(3);
   expect(unhandled).toEqual([]);
 });
 

@@ -2,6 +2,7 @@ import type { CartProduct } from "@/components/cart/StudentCartProvider";
 import { resolveShopProductAsset } from "@/lib/shop-assets";
 import { isUniformClothOnly, sortProductOptionValues } from "@/lib/product-display";
 import { apiErrorMessage } from "@/lib/user-facing-error";
+import type { CollectionChannel } from "@/lib/collection-channel";
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "/api/backend";
 export const COOKIE_SESSION_TOKEN = "cookie-session";
@@ -101,7 +102,7 @@ export type BackendFaq = {
 };
 
 export type BackendReservationStatus = "PENDING" | "CONFIRMED" | "READY_FOR_PICKUP" | "COMPLETED" | "CANCELLED" | "NO_SHOW";
-export type BackendPaymentMethod = "PAY_AT_COMMISSARY" | "E_WALLET_AT_PICKUP" | "PAYMONGO_GCASH" | "CASH" | "GCASH";
+export type BackendPaymentMethod = "PAY_AT_COMMISSARY" | "E_WALLET_AT_PICKUP" | "PAYMONGO_GCASH" | "CASH" | "GCASH" | "OTHER";
 export type BackendPaymentStatus =
   | "INITIALIZING"
   | "AWAITING_PAYMENT"
@@ -185,6 +186,7 @@ export type BackendReservation = {
   pickupPolicyVersion: number | null;
   pickupSlot: BackendPickupTimeSlot | null;
   paymentMethod: BackendPaymentMethod;
+  preferredCollectionChannel?: CollectionChannel;
   totalAmount: string | number;
   staffNotes?: string | null;
   payment?: BackendPaymentSummary | null;
@@ -223,6 +225,7 @@ export type BackendReservation = {
 
 export type CreateReservationPayload = {
   paymentMethod: BackendPaymentMethod;
+  preferredCollectionChannel: CollectionChannel;
   pickupDate: string;
   pickupSlotId: string;
   pickupPolicyVersion: number;
@@ -245,6 +248,8 @@ export type BackendReceipt = {
   reservationId: string | null;
   totalAmount: string | number;
   paymentMethod: BackendPaymentMethod;
+  collectionChannel?: CollectionChannel | null;
+  officialReceiptNumber?: string | null;
   status: BackendReceiptStatus;
   publicVerificationUrl: string | null;
   receiptImageUrl?: string | null;
@@ -804,6 +809,29 @@ export type BackendReportSummary = {
     label: string;
   };
   totalSales: number;
+  cogs: number;
+  grossProfit: number;
+  commissaryCollection: number;
+  treasurerCollection: number;
+  collectionChannelBreakdown: {
+    commissary: { amount: number; payments: number };
+    treasurer: { amount: number; payments: number };
+  };
+  commissaryPaymentBreakdown: {
+    cash: { amount: number; payments: number };
+    gcash: { amount: number; payments: number };
+    other: { amount: number; payments: number };
+  };
+  treasurerCollections: Array<{
+    paymentId: string;
+    paidAt: string;
+    officialReceiptNumber: string;
+    orderReference: string;
+    items: string;
+    amount: number;
+  }>;
+  uncostedQuantity: number;
+  unverifiedInventoryQuantity: number;
   onlineGcashRevenue: number;
   payAtCommissaryRevenue: number;
   paymentMethodBreakdown: {
@@ -834,6 +862,19 @@ export type BackendReportSummary = {
   categorySales: Array<{
     category: string;
     amount: number;
+    quantity: number;
+    sales: number;
+    cogs: number;
+    grossProfit: number;
+  }>;
+  itemSales: Array<{
+    productId: string;
+    item: string;
+    category: string;
+    quantity: number;
+    sales: number;
+    cogs: number;
+    grossProfit: number;
   }>;
   reservationStatusDistribution: Array<{
     status: string;
@@ -909,6 +950,8 @@ export type ReportRangeOptions = {
   from?: string;
   to?: string;
   granularity?: "AUTO" | "DAILY" | "MONTHLY";
+  collectionChannel?: "COMMISSARY" | "TREASURER";
+  categoryId?: string;
 };
 
 export type BackendDashboardProduct = {
@@ -1418,11 +1461,16 @@ export async function cancelMyReservationFromApi(token: string, reservationId: s
 export async function updateReservationStatusFromApi(
   token: string,
   reservationId: string,
-  status: BackendReservationStatus
+  status: BackendReservationStatus,
+  settlement?: {
+    paymentMethod: "CASH" | "GCASH" | "OTHER";
+    collectionChannel: "COMMISSARY" | "TREASURER";
+    officialReceiptNumber?: string;
+  }
 ) {
   const data = await authApiFetch<{ reservation: BackendReservation; receipt: BackendReceipt | null }>(`/reservations/${reservationId}/status`, token, {
     method: "PATCH",
-    body: JSON.stringify({ status })
+    body: JSON.stringify({ status, settlement })
   });
   return data;
 }
@@ -1869,6 +1917,8 @@ function reportQuery(options: ReportRangeOptions = {}, fresh = false) {
   if (options.from) params.set("from", options.from);
   if (options.to) params.set("to", options.to);
   if (options.granularity) params.set("granularity", options.granularity);
+  if (options.collectionChannel) params.set("collectionChannel", options.collectionChannel);
+  if (options.categoryId) params.set("categoryId", options.categoryId);
   if (fresh) params.set("fresh", "1");
   return params.size ? `?${params.toString()}` : "";
 }

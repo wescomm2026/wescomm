@@ -17,6 +17,8 @@ test("receipt QR references are opaque, encrypted at rest, hashed for lookup, an
   assert.match(receipts, /encrypted: encryptSensitiveText\(token, RECEIPT_TOKEN_CONTEXT\)/);
   assert.match(receipts, /hash: hashHighEntropyLookup\(token, RECEIPT_TOKEN_CONTEXT\)/);
   assert.match(receiptDtoMapper, /publicVerificationUrl: publicVerificationUrl/);
+  assert.match(receiptDtoMapper, /collectionChannel: receipt\.reservation\?\.collectionPayment\?\.collectionChannel/);
+  assert.match(receiptDtoMapper, /officialReceiptNumber: receipt\.reservation\?\.collectionPayment\?\.officialReceiptNumber/);
   assert.doesNotMatch(receiptDtoMapper, /verificationHash:/);
   assert.doesNotMatch(receiptDtoMapper, /publicVerificationTokenHash:/);
   assert.doesNotMatch(receiptDtoMapper, /publicVerificationTokenEncrypted:/);
@@ -45,11 +47,34 @@ test("permanent product deletion is archived-only, dependency guarded, audited, 
   assert.match(outbox, /processProductImageDelete/);
 });
 
-test("revenue reports count verified receipts only and apply the selected range to trends and categories", () => {
+test("financial reports count completed paid sales with verified receipts, FIFO cost, and separated collection channels", () => {
   const reports = source("src/services/report.service.ts");
-  assert.match(reports, /WHERE status = 'VERIFIED'/);
-  assert.match(reports, /COALESCE\(verified_at, issued_at\)/);
-  assert.match(reports, /ONLINE_GCASH/);
-  assert.match(reports, /AT_COMMISSARY/);
+  assert.match(reports, /receipt\.status = 'VERIFIED'/);
+  assert.match(reports, /payment\.status = 'PAID'/);
+  assert.match(reports, /order_item_cost_allocations/);
+  assert.match(reports, /COMMISSARY/);
+  assert.match(reports, /TREASURER/);
   assert.match(reports, /range\.toExclusive/);
+});
+
+test("release migration preflight covers FIFO and collection-preference migrations without rewriting applied checksums", () => {
+  const verifier = source("scripts/verify-release-migrations.mjs");
+
+  assert.match(verifier, /20260924000000_add_fifo_costing_and_collection_channels/);
+  assert.match(verifier, /20260924010000_add_reservation_collection_preference/);
+  assert.match(verifier, /release migration is not registered/);
+  assert.match(verifier, /requiresExplicitTransaction: false/);
+  assert.match(verifier, /preserve its Prisma checksum/);
+});
+
+test("restocking can atomically update the product-wide selling price without changing historical order snapshots", () => {
+  const routes = source("src/routes/staff-products.routes.ts");
+  const inventory = source("src/services/inventory.service.ts");
+  const skuInventory = source("src/services/sku-inventory.service.ts");
+  const reservations = source("src/services/reservation.service.ts");
+
+  assert.match(routes, /sellingPrice: acquisitionCostSchema\.optional\(\)/);
+  assert.match(inventory, /price: nextSellingPrice/);
+  assert.match(skuInventory, /data: \{ stock: totalStock, status, price: nextSellingPrice/);
+  assert.match(reservations, /unitPrice:/);
 });

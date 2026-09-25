@@ -14,6 +14,7 @@ import {
   PaymentMethodSelector,
   type StudentCheckoutPaymentMethod
 } from "@/components/checkout/PaymentMethodSelector";
+import { CollectionChannelSelector } from "@/components/checkout/CollectionChannelSelector";
 import { useStudentRestriction } from "@/components/restrictions/StudentRestrictionProvider";
 import { PolicyConsentCheckbox } from "@/components/legal/PolicyConsentCheckbox";
 import { ReservationSaveOverlay } from "@/components/checkout/ReservationSaveOverlay";
@@ -33,6 +34,7 @@ import {
   type BackendReservation
 } from "@/lib/api";
 import { reservationCacheKey, upsertCursorItem } from "@/lib/server-state";
+import type { CollectionChannel } from "@/lib/collection-channel";
 import {
   getPaymentIdempotencyKey,
   openTrustedPaymongoCheckout,
@@ -96,6 +98,7 @@ export function StudentCartDrawer() {
   const [pickupSummary, setPickupSummary] = useState<PickupSelectionSummary | null>(null);
   const [pickupRefreshKey, setPickupRefreshKey] = useState(0);
   const [paymentMethod, setPaymentMethod] = useState<StudentCheckoutPaymentMethod | null>(null);
+  const [preferredCollectionChannel, setPreferredCollectionChannel] = useState<CollectionChannel | null>(null);
   const [policyAccepted, setPolicyAccepted] = useState(false);
   const [notes, setNotes] = useState("");
   const [error, setError] = useState("");
@@ -125,6 +128,7 @@ export function StudentCartDrawer() {
       setPickupSummary(null);
       setPickupRefreshKey(0);
       setPaymentMethod(null);
+      setPreferredCollectionChannel(null);
       setPolicyAccepted(false);
       setNotes("");
       setError("");
@@ -243,6 +247,11 @@ export function StudentCartDrawer() {
       setError("Please choose how you would like to pay.");
       return;
     }
+    const checkoutCollectionChannel = paymentMethod === "PAYMONGO_GCASH" ? "COMMISSARY" : preferredCollectionChannel;
+    if (!checkoutCollectionChannel) {
+      setError("Please choose where you will pay.");
+      return;
+    }
     if (!policyAccepted) {
       setError("Review and accept the reservation and refund terms before confirming.");
       return;
@@ -258,6 +267,7 @@ export function StudentCartDrawer() {
 
     const payload = {
       paymentMethod,
+      preferredCollectionChannel: checkoutCollectionChannel,
       ...pickupSelection,
       policyAcceptance: currentCheckoutPolicyAcceptance(),
       items: items.map((item) => {
@@ -434,6 +444,8 @@ export function StudentCartDrawer() {
                     {notes.trim() ? <p className="mt-3 border-t pt-3 text-sm text-muted-foreground"><strong className="text-foreground">Note:</strong> {notes.trim()}</p> : null}
                   </section>
                   <PaymentMethodSelector name="cart-payment" value={paymentMethod} onChange={setPaymentMethod} disabled={submitting} legend="How would you like to pay?" />
+                  {paymentMethod && paymentMethod !== "PAYMONGO_GCASH" ? <CollectionChannelSelector name="cart-collection-channel" value={preferredCollectionChannel} onChange={(channel) => { setPreferredCollectionChannel(channel); setError(""); }} disabled={submitting} /> : null}
+                  {paymentMethod === "PAYMONGO_GCASH" ? <p className="rounded-control border bg-surface-subtle px-3 py-2 text-sm text-muted-foreground">Online GCash payments are recorded under the Commissary collection channel.</p> : null}
                   <PolicyConsentCheckbox id="cart-policy-consent" checked={policyAccepted} onCheckedChange={(checked) => { setPolicyAccepted(checked); if (checked) setError(""); }} disabled={submitting} context="checkout" />
                 </>
               )}
@@ -445,7 +457,7 @@ export function StudentCartDrawer() {
               {checkoutStep === 1 ? (
                 <><Button type="button" variant="secondary" size="lg" onClick={() => setCheckout(false)} disabled={submitting}>Back to Cart</Button><Button type="button" size="lg" onClick={continueToPayment} disabled={!pickupSelection || isReservationRestricted || hasUnavailableItems}>Next: Payment <ChevronRight className="size-4" /></Button></>
               ) : (
-                <><Button type="submit" size="lg" className="h-14 w-full rounded-xl font-extrabold" disabled={!paymentMethod || !policyAccepted || isReservationRestricted || hasUnavailableItems} loading={submitting}><AssetIcon src={paymentMethod === "PAYMONGO_GCASH" ? "/assets/e-wallet.svg" : "/assets/verified.svg"} className="size-6" />{paymentMethod === "PAYMONGO_GCASH" ? "Continue to GCash" : "Confirm Reservation"}</Button><Button type="button" variant="secondary" size="lg" className="h-14 w-full rounded-xl border-primary" onClick={() => { setCheckoutStep(1); setError(""); }} disabled={submitting}><ChevronLeft className="size-5" />Back</Button></>
+                <><Button type="submit" size="lg" className="h-14 w-full rounded-xl font-extrabold" disabled={!paymentMethod || (paymentMethod !== "PAYMONGO_GCASH" && !preferredCollectionChannel) || !policyAccepted || isReservationRestricted || hasUnavailableItems} loading={submitting}><AssetIcon src={paymentMethod === "PAYMONGO_GCASH" ? "/assets/e-wallet.svg" : "/assets/verified.svg"} className="size-6" />{paymentMethod === "PAYMONGO_GCASH" ? "Continue to GCash" : "Confirm Reservation"}</Button><Button type="button" variant="secondary" size="lg" className="h-14 w-full rounded-xl border-primary" onClick={() => { setCheckoutStep(1); setError(""); }} disabled={submitting}><ChevronLeft className="size-5" />Back</Button></>
               )}
             </footer>
           </form>

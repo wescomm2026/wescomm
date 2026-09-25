@@ -74,6 +74,9 @@ export type StaffProductPayload = {
     lowStockThreshold?: number;
   }>;
   notes?: string;
+  initialUnitCost?: number;
+  receivedAt?: string;
+  supplierNote?: string;
   audienceScope?: "ALL_STUDENTS" | "SPECIFIC_DEPARTMENTS";
   departmentIds?: string[];
 };
@@ -333,6 +336,10 @@ export async function restockStaffProduct(
     quantity: number;
     variantQuantities?: Array<{ variantId: string; quantity: number }>;
     notes?: string;
+    unitCost?: number;
+    sellingPrice?: number;
+    receivedAt?: string;
+    supplierNote?: string;
   }
 ) {
   const data = await staffFetch<{ product: StaffProduct }>(`/staff/products/${productId}/restock`, token, {
@@ -382,6 +389,10 @@ export async function restockStaffProductSkus(
     mode: "add" | "set";
     quantities: Array<{ skuId: string; quantity: number }>;
     notes?: string;
+    unitCost?: number;
+    sellingPrice?: number;
+    receivedAt?: string;
+    supplierNote?: string;
   }
 ) {
   const data = await staffFetch<{ product: StaffProduct }>(`/staff/products/${productId}/skus/restock`, token, {

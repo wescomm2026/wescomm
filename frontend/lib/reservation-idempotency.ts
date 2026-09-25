@@ -22,6 +22,7 @@ function createRequestKey() {
 function requestFingerprint(payload: CreateReservationPayload) {
   const canonicalPayload = JSON.stringify({
     paymentMethod: payload.paymentMethod,
+    preferredCollectionChannel: payload.preferredCollectionChannel,
     pickupDate: payload.pickupDate,
     pickupSlotId: payload.pickupSlotId,
     pickupPolicyVersion: payload.pickupPolicyVersion,

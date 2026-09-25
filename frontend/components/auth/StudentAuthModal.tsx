@@ -407,7 +407,7 @@ export function StudentAuthModal({ open, onClose }: { open: boolean; onClose: ()
                         setEmailName(stripSchoolEmailDomain(event.target.value, allowedEmailDomain));
                       }}
                       disabled={Boolean(loading)}
-                      className="h-full min-w-0 flex-1 bg-transparent px-3 text-sm outline-none disabled:opacity-60 sm:text-base"
+                      className="h-full min-w-0 flex-1 bg-transparent px-3 text-sm outline-none focus-visible:outline-none disabled:opacity-60 sm:text-base"
                       placeholder="student.name"
                     />
                     <span className="flex h-full shrink-0 items-center border-l border-[#dce6dc] bg-[#f0faf3] px-2 text-[10px] font-extrabold text-primary sm:px-3 sm:text-sm">
@@ -483,7 +483,7 @@ export function StudentAuthModal({ open, onClose }: { open: boolean; onClose: ()
                       aria-describedby="student-auth-code-help"
                       aria-invalid={Boolean(error)}
                       aria-errormessage={error ? "student-auth-error" : undefined}
-                      className="h-full w-full bg-transparent px-10 text-center text-xl font-extrabold tracking-[0.22em] text-[#101820] outline-none disabled:opacity-60"
+                      className="h-full w-full bg-transparent px-10 text-center text-xl font-extrabold tracking-[0.22em] text-[#101820] outline-none focus-visible:outline-none disabled:opacity-60"
                       placeholder="000000"
                     />
                   </div>
@@ -534,7 +534,7 @@ export function StudentAuthModal({ open, onClose }: { open: boolean; onClose: ()
                       value={password}
                       onChange={(event) => setPassword(event.target.value)}
                       disabled={Boolean(loading)}
-                      className="h-full min-w-0 flex-1 bg-transparent text-sm outline-none disabled:opacity-60"
+                      className="h-full min-w-0 flex-1 bg-transparent text-sm outline-none focus-visible:outline-none disabled:opacity-60"
                       placeholder="Enter password"
                     />
                   </div>

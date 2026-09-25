@@ -9,8 +9,11 @@ export type ProductStatus = (typeof PRODUCT_STATUSES)[number];
 export const PRODUCT_SALE_MODES = ["SIMPLE", "CLOTH_ONLY", "OPTIONS"] as const;
 export type ProductSaleMode = (typeof PRODUCT_SALE_MODES)[number];
 
-export const PAYMENT_METHODS = ["PAY_AT_COMMISSARY", "E_WALLET_AT_PICKUP", "CASH", "GCASH", "PAYMONGO_GCASH"] as const;
+export const PAYMENT_METHODS = ["PAY_AT_COMMISSARY", "E_WALLET_AT_PICKUP", "CASH", "GCASH", "PAYMONGO_GCASH", "OTHER"] as const;
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
+
+export const COLLECTION_CHANNELS = ["COMMISSARY", "TREASURER"] as const;
+export type CollectionChannel = (typeof COLLECTION_CHANNELS)[number];
 
 export const ONLINE_PAYMENT_STATUSES = [
   "INITIALIZING",
