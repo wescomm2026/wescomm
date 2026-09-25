@@ -4,19 +4,22 @@ import { userFacingErrorMessage } from "@/lib/user-facing-error";
 
 import Image from "next/image";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { createPortal } from "react-dom";
-import { Check, ChevronLeft, ChevronRight, Minus, Plus, X } from "lucide-react";
+import { CalendarDays, Check, ChevronLeft, ChevronRight, Minus, Plus, X } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import {
   PaymentMethodSelector,
   type StudentCheckoutPaymentMethod
 } from "@/components/checkout/PaymentMethodSelector";
+import { CollectionChannelSelector } from "@/components/checkout/CollectionChannelSelector";
 import { useStudentRestriction } from "@/components/restrictions/StudentRestrictionProvider";
 import { PolicyConsentCheckbox } from "@/components/legal/PolicyConsentCheckbox";
-import { ActionLoadingOverlay } from "@/components/ui/ActionLoadingOverlay";
+import { ReservationSaveOverlay } from "@/components/checkout/ReservationSaveOverlay";
 import { AssetIcon } from "@/components/ui/AssetIcon";
 import { Button } from "@/components/ui/button";
+import { shopProductCardImage } from "@/lib/shop-assets";
 import {
   PickupSchedulePicker,
   type PickupSelection,
@@ -24,13 +27,13 @@ import {
 } from "@/components/pickup/PickupSchedulePicker";
 import { useAccessibleDialog } from "@/components/ui/useAccessibleDialog";
 import {
-  BackendApiError,
   createGcashCheckoutFromApi,
   createReservationFromApi,
   requestProductsRefresh,
   type BackendReservation
 } from "@/lib/api";
 import { reservationCacheKey, upsertCursorItem } from "@/lib/server-state";
+import type { CollectionChannel } from "@/lib/collection-channel";
 import {
   getPaymentIdempotencyKey,
   openTrustedPaymongoCheckout,
@@ -54,6 +57,7 @@ import {
 } from "@/lib/reservation-idempotency";
 import { cn } from "@/lib/utils";
 import { currentCheckoutPolicyAcceptance } from "@/lib/policy-consent";
+import { isPickupRecoveryError, pickupRecoveryMessage } from "@/lib/pickup-errors";
 
 export type CheckoutProduct = {
   id?: string;
@@ -72,13 +76,6 @@ export type CheckoutProduct = {
   }>;
 };
 
-const PICKUP_RECOVERY_CODES = new Set([
-  "PICKUP_POLICY_CHANGED",
-  "PICKUP_DATE_CLOSED",
-  "PICKUP_SLOT_UNAVAILABLE",
-  "PICKUP_SLOT_FULL"
-]);
-
 function parsePrice(price: string) {
   return Number(price.replace(/[^0-9.]/g, ""));
 }
@@ -93,14 +90,14 @@ function formatSelections(options: Record<string, string>) {
 
 function CheckoutSteps({ step }: { step: 1 | 2 }) {
   return (
-    <ol className="mt-4 flex max-w-md items-center text-xs font-bold sm:text-sm" aria-label="Reservation checkout progress">
-      <li className="flex items-center gap-2 text-primary" aria-current={step === 1 ? "step" : undefined}>
-        <span className={cn("grid size-7 place-items-center rounded-full", step === 1 ? "bg-primary text-primary-foreground" : "bg-primary/10 text-primary")}>{step === 2 ? <Check className="size-4" /> : "1"}</span>
+    <ol className="mt-5 flex w-full max-w-3xl items-center text-xs font-extrabold sm:text-base" aria-label="Reservation checkout progress">
+      <li className="flex items-center gap-2 text-primary sm:gap-3" aria-current={step === 1 ? "step" : undefined}>
+        <span className={cn("grid size-9 shrink-0 place-items-center rounded-full sm:size-10", step === 1 ? "bg-primary text-primary-foreground" : "bg-primary/10 text-primary")}>{step === 2 ? <Check className="size-5" /> : "1"}</span>
         <span>Item &amp; Pickup</span>
       </li>
-      <li className={cn("mx-3 h-px flex-1", step === 2 ? "bg-primary" : "bg-border-strong")} aria-hidden="true" />
-      <li className={cn("flex items-center gap-2", step === 2 ? "text-primary" : "text-muted-foreground")} aria-current={step === 2 ? "step" : undefined}>
-        <span className={cn("grid size-7 place-items-center rounded-full", step === 2 ? "bg-primary text-primary-foreground" : "bg-muted")}>2</span>
+      <li className={cn("mx-3 h-0.5 flex-1 sm:mx-5", step === 2 ? "bg-primary" : "bg-border-strong")} aria-hidden="true" />
+      <li className={cn("flex items-center gap-2 sm:gap-3", step === 2 ? "text-primary" : "text-muted-foreground")} aria-current={step === 2 ? "step" : undefined}>
+        <span className={cn("grid size-9 shrink-0 place-items-center rounded-full text-base sm:size-10", step === 2 ? "bg-primary text-primary-foreground" : "bg-muted")}>2</span>
         <span>Payment</span>
       </li>
     </ol>
@@ -116,6 +113,7 @@ export function StudentCheckoutModal({
   onSwitchProduct?: (product: CheckoutProduct) => void;
   onClose: () => void;
 }) {
+  const router = useRouter();
   const { user, openAuth } = useStudentAuth();
   const { summary: restrictionSummary, isReservationRestricted } = useStudentRestriction();
   const [mounted, setMounted] = useState(false);
@@ -125,20 +123,22 @@ export function StudentCheckoutModal({
   const [pickupSummary, setPickupSummary] = useState<PickupSelectionSummary | null>(null);
   const [pickupRefreshKey, setPickupRefreshKey] = useState(0);
   const [paymentMethod, setPaymentMethod] = useState<StudentCheckoutPaymentMethod | null>(null);
+  const [preferredCollectionChannel, setPreferredCollectionChannel] = useState<CollectionChannel | null>(null);
   const [policyAccepted, setPolicyAccepted] = useState(false);
   const [notes, setNotes] = useState("");
   const [selectedOptions, setSelectedOptions] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
-  const [reference, setReference] = useState("");
   const [gcashRecovery, setGcashRecovery] = useState<{
     reservationId: string;
     referenceCode: string;
     message: string;
   } | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [savedReservation, setSavedReservation] = useState<Pick<BackendReservation, "id" | "referenceCode"> | null>(null);
   const submittingRef = useRef(false);
   const stepHeadingRef = useRef<HTMLHeadingElement | null>(null);
   const pendingRequestRef = useRef<PendingReservationRequest | null>(null);
+  const productId = product?.id;
 
   useEffect(() => setMounted(true), []);
   useEffect(() => { submittingRef.current = submitting; }, [submitting]);
@@ -148,28 +148,29 @@ export function StudentCheckoutModal({
   });
 
   useEffect(() => {
-    if (!product) return;
+    if (!productId) return;
     setCheckoutStep(1);
     setQuantity(1);
     setPickupSelection(null);
     setPickupSummary(null);
     setPickupRefreshKey(0);
     setPaymentMethod(null);
+    setPreferredCollectionChannel(null);
     setPolicyAccepted(false);
     setNotes("");
     setSelectedOptions({});
     setError("");
-    setReference("");
     setGcashRecovery(null);
     setSubmitting(false);
+    setSavedReservation(null);
     pendingRequestRef.current = null;
-  }, [product]);
+  }, [productId]);
 
   useEffect(() => {
-    if (!mounted || reference || gcashRecovery) return;
+    if (!mounted || gcashRecovery) return;
     const frame = window.requestAnimationFrame(() => stepHeadingRef.current?.focus({ preventScroll: true }));
     return () => window.cancelAnimationFrame(frame);
-  }, [checkoutStep, gcashRecovery, mounted, reference]);
+  }, [checkoutStep, gcashRecovery, mounted]);
 
   const unitPrice = product ? parsePrice(product.price) : 0;
   const stockCount = product ? productStockCount(product) : 0;
@@ -235,6 +236,7 @@ export function StudentCheckoutModal({
 
   const confirmReservation = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (submittingRef.current || savedReservation) return;
     setError("");
     if (checkoutStep !== 2) {
       continueToPayment();
@@ -257,6 +259,11 @@ export function StudentCheckoutModal({
       setError("Please choose how you would like to pay.");
       return;
     }
+    const checkoutCollectionChannel = paymentMethod === "PAYMONGO_GCASH" ? "COMMISSARY" : preferredCollectionChannel;
+    if (!checkoutCollectionChannel) {
+      setError("Please choose where you will pay.");
+      return;
+    }
     if (!policyAccepted) {
       setError("Review and accept the reservation and refund terms before confirming.");
       return;
@@ -277,6 +284,7 @@ export function StudentCheckoutModal({
     const skuId = selectedProductSkuId(product, selectedOptions);
     const payload = {
       paymentMethod,
+      preferredCollectionChannel: checkoutCollectionChannel,
       ...pickupSelection,
       policyAcceptance: currentCheckoutPolicyAcceptance(),
       items: [{ productId: product.id, ...(skuId ? { skuId } : {}), variantSummary, quantity }]
@@ -284,6 +292,7 @@ export function StudentCheckoutModal({
     const requestIdentity = getReservationRequestIdentity(payload, pendingRequestRef.current, user.id);
     pendingRequestRef.current = requestIdentity;
 
+    submittingRef.current = true;
     setSubmitting(true);
     try {
       const reservation = await createReservationFromApi(user.accessToken, payload, requestIdentity.key);
@@ -299,32 +308,41 @@ export function StudentCheckoutModal({
           setGcashRecovery({ reservationId: reservation.id, referenceCode: reservation.referenceCode, message: userFacingErrorMessage(paymentError, "Unable to open GCash payment.") });
         }
       } else {
-        setReference(reservation.referenceCode);
+        setSavedReservation({ id: reservation.id, referenceCode: reservation.referenceCode });
       }
     } catch (reservationError) {
-      if (reservationError instanceof BackendApiError && reservationError.code === "RESERVATION_ACCESS_SUSPENDED") {
+      if (reservationError instanceof Error && "code" in reservationError && reservationError.code === "RESERVATION_ACCESS_SUSPENDED") {
         window.dispatchEvent(new Event("wescomm:restriction-refresh"));
       }
-      if (reservationError instanceof BackendApiError && reservationError.code && PICKUP_RECOVERY_CODES.has(reservationError.code)) {
+      if (isPickupRecoveryError(reservationError)) {
         setCheckoutStep(1);
         setPickupSelection(null);
         setPickupSummary(null);
         setPickupRefreshKey((current) => current + 1);
-        setError("Pickup availability changed. Please choose another date and time.");
+        setError(pickupRecoveryMessage(reservationError));
       } else {
         setError(userFacingErrorMessage(reservationError, "Unable to submit reservation."));
       }
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   };
 
   if (!mounted || !product) return null;
 
+  const savingReservation = submitting && !gcashRecovery && !savedReservation;
+  const saveHeadingId = `${checkoutDialog.titleId}-save`;
+  const viewSavedReservation = () => {
+    if (!savedReservation) return;
+    onClose();
+    router.push(`/student/reservations#reservation-${encodeURIComponent(savedReservation.id)}`);
+  };
+
   return createPortal(
     <div className="fixed inset-0 z-[9000] grid place-items-center overflow-y-auto bg-foreground/55 p-0 backdrop-blur-sm sm:p-6" role="presentation" onMouseDown={(event) => { if (!submitting && event.target === event.currentTarget) onClose(); }}>
-      <section ref={checkoutDialog.dialogRef} {...checkoutDialog.dialogProps} className="relative flex h-[100svh] w-full flex-col overflow-hidden border bg-white shadow-overlay outline-none sm:h-auto sm:max-h-[calc(100svh-48px)] sm:max-w-5xl sm:rounded-feature">
-        <Button type="button" variant="secondary" size="icon" onClick={onClose} disabled={submitting} aria-label="Close checkout" className="absolute right-4 top-4 z-20"><X className="size-5" /></Button>
+      <section ref={checkoutDialog.dialogRef} {...checkoutDialog.dialogProps} aria-labelledby={savingReservation || savedReservation ? saveHeadingId : checkoutDialog.titleId} className="relative flex h-[100svh] w-full flex-col overflow-hidden border bg-white shadow-overlay outline-none sm:h-auto sm:max-h-[calc(100svh-48px)] sm:max-w-5xl sm:rounded-feature">
+        <Button type="button" variant="secondary" size="icon" onClick={onClose} disabled={submitting} aria-label="Close checkout" className="absolute right-4 top-4 z-20 size-11 rounded-xl"><X className="size-6" /></Button>
 
         {gcashRecovery ? (
           <div className="flex min-h-[560px] flex-col items-center justify-center overflow-y-auto px-6 py-16 text-center">
@@ -336,22 +354,13 @@ export function StudentCheckoutModal({
             {error ? <p className="mt-4 max-w-xl rounded-control border border-danger/25 bg-danger/5 px-4 py-3 text-sm font-semibold text-danger" role="alert">{error}</p> : null}
             <div className="mt-8 flex w-full max-w-md flex-col gap-3 sm:flex-row"><Link href="/student/reservations" className="flex-1" onClick={onClose}><Button variant="secondary" size="lg" className="w-full">View Reservation</Button></Link><Button size="lg" className="flex-1" onClick={() => void continueGcashPayment()} loading={submitting}><AssetIcon src="/assets/e-wallet.svg" className="size-6" />Continue Payment</Button></div>
           </div>
-        ) : reference ? (
-          <div className="flex min-h-[560px] flex-col items-center justify-center overflow-y-auto px-6 py-16 text-center">
-            <span className="grid size-20 place-items-center rounded-full bg-primary/10 text-primary"><AssetIcon src="/assets/confirmed.svg" className="size-14" /></span>
-            <p className="mt-6 text-sm font-bold uppercase text-primary">Reservation submitted</p>
-            <h1 id={checkoutDialog.titleId} className="mt-2 text-3xl font-extrabold text-foreground sm:text-4xl">Your item is awaiting confirmation</h1>
-            <p className="mt-3 max-w-xl text-sm leading-6 text-muted-foreground">Commissary staff will review the stock and pickup schedule. Payment will be collected using your selected method.</p>
-            <div className="mt-7 rounded-surface border border-primary/20 bg-primary/5 px-7 py-5"><p className="text-xs font-bold uppercase text-muted-foreground">Reservation reference</p><p className="mt-1 text-2xl font-extrabold text-primary">{reference}</p></div>
-            <div className="mt-8 flex w-full max-w-md flex-col gap-3 sm:flex-row"><Button variant="secondary" size="lg" className="flex-1" onClick={onClose}><ChevronLeft className="size-4" />Continue Shopping</Button><Link href="/student/reservations" className="flex-1" onClick={onClose}><Button size="lg" className="w-full"><AssetIcon src="/assets/my-reservations.svg" className="size-6" />My Reservations</Button></Link></div>
-          </div>
         ) : (
-          <form className="relative flex min-h-0 flex-1 flex-col" onSubmit={confirmReservation}>
-            <ActionLoadingOverlay active={submitting} title="Submitting your reservation" detail="We are checking stock and saving your pickup schedule." />
-            <header className="shrink-0 border-b px-5 pb-4 pt-5 sm:px-8">
-              <p className="text-xs font-extrabold uppercase tracking-wide text-primary">Reserve item</p>
-              <h1 ref={stepHeadingRef} id={checkoutDialog.titleId} tabIndex={-1} className="mt-1 pr-12 text-2xl font-extrabold text-foreground outline-none sm:text-3xl" data-dialog-autofocus>
-                {checkoutStep === 1 ? "Item and pickup details" : "Choose payment method"}
+          <>
+          <form className="relative flex min-h-0 flex-1 flex-col" onSubmit={confirmReservation} inert={savingReservation || Boolean(savedReservation)}>
+            <header className="shrink-0 border-b px-5 pb-5 pt-6 sm:px-8">
+              <p className="text-sm font-extrabold uppercase tracking-wide text-primary">Reserve item</p>
+              <h1 ref={stepHeadingRef} id={checkoutDialog.titleId} tabIndex={-1} className="mt-1 pr-12 text-2xl font-extrabold text-foreground outline-none sm:text-3xl" data-dialog-autofocus={savingReservation || savedReservation ? undefined : true}>
+                {checkoutStep === 1 ? "Item and pickup details" : "Payment and collection"}
               </h1>
               <CheckoutSteps step={checkoutStep} />
             </header>
@@ -360,7 +369,7 @@ export function StudentCheckoutModal({
               {checkoutStep === 1 ? (
                 <div className="space-y-6 p-5 sm:p-8">
                   <section className="grid gap-4 rounded-surface border bg-surface-subtle p-4 sm:grid-cols-[112px_1fr]">
-                    <div className="relative h-28 overflow-hidden rounded-control bg-white"><Image src={product.image} alt={product.name} fill sizes="112px" className="object-contain p-3" /></div>
+                    <div className="relative h-28 overflow-hidden rounded-control bg-white"><Image src={shopProductCardImage(product.image)} alt={product.name} fill sizes="112px" className="object-contain p-3" /></div>
                     <div className="min-w-0"><span className="inline-flex rounded-full bg-primary/10 px-3 py-1 text-xs font-bold text-primary">{product.status}</span><h2 className="mt-2 text-xl font-extrabold text-foreground">{product.name}</h2><p className="mt-1 text-sm text-muted-foreground">{product.detail}</p><div className="mt-2 flex flex-wrap items-center gap-2"><p className="text-xl font-extrabold text-primary">{product.price}</p>{product.oldPrice ? <p className="text-sm text-muted-foreground line-through">{product.oldPrice}</p> : null}<span className="text-xs text-muted-foreground">· {stockCount} available</span></div></div>
                   </section>
 
@@ -378,17 +387,55 @@ export function StudentCheckoutModal({
                   {restrictionSummary?.activeRestriction ? <p className="rounded-control border border-danger/25 bg-danger/5 px-3 py-2.5 text-sm leading-6 text-danger" role="alert"><strong>Reservation access is paused.</strong> {restrictionSummary.activeRestriction.reason}</p> : null}
                 </div>
               ) : (
-                <div className="grid gap-6 p-5 sm:p-8 lg:grid-cols-[1fr_0.9fr]">
-                  <section><h2 className="text-lg font-extrabold text-foreground">Reservation summary</h2><div className="mt-4 rounded-surface border bg-surface-subtle p-4"><div className="flex gap-3"><div className="relative size-20 shrink-0 overflow-hidden rounded-control bg-white"><Image src={product.image} alt="" fill sizes="80px" className="object-contain p-2" /></div><div className="min-w-0"><p className="font-extrabold text-foreground">{product.name}</p>{Object.keys(selectedOptions).length ? <p className="mt-1 text-sm text-muted-foreground">{formatSelections(selectedOptions)}</p> : null}<p className="mt-1 text-sm text-muted-foreground">Quantity: {quantity}</p></div></div><dl className="mt-4 grid gap-3 border-t pt-4 text-sm"><div className="flex justify-between gap-4"><dt className="text-muted-foreground">Pickup</dt><dd className="max-w-[65%] text-right font-bold text-foreground">{pickupSummary ? `${pickupSummary.dateLabel} · ${pickupSummary.slotLabel}` : pickupSelection?.pickupDate}</dd></div><div className="flex items-end justify-between gap-4 border-t pt-3"><dt className="font-bold text-foreground">Total</dt><dd className="text-2xl font-extrabold text-primary">{formatPrice(total)}</dd></div></dl></div>{notes.trim() ? <p className="mt-3 rounded-control border px-3 py-2 text-sm text-muted-foreground"><strong className="text-foreground">Note:</strong> {notes.trim()}</p> : null}</section>
-                  <section className="space-y-4"><PaymentMethodSelector name="payment" value={paymentMethod} onChange={setPaymentMethod} disabled={submitting} legend="How would you like to pay?" /><PolicyConsentCheckbox id="buy-now-policy-consent" checked={policyAccepted} onCheckedChange={(checked) => { setPolicyAccepted(checked); if (checked) setError(""); }} disabled={submitting} context="checkout" />{error ? <p className="rounded-control border border-danger/25 bg-danger/5 px-3 py-2.5 text-sm font-medium text-danger" role="alert">{error}</p> : null}{!user ? <p className="rounded-control border border-warning/25 bg-warning/5 px-3 py-2.5 text-sm text-warning">Log in with your Wesleyan account before confirming.</p> : <p className="text-xs leading-5 text-muted-foreground">Reserving as <strong>{user.email}</strong></p>}</section>
+                <div className="mx-auto w-full max-w-3xl space-y-6 p-5 sm:p-8">
+                  <section className="rounded-2xl border bg-white p-4 shadow-soft sm:p-6">
+                    <h2 className="text-xl font-extrabold text-foreground">Reservation summary</h2>
+                    <div className="mt-4 rounded-xl border border-[#cfe2d1] bg-[#f5faf5] p-4">
+                      <div className="flex items-center gap-4">
+                        <div className="relative size-20 shrink-0 overflow-hidden rounded-lg bg-white sm:size-24">
+                          <Image src={shopProductCardImage(product.image)} alt="" fill sizes="(max-width: 639px) 80px, 96px" className="object-contain p-2" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-base font-extrabold text-foreground sm:text-lg">{product.name}</p>
+                          {Object.keys(selectedOptions).length ? <p className="mt-1 text-xs text-muted-foreground sm:text-sm">{formatSelections(selectedOptions)}</p> : null}
+                          <p className="mt-1 text-sm text-muted-foreground">Quantity: {quantity}</p>
+                        </div>
+                      </div>
+                      <dl className="mt-4 grid gap-4 border-t border-[#cfe2d1] pt-4 text-sm">
+                        <div className="flex items-start justify-between gap-4">
+                          <dt className="flex items-center gap-2 text-muted-foreground"><CalendarDays className="size-5 shrink-0 text-primary" aria-hidden="true" />Pickup</dt>
+                          <dd className="max-w-[65%] text-right font-bold text-foreground">{pickupSummary ? <>{pickupSummary.dateLabel}<span className="block">{pickupSummary.slotLabel}</span></> : pickupSelection?.pickupDate}</dd>
+                        </div>
+                        <div className="flex items-end justify-between gap-4 border-t border-[#cfe2d1] pt-4">
+                          <dt className="font-extrabold text-foreground">Total</dt>
+                          <dd className="text-2xl font-extrabold text-primary sm:text-3xl">{formatPrice(total)}</dd>
+                        </div>
+                      </dl>
+                    </div>
+                    {notes.trim() ? <p className="mt-3 rounded-lg border px-3 py-2 text-sm text-muted-foreground"><strong className="text-foreground">Note:</strong> {notes.trim()}</p> : null}
+                  </section>
+                  <PaymentMethodSelector name="payment" value={paymentMethod} onChange={setPaymentMethod} disabled={submitting} legend="How would you like to pay?" />
+                  {paymentMethod && paymentMethod !== "PAYMONGO_GCASH" ? <CollectionChannelSelector name="collection-channel" value={preferredCollectionChannel} onChange={(channel) => { setPreferredCollectionChannel(channel); setError(""); }} disabled={submitting} /> : null}
+                  {paymentMethod === "PAYMONGO_GCASH" ? <p className="rounded-control border bg-surface-subtle px-3 py-2 text-sm text-muted-foreground">Online GCash payments are recorded under the Commissary collection channel.</p> : null}
+                  <PolicyConsentCheckbox id="buy-now-policy-consent" checked={policyAccepted} onCheckedChange={(checked) => { setPolicyAccepted(checked); if (checked) setError(""); }} disabled={submitting} context="checkout" />
+                  {error ? <p className="rounded-control border border-danger/25 bg-danger/5 px-3 py-2.5 text-sm font-medium text-danger" role="alert">{error}</p> : null}
+                  {!user ? <p className="rounded-control border border-warning/25 bg-warning/5 px-3 py-2.5 text-sm text-warning">Log in with your Wesleyan account before confirming.</p> : <p className="text-xs leading-5 text-muted-foreground">Reserving as <strong>{user.email}</strong></p>}
                 </div>
               )}
             </div>
 
             <footer className="shrink-0 border-t bg-white p-4 sm:px-8">
-              {checkoutStep === 1 ? <div className="flex flex-col gap-3 sm:flex-row sm:items-center"><div className="sm:mr-auto"><p className="text-xs font-semibold uppercase text-muted-foreground">Total</p><p className="text-xl font-extrabold text-primary">{formatPrice(total)}</p></div><Button type="button" variant="secondary" size="lg" onClick={onClose} disabled={submitting}>Cancel</Button><Button type="button" size="lg" onClick={continueToPayment} disabled={Boolean(user && stepOneBlockingMessage)}>{user ? <>Next: Payment <ChevronRight className="size-4" /></> : "Sign in to continue"}</Button></div> : <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end"><Button type="button" variant="secondary" size="lg" onClick={() => { setCheckoutStep(1); setError(""); }} disabled={submitting}><ChevronLeft className="size-4" />Back</Button><Button type="submit" size="lg" disabled={!paymentMethod || !policyAccepted || isReservationRestricted} loading={submitting}><AssetIcon src={paymentMethod === "PAYMONGO_GCASH" ? "/assets/e-wallet.svg" : "/assets/verified.svg"} className="size-6" />{paymentMethod === "PAYMONGO_GCASH" ? "Continue to GCash" : "Confirm Reservation"}</Button></div>}
+              {checkoutStep === 1 ? <div className="flex flex-col gap-3 sm:flex-row sm:items-center"><div className="sm:mr-auto"><p className="text-xs font-semibold uppercase text-muted-foreground">Total</p><p className="text-xl font-extrabold text-primary">{formatPrice(total)}</p></div><Button type="button" variant="secondary" size="lg" onClick={onClose} disabled={submitting}>Cancel</Button><Button type="button" size="lg" onClick={continueToPayment} disabled={Boolean(user && stepOneBlockingMessage)}>{user ? <>Next: Payment <ChevronRight className="size-4" /></> : "Sign in to continue"}</Button></div> : <div className="mx-auto flex w-full max-w-3xl flex-col gap-3"><Button type="submit" size="lg" className="h-14 w-full rounded-xl text-base font-extrabold" disabled={!paymentMethod || (paymentMethod !== "PAYMONGO_GCASH" && !preferredCollectionChannel) || !policyAccepted || isReservationRestricted} loading={submitting}><AssetIcon src={paymentMethod === "PAYMONGO_GCASH" ? "/assets/e-wallet.svg" : "/assets/verified.svg"} className="size-6" />{paymentMethod === "PAYMONGO_GCASH" ? "Continue to GCash" : "Confirm Reservation"}</Button><Button type="button" variant="secondary" size="lg" className="h-14 w-full rounded-xl border-primary font-bold" onClick={() => { setCheckoutStep(1); setError(""); }} disabled={submitting}><ChevronLeft className="size-5" />Back</Button></div>}
             </footer>
           </form>
+          <ReservationSaveOverlay
+            headingId={saveHeadingId}
+            saving={savingReservation}
+            reservation={savedReservation}
+            onView={viewSavedReservation}
+            onDone={onClose}
+          />
+          </>
         )}
       </section>
     </div>,

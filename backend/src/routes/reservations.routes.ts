@@ -21,6 +21,7 @@ export const reservationsRoutes = Router();
 
 const createReservationSchema = z.object({
     paymentMethod: z.enum(PAYMENT_METHODS).default("PAY_AT_COMMISSARY"),
+    preferredCollectionChannel: z.enum(["COMMISSARY", "TREASURER"] as const).default("COMMISSARY"),
     pickupDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Pickup date must use YYYY-MM-DD."),
     pickupSlotId: z.string().uuid(),
     pickupPolicyVersion: z.number().int().positive(),
@@ -42,7 +43,12 @@ const createReservationSchema = z.object({
   });
 
 const updateStatusSchema = z.object({
-  status: z.enum(RESERVATION_STATUSES)
+  status: z.enum(RESERVATION_STATUSES),
+  settlement: z.object({
+    paymentMethod: z.enum(["CASH", "GCASH", "OTHER"] as const),
+    collectionChannel: z.enum(["COMMISSARY", "TREASURER"] as const),
+    officialReceiptNumber: z.string().trim().max(100).optional()
+  }).optional()
 });
 const rescheduleSchema = z.object({
   expectedScheduleRevision: z.number().int().positive(),
@@ -148,7 +154,13 @@ reservationsRoutes.patch(
   asyncHandler(async (request: AuthenticatedRequest, response) => {
     const input = updateStatusSchema.parse(request.body);
     const result = await measureRequestPhase(response, "reservation_status", () =>
-      updateReservationStatus(reservationIdSchema.parse(request.params.id), input.status, request.auth!.id)
+      updateReservationStatus(
+        reservationIdSchema.parse(request.params.id),
+        input.status,
+        request.auth!.id,
+        request.auth!.role,
+        input.settlement
+      )
     );
     await invalidateOperationalReadCaches();
     scheduleOutboxProcessing();

@@ -10,6 +10,10 @@ test("PostgreSQL keeps completion and its reservation receipt atomic and idempot
   const staffId = randomUUID();
   const reservationIds = [randomUUID(), randomUUID()];
   const referenceCodes = [`RCT-ATOMIC-${suffix}`, `RCT-RACE-${suffix}`];
+  const settlement = {
+    paymentMethod: "CASH" as const,
+    collectionChannel: "COMMISSARY" as const
+  };
 
   try {
     await prisma.profile.createMany({
@@ -29,19 +33,21 @@ test("PostgreSQL keeps completion and its reservation receipt atomic and idempot
       }))
     });
 
-    await assert.rejects(updateReservationStatus(reservationIds[0], "COMPLETED", randomUUID()));
+    await assert.rejects(updateReservationStatus(reservationIds[0], "COMPLETED", randomUUID(), undefined, settlement));
     assert.equal(
       (await prisma.reservation.findUniqueOrThrow({ where: { id: reservationIds[0] }, select: { status: true } })).status,
       "READY_FOR_PICKUP"
     );
     assert.equal(await prisma.receipt.count({ where: { reservationId: reservationIds[0] } }), 0);
+    assert.equal(await prisma.payment.count({ where: { reservationId: reservationIds[0] } }), 0);
 
-    const completed = await updateReservationStatus(reservationIds[0], "COMPLETED", staffId);
+    const completed = await updateReservationStatus(reservationIds[0], "COMPLETED", staffId, undefined, settlement);
     assert.equal(completed.reservation.status, "COMPLETED");
     assert.equal(completed.receipt?.studentId, studentId);
     assert.equal(completed.receipt?.totalAmount, "321.45");
     assert.equal(completed.receipt?.paymentMethod, "CASH");
-    assert.equal(completed.receipt?.status, "PENDING");
+    assert.equal(completed.receipt?.status, "VERIFIED");
+    assert.equal(await prisma.payment.count({ where: { reservationId: reservationIds[0] } }), 1);
 
     const replay = await updateReservationStatus(reservationIds[0], "COMPLETED", staffId);
     assert.equal(replay.receipt?.id, completed.receipt?.id);
@@ -54,8 +60,8 @@ test("PostgreSQL keeps completion and its reservation receipt atomic and idempot
     assert.equal(await prisma.receipt.count({ where: { reservationId: reservationIds[0] } }), 1);
 
     const concurrent = await Promise.allSettled([
-      updateReservationStatus(reservationIds[1], "COMPLETED", staffId),
-      updateReservationStatus(reservationIds[1], "COMPLETED", staffId)
+      updateReservationStatus(reservationIds[1], "COMPLETED", staffId, undefined, settlement),
+      updateReservationStatus(reservationIds[1], "COMPLETED", staffId, undefined, settlement)
     ]);
     assert.ok(concurrent.some((result) => result.status === "fulfilled"));
     assert.equal(
@@ -63,6 +69,7 @@ test("PostgreSQL keeps completion and its reservation receipt atomic and idempot
       "COMPLETED"
     );
     assert.equal(await prisma.receipt.count({ where: { reservationId: reservationIds[1] } }), 1);
+    assert.equal(await prisma.payment.count({ where: { reservationId: reservationIds[1] } }), 1);
   } finally {
     const receipts = await prisma.receipt.findMany({
       where: { reservationId: { in: reservationIds } },
@@ -72,6 +79,7 @@ test("PostgreSQL keeps completion and its reservation receipt atomic and idempot
     await prisma.realtimeEvent.deleteMany({ where: { entityId: { in: entityIds } } });
     await prisma.outboxEvent.deleteMany({ where: { entityId: { in: entityIds } } });
     await prisma.receipt.deleteMany({ where: { reservationId: { in: reservationIds } } });
+    await prisma.payment.deleteMany({ where: { reservationId: { in: reservationIds } } });
     await prisma.reservation.deleteMany({ where: { id: { in: reservationIds } } });
     await prisma.profile.deleteMany({ where: { id: { in: [studentId, staffId] } } });
   }

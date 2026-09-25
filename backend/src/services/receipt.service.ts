@@ -151,11 +151,20 @@ const receiptRecordSelect = Prisma.validator<Prisma.ReceiptSelect>()({
       status: true,
       pickupStart: true,
       pickupEnd: true,
+      collectionPayment: {
+        select: {
+          collectionChannel: true,
+          officialReceiptNumber: true
+        }
+      },
       items: {
         orderBy: { createdAt: "asc" },
         select: {
           id: true,
           productId: true,
+          productNameSnapshot: true,
+          skuCodeSnapshot: true,
+          optionSnapshot: true,
           variantSummary: true,
           quantity: true,
           unitPrice: true,
@@ -177,6 +186,8 @@ function mapPrismaReceipt(receipt: ReceiptRecord) {
     reservationId: receipt.reservationId,
     totalAmount: receipt.totalAmount.toString(),
     paymentMethod: receipt.paymentMethod,
+    collectionChannel: receipt.reservation?.collectionPayment?.collectionChannel ?? null,
+    officialReceiptNumber: receipt.reservation?.collectionPayment?.officialReceiptNumber ?? null,
     status: receipt.status,
     publicVerificationUrl: publicVerificationUrl(receipt.publicVerificationTokenEncrypted),
     receiptImageUrl: receipt.receiptImageUrl,
@@ -211,13 +222,16 @@ function mapPrismaReceipt(receipt: ReceiptRecord) {
           items: receipt.reservation.items.map((item) => ({
             id: item.id,
             productId: item.productId,
+            productNameSnapshot: item.productNameSnapshot,
+            skuCodeSnapshot: item.skuCodeSnapshot,
+            optionSnapshot: item.optionSnapshot,
             variantSummary: item.variantSummary,
             quantity: item.quantity,
             unitPrice: item.unitPrice.toString(),
             subtotal: item.subtotal.toString(),
             product: {
               id: item.product.id,
-              name: item.product.name,
+              name: item.productNameSnapshot,
               description: item.product.description,
               imageUrl: item.product.imageUrl,
               price: item.product.price.toString()
@@ -380,6 +394,7 @@ export async function ensureReceiptForCompletedReservationInTransaction(
       totalAmount: Prisma.Decimal;
     };
     issuedById: string;
+    verified?: boolean;
   }
 ) {
   const receiptCode = createReceiptCode();
@@ -398,7 +413,8 @@ export async function ensureReceiptForCompletedReservationInTransaction(
       totalAmount: input.reservation.totalAmount,
       paymentMethod: input.reservation.paymentMethod,
       issuedById: input.issuedById,
-      status: "PENDING"
+      status: input.verified ? "VERIFIED" : "PENDING",
+      verifiedAt: input.verified ? new Date() : null
     },
     select: receiptRecordSelect
   });
@@ -493,6 +509,18 @@ async function updateReceiptStatusInTransaction(input: {
       },
       select: receiptRecordSelect
     });
+
+    if (input.nextStatus === "VOIDED" && receipt.reservationId) {
+      await tx.payment.updateMany({
+        where: { reservationId: receipt.reservationId, status: "PAID" },
+        data: {
+          status: "VOIDED",
+          voidedAt: now,
+          voidedById: input.actorId,
+          voidReason: input.reason ?? "Receipt voided."
+        }
+      });
+    }
 
     await tx.outboxEvent.create({
       data: {

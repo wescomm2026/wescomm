@@ -92,6 +92,7 @@ await import("./outbox.test.js");
 await import("./realtime-pagination-architecture.test.js");
 await import("./performance-architecture.test.js");
 await import("./inventory-live-availability.test.js");
+await import("./inventory-cost.test.js");
 await import("./variant-stock.test.js");
 await import("./sku-inventory.test.js");
 await import("./inventory-safety-v9.test.js");
@@ -120,11 +121,13 @@ await import("./wishlist-migration.test.js");
 await import("./wishlist-policy.test.js");
 await import("./wishlist-notification.test.js");
 await import("./wishlist-service.test.js");
+await import("./department-product-audience.test.js");
 if (process.env.RUN_DATABASE_INTEGRATION_TESTS === "true") {
   await import("./rate-limit-postgres.integration.test.js");
   await import("./receipt-postgres.integration.test.js");
   await import("./wishlist-postgres.integration.test.js");
   await import("./conversation-archive-postgres.integration.test.js");
   await import("./conversation-message-edit-postgres.integration.test.js");
+  await import("./pickup-capacity-postgres.integration.test.js");
 }
 await import("./security.test.js");

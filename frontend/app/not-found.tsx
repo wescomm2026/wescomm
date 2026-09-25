@@ -27,12 +27,12 @@ export default function NotFound() {
         <Image src="/assets/id-accessories.svg" alt="" fill sizes="192px" className="object-contain" />
       </div>
       <div className="pointer-events-none absolute bottom-12 right-8 hidden h-72 w-72 opacity-10 lg:block" aria-hidden="true">
-        <Image src="/assets/wup shop assets/wup-girls-uniform-set.png" alt="" fill sizes="288px" className="object-contain" />
+        <Image src="/assets/wup shop assets/wup-girls-uniform-set.webp" alt="" fill sizes="288px" className="object-contain" />
       </div>
 
       <section className="mx-auto flex w-full max-w-4xl flex-col items-center text-center">
         <Link href="/" aria-label="WESCOMM home" className="relative h-24 w-[250px] sm:h-28 sm:w-[330px]">
-          <Image src="/assets/wescomm-logo.png" alt="WESCOMM" fill priority sizes="(max-width: 640px) 250px, 330px" className="object-contain" />
+          <Image src="/assets/wescomm-logo.webp" alt="WESCOMM" fill priority sizes="(max-width: 640px) 250px, 330px" className="object-contain" />
         </Link>
 
         <div className="mt-3 flex h-[126px] items-center justify-center font-black leading-none sm:mt-5 sm:h-[180px] lg:h-[215px]" aria-label="Error 404">

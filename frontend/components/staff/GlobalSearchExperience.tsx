@@ -7,6 +7,7 @@ import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowRight, MessageCircleMore, PackageSearch, ReceiptText, Search } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
+import { useRealtimeRefresh } from "@/components/realtime/RealtimeProvider";
 import {
   searchStaffWorkspaceFromApi,
   isRequestAbortError,
@@ -38,7 +39,12 @@ export function GlobalSearchExperience({ routeBase }: { routeBase: "/staff" | "/
   const [results, setResults] = useState<BackendGlobalSearchResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [inventoryRevision, setInventoryRevision] = useState(0);
   const requestSequenceRef = useRef(0);
+
+  useRealtimeRefresh(["inventory"], () => {
+    if (query.length >= 2) setInventoryRevision((current) => current + 1);
+  });
 
   useEffect(() => {
     const requestId = ++requestSequenceRef.current;
@@ -71,7 +77,7 @@ export function GlobalSearchExperience({ routeBase }: { routeBase: "/staff" | "/
     return () => {
       requestController.abort();
     };
-  }, [query, ready, routeBase, user?.accessToken]);
+  }, [inventoryRevision, query, ready, routeBase, user?.accessToken]);
 
   const groupedResults = useMemo(() => results.reduce<Record<string, BackendGlobalSearchResult[]>>((groups, result) => {
     (groups[result.type] ??= []).push(result);

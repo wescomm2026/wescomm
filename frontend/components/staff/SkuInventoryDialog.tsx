@@ -3,7 +3,7 @@
 import { userFacingErrorMessage } from "@/lib/user-facing-error";
 
 import Image from "next/image";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, Plus, RefreshCw, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useConfirmationDialog } from "@/components/ui/ConfirmationDialogProvider";
@@ -13,13 +13,16 @@ import {
   restockStaffProductSkus,
   type StaffProduct
 } from "@/lib/staff-api";
+import { getStaffInventoryBatches, verifyStaffOpeningBatchCost, type StaffInventoryBatchResult } from "@/lib/inventory-batch-api";
 import { sortProductOptionValues } from "@/lib/product-display";
+import { shopProductCardImage } from "@/lib/shop-assets";
 
 export type SkuInventoryDialogProduct = {
   id: string;
   name: string;
   imageUrl: string;
   stock: number;
+  price: number;
   skuInventoryEnabled: boolean;
   inventoryReconciledAt?: string | null;
   variants: Array<{
@@ -181,8 +184,22 @@ export function SkuInventoryDialog({
   const [skuQuantities, setSkuQuantities] = useState<Record<string, string>>(
     () => Object.fromEntries(product.skus.map((sku) => [sku.id, "0"]))
   );
+  const [unitCost, setUnitCost] = useState("");
+  const [sellingPrice, setSellingPrice] = useState(() => product.price.toFixed(2));
+  const [receivedAt, setReceivedAt] = useState(() => new Date().toISOString().slice(0, 10));
+  const [supplierNote, setSupplierNote] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [batchResult, setBatchResult] = useState<StaffInventoryBatchResult | null>(null);
+  const [openingCostDrafts, setOpeningCostDrafts] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (!product.skuInventoryEnabled) return;
+    void getStaffInventoryBatches(token, product.id).then((result) => {
+      setBatchResult(result);
+      setOpeningCostDrafts(Object.fromEntries(result.batches.filter((batch) => !batch.costVerified).map((batch) => [batch.id, ""])));
+    }).catch(() => undefined);
+  }, [product.id, product.skuInventoryEnabled, token]);
 
   const valueByKey = useMemo(
     () => new Map(groups.flatMap((group) => group.values.map((value) => [value.key, value] as const))),
@@ -194,6 +211,10 @@ export function SkuInventoryDialog({
     0
   );
   const resultingTotal = stockMode === "set" ? restockAmount : product.stock + restockAmount;
+  const enteredUnitCost = unitCost.trim() ? Number(unitCost) : null;
+  const enteredSellingPrice = sellingPrice.trim() ? Number(sellingPrice) : null;
+  const estimatedUnitProfit = enteredSellingPrice !== null && Number.isFinite(enteredSellingPrice) && enteredUnitCost !== null && Number.isFinite(enteredUnitCost) ? enteredSellingPrice - enteredUnitCost : null;
+  const estimatedMargin = estimatedUnitProfit !== null && enteredSellingPrice !== null && enteredSellingPrice > 0 ? estimatedUnitProfit / enteredSellingPrice * 100 : null;
 
   const updateGroup = (groupKey: string, update: (group: OptionGroupDraft) => OptionGroupDraft) => {
     setGroups((current) => current.map((group) => group.key === groupKey ? update(group) : group));
@@ -377,11 +398,21 @@ export function SkuInventoryDialog({
       if (stockMode === "add" && !quantities.some((entry) => entry.quantity > 0)) {
         throw new Error("Enter at least one new item before saving.");
       }
+      const parsedUnitCost = Number(unitCost);
+      if (stockMode === "add" && (!unitCost.trim() || !Number.isFinite(parsedUnitCost) || parsedUnitCost < 0 || Math.round(parsedUnitCost * 100) !== parsedUnitCost * 100)) {
+        throw new Error("Enter the unit acquisition cost with up to two decimal places.");
+      }
+      const parsedSellingPrice = Number(sellingPrice);
+      if (stockMode === "add" && (!sellingPrice.trim() || !Number.isFinite(parsedSellingPrice) || parsedSellingPrice < 0 || parsedSellingPrice > 10_000_000 || Math.round(parsedSellingPrice * 100) !== parsedSellingPrice * 100)) {
+        throw new Error("Enter a selling price from PHP 0.00 to PHP 10,000,000.00 with up to two decimal places.");
+      }
+      if (stockMode === "add" && !receivedAt) throw new Error("Choose the date the stock was received.");
       const totalQuantity = quantities.reduce((total, entry) => total + entry.quantity, 0);
+      const sellingPriceChanged = stockMode === "add" && parsedSellingPrice !== product.price;
       const confirmed = await confirm({
         title: stockMode === "add" ? "Add this inventory stock?" : "Save these corrected stock counts?",
         description: stockMode === "add"
-          ? `${totalQuantity} new item${totalQuantity === 1 ? "" : "s"} will be added across ${product.skus.length} physical combination${product.skus.length === 1 ? "" : "s"} for ${product.name}.`
+          ? `${totalQuantity} new item${totalQuantity === 1 ? "" : "s"} will be added across ${product.skus.length} physical combination${product.skus.length === 1 ? "" : "s"} for ${product.name}.${sellingPriceChanged ? ` Its selling price will change from PHP ${product.price.toFixed(2)} to PHP ${parsedSellingPrice.toFixed(2)} for future sales.` : ""}`
           : `The exact available counts for all ${product.skus.length} physical combination${product.skus.length === 1 ? "" : "s"} of ${product.name} will be replaced by the values shown.`,
         confirmLabel: stockMode === "add" ? "Add stock" : "Save corrected counts",
         tone: stockMode === "add" ? "default" : "warning"
@@ -392,7 +423,13 @@ export function SkuInventoryDialog({
       const updated = await restockStaffProductSkus(token, product.id, {
         mode: stockMode,
         quantities,
-        notes: stockMode === "add" ? "New stock received." : "Available stock count corrected."
+        notes: stockMode === "add" ? "New stock received." : "Available stock count corrected.",
+        ...(stockMode === "add" ? {
+          unitCost: parsedUnitCost,
+          sellingPrice: parsedSellingPrice,
+          receivedAt: `${receivedAt}T00:00:00+08:00`,
+          supplierNote: supplierNote.trim() || undefined
+        } : {})
       });
       onSaved(updated);
     } catch (saveError) {
@@ -402,22 +439,39 @@ export function SkuInventoryDialog({
     }
   };
 
+  const saveOpeningCost = async (batchId: string) => {
+    const parsed = Number(openingCostDrafts[batchId]);
+    if (!Number.isFinite(parsed) || parsed < 0 || Math.round(parsed * 100) !== parsed * 100) {
+      setError("Enter a valid opening unit cost with up to two decimal places.");
+      return;
+    }
+    setSubmitting(true);
+    setError("");
+    try {
+      setBatchResult(await verifyStaffOpeningBatchCost(token, product.id, batchId, parsed));
+    } catch (saveError) {
+      setError(userFacingErrorMessage(saveError, "Unable to verify the opening batch cost."));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   return (
-    <div className="fixed inset-0 z-[10020] grid place-items-center bg-[#101820]/50 p-4">
-      <section ref={dialog.dialogRef} {...dialog.dialogProps} className="w-full max-w-5xl overflow-hidden rounded-xl bg-white shadow-2xl">
-        <header className="flex items-start gap-3 border-b border-[#e1e8e2] p-5">
-          <div className="relative grid size-16 shrink-0 place-items-center overflow-hidden rounded-lg border border-[#dce5dd] bg-[#f8fbf8]">
-            <Image src={product.imageUrl} alt={product.name} fill sizes="64px" unoptimized className="object-contain p-1" />
+    <div className="fixed inset-0 z-[10020] grid place-items-center overflow-hidden bg-[#101820]/50 p-2 sm:p-4">
+      <section ref={dialog.dialogRef} {...dialog.dialogProps} className="flex max-h-[calc(100dvh-1rem)] w-full max-w-5xl flex-col overflow-hidden rounded-xl bg-white shadow-2xl sm:max-h-[calc(100dvh-2rem)]">
+        <header className="flex shrink-0 items-start gap-3 border-b border-[#e1e8e2] p-4 sm:p-5">
+          <div className="relative grid size-16 shrink-0 place-items-center overflow-hidden rounded-lg border border-border bg-[#f8fbf8]">
+            <Image src={shopProductCardImage(product.imageUrl)} alt={product.name} fill sizes="64px" unoptimized className="object-contain p-1" />
           </div>
           <div className="min-w-0 flex-1">
-            <h2 id={dialog.titleId} className="text-xl font-extrabold text-[#17211b]">{mode === "reconcile" ? "Set up inventory" : "Update stock"}</h2>
-            <p className="mt-1 truncate text-sm font-bold text-[#253029]">{product.name}</p>
-            <p className="mt-0.5 text-xs text-[#68746d]">Current available total: {product.stock} items</p>
+            <h2 id={dialog.titleId} className="text-xl font-extrabold text-foreground">{mode === "reconcile" ? "Set up inventory" : "Update stock"}</h2>
+            <p className="mt-1 truncate text-sm font-bold text-foreground">{product.name}</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">Current available total: {product.stock} items</p>
           </div>
           <button type="button" data-dialog-autofocus onClick={onClose} disabled={submitting} aria-label="Close inventory dialog" className="grid size-9 place-items-center rounded-md hover:bg-[#eef3ee] disabled:opacity-50"><X /></button>
         </header>
 
-        <div className="max-h-[calc(100svh-11rem)] overflow-y-auto p-5">
+        <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-5">
           {error ? <p role="alert" className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">{error}</p> : null}
 
           {mode === "reconcile" ? (
@@ -426,14 +480,14 @@ export function SkuInventoryDialog({
                 <div className="flex gap-3"><AlertTriangle className="mt-0.5 size-5 shrink-0" /><div><p className="font-extrabold">Atomic option and inventory setup</p><p className="mt-1 text-xs leading-5">Edit the complete option structure, then enter the combinations physically available. The structure, combinations, and totals save together or not at all.</p></div></div>
               </div>
 
-              <section className="mt-5 rounded-lg border border-[#dce5dd] bg-[#fbfdfb] p-4">
+              <section className="mt-5 rounded-lg border border-border bg-[#fbfdfb] p-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div><h3 className="font-extrabold text-[#17211b]">Option structure</h3><p className="mt-1 text-xs text-[#68746d]">Add Size, Color, Waist, Length, Clip Type, or another physical attribute.</p></div>
+                  <div><h3 className="font-extrabold text-foreground">Option structure</h3><p className="mt-1 text-xs text-muted-foreground">Add Size, Color, Waist, Length, Clip Type, or another physical attribute.</p></div>
                   <Button type="button" variant="secondary" className="h-9 px-3" onClick={addGroup} disabled={submitting || groups.length >= 12}><Plus className="size-4" /> Add group</Button>
                 </div>
                 <div className="mt-4 grid gap-4 lg:grid-cols-2">
                   {groups.map((group, groupIndex) => (
-                    <div key={group.key} className="rounded-lg border border-[#dce5dd] bg-white p-3">
+                    <div key={group.key} className="rounded-lg border border-border bg-white p-3">
                       <div className="flex items-center gap-2">
                         <input value={group.name} onChange={(event) => updateGroup(group.key, (current) => ({ ...current, name: event.target.value }))} placeholder="Option name, e.g. Color" aria-label={`Option group ${groupIndex + 1} name`} className="h-10 min-w-0 flex-1 rounded-md border px-3 text-sm font-bold outline-none focus:border-primary" />
                         <button type="button" onClick={() => removeGroup(group.key)} disabled={groups.length === 1 || submitting} aria-label={`Remove option group ${groupIndex + 1}`} className="grid size-10 place-items-center rounded-md text-red-600 hover:bg-red-50 disabled:opacity-30"><Trash2 className="size-4" /></button>
@@ -454,12 +508,12 @@ export function SkuInventoryDialog({
 
               <section className="mt-5">
                 <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div><h3 className="font-extrabold text-[#17211b]">Physical inventory combinations</h3><p className="mt-1 text-xs text-[#68746d]">Keep only combinations that can physically exist. Zero-stock combinations are allowed.</p></div>
+                  <div><h3 className="font-extrabold text-foreground">Physical inventory combinations</h3><p className="mt-1 text-xs text-muted-foreground">Keep only combinations that can physically exist. Zero-stock combinations are allowed.</p></div>
                   <Button type="button" variant="secondary" className="h-9 px-3" onClick={generateAllCombinations} disabled={submitting}><RefreshCw className="size-4" /> Generate all</Button>
                 </div>
-                <div className="mt-3 overflow-x-auto rounded-lg border border-[#dce5dd]">
+                <div className="mt-3 overflow-x-auto rounded-lg border border-border">
                   <table className="w-full min-w-[720px] text-sm">
-                    <thead className="bg-[#f6f9f6] text-left text-xs font-bold text-[#59655d]"><tr>{groups.map((group) => <th key={group.key} className="px-3 py-3">{group.name || "Unnamed option"}</th>)}<th className="px-3 py-3">Exact available</th><th className="px-3 py-3">Warn at</th><th className="w-12 px-3 py-3" /></tr></thead>
+                    <thead className="bg-[#f6f9f6] text-left text-xs font-bold text-muted-foreground"><tr>{groups.map((group) => <th key={group.key} className="px-3 py-3">{group.name || "Unnamed option"}</th>)}<th className="px-3 py-3">Exact available</th><th className="px-3 py-3">Warn at</th><th className="w-12 px-3 py-3" /></tr></thead>
                     <tbody className="divide-y divide-[#e7ece8]">
                       {rows.map((row, rowIndex) => (
                         <tr key={row.key} className="[content-visibility:auto]">
@@ -480,34 +534,48 @@ export function SkuInventoryDialog({
                   </table>
                 </div>
                 <button type="button" onClick={() => setRows((current) => [...current, { key: draftKey("row"), selections: Object.fromEntries(groups.map((group) => [group.key, ""])), stock: "0", threshold: "2" }])} disabled={submitting || rows.length >= 500} className="mt-3 inline-flex items-center gap-2 text-sm font-bold text-primary hover:underline disabled:opacity-40"><Plus className="size-4" /> Add combination</button>
-                <div className="mt-5 rounded-lg bg-[#eef6ef] px-4 py-3"><p className="font-extrabold text-[#17211b]">New available total: {exactTotal} items</p><p className="mt-0.5 text-xs text-[#68746d]">Calculated from the physical combinations above.</p></div>
+                <div className="mt-5 rounded-lg bg-primary/10 px-4 py-3"><p className="font-extrabold text-foreground">New available total: {exactTotal} items</p><p className="mt-0.5 text-xs text-muted-foreground">Calculated from the physical combinations above.</p></div>
               </section>
             </>
           ) : (
             <>
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <div><p className="text-sm font-extrabold text-[#253029]">{stockMode === "add" ? "Add newly received stock" : "Correct available stock"}</p><p className="mt-1 text-xs text-[#68746d]">{stockMode === "add" ? "Enter only the pieces that arrived for each combination." : "Enter the exact stock still available for new reservations. Exact correction is blocked while this product has active reservations."}</p></div>
+                <div><p className="text-sm font-extrabold text-foreground">{stockMode === "add" ? "Add newly received stock" : "Correct available stock"}</p><p className="mt-1 text-xs text-muted-foreground">{stockMode === "add" ? "Enter only the pieces that arrived for each combination." : "Enter the exact stock still available for new reservations. Exact correction is blocked while this product has active reservations."}</p></div>
                 <button type="button" onClick={() => changeStockMode(stockMode === "add" ? "set" : "add")} className="text-xs font-bold text-primary hover:underline">{stockMode === "add" ? "Need to correct the count?" : "Back to adding stock"}</button>
               </div>
-              <div className="mt-5 overflow-hidden rounded-lg border border-[#dce5dd]">
-                <div className="hidden grid-cols-[1fr_100px_120px] gap-3 bg-[#f6f9f6] px-4 py-3 text-xs font-bold text-[#59655d] sm:grid"><span>Inventory combination</span><span>Current</span><span>{stockMode === "add" ? "Add" : "Exact available"}</span></div>
+              {batchResult?.summary.unverifiedQuantity ? <section className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-4"><h3 className="text-sm font-extrabold text-amber-900">Opening costs need verification</h3><p className="mt-1 text-xs text-amber-800">Set each migrated combination’s acquisition cost before it can be released through FIFO.</p><div className="mt-3 space-y-2">{batchResult.batches.filter((batch) => !batch.costVerified).map((batch) => <div key={batch.id} className="grid gap-2 rounded-md bg-white p-3 sm:grid-cols-[1fr_150px_auto] sm:items-center"><div><p className="text-xs font-bold text-foreground">{batch.sku?.optionSnapshot?.map((option) => option.optionValue).join(" · ") || batch.batchCode}</p><p className="text-xs text-muted-foreground">{batch.quantityRemaining} item(s)</p></div><div className="flex h-10 items-center rounded-md border px-2"><span className="mr-1 text-xs font-bold text-muted-foreground">PHP</span><input type="number" min="0" step="0.01" inputMode="decimal" value={openingCostDrafts[batch.id] ?? ""} onChange={(event) => setOpeningCostDrafts((current) => ({ ...current, [batch.id]: event.target.value }))} className="min-w-0 flex-1 outline-none" placeholder="0.00" /></div><Button type="button" className="h-10" disabled={submitting || !openingCostDrafts[batch.id]} onClick={() => void saveOpeningCost(batch.id)}>Verify</Button></div>)}</div></section> : null}
+              {batchResult ? <details className="mt-4 rounded-lg border border-border bg-muted/40 p-4"><summary className="cursor-pointer text-sm font-bold text-primary">View FIFO batch history ({batchResult.batches.length})</summary><div className="mt-3 overflow-x-auto"><table className="w-full min-w-[620px] text-left text-xs"><thead className="text-muted-foreground"><tr><th className="py-2 pr-3">Combination</th><th className="py-2 pr-3">Batch</th><th className="py-2 pr-3">Cost</th><th className="py-2 pr-3">Received</th><th className="py-2">Remaining</th></tr></thead><tbody className="divide-y divide-border">{batchResult.batches.map((batch) => <tr key={batch.id}><td className="py-2 pr-3 font-bold">{batch.sku?.optionSnapshot?.map((option) => option.optionValue).join(" / ") || "Product total"}</td><td className="py-2 pr-3">{batch.batchCode}</td><td className="py-2 pr-3">{batch.costVerified ? `PHP ${Number(batch.unitCost).toFixed(2)}` : "Needs verification"}</td><td className="py-2 pr-3">{batch.quantityReceived}</td><td className="py-2 font-bold">{batch.quantityRemaining}</td></tr>)}</tbody></table></div></details> : null}
+              <div className="mt-5 overflow-hidden rounded-lg border border-border">
+                <div className="hidden grid-cols-[1fr_100px_120px] gap-3 bg-[#f6f9f6] px-4 py-3 text-xs font-bold text-muted-foreground sm:grid"><span>Inventory combination</span><span>Current</span><span>{stockMode === "add" ? "Add" : "Exact available"}</span></div>
                 <div className="divide-y divide-[#e7ece8]">
                   {product.skus.map((sku, index) => (
                     <div key={sku.id} className="grid gap-2 px-4 py-3 [content-visibility:auto] sm:grid-cols-[1fr_100px_120px] sm:items-center">
-                      <div><p className="text-sm font-bold text-[#253029]">{skuLabel(sku)}</p>{sku.stock <= sku.lowStockThreshold ? <p className="mt-0.5 text-xs font-semibold text-amber-700">Low stock · alert at {sku.lowStockThreshold}</p> : null}</div>
-                      <p className="text-sm"><span className="text-[#68746d] sm:hidden">Current: </span><span className="font-extrabold">{sku.stock}</span></p>
+                      <div><p className="text-sm font-bold text-foreground">{skuLabel(sku)}</p>{sku.stock <= sku.lowStockThreshold ? <p className="mt-0.5 text-xs font-semibold text-amber-700">Low stock · alert at {sku.lowStockThreshold}</p> : null}</div>
+                      <p className="text-sm"><span className="text-muted-foreground sm:hidden">Current: </span><span className="font-extrabold">{sku.stock}</span></p>
                       <input type="number" min="0" max="10000000" step="1" inputMode="numeric" value={skuQuantities[sku.id] ?? "0"} onChange={(event) => setSkuQuantities((current) => ({ ...current, [sku.id]: event.target.value }))} aria-label={`Combination ${index + 1} ${stockMode === "add" ? "new quantity" : "exact available quantity"}`} className="h-10 rounded-md border px-2 text-center outline-none focus:border-primary" />
                     </div>
                   ))}
                 </div>
               </div>
-              <div className="mt-5 flex items-center gap-3 rounded-lg bg-[#eef6ef] px-4 py-3"><RefreshCw className="size-5 text-primary" /><div><p className="font-extrabold text-[#17211b]">{stockMode === "add" ? `Total items to add: ${restockAmount}` : `Corrected available total: ${resultingTotal}`}</p><p className="mt-0.5 text-xs text-[#68746d]">{stockMode === "add" ? `After saving: ${resultingTotal} available items` : "The product total will be recalculated from these exact available counts."}</p></div></div>
+              {stockMode === "add" ? (
+                <section className="mt-5 rounded-lg border border-border bg-muted/40 p-4">
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <label className="grid gap-1.5 text-sm font-semibold">Unit acquisition cost<div className="flex h-11 items-center rounded-md border bg-white px-3 focus-within:border-primary"><span className="mr-2 text-xs font-bold text-muted-foreground">PHP</span><input type="number" min="0" max="10000000" step="0.01" inputMode="decimal" value={unitCost} onChange={(event) => setUnitCost(event.target.value)} placeholder="0.00" className="min-w-0 flex-1 bg-transparent outline-none" /></div></label>
+                    <label className="grid gap-1.5 text-sm font-semibold">Selling price<div className="flex h-11 items-center rounded-md border bg-white px-3 focus-within:border-primary"><span className="mr-2 text-xs font-bold text-muted-foreground">PHP</span><input aria-label="Selling price" type="number" min="0" max="10000000" step="0.01" inputMode="decimal" value={sellingPrice} onChange={(event) => setSellingPrice(event.target.value)} placeholder="0.00" className="min-w-0 flex-1 bg-transparent outline-none" /></div><span className="text-xs font-normal leading-4 text-muted-foreground">Applies to the whole product and future sales.</span></label>
+                  </div>
+                  <div className="mt-4 grid gap-4 sm:grid-cols-2"><label className="grid gap-1.5 text-sm font-semibold">Date received<input type="date" value={receivedAt} onChange={(event) => setReceivedAt(event.target.value)} className="h-11 rounded-md border bg-white px-3 outline-none focus:border-primary" /></label><label className="grid gap-1.5 text-sm font-semibold">Supplier reference <span className="font-normal text-muted-foreground">(optional)</span><input type="text" maxLength={500} value={supplierNote} onChange={(event) => setSupplierNote(event.target.value)} placeholder="Invoice or delivery receipt" className="h-11 rounded-md border bg-white px-3 font-normal outline-none focus:border-primary" /></label></div>
+                  <div className="mt-4 grid gap-2 rounded-md border border-border bg-white p-3 sm:grid-cols-3"><div><p className="text-xs font-bold text-muted-foreground">Selling price after saving</p><p className="mt-1 font-extrabold">{enteredSellingPrice === null || !Number.isFinite(enteredSellingPrice) ? "Enter price" : `PHP ${enteredSellingPrice.toFixed(2)}`}</p></div><div><p className="text-xs font-bold text-muted-foreground">New unit cost</p><p className="mt-1 font-extrabold">{enteredUnitCost === null || !Number.isFinite(enteredUnitCost) ? "Enter cost" : `PHP ${enteredUnitCost.toFixed(2)}`}</p></div><div><p className="text-xs font-bold text-muted-foreground">Estimated gross profit</p><p className={estimatedUnitProfit !== null && estimatedUnitProfit < 0 ? "mt-1 font-extrabold text-red-700" : "mt-1 font-extrabold text-primary"}>{estimatedUnitProfit === null ? "—" : `PHP ${estimatedUnitProfit.toFixed(2)} / item${estimatedMargin === null ? "" : ` (${estimatedMargin.toFixed(1)}%)`}`}</p></div></div>
+                  {estimatedUnitProfit !== null && estimatedUnitProfit < 0 ? <p className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs font-bold text-red-800">Warning: this acquisition cost is higher than the current selling price.</p> : null}
+                  <p className="mt-3 text-xs leading-5 text-muted-foreground">The selling price applies to the whole product and future sales. The same acquisition cost applies to this delivery; completed historical sales keep their original price and FIFO cost allocation.</p>
+                </section>
+              ) : null}
+              <div className="mt-5 flex items-center gap-3 rounded-lg bg-primary/10 px-4 py-3"><RefreshCw className="size-5 text-primary" /><div><p className="font-extrabold text-foreground">{stockMode === "add" ? `Total items to add: ${restockAmount}` : `Corrected available total: ${resultingTotal}`}</p><p className="mt-0.5 text-xs text-muted-foreground">{stockMode === "add" ? `After saving: ${resultingTotal} available items` : "The product total will be recalculated from these exact available counts."}</p></div></div>
               <button type="button" onClick={() => { setGroups(initialStructure.groups); setRows(initialStructure.rows); setMode("reconcile"); setError(""); }} className="mt-4 text-xs font-bold text-primary hover:underline">Edit options and rebuild combinations</button>
             </>
           )}
         </div>
 
-        <footer className="flex justify-end gap-2 border-t border-[#e1e8e2] p-4">
+        <footer className="flex shrink-0 justify-end gap-2 border-t border-[#e1e8e2] bg-white p-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
           <Button type="button" variant="secondary" onClick={onClose} disabled={submitting}>Cancel</Button>
           <Button type="button" onClick={() => void (mode === "reconcile" ? saveReconciliation() : saveRestock())} disabled={submitting}>{submitting ? "Saving..." : mode === "reconcile" ? "Save structure & inventory" : stockMode === "add" ? "Confirm & add" : "Save corrected stock"}</Button>
         </footer>

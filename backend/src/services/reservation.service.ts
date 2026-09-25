@@ -25,6 +25,7 @@ import { resolveReservationVariantSelections } from "../domain/variant-stock.js"
 import { sameSkuVariantSelection } from "../domain/sku-inventory.js";
 import { prisma } from "../lib/prisma.js";
 import { ensureReceiptForCompletedReservationInTransaction } from "./receipt.service.js";
+import { allocateFifoCostsInTransaction } from "./inventory-cost.service.js";
 import { validatePickupSelectionInTransaction } from "./pickup-policy.service.js";
 import { expireCheckoutAttemptBestEffort } from "./paymongo-reconciliation.service.js";
 import {
@@ -33,12 +34,13 @@ import {
   type NoShowPolicyOutcome
 } from "./restriction.service.js";
 import { OUTBOX_EVENT_TYPES } from "./outbox.service.js";
-import { publishRealtimeEvents, REALTIME_TOPICS, wakeRealtimeBroker } from "./realtime-event.service.js";
+import { publishRealtimeEvents, REALTIME_TOPICS } from "./realtime-event.service.js";
 import {
   createBackInStockNotificationsInTransaction
 } from "./wishlist-notification.service.js";
 import {
   type AppRole,
+  type CollectionChannel,
   type OnlinePaymentStatus,
   type PaymentMethod,
   type RawProfileSummary,
@@ -142,8 +144,10 @@ function nonOptionReservationSummary(summary?: string | null) {
 type SkuReservationRecord = {
   id: string;
   productId: string;
+  code: string | null;
   stock: number;
   lowStockThreshold: number;
+  optionSnapshot: Prisma.JsonValue;
   optionValues: Array<{ variantId: string }>;
 };
 
@@ -239,6 +243,7 @@ const reservationRecordSelect = Prisma.validator<Prisma.ReservationSelect>()({
   pickupPolicyVersion: { select: { id: true, version: true } },
   pickupTimeSlot: { select: { id: true, label: true, startMinute: true, endMinute: true } },
   paymentMethod: true,
+  preferredCollectionChannel: true,
   totalAmount: true,
   staffNotes: true,
   createdAt: true,
@@ -287,6 +292,9 @@ const reservationRecordSelect = Prisma.validator<Prisma.ReservationSelect>()({
       id: true,
       reservationId: true,
       productId: true,
+      productNameSnapshot: true,
+      skuCodeSnapshot: true,
+      optionSnapshot: true,
       variantSummary: true,
       quantity: true,
       unitPrice: true,
@@ -325,6 +333,7 @@ function mapPrismaReservation(reservation: ReservationRecord) {
     pickupPolicyVersion: reservation.pickupPolicyVersion?.version ?? null,
     pickupSlot: reservation.pickupTimeSlot,
     paymentMethod: reservation.paymentMethod,
+    preferredCollectionChannel: reservation.preferredCollectionChannel,
     totalAmount: reservation.totalAmount.toString(),
     staffNotes: reservation.staffNotes,
     createdAt: reservation.createdAt.toISOString(),
@@ -364,6 +373,9 @@ function mapPrismaReservation(reservation: ReservationRecord) {
       id: item.id,
       reservationId: item.reservationId,
       productId: item.productId,
+      productNameSnapshot: item.productNameSnapshot,
+      skuCodeSnapshot: item.skuCodeSnapshot,
+      optionSnapshot: item.optionSnapshot,
       variantSummary: item.variantSummary,
       quantity: item.quantity,
       unitPrice: item.unitPrice.toString(),
@@ -371,7 +383,7 @@ function mapPrismaReservation(reservation: ReservationRecord) {
       createdAt: item.createdAt.toISOString(),
       product: {
         id: item.product.id,
-        name: item.product.name,
+        name: item.productNameSnapshot,
         description: item.product.description,
         imageUrl: item.product.imageUrl,
         price: item.product.price.toString(),
@@ -396,6 +408,7 @@ const staffReservationListSelect = Prisma.validator<Prisma.ReservationSelect>()(
   pickupPolicyVersion: { select: { id: true, version: true } },
   pickupTimeSlot: { select: { id: true, label: true, startMinute: true, endMinute: true } },
   paymentMethod: true,
+  preferredCollectionChannel: true,
   totalAmount: true,
   staffNotes: true,
   createdAt: true,
@@ -424,6 +437,9 @@ const staffReservationListSelect = Prisma.validator<Prisma.ReservationSelect>()(
       id: true,
       reservationId: true,
       productId: true,
+      productNameSnapshot: true,
+      skuCodeSnapshot: true,
+      optionSnapshot: true,
       variantSummary: true,
       quantity: true,
       unitPrice: true,
@@ -451,6 +467,7 @@ function mapStaffReservationList(reservation: StaffReservationListRecord) {
     pickupPolicyVersion: reservation.pickupPolicyVersion?.version ?? null,
     pickupSlot: reservation.pickupTimeSlot,
     paymentMethod: reservation.paymentMethod,
+    preferredCollectionChannel: reservation.preferredCollectionChannel,
     totalAmount: reservation.totalAmount.toString(),
     staffNotes: reservation.staffNotes,
     createdAt: reservation.createdAt.toISOString(),
@@ -482,12 +499,15 @@ function mapStaffReservationList(reservation: StaffReservationListRecord) {
       id: item.id,
       reservationId: item.reservationId,
       productId: item.productId,
+      productNameSnapshot: item.productNameSnapshot,
+      skuCodeSnapshot: item.skuCodeSnapshot,
+      optionSnapshot: item.optionSnapshot,
       variantSummary: item.variantSummary,
       quantity: item.quantity,
       unitPrice: item.unitPrice.toString(),
       subtotal: item.subtotal.toString(),
       createdAt: item.createdAt.toISOString(),
-      product: { id: item.product.id, name: item.product.name }
+      product: { id: item.product.id, name: item.productNameSnapshot }
     }))
   };
 }
@@ -526,6 +546,16 @@ export async function listReservations(userId: string, role: AppRole, options: R
               { fullName: { contains: query, mode: "insensitive" as const } },
               { email: { contains: query, mode: "insensitive" as const } },
               { studentNumber: { contains: query, mode: "insensitive" as const } }
+            ]
+          }
+        }
+      }, {
+        items: {
+          some: {
+            OR: [
+              { variantSummary: { contains: query, mode: "insensitive" as const } },
+              { productNameSnapshot: { contains: query, mode: "insensitive" as const } },
+              { skuCodeSnapshot: { contains: query, mode: "insensitive" as const } }
             ]
           }
         }
@@ -593,6 +623,7 @@ export async function createReservation(input: {
   studentId: string;
   idempotencyKey: string;
   paymentMethod: PaymentMethod;
+  preferredCollectionChannel: CollectionChannel;
   pickupDate: string;
   pickupSlotId: string;
   pickupPolicyVersion: number;
@@ -669,6 +700,19 @@ export async function createReservation(input: {
           select: { id: true }
         });
 
+        if (env.REQUIRE_STUDENT_ONBOARDING) {
+          const studentProfile = await tx.profile.findUnique({
+            where: { id: input.studentId },
+            select: { departmentId: true, studentNumber: true, onboardingCompletedAt: true }
+          });
+          if (!studentProfile?.departmentId || !studentProfile.studentNumber?.trim() || !studentProfile.onboardingCompletedAt) {
+            throw new HttpError(
+              409,
+              "Complete your Department and Student ID before making a reservation.",
+              "STUDENT_PROFILE_INCOMPLETE"
+            );
+          }
+        }
         await assertReservationAccessInTransaction(tx, input.studentId);
         const pickup = await validatePickupSelectionInTransaction(tx, input);
 
@@ -686,7 +730,7 @@ export async function createReservation(input: {
             isActive: true,
             saleMode: true,
             skuInventoryEnabled: true,
-            category: { select: { name: true, slug: true, iconUrl: true } }
+            category: { select: { id: true, name: true, slug: true, iconUrl: true } }
           },
           relationLoadStrategy: "join"
         });
@@ -717,8 +761,10 @@ export async function createReservation(input: {
               select: {
                 id: true,
                 productId: true,
+                code: true,
                 stock: true,
                 lowStockThreshold: true,
+                optionSnapshot: true,
                 optionValues: { select: { variantId: true } }
               },
               relationLoadStrategy: "join"
@@ -777,6 +823,7 @@ export async function createReservation(input: {
             studentId: input.studentId,
             referenceCode,
             paymentMethod: input.paymentMethod,
+            preferredCollectionChannel: input.paymentMethod === "PAYMONGO_GCASH" ? "COMMISSARY" : input.preferredCollectionChannel,
             pickupStart: pickup.pickupStart,
             pickupEnd: pickup.pickupEnd,
             pickupPolicyVersionId: pickup.policy.id,
@@ -796,6 +843,7 @@ export async function createReservation(input: {
             pickupReviewReason: true,
             scheduleRevision: true,
             paymentMethod: true,
+            preferredCollectionChannel: true,
             totalAmount: true,
             createdAt: true,
             updatedAt: true
@@ -806,10 +854,16 @@ export async function createReservation(input: {
           data: input.items.map((item, itemIndex) => {
             const product = products.find((entry) => entry.id === item.productId)!;
             const unitPrice = Number(product.price ?? 0);
+            const selectedSku = productSkus.find((sku) => sku.id === itemSkuIds.get(itemIndex));
             return {
               reservationId: reservation.id,
               productId: item.productId,
               skuId: itemSkuIds.get(itemIndex) ?? null,
+              productNameSnapshot: product.name,
+              categoryIdSnapshot: product.category.id,
+              categoryNameSnapshot: product.category.name,
+              skuCodeSnapshot: selectedSku?.code ?? null,
+              optionSnapshot: (selectedSku?.optionSnapshot ?? []) as Prisma.InputJsonValue,
               variantSummary: product.saleMode === "OPTIONS"
                 ? item.variantSummary ?? null
                 : nonOptionReservationSummary(item.variantSummary),
@@ -823,6 +877,9 @@ export async function createReservation(input: {
             reservationId: true,
             productId: true,
             skuId: true,
+            productNameSnapshot: true,
+            skuCodeSnapshot: true,
+            optionSnapshot: true,
             variantSummary: true,
             quantity: true,
             unitPrice: true,
@@ -991,6 +1048,7 @@ export async function createReservation(input: {
               itemCount: createdItems.reduce((sum, item) => sum + item.quantity, 0),
               totalAmount,
               paymentMethod: reservation.paymentMethod,
+              preferredCollectionChannel: reservation.preferredCollectionChannel,
               checkoutPolicyVersion: policyVersion,
               idempotencyKey: input.idempotencyKey,
               lowStockAlerts
@@ -1034,6 +1092,7 @@ export async function createReservation(input: {
           pickupPolicyVersion: pickup.policy.version,
           pickupSlot: pickup.slot,
           paymentMethod: reservation.paymentMethod,
+          preferredCollectionChannel: reservation.preferredCollectionChannel,
           totalAmount: reservation.totalAmount.toString(),
           staffNotes: null,
           createdAt: reservation.createdAt.toISOString(),
@@ -1047,6 +1106,9 @@ export async function createReservation(input: {
               id: item.id,
               reservationId: item.reservationId,
               productId: item.productId,
+              productNameSnapshot: item.productNameSnapshot,
+              skuCodeSnapshot: item.skuCodeSnapshot,
+              optionSnapshot: item.optionSnapshot,
               variantSummary: item.variantSummary,
               quantity: item.quantity,
               unitPrice: item.unitPrice.toString(),
@@ -1054,7 +1116,7 @@ export async function createReservation(input: {
               createdAt: item.createdAt.toISOString(),
               product: {
                 id: product.id,
-                name: product.name,
+                name: item.productNameSnapshot,
                 description: product.description,
                 imageUrl: product.imageUrl,
                 price: product.price.toString(),
@@ -1120,7 +1182,6 @@ export async function createReservation(input: {
       throw error;
     });
 
-  if (!transactionResult.idempotentReplay) wakeRealtimeBroker();
   return transactionResult;
 }
 
@@ -1128,7 +1189,12 @@ export async function updateReservationStatus(
   reservationId: string,
   status: ReservationStatus,
   performedById?: string,
-  actorRole?: AppRole
+  actorRole?: AppRole,
+  settlement?: {
+    paymentMethod: "CASH" | "GCASH" | "OTHER";
+    collectionChannel: CollectionChannel;
+    officialReceiptNumber?: string | null;
+  }
 ) {
   const result = await withReservationSerializationRetry(() => prisma.$transaction(
       async (tx) => {
@@ -1146,6 +1212,7 @@ export async function updateReservationStatus(
               select: {
                 id: true,
                 status: true,
+                paidAt: true,
                 attempts: {
                   where: { status: { in: ["CREATING", "CREATE_UNKNOWN", "ACTIVE", "EXPIRY_REQUESTED"] } },
                   select: { id: true }
@@ -1154,6 +1221,7 @@ export async function updateReservationStatus(
             },
             items: {
               select: {
+                id: true,
                 productId: true,
                 skuId: true,
                 variantSummary: true,
@@ -1207,6 +1275,32 @@ export async function updateReservationStatus(
         }
 
         const statusChanged = existingReservation.status !== status;
+        const completesSale = statusChanged && status === "COMPLETED";
+        const completionPayment = completesSale
+          ? existingReservation.paymentMethod === "PAYMONGO_GCASH"
+            ? {
+                paymentMethod: "GCASH" as const,
+                collectionChannel: "COMMISSARY" as const,
+                officialReceiptNumber: null,
+                paidAt: existingReservation.onlinePayment?.paidAt ?? new Date()
+              }
+            : settlement
+              ? {
+                  ...settlement,
+                  officialReceiptNumber: settlement.officialReceiptNumber?.trim() || null,
+                  paidAt: new Date()
+                }
+              : null
+          : null;
+        if (completesSale && !completionPayment) {
+          throw new HttpError(400, "Payment details are required before releasing this order.", "PAYMENT_DETAILS_REQUIRED");
+        }
+        if (
+          completionPayment?.collectionChannel === "TREASURER"
+          && !completionPayment.officialReceiptNumber
+        ) {
+          throw new HttpError(400, "Treasury official receipt number is required.", "TREASURER_OR_REQUIRED");
+        }
         const releasesHeldStock = statusChanged && (status === "CANCELLED" || status === "NO_SHOW");
         const releaseMovementType = status === "NO_SHOW" ? "RESERVATION_NO_SHOW" : "RESERVATION_CANCEL";
         const releaseNote = status === "NO_SHOW" ? "released after confirmed no-show" : "cancelled";
@@ -1238,10 +1332,31 @@ export async function updateReservationStatus(
           where: { id: reservationId },
           data: {
             status: status as PrismaReservationStatus,
+            ...(completesSale ? { completedAt: new Date() } : {}),
             updatedAt: new Date()
           },
           select: { id: true }
         });
+
+        if (completesSale && completionPayment) {
+          await allocateFifoCostsInTransaction(tx, existingReservation.items.map((item) => ({
+            id: item.id,
+            productId: item.productId,
+            skuId: item.skuId,
+            quantity: item.quantity
+          })));
+          await tx.payment.create({
+            data: {
+              reservationId: existingReservation.id,
+              amount: existingReservation.totalAmount,
+              paymentMethod: completionPayment.paymentMethod,
+              collectionChannel: completionPayment.collectionChannel,
+              officialReceiptNumber: completionPayment.officialReceiptNumber,
+              paidAt: completionPayment.paidAt,
+              verifiedById: performedById!
+            }
+          });
+        }
 
         if (releasesHeldStock) {
           const releasedQuantityByProduct = existingReservation.items.reduce((map, item) => {
@@ -1498,10 +1613,11 @@ export async function updateReservationStatus(
               studentId: existingReservation.studentId,
               referenceCode: existingReservation.referenceCode,
               status: "COMPLETED",
-              paymentMethod: existingReservation.paymentMethod as PaymentMethod,
+              paymentMethod: (completionPayment?.paymentMethod ?? existingReservation.paymentMethod) as PaymentMethod,
               totalAmount: existingReservation.totalAmount
             },
-            issuedById: performedById!
+            issuedById: performedById!,
+            verified: true
           });
           generatedReceipt = ensuredReceipt.receipt;
           receiptCreated = ensuredReceipt.created;
@@ -1595,6 +1711,13 @@ export async function updateReservationStatus(
     .catch((error) => {
       if (error instanceof HttpError) throw error;
       if (
+        error instanceof Prisma.PrismaClientKnownRequestError
+        && error.code === "P2002"
+        && JSON.stringify(error.meta?.target ?? "").includes("official_receipt_number")
+      ) {
+        throw new HttpError(409, "That Treasury OR number is already recorded on another payment.", "TREASURER_OR_DUPLICATE");
+      }
+      if (
         error instanceof Prisma.PrismaClientKnownRequestError &&
         (error.code === "P2002" || error.code === "P2034")
       ) {
@@ -1608,7 +1731,6 @@ export async function updateReservationStatus(
       throw error;
     });
 
-  if (result.previousStatus !== result.nextStatus || result.receiptCreated) wakeRealtimeBroker();
 
   if (result.paymentCleanupAttemptIds.length) {
     await Promise.allSettled(

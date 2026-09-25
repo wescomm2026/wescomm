@@ -1,5 +1,7 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
+
+const releaseMigrationFloor = "20260831000000_add_closure_qr_students_support_lifecycle";
 
 const releaseMigrations = [
   {
@@ -54,6 +56,65 @@ const releaseMigrations = [
       /CHECK \(\s*"operations_archived_at" IS NULL\s*OR "status" = 'RESOLVED'/,
       /VALIDATE CONSTRAINT "conversations_operations_archive_requires_resolved_check"/
     ]
+  },
+  {
+    directory: "20260907000000_add_reservation_item_snapshots",
+    required: [
+      /ADD COLUMN "product_name_snapshot" TEXT/,
+      /ADD COLUMN "sku_code_snapshot" TEXT/,
+      /ADD COLUMN "option_snapshot" JSONB NOT NULL/,
+      /ALTER COLUMN "product_name_snapshot" SET NOT NULL/
+    ]
+  },
+  {
+    directory: "20260907010000_add_departments_and_product_audiences",
+    required: [
+      /CREATE TABLE "departments"/,
+      /CREATE TABLE "product_departments"/,
+      /normalized duplicates exist/,
+      /departments ENABLE ROW LEVEL SECURITY/,
+      /product_departments ENABLE ROW LEVEL SECURITY/,
+      /REVOKE ALL PRIVILEGES ON TABLE public\.departments FROM PUBLIC/
+    ]
+  },
+  {
+    directory: "20260907020000_add_pickup_advance_mode",
+    required: [
+      /CREATE TYPE "pickup_advance_mode"/,
+      /ADD COLUMN "advance_mode" "pickup_advance_mode" NOT NULL DEFAULT 'OPEN_DAYS'/
+    ]
+  },
+  {
+    directory: "20260907030000_backfill_department_product_audiences",
+    required: [
+      /CREATE TEMP TABLE "department_product_audience_backfill"/,
+      /product\."audience_scope" = 'ALL_STUDENTS'/,
+      /NOT EXISTS[\s\S]*FROM "product_departments" AS existing/,
+      /SET "audience_scope" = 'SPECIFIC_DEPARTMENTS'/,
+      /system\.cache-revision\.products/
+    ]
+  },
+  {
+    directory: "20260924000000_add_fifo_costing_and_collection_channels",
+    required: [
+      /CREATE TYPE "collection_channel" AS ENUM \('COMMISSARY', 'TREASURER'\)/,
+      /CREATE TABLE IF NOT EXISTS "inventory_batches"/,
+      /CREATE TABLE IF NOT EXISTS "order_item_cost_allocations"/,
+      /CREATE TABLE IF NOT EXISTS "payments"/,
+      /payments_treasurer_or_required/,
+      /"inventory_batches" ENABLE ROW LEVEL SECURITY/,
+      /"order_item_cost_allocations" ENABLE ROW LEVEL SECURITY/,
+      /"payments" ENABLE ROW LEVEL SECURITY/
+    ]
+  },
+  {
+    directory: "20260924010000_add_reservation_collection_preference",
+    requiresExplicitTransaction: false,
+    nonTransactionalReason: "Already applied as an idempotent ALTER TABLE plus COMMENT; preserve its Prisma checksum.",
+    required: [
+      /ADD COLUMN IF NOT EXISTS "preferred_collection_channel" "collection_channel" NOT NULL DEFAULT 'COMMISSARY'/,
+      /final audited channel remains payments\.collection_channel/
+    ]
   }
 ];
 
@@ -64,6 +125,19 @@ const forbiddenDestructiveStatements = [
 ];
 
 const failures = [];
+const migrationsRoot = path.resolve(process.cwd(), "prisma", "migrations");
+const configuredReleaseMigrations = new Set(releaseMigrations.map((migration) => migration.directory));
+const discoveredReleaseMigrations = readdirSync(migrationsRoot, { withFileTypes: true })
+  .filter((entry) => entry.isDirectory() && entry.name >= releaseMigrationFloor)
+  .map((entry) => entry.name)
+  .sort();
+
+for (const directory of discoveredReleaseMigrations) {
+  if (!configuredReleaseMigrations.has(directory)) {
+    failures.push(`${directory}: release migration is not registered in verify-release-migrations.mjs.`);
+  }
+}
+
 for (const migration of releaseMigrations) {
   const migrationPath = path.resolve(
     process.cwd(),
@@ -81,8 +155,12 @@ for (const migration of releaseMigrations) {
   }
 
   const normalized = sql.trim();
-  if (!/^BEGIN;/i.test(normalized) || !/COMMIT;$/i.test(normalized)) {
+  const requiresExplicitTransaction = migration.requiresExplicitTransaction !== false;
+  if (requiresExplicitTransaction && (!/^BEGIN;/i.test(normalized) || !/COMMIT;$/i.test(normalized))) {
     failures.push(`${migration.directory}: release migration must have explicit BEGIN/COMMIT boundaries.`);
+  }
+  if (!requiresExplicitTransaction && !migration.nonTransactionalReason?.trim()) {
+    failures.push(`${migration.directory}: a reviewed non-transactional migration requires a documented reason.`);
   }
   for (const pattern of migration.required) {
     if (!pattern.test(sql)) failures.push(`${migration.directory}: missing required invariant ${pattern}.`);
@@ -102,8 +180,15 @@ console.log(JSON.stringify({
   status: "passed",
   migrations: releaseMigrations.map((migration) => migration.directory),
   guarantees: [
-    "explicit-transaction-boundaries",
+    "all-release-migrations-registered",
+    "explicit-transaction-boundaries-or-reviewed-checksum-preserving-exception",
     "required-release-invariants",
     "no-destructive-ddl-or-data-deletion"
-  ]
+  ],
+  reviewedNonTransactionalMigrations: releaseMigrations
+    .filter((migration) => migration.requiresExplicitTransaction === false)
+    .map((migration) => ({
+      directory: migration.directory,
+      reason: migration.nonTransactionalReason
+    }))
 }, null, 2));

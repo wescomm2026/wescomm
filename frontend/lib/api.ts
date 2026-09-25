@@ -2,6 +2,7 @@ import type { CartProduct } from "@/components/cart/StudentCartProvider";
 import { resolveShopProductAsset } from "@/lib/shop-assets";
 import { isUniformClothOnly, sortProductOptionValues } from "@/lib/product-display";
 import { apiErrorMessage } from "@/lib/user-facing-error";
+import type { CollectionChannel } from "@/lib/collection-channel";
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "/api/backend";
 export const COOKIE_SESSION_TOKEN = "cookie-session";
@@ -12,6 +13,8 @@ export type BackendAuthProfile = {
   id: string;
   role: "STUDENT" | "STAFF" | "ADMIN";
   studentNumber: string | null;
+  departmentId: string | null;
+  onboardingCompletedAt: string | null;
   fullName: string;
   email: string;
   phone: string | null;
@@ -24,8 +27,23 @@ export type BackendAuthProfile = {
 
 export type UpdateMyProfilePayload = {
   fullName: string;
+  studentNumber: string;
+  departmentId: string;
   phone: string | null;
-  department: string | null;
+  address: string | null;
+};
+
+export type BackendDepartment = {
+  id: string;
+  code: string;
+  groupName: string;
+  displayName: string;
+};
+
+export type CompleteOnboardingPayload = {
+  departmentId: string;
+  studentNumber: string;
+  phone: string | null;
   address: string | null;
 };
 
@@ -62,6 +80,8 @@ export type BackendProduct = {
   status: "IN_STOCK" | "RESTOCK_SOON" | "OUT_OF_STOCK" | "ON_SALE";
   stock: number;
   saleMode?: ProductSaleMode;
+  audienceScope?: "ALL_STUDENTS" | "SPECIFIC_DEPARTMENTS";
+  targetDepartments?: Array<{ id: string; code: string; displayName: string }>;
   category?: BackendCategory | null;
   variants?: BackendVariant[];
   skuInventoryEnabled?: boolean;
@@ -82,7 +102,7 @@ export type BackendFaq = {
 };
 
 export type BackendReservationStatus = "PENDING" | "CONFIRMED" | "READY_FOR_PICKUP" | "COMPLETED" | "CANCELLED" | "NO_SHOW";
-export type BackendPaymentMethod = "PAY_AT_COMMISSARY" | "E_WALLET_AT_PICKUP" | "PAYMONGO_GCASH" | "CASH" | "GCASH";
+export type BackendPaymentMethod = "PAY_AT_COMMISSARY" | "E_WALLET_AT_PICKUP" | "PAYMONGO_GCASH" | "CASH" | "GCASH" | "OTHER";
 export type BackendPaymentStatus =
   | "INITIALIZING"
   | "AWAITING_PAYMENT"
@@ -104,6 +124,24 @@ export type BackendNotificationType =
 export type BackendConversationStatus = "OPEN" | "RESOLVED";
 export type BackendConversationMode = "BOT_ACTIVE" | "WAITING_FOR_STAFF" | "STAFF_ACTIVE" | "RESOLVED";
 export type BackendConversationMessageSenderType = "STUDENT" | "BOT" | "STAFF" | "SYSTEM";
+
+export type BackendRealtimeUpdate = {
+  id: string;
+  topic:
+    | "reservations"
+    | "receipts"
+    | "notifications"
+    | "conversations"
+    | "typing"
+    | "inventory"
+    | "dashboard"
+    | "reports"
+    | "restrictions"
+    | "users";
+  entityId: string | null;
+  payload: Record<string, unknown>;
+  createdAt: string;
+};
 
 export type BackendProfileSummary = {
   id: string;
@@ -148,6 +186,7 @@ export type BackendReservation = {
   pickupPolicyVersion: number | null;
   pickupSlot: BackendPickupTimeSlot | null;
   paymentMethod: BackendPaymentMethod;
+  preferredCollectionChannel?: CollectionChannel;
   totalAmount: string | number;
   staffNotes?: string | null;
   payment?: BackendPaymentSummary | null;
@@ -157,6 +196,9 @@ export type BackendReservation = {
   items: Array<{
     id: string;
     productId: string;
+    productNameSnapshot?: string;
+    skuCodeSnapshot?: string | null;
+    optionSnapshot?: Array<{ optionName: string; optionValue: string }>;
     variantSummary?: string | null;
     quantity: number;
     unitPrice: string | number;
@@ -183,6 +225,7 @@ export type BackendReservation = {
 
 export type CreateReservationPayload = {
   paymentMethod: BackendPaymentMethod;
+  preferredCollectionChannel: CollectionChannel;
   pickupDate: string;
   pickupSlotId: string;
   pickupPolicyVersion: number;
@@ -205,6 +248,8 @@ export type BackendReceipt = {
   reservationId: string | null;
   totalAmount: string | number;
   paymentMethod: BackendPaymentMethod;
+  collectionChannel?: CollectionChannel | null;
+  officialReceiptNumber?: string | null;
   status: BackendReceiptStatus;
   publicVerificationUrl: string | null;
   receiptImageUrl?: string | null;
@@ -280,6 +325,9 @@ export type BackendPickupSlotAvailability = {
     booked: number;
     remaining: number | null;
     isFull: boolean;
+    isExpired: boolean;
+    isUnavailable: boolean;
+    unavailableReason: "PICKUP_SLOT_EXPIRED" | "PICKUP_SLOT_FULL" | null;
   }>;
 };
 
@@ -287,6 +335,7 @@ export type BackendPickupPolicy = {
   id?: string;
   version: number;
   timezone: "Asia/Manila" | string;
+  advanceMode: "OPEN_DAYS" | "CALENDAR_DAYS";
   minAdvanceDays: number;
   maxAdvanceDays: number;
   minDate: string;
@@ -305,6 +354,7 @@ export type BackendPickupPolicy = {
 };
 
 export type PickupPolicyPayload = {
+  advanceMode: "OPEN_DAYS" | "CALENDAR_DAYS";
   minAdvanceDays: number;
   maxAdvanceDays: number;
   reason: string;
@@ -759,6 +809,29 @@ export type BackendReportSummary = {
     label: string;
   };
   totalSales: number;
+  cogs: number;
+  grossProfit: number;
+  commissaryCollection: number;
+  treasurerCollection: number;
+  collectionChannelBreakdown: {
+    commissary: { amount: number; payments: number };
+    treasurer: { amount: number; payments: number };
+  };
+  commissaryPaymentBreakdown: {
+    cash: { amount: number; payments: number };
+    gcash: { amount: number; payments: number };
+    other: { amount: number; payments: number };
+  };
+  treasurerCollections: Array<{
+    paymentId: string;
+    paidAt: string;
+    officialReceiptNumber: string;
+    orderReference: string;
+    items: string;
+    amount: number;
+  }>;
+  uncostedQuantity: number;
+  unverifiedInventoryQuantity: number;
   onlineGcashRevenue: number;
   payAtCommissaryRevenue: number;
   paymentMethodBreakdown: {
@@ -789,6 +862,19 @@ export type BackendReportSummary = {
   categorySales: Array<{
     category: string;
     amount: number;
+    quantity: number;
+    sales: number;
+    cogs: number;
+    grossProfit: number;
+  }>;
+  itemSales: Array<{
+    productId: string;
+    item: string;
+    category: string;
+    quantity: number;
+    sales: number;
+    cogs: number;
+    grossProfit: number;
   }>;
   reservationStatusDistribution: Array<{
     status: string;
@@ -864,6 +950,8 @@ export type ReportRangeOptions = {
   from?: string;
   to?: string;
   granularity?: "AUTO" | "DAILY" | "MONTHLY";
+  collectionChannel?: "COMMISSARY" | "TREASURER";
+  categoryId?: string;
 };
 
 export type BackendDashboardProduct = {
@@ -978,6 +1066,8 @@ export function mapBackendProduct(product: BackendProduct): CartProduct {
     count: String(product.stock),
     image: asset.image,
     saleMode,
+    audienceScope: product.audienceScope ?? "ALL_STUDENTS",
+    targetDepartmentIds: (product.targetDepartments ?? []).map((department) => department.id),
     inventorySetupRequired: saleMode === "OPTIONS" && Boolean(product.inventorySetupRequired),
     options: saleMode === "OPTIONS" ? groupOptions(product.variants) : [],
     skus: saleMode === "OPTIONS" && product.skuInventoryEnabled
@@ -1049,6 +1139,30 @@ export async function updateMyProfileFromApi(token: string, payload: UpdateMyPro
     body: JSON.stringify(payload)
   });
   return data.profile;
+}
+
+export async function getDepartmentsFromApi(token: string) {
+  const data = await authApiFetch<{ departments: BackendDepartment[] }>("/auth/departments", token);
+  return data.departments;
+}
+
+export async function completeOnboardingFromApi(token: string, payload: CompleteOnboardingPayload) {
+  const data = await authApiFetch<{ profile: BackendAuthProfile }>("/auth/onboarding", token, {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+  return data.profile;
+}
+
+export async function getRealtimeUpdatesFromApi(token: string, cursor?: string) {
+  const query = cursor && /^\d+$/.test(cursor)
+    ? `?cursor=${encodeURIComponent(cursor)}`
+    : "";
+  return authApiFetch<{
+    cursor: string;
+    hasMore: boolean;
+    events: BackendRealtimeUpdate[];
+  }>(`/realtime/updates${query}`, token, { cache: "no-store" });
 }
 
 const PRODUCT_CACHE_TTL_MS = 30_000;
@@ -1347,11 +1461,16 @@ export async function cancelMyReservationFromApi(token: string, reservationId: s
 export async function updateReservationStatusFromApi(
   token: string,
   reservationId: string,
-  status: BackendReservationStatus
+  status: BackendReservationStatus,
+  settlement?: {
+    paymentMethod: "CASH" | "GCASH" | "OTHER";
+    collectionChannel: "COMMISSARY" | "TREASURER";
+    officialReceiptNumber?: string;
+  }
 ) {
   const data = await authApiFetch<{ reservation: BackendReservation; receipt: BackendReceipt | null }>(`/reservations/${reservationId}/status`, token, {
     method: "PATCH",
-    body: JSON.stringify({ status })
+    body: JSON.stringify({ status, settlement })
   });
   return data;
 }
@@ -1792,17 +1911,20 @@ export async function editConversationMessageFromApi(
   return data.message;
 }
 
-function reportQuery(options: ReportRangeOptions = {}) {
+function reportQuery(options: ReportRangeOptions = {}, fresh = false) {
   const params = new URLSearchParams();
   if (options.preset) params.set("preset", options.preset);
   if (options.from) params.set("from", options.from);
   if (options.to) params.set("to", options.to);
   if (options.granularity) params.set("granularity", options.granularity);
+  if (options.collectionChannel) params.set("collectionChannel", options.collectionChannel);
+  if (options.categoryId) params.set("categoryId", options.categoryId);
+  if (fresh) params.set("fresh", "1");
   return params.size ? `?${params.toString()}` : "";
 }
 
-export async function getAdminReportSummaryFromApi(token: string, options: ReportRangeOptions = {}, signal?: AbortSignal) {
-  const data = await authApiFetch<{ summary: BackendReportSummary }>(`/admin/reports/summary${reportQuery(options)}`, token, { signal });
+export async function getAdminReportSummaryFromApi(token: string, options: ReportRangeOptions = {}, signal?: AbortSignal, fresh = false) {
+  const data = await authApiFetch<{ summary: BackendReportSummary }>(`/admin/reports/summary${reportQuery(options, fresh)}`, token, { signal });
   return data.summary;
 }
 
@@ -1811,13 +1933,13 @@ export async function getAdminWesbotUsageFromApi(token: string, signal?: AbortSi
   return data.usage;
 }
 
-export async function getStaffReportSummaryFromApi(token: string, options: ReportRangeOptions = {}, signal?: AbortSignal) {
-  const data = await authApiFetch<{ summary: BackendReportSummary }>(`/staff/reports/summary${reportQuery(options)}`, token, { signal });
+export async function getStaffReportSummaryFromApi(token: string, options: ReportRangeOptions = {}, signal?: AbortSignal, fresh = false) {
+  const data = await authApiFetch<{ summary: BackendReportSummary }>(`/staff/reports/summary${reportQuery(options, fresh)}`, token, { signal });
   return data.summary;
 }
 
-export async function getStaffDashboardSummaryFromApi(token: string, signal?: AbortSignal) {
-  const data = await authApiFetch<{ dashboard: BackendStaffDashboard }>("/staff/dashboard/summary", token, { signal });
+export async function getStaffDashboardSummaryFromApi(token: string, signal?: AbortSignal, fresh = false) {
+  const data = await authApiFetch<{ dashboard: BackendStaffDashboard }>(`/staff/dashboard/summary${fresh ? "?fresh=1" : ""}`, token, { signal });
   return data.dashboard;
 }
 

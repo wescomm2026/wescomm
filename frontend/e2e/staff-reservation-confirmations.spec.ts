@@ -10,11 +10,13 @@ const staffProfile: BackendAuthProfile = {
   email: "reservation.qa@wesleyan.edu.ph",
   phone: null,
   department: "Commissary",
+  departmentId: null,
+  onboardingCompletedAt: null,
   address: null,
   avatarUrl: null
 };
 
-function reservation(id: string, referenceCode: string, status: "PENDING" | "CONFIRMED"): BackendReservation {
+function reservation(id: string, referenceCode: string, status: "PENDING" | "CONFIRMED" | "READY_FOR_PICKUP", preferredCollectionChannel: "COMMISSARY" | "TREASURER" = "COMMISSARY"): BackendReservation {
   return {
     id,
     studentId: "00000000-0000-4000-8000-000000000302",
@@ -28,6 +30,7 @@ function reservation(id: string, referenceCode: string, status: "PENDING" | "CON
     pickupPolicyVersion: 1,
     pickupSlot: null,
     paymentMethod: "PAY_AT_COMMISSARY",
+    preferredCollectionChannel,
     totalAmount: "350.00",
     payment: null,
     createdAt: "2026-08-25T02:00:00.000Z",
@@ -58,7 +61,8 @@ async function mockReservations(page: Page) {
   await authorizeMockedWorkspace(page, "STAFF");
   let reservations = [
     reservation("00000000-0000-4000-8000-000000000304", "WES-CONFIRM-0304", "PENDING"),
-    reservation("00000000-0000-4000-8000-000000000305", "WES-CANCEL-0305", "CONFIRMED")
+    reservation("00000000-0000-4000-8000-000000000305", "WES-CANCEL-0305", "CONFIRMED"),
+    reservation("00000000-0000-4000-8000-000000000306", "WES-TREASURY-0306", "READY_FOR_PICKUP", "TREASURER")
   ];
   const statusUpdates: string[] = [];
   const unhandled: string[] = [];
@@ -79,8 +83,8 @@ async function mockReservations(page: Page) {
       await json(route, { unreadCount: 0 });
       return;
     }
-    if (path === "/api/backend/realtime/events" && request.method() === "GET") {
-      await route.fulfill({ status: 200, contentType: "text/event-stream", body: "" });
+    if (path === "/api/backend/realtime/updates" && request.method() === "GET") {
+      await json(route, { cursor: "0", hasMore: false, events: [] });
       return;
     }
     if (path === "/api/backend/reservations" && request.method() === "GET") {
@@ -151,6 +155,15 @@ for (const viewport of viewports) {
     await page.keyboard.press("Escape");
     await expect(cancelButton).toBeFocused();
     expect(requests.statusUpdates).toHaveLength(1);
+
+    const treasuryRow = page.locator("article").filter({ hasText: "WES-TREASURY-0306" });
+    await expect(treasuryRow).toContainText("Plans to pay at: Treasury");
+    await treasuryRow.getByRole("button", { name: "Complete" }).click();
+    const paymentDialog = page.getByRole("dialog", { name: "Complete WES-TREASURY-0306" });
+    await expect(paymentDialog.getByRole("button", { name: "Treasury" })).toHaveAttribute("aria-pressed", "true");
+    await expect(paymentDialog.getByLabel("Treasury official receipt number")).toBeVisible();
+    await expect(paymentDialog.getByLabel("Payment method")).toHaveValue("CASH");
+    await page.keyboard.press("Escape");
     expect(requests.unhandled).toEqual([]);
   });
 }

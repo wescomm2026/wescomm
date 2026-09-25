@@ -9,7 +9,7 @@ export default function LegalLayout({ children }: { children: React.ReactNode })
       <header className="sticky top-0 z-40 border-b border-[#dfe8df] bg-white/95 backdrop-blur">
         <div className="mx-auto flex min-h-[78px] w-full max-w-[1500px] items-center gap-4 px-4 py-3 sm:min-h-[86px] sm:px-8 lg:px-10">
           <Link href="/" className="relative h-12 w-24 shrink-0 sm:h-14 sm:w-28" aria-label="Go to WESCOMM home">
-            <Image src="/assets/wescomm-logo.png" alt="WESCOMM" fill priority className="object-contain object-left" />
+            <Image src="/assets/wescomm-logo-ui.webp" alt="WESCOMM" fill priority className="object-contain object-left" />
           </Link>
           <div className="hidden border-l pl-4 sm:block">
             <p className="text-sm font-extrabold text-[#17211b]">WESCOMM</p>

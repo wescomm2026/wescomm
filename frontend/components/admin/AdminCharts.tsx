@@ -33,11 +33,10 @@ function ChartPanel({ title, children }: { title: string; children: React.ReactN
   );
 }
 
-export function AdminSummaryCharts({ summary }: { summary: BackendReportSummary }) {
+export function AdminSummaryCharts({ summary, embedded = false }: { summary: BackendReportSummary; embedded?: boolean }) {
   const totalStatus = summary.reservationStatusDistribution.reduce((total, item) => total + item.value, 0);
-
-  return (
-    <section className="grid gap-5 xl:grid-cols-[1.15fr_0.85fr]">
+  const panels = (
+    <>
       <ChartPanel title="Sales Trend">
         <div className="h-[310px] p-4">
           <ResponsiveContainer width="100%" height="100%">
@@ -53,8 +52,8 @@ export function AdminSummaryCharts({ summary }: { summary: BackendReportSummary 
       </ChartPanel>
 
       <ChartPanel title="Reservation Status">
-        <div className="grid min-h-[310px] items-center gap-3 p-4 sm:grid-cols-[1fr_1fr] xl:grid-cols-1 2xl:grid-cols-[1fr_1fr]">
-          <div className="relative mx-auto h-52 w-full max-w-52">
+        <div className="flex min-h-[310px] flex-wrap items-center justify-center gap-4 p-4">
+          <div className="relative h-48 min-w-44 flex-1 basis-48 sm:h-52">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
                 <Pie data={summary.reservationStatusDistribution} dataKey="value" nameKey="label" innerRadius={52} outerRadius={82} paddingAngle={1}>
@@ -70,7 +69,7 @@ export function AdminSummaryCharts({ summary }: { summary: BackendReportSummary 
               </div>
             </div>
           </div>
-          <div className="space-y-3">
+          <div className="min-w-36 flex-1 basis-36 space-y-3">
             {summary.reservationStatusDistribution.map((item, index) => (
               <div key={item.status} className="grid grid-cols-[auto_1fr_auto] items-center gap-2 text-xs">
                 <span className="size-2.5 rounded-full" style={{ backgroundColor: statusColors[index % statusColors.length] }} />
@@ -81,17 +80,23 @@ export function AdminSummaryCharts({ summary }: { summary: BackendReportSummary 
           </div>
         </div>
       </ChartPanel>
-    </section>
+    </>
   );
+
+  return embedded ? panels : <section className="grid gap-5 xl:grid-cols-[1.15fr_0.85fr]">{panels}</section>;
 }
 
 export function AdminReportsCharts({ summary }: { summary: BackendReportSummary }) {
+  const topCategories = [...summary.categorySales]
+    .sort((left, right) => right.sales - left.sales || left.category.localeCompare(right.category))
+    .slice(0, 3);
+
   return (
-    <section className="grid gap-5 xl:grid-cols-[1fr_0.95fr]">
+    <section className="grid gap-5 xl:grid-cols-2 2xl:grid-cols-3">
       <ChartPanel title="Top Categories by Sales">
         <div className="h-[330px] p-4">
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={summary.categorySales} layout="vertical" margin={{ top: 5, right: 70, left: 10, bottom: 0 }}>
+            <BarChart data={topCategories} layout="vertical" margin={{ top: 5, right: 70, left: 10, bottom: 0 }}>
               <XAxis type="number" hide />
               <YAxis type="category" dataKey="category" width={125} tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
               <Tooltip formatter={(value: number) => formatCurrency(value)} />
@@ -100,7 +105,7 @@ export function AdminReportsCharts({ summary }: { summary: BackendReportSummary 
           </ResponsiveContainer>
         </div>
       </ChartPanel>
-      <AdminSummaryCharts summary={summary} />
+      <AdminSummaryCharts summary={summary} embedded />
     </section>
   );
 }

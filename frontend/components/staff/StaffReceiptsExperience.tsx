@@ -210,7 +210,7 @@ export function StaffReceiptsExperience() {
         >
           <option value="ALL">All Payments</option>
           <option value="ONLINE_GCASH">GCash – Online</option>
-          <option value="AT_COMMISSARY">Pay at Commissary</option>
+          <option value="AT_COMMISSARY">In-person payments</option>
         </select>
         <p className="text-xs text-[#718078]">Combines with the selected receipt status and search.</p>
       </div>

@@ -9,6 +9,7 @@ import { safelyRecordAuditLog } from "./audit-log.service.js";
 import { createNotificationsForRolesBestEffort } from "./notification.service.js";
 import { getInventoryProduct, INVENTORY_WRITE_TRANSACTION_OPTIONS } from "./inventory.service.js";
 import { createBackInStockNotificationsInTransaction } from "./wishlist-notification.service.js";
+import { adjustInventoryBatchesInTransaction, createInventoryBatchInTransaction, requireRestockCost } from "./inventory-cost.service.js";
 
 export type SkuDefinitionInput = {
   variantIds?: string[];
@@ -104,6 +105,7 @@ export async function reconcileProductSkuInventory(input: {
         lowStockThreshold: true,
         isActive: true,
         saleMode: true,
+        skuInventoryEnabled: true,
         variants: {
           select: { id: true, optionName: true, optionValue: true, lowStockThreshold: true },
           orderBy: [{ optionName: "asc" }, { optionValue: "asc" }]
@@ -276,6 +278,13 @@ export async function reconcileProductSkuInventory(input: {
     });
 
     const previousStock = product.stock;
+    if (product.skuInventoryEnabled && previousStock > 0) {
+      throw new HttpError(
+        409,
+        "Set all current SKU quantities to zero before rebuilding inventory combinations. This protects existing FIFO cost batches.",
+        "SKU_REBUILD_HAS_COSTED_STOCK"
+      );
+    }
     // Retire previous definitions instead of deleting them so completed reservation and
     // inventory-movement references remain auditable. Active reservations are blocked above.
     await transaction.productSku.updateMany({
@@ -381,6 +390,27 @@ export async function reconcileProductSkuInventory(input: {
       await transaction.productSkuVariant.createMany({ data: skuVariantLinks });
     }
 
+    if (!product.skuInventoryEnabled) {
+      // A first-time conversion from legacy total stock cannot prove which old
+      // cost layer belongs to which physical combination. Retire only the
+      // remaining legacy balance and create explicit review-required opening
+      // batches for each SKU instead of inventing a cost allocation.
+      await transaction.inventoryBatch.updateMany({
+        where: { productId: input.productId, skuId: null, quantityRemaining: { gt: 0 } },
+        data: { quantityRemaining: 0 }
+      });
+      for (const sku of skuRows) {
+        if (sku.stock <= 0) continue;
+        await adjustInventoryBatchesInTransaction(transaction, {
+          productId: input.productId,
+          skuId: sku.id,
+          difference: sku.stock,
+          createdById: input.performedById,
+          note: "Opening SKU balance from inventory setup; verify the acquisition cost before release."
+        });
+      }
+    }
+
     const totalStock = normalizedSkus.reduce((total, sku) => total + sku.stock, 0);
     const status = deriveProductStatus(totalStock, product.lowStockThreshold, product.status);
     await transaction.product.update({
@@ -460,7 +490,26 @@ export async function restockProductSkus(input: {
   quantities: SkuStockQuantityInput[];
   performedById: string;
   notes?: string;
+  unitCost?: number;
+  sellingPrice?: number;
+  receivedAt?: Date;
+  supplierNote?: string;
 }) {
+  if (input.mode === "add") {
+    requireRestockCost({
+      unitCost: input.unitCost ?? Number.NaN,
+      receivedAt: input.receivedAt ?? new Date(Number.NaN),
+      supplierNote: input.supplierNote
+    });
+  }
+  if (input.sellingPrice !== undefined && (
+    !Number.isFinite(input.sellingPrice)
+    || input.sellingPrice < 0
+    || input.sellingPrice > 10_000_000
+    || Number(input.sellingPrice.toFixed(2)) !== input.sellingPrice
+  )) {
+    throw new HttpError(400, "Selling price must be from PHP 0.00 to PHP 10,000,000.00 with up to two decimal places.", "INVALID_SELLING_PRICE");
+  }
   const result = await prisma.$transaction(async (transaction) => {
     const locked = await lockProductForUpdate(transaction, input.productId);
     if (!locked) throw new HttpError(404, "Product not found.");
@@ -471,6 +520,7 @@ export async function restockProductSkus(input: {
         id: true,
         name: true,
         stock: true,
+        price: true,
         status: true,
         lowStockThreshold: true,
         saleMode: true,
@@ -565,15 +615,39 @@ export async function restockProductSkus(input: {
           notes: input.notes ?? `${input.mode === "set" ? "Corrected" : "Updated"} ${change.label} stock.`
         }))
       });
+      for (const change of changes) {
+        const difference = change.newStock - change.previousStock;
+        if (input.mode === "add") {
+          await createInventoryBatchInTransaction(transaction, {
+            productId: input.productId,
+            skuId: change.skuId,
+            quantity: difference,
+            unitCost: input.unitCost!,
+            receivedAt: input.receivedAt!,
+            supplierNote: input.supplierNote ?? input.notes,
+            createdById: input.performedById
+          });
+        } else {
+          await adjustInventoryBatchesInTransaction(transaction, {
+            productId: input.productId,
+            skuId: change.skuId,
+            difference,
+            createdById: input.performedById,
+            note: input.notes
+          });
+        }
+      }
     }
 
     const nextStockBySkuId = new Map(changes.map((change) => [change.skuId, change.newStock]));
     const nextSkuStocks = product.skus.map((sku) => nextStockBySkuId.get(sku.id) ?? sku.stock);
     const totalStock = nextSkuStocks.reduce((total, stock) => total + stock, 0);
     const status = deriveProductStatus(totalStock, product.lowStockThreshold, product.status);
+    const previousSellingPrice = Number(product.price);
+    const nextSellingPrice = input.sellingPrice ?? previousSellingPrice;
     await transaction.product.update({
       where: { id: input.productId },
-      data: { stock: totalStock, status, updatedAt: new Date() },
+      data: { stock: totalStock, status, price: nextSellingPrice, updatedAt: new Date() },
       select: { id: true }
     });
     await syncDerivedVariantStocks(transaction, input.productId);
@@ -613,7 +687,7 @@ export async function restockProductSkus(input: {
       eventId: productMovementId
     });
 
-    return { productName: product.name, previousProductStock, totalStock, changes };
+    return { productName: product.name, previousProductStock, totalStock, changes, previousSellingPrice, nextSellingPrice };
   }, INVENTORY_WRITE_TRANSACTION_OPTIONS);
 
   for (const change of result.changes) {
@@ -640,6 +714,9 @@ export async function restockProductSkus(input: {
     metadata: {
       previousStock: result.previousProductStock,
       newStock: result.totalStock,
+      previousSellingPrice: result.previousSellingPrice,
+      newSellingPrice: result.nextSellingPrice,
+      sellingPriceChanged: result.previousSellingPrice !== result.nextSellingPrice,
       changes: result.changes
     }
   });

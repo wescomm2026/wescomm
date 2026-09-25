@@ -19,6 +19,15 @@ import { markWelcomeContentReady } from "@/lib/welcome-readiness";
 export const emptySummary: BackendReportSummary = {
   range: { preset: "LAST_30_DAYS", from: null, to: "", granularity: "DAILY", label: "Last 30 Days" },
   totalSales: 0,
+  cogs: 0,
+  grossProfit: 0,
+  commissaryCollection: 0,
+  treasurerCollection: 0,
+  collectionChannelBreakdown: { commissary: { amount: 0, payments: 0 }, treasurer: { amount: 0, payments: 0 } },
+  commissaryPaymentBreakdown: { cash: { amount: 0, payments: 0 }, gcash: { amount: 0, payments: 0 }, other: { amount: 0, payments: 0 } },
+  treasurerCollections: [],
+  uncostedQuantity: 0,
+  unverifiedInventoryQuantity: 0,
   onlineGcashRevenue: 0,
   payAtCommissaryRevenue: 0,
   paymentMethodBreakdown: { onlineGcash: { amount: 0, receipts: 0 }, payAtCommissary: { amount: 0, receipts: 0 } },
@@ -35,6 +44,7 @@ export const emptySummary: BackendReportSummary = {
   activeConversations: 0,
   salesTrend: [],
   categorySales: [],
+  itemSales: [],
   reservationStatusDistribution: [],
   inventoryInsights: []
 };
@@ -87,7 +97,7 @@ export function useAdminSummary(options: ReportRangeOptions = DEFAULT_REPORT_RAN
   const requestSequenceRef = useRef(0);
   const requestAbortRef = useRef<AbortController | null>(null);
 
-  const loadSummary = useCallback(async ({ background = false }: { background?: boolean } = {}) => {
+  const loadSummary = useCallback(async ({ background = false, fresh = false }: { background?: boolean; fresh?: boolean } = {}) => {
     if (!ready) return;
 
     const requestId = ++requestSequenceRef.current;
@@ -111,7 +121,7 @@ export function useAdminSummary(options: ReportRangeOptions = DEFAULT_REPORT_RAN
     }
 
     try {
-      const data = await getAdminReportSummaryFromApi(user.accessToken, options, requestController.signal);
+      const data = await getAdminReportSummaryFromApi(user.accessToken, options, requestController.signal, fresh);
       if (requestId !== requestSequenceRef.current) return;
       setSummary(data);
     } catch (summaryError) {
@@ -154,7 +164,7 @@ export function useAdminSummary(options: ReportRangeOptions = DEFAULT_REPORT_RAN
     };
   }, [loadSummary, user?.accessToken]);
 
-  return { user, ready, openAuth, summary, loading, initialLoadComplete, error, reload: loadSummary };
+  return { user, ready, openAuth, summary, loading, initialLoadComplete, error, reload: () => loadSummary({ fresh: true }) };
 }
 
 export function AdminHeader({

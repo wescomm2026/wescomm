@@ -18,6 +18,8 @@ const staffProfile: BackendAuthProfile = {
   email: "inventory.qa@wesleyan.edu.ph",
   phone: null,
   department: "Commissary",
+  departmentId: null,
+  onboardingCompletedAt: null,
   address: null,
   avatarUrl: null
 };
@@ -142,6 +144,10 @@ async function mockInventory(page: Page) {
       await json(route, { profile: staffProfile });
       return;
     }
+    if (path === "/api/backend/auth/departments" && request.method() === "GET") {
+      await json(route, { departments: [] });
+      return;
+    }
     if (path === "/api/backend/notifications" && request.method() === "GET") {
       await json(route, { notifications: [], nextCursor: null });
       return;
@@ -150,8 +156,8 @@ async function mockInventory(page: Page) {
       await json(route, { unreadCount: 0 });
       return;
     }
-    if (path === "/api/backend/realtime/events" && request.method() === "GET") {
-      await route.fulfill({ status: 200, contentType: "text/event-stream", body: "" });
+    if (path === "/api/backend/realtime/updates" && request.method() === "GET") {
+      await json(route, { cursor: "0", hasMore: false, events: [] });
       return;
     }
     if (path === "/api/backend/staff/products" && request.method() === "GET") {
@@ -160,6 +166,31 @@ async function mockInventory(page: Page) {
         products: archived ? archivedProducts : [clothProduct, optionProduct],
         categories: [category],
         nextCursor: null
+      });
+      return;
+    }
+    const batchProduct = [clothProduct, optionProduct].find((product) => path === `/api/backend/staff/products/${product.id}/batches`);
+    if (batchProduct && request.method() === "GET") {
+      const unitCost = batchProduct.id === clothProduct.id ? 80 : 200;
+      await json(route, {
+        batches: [{
+          id: `${batchProduct.id}-batch`,
+          batchCode: batchProduct.id === clothProduct.id ? "B-CLOTH-001" : "B-PE-001",
+          skuId: batchProduct.id === optionProduct.id ? optionProduct.skus?.[0]?.id ?? null : null,
+          quantityReceived: batchProduct.stock,
+          quantityRemaining: batchProduct.stock,
+          unitCost,
+          costVerified: true,
+          receivedAt: "2026-09-24T00:00:00.000Z",
+          supplierNote: "QA delivery",
+          sku: batchProduct.id === optionProduct.id ? { code: "PE-M-RED", optionSnapshot: [{ optionName: "Size", optionValue: "M" }, { optionName: "Color", optionValue: "Red" }] } : null
+        }],
+        summary: {
+          latestCost: unitCost,
+          averageInventoryCost: unitCost,
+          inventoryValue: batchProduct.stock * unitCost,
+          unverifiedQuantity: 0
+        }
       });
       return;
     }
@@ -178,6 +209,7 @@ async function mockInventory(page: Page) {
 
 const viewports = [
   { name: "desktop", width: 1440, height: 900 },
+  { name: "short-laptop", width: 1366, height: 650 },
   { name: "mobile", width: 390, height: 844 }
 ] as const;
 
@@ -202,16 +234,35 @@ for (const viewport of viewports) {
     await expect(optionRow).toContainText("L · Blue · 3");
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 
+    if (viewport.width >= 1280) {
+      const productHeading = page.getByText("Product", { exact: true }).first();
+      const categoryHeading = page.getByText("Category", { exact: true }).first();
+      const [productBox, categoryBox] = await Promise.all([productHeading.boundingBox(), categoryHeading.boundingBox()]);
+      expect(productBox).not.toBeNull();
+      expect(categoryBox).not.toBeNull();
+      expect(Math.abs((productBox?.y ?? 0) - (categoryBox?.y ?? 0))).toBeLessThan(3);
+      expect(categoryBox?.x ?? 0).toBeGreaterThan((productBox?.x ?? 0) + (productBox?.width ?? 0));
+    }
+
     const clothUpdateButton = clothRow.getByRole("button", { name: "Update stock" });
     await clothUpdateButton.click();
     const clothDialog = page.getByRole("dialog", { name: "Update stock" });
     await expect(clothDialog).toBeVisible();
     await expect(clothDialog.getByText("New items received")).toBeVisible();
+    await expect(clothDialog.getByText("PHP 125.00", { exact: true })).toBeVisible();
     await clothDialog.getByLabel("New items received").fill("2");
+    await clothDialog.getByLabel("Unit acquisition cost").fill("80");
+    await expect(clothDialog.getByText(/PHP 45\.00 \/ item/)).toBeVisible();
+    await clothDialog.getByLabel("Selling price", { exact: true }).fill("150");
+    await expect(clothDialog.getByText(/PHP 70\.00 \/ item/)).toBeVisible();
     const clothSaveButton = clothDialog.getByRole("button", { name: "Confirm & add" });
+    const saveButtonBox = await clothSaveButton.boundingBox();
+    expect(saveButtonBox).not.toBeNull();
+    expect((saveButtonBox?.y ?? 0) + (saveButtonBox?.height ?? 0)).toBeLessThanOrEqual(viewport.height);
     await clothSaveButton.click();
     const clothConfirmation = page.getByRole("alertdialog", { name: "Add this inventory stock?" });
     await expect(clothConfirmation).toContainText("2 new items");
+    await expect(clothConfirmation).toContainText("selling price will change from PHP 125.00 to PHP 150.00");
     await expect(clothConfirmation.getByRole("button", { name: "Cancel" })).toBeFocused();
     await page.keyboard.press("Escape");
     await expect(clothDialog).toBeVisible();
@@ -224,6 +275,18 @@ for (const viewport of viewports) {
     await manageButton.click();
     const managerDialog = page.getByRole("dialog", { name: "Manage product" });
     await expect(managerDialog).toBeVisible();
+    await managerDialog.getByRole("button", { name: /^Edit details/ }).click();
+    const detailsDialog = page.getByRole("dialog", { name: "Edit details" });
+    await expect(detailsDialog.getByText("PHP 350.00", { exact: true }).first()).toBeVisible();
+    await expect(detailsDialog.getByText("PHP 200.00", { exact: true }).first()).toBeVisible();
+    await expect(detailsDialog.getByText("PHP 150.00 / item", { exact: true })).toBeVisible();
+    const sellingPriceInput = detailsDialog.getByLabel("Selling price", { exact: true });
+    const oldPriceInput = detailsDialog.getByLabel(/Old price/);
+    const [sellingPriceBox, oldPriceBox] = await Promise.all([sellingPriceInput.boundingBox(), oldPriceInput.boundingBox()]);
+    expect(sellingPriceBox).not.toBeNull();
+    expect(oldPriceBox).not.toBeNull();
+    expect(oldPriceBox?.y ?? 0).toBeGreaterThanOrEqual((sellingPriceBox?.y ?? 0) + (sellingPriceBox?.height ?? 0));
+    await detailsDialog.getByRole("button", { name: "Back to manage product" }).click();
     const combinationsButton = managerDialog.getByRole("button", { name: /^Inventory combinations/ });
     await combinationsButton.click();
 
@@ -232,10 +295,15 @@ for (const viewport of viewports) {
     await expect(skuDialog.getByText("Size: M · Color: Red", { exact: true })).toBeVisible();
     await expect(skuDialog.getByText("Size: L · Color: Blue", { exact: true })).toBeVisible();
     await skuDialog.getByLabel("Combination 1 new quantity").fill("1");
+    await skuDialog.getByLabel("Unit acquisition cost").fill("200");
+    await expect(skuDialog.getByText(/PHP 150\.00 \/ item/)).toBeVisible();
+    await skuDialog.getByLabel("Selling price", { exact: true }).fill("400");
+    await expect(skuDialog.getByText(/PHP 200\.00 \/ item/)).toBeVisible();
     const skuSaveButton = skuDialog.getByRole("button", { name: "Confirm & add" });
     await skuSaveButton.click();
     const skuConfirmation = page.getByRole("alertdialog", { name: "Add this inventory stock?" });
     await expect(skuConfirmation).toContainText("1 new item");
+    await expect(skuConfirmation).toContainText("selling price will change from PHP 350.00 to PHP 400.00");
     await page.keyboard.press("Escape");
     await expect(skuDialog).toBeVisible();
     await expect(skuSaveButton).toBeFocused();

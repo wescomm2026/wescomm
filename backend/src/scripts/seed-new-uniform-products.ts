@@ -24,7 +24,7 @@ const assetProducts: ProductSeed[] = [
     categorySlug: "uniforms",
     categoryIconUrl: "/assets/uniforms.svg",
     description: "Elementary PE T-shirt, all sizes",
-    imageUrl: `${SHOP_ASSET_BASE}/elem pe shirt.png`,
+    imageUrl: `${SHOP_ASSET_BASE}/elem pe shirt.webp`,
     price: 300,
     stock: 24,
     lowStockThreshold: 10
@@ -35,7 +35,7 @@ const assetProducts: ProductSeed[] = [
     categorySlug: "uniforms",
     categoryIconUrl: "/assets/uniforms.svg",
     description: "Elementary PE jogging pants, all sizes",
-    imageUrl: `${SHOP_ASSET_BASE}/elem pe pants.png`,
+    imageUrl: `${SHOP_ASSET_BASE}/elem pe pants.webp`,
     price: 350,
     stock: 24,
     lowStockThreshold: 10
@@ -46,7 +46,7 @@ const assetProducts: ProductSeed[] = [
     categorySlug: "uniforms",
     categoryIconUrl: "/assets/uniforms.svg",
     description: "Elementary PE shirt and jogging pants set",
-    imageUrl: `${SHOP_ASSET_BASE}/elem pe set.png`,
+    imageUrl: `${SHOP_ASSET_BASE}/elem pe set.webp`,
     price: 650,
     stock: 24,
     lowStockThreshold: 10
@@ -57,7 +57,7 @@ const assetProducts: ProductSeed[] = [
     categorySlug: "uniforms",
     categoryIconUrl: "/assets/uniforms.svg",
     description: "College PE T-shirt, all sizes",
-    imageUrl: `${SHOP_ASSET_BASE}/pe-uniform-top.png`,
+    imageUrl: `${SHOP_ASSET_BASE}/pe-uniform-top.webp`,
     price: 350,
     stock: 30,
     lowStockThreshold: 10
@@ -68,7 +68,7 @@ const assetProducts: ProductSeed[] = [
     categorySlug: "uniforms",
     categoryIconUrl: "/assets/uniforms.svg",
     description: "College PE jogging pants, all sizes",
-    imageUrl: `${SHOP_ASSET_BASE}/pe-uniform-pants.png`,
+    imageUrl: `${SHOP_ASSET_BASE}/pe-uniform-pants.webp`,
     price: 400,
     stock: 30,
     lowStockThreshold: 10
@@ -79,7 +79,7 @@ const assetProducts: ProductSeed[] = [
     categorySlug: "uniforms",
     categoryIconUrl: "/assets/uniforms.svg",
     description: "College PE shirt and jogging pants set",
-    imageUrl: `${SHOP_ASSET_BASE}/pe-uniform-set.png`,
+    imageUrl: `${SHOP_ASSET_BASE}/pe-uniform-set.webp`,
     price: 750,
     stock: 30,
     lowStockThreshold: 10,
@@ -92,7 +92,7 @@ const assetProducts: ProductSeed[] = [
     categorySlug: "uniforms",
     categoryIconUrl: "/assets/uniforms.svg",
     description: "Senior High men's uniform polo",
-    imageUrl: `${SHOP_ASSET_BASE}/senior high boys polo.png`,
+    imageUrl: `${SHOP_ASSET_BASE}/senior high boys polo.webp`,
     price: 300,
     stock: 24,
     lowStockThreshold: 10
@@ -104,7 +104,7 @@ const assetProducts: ProductSeed[] = [
     categorySlug: "uniforms",
     categoryIconUrl: "/assets/uniforms.svg",
     description: "Senior High men's uniform pants",
-    imageUrl: `${SHOP_ASSET_BASE}/senior high boys pants.png`,
+    imageUrl: `${SHOP_ASSET_BASE}/senior high boys pants.webp`,
     price: 350,
     stock: 24,
     lowStockThreshold: 10
@@ -116,7 +116,7 @@ const assetProducts: ProductSeed[] = [
     categorySlug: "uniforms",
     categoryIconUrl: "/assets/uniforms.svg",
     description: "Senior High men's polo and pants set",
-    imageUrl: `${SHOP_ASSET_BASE}/senior high boys set.png`,
+    imageUrl: `${SHOP_ASSET_BASE}/senior high boys set.webp`,
     price: 600,
     stock: 24,
     lowStockThreshold: 10
@@ -128,7 +128,7 @@ const assetProducts: ProductSeed[] = [
     categorySlug: "uniforms",
     categoryIconUrl: "/assets/uniforms.svg",
     description: "Senior High women's uniform top",
-    imageUrl: `${SHOP_ASSET_BASE}/senior high top girl.png`,
+    imageUrl: `${SHOP_ASSET_BASE}/senior high top girl.webp`,
     price: 300,
     stock: 24,
     lowStockThreshold: 10
@@ -140,7 +140,7 @@ const assetProducts: ProductSeed[] = [
     categorySlug: "uniforms",
     categoryIconUrl: "/assets/uniforms.svg",
     description: "Senior High women's uniform skirt",
-    imageUrl: `${SHOP_ASSET_BASE}/senior high palda girl.png`,
+    imageUrl: `${SHOP_ASSET_BASE}/senior high palda girl.webp`,
     price: 350,
     stock: 24,
     lowStockThreshold: 10
@@ -152,7 +152,7 @@ const assetProducts: ProductSeed[] = [
     categorySlug: "uniforms",
     categoryIconUrl: "/assets/uniforms.svg",
     description: "Senior High women's top and skirt set",
-    imageUrl: `${SHOP_ASSET_BASE}/senior high uniform set girl.png`,
+    imageUrl: `${SHOP_ASSET_BASE}/senior high uniform set girl.webp`,
     price: 600,
     stock: 24,
     lowStockThreshold: 10
@@ -164,7 +164,7 @@ const assetProducts: ProductSeed[] = [
     categorySlug: "uniforms",
     categoryIconUrl: "/assets/uniforms.svg",
     description: "WUP men's uniform top",
-    imageUrl: `${SHOP_ASSET_BASE}/boys-wup-uniform.png`,
+    imageUrl: `${SHOP_ASSET_BASE}/boys-wup-uniform.webp`,
     price: 350,
     stock: 24,
     lowStockThreshold: 10
@@ -176,7 +176,7 @@ const assetProducts: ProductSeed[] = [
     categorySlug: "uniforms",
     categoryIconUrl: "/assets/uniforms.svg",
     description: "WUP men's uniform set",
-    imageUrl: `${SHOP_ASSET_BASE}/boys-wup-uniform-set.png`,
+    imageUrl: `${SHOP_ASSET_BASE}/boys-wup-uniform-set.webp`,
     price: 600,
     stock: 24,
     lowStockThreshold: 10
@@ -188,7 +188,7 @@ const assetProducts: ProductSeed[] = [
     categorySlug: "uniforms",
     categoryIconUrl: "/assets/uniforms.svg",
     description: "WUP women's blouse and skirt set",
-    imageUrl: `${SHOP_ASSET_BASE}/wup-girls-uniform-set.png`,
+    imageUrl: `${SHOP_ASSET_BASE}/wup-girls-uniform-set.webp`,
     price: 600,
     stock: 24,
     lowStockThreshold: 10
@@ -200,7 +200,7 @@ const assetProducts: ProductSeed[] = [
     categorySlug: "uniforms",
     categoryIconUrl: "/assets/uniforms.svg",
     description: "WUP women's blouse with ribbon",
-    imageUrl: `${SHOP_ASSET_BASE}/wup-girls-blouse-ribbon.png`,
+    imageUrl: `${SHOP_ASSET_BASE}/wup-girls-blouse-ribbon.webp`,
     price: 350,
     stock: 24,
     lowStockThreshold: 10
@@ -212,7 +212,7 @@ const assetProducts: ProductSeed[] = [
     categorySlug: "uniforms",
     categoryIconUrl: "/assets/uniforms.svg",
     description: "WUP women's standard blouse",
-    imageUrl: `${SHOP_ASSET_BASE}/wup-girls-blouse.png`,
+    imageUrl: `${SHOP_ASSET_BASE}/wup-girls-blouse.webp`,
     price: 350,
     stock: 24,
     lowStockThreshold: 10
@@ -224,7 +224,7 @@ const assetProducts: ProductSeed[] = [
     categorySlug: "uniforms",
     categoryIconUrl: "/assets/uniforms.svg",
     description: "WUP women's uniform skirt",
-    imageUrl: `${SHOP_ASSET_BASE}/wup-girls-skirt.png`,
+    imageUrl: `${SHOP_ASSET_BASE}/wup-girls-skirt.webp`,
     price: 350,
     stock: 24,
     lowStockThreshold: 10
@@ -235,7 +235,7 @@ const assetProducts: ProductSeed[] = [
     categorySlug: "uniforms",
     categoryIconUrl: "/assets/uniforms.svg",
     description: "WUP uniform slacks",
-    imageUrl: `${SHOP_ASSET_BASE}/wup-slacks.png`,
+    imageUrl: `${SHOP_ASSET_BASE}/wup-slacks.webp`,
     price: 400,
     stock: 24,
     lowStockThreshold: 10
@@ -247,7 +247,7 @@ const assetProducts: ProductSeed[] = [
     categorySlug: "uniforms",
     categoryIconUrl: "/assets/uniforms.svg",
     description: "BSBA blouse and skirt set",
-    imageUrl: `${SHOP_ASSET_BASE}/BSBA GIRL UNIFORM SET.png`,
+    imageUrl: `${SHOP_ASSET_BASE}/BSBA GIRL UNIFORM SET.webp`,
     price: 700,
     stock: 24,
     lowStockThreshold: 10
@@ -259,7 +259,7 @@ const assetProducts: ProductSeed[] = [
     categorySlug: "uniforms",
     categoryIconUrl: "/assets/uniforms.svg",
     description: "BSBA blouse uniform",
-    imageUrl: `${SHOP_ASSET_BASE}/BSBA GIRL UNIFORM.png`,
+    imageUrl: `${SHOP_ASSET_BASE}/BSBA GIRL UNIFORM.webp`,
     price: 350,
     stock: 24,
     lowStockThreshold: 10
@@ -270,7 +270,7 @@ const assetProducts: ProductSeed[] = [
     categorySlug: "uniforms",
     categoryIconUrl: "/assets/uniforms.svg",
     description: "BSBA green skirt",
-    imageUrl: `${SHOP_ASSET_BASE}/BSBA SKIRT.png`,
+    imageUrl: `${SHOP_ASSET_BASE}/BSBA SKIRT.webp`,
     price: 350,
     stock: 24,
     lowStockThreshold: 10
@@ -282,7 +282,7 @@ const assetProducts: ProductSeed[] = [
     categorySlug: "uniforms",
     categoryIconUrl: "/assets/uniforms.svg",
     description: "Nursing women's yellow uniform dress",
-    imageUrl: `${SHOP_ASSET_BASE}/chtm-dress-uniform.png`,
+    imageUrl: `${SHOP_ASSET_BASE}/chtm-dress-uniform.webp`,
     price: 600,
     stock: 24,
     lowStockThreshold: 10
@@ -293,7 +293,7 @@ const assetProducts: ProductSeed[] = [
     categorySlug: "uniforms",
     categoryIconUrl: "/assets/uniforms.svg",
     description: "WUP criminology uniform",
-    imageUrl: `${SHOP_ASSET_BASE}/wup crim uniform.png`,
+    imageUrl: `${SHOP_ASSET_BASE}/wup crim uniform.webp`,
     price: 600,
     stock: 24,
     lowStockThreshold: 10
@@ -304,7 +304,7 @@ const assetProducts: ProductSeed[] = [
     categorySlug: "uniforms",
     categoryIconUrl: "/assets/uniforms.svg",
     description: "Nursing uniform set",
-    imageUrl: `${SHOP_ASSET_BASE}/nursing-uniform-set.png`,
+    imageUrl: `${SHOP_ASSET_BASE}/nursing-uniform-set.webp`,
     price: 600,
     stock: 24,
     lowStockThreshold: 10
@@ -316,7 +316,7 @@ const assetProducts: ProductSeed[] = [
     categorySlug: "uniforms",
     categoryIconUrl: "/assets/uniforms.svg",
     description: "Nursing men's uniform set",
-    imageUrl: `${SHOP_ASSET_BASE}/nursing-boys-uniform-set.png`,
+    imageUrl: `${SHOP_ASSET_BASE}/nursing-boys-uniform-set.webp`,
     price: 600,
     stock: 24,
     lowStockThreshold: 10
@@ -327,7 +327,7 @@ const assetProducts: ProductSeed[] = [
     categorySlug: "uniforms",
     categoryIconUrl: "/assets/uniforms.svg",
     description: "Nursing clinical uniform top",
-    imageUrl: `${SHOP_ASSET_BASE}/nursing-clinical-top.png`,
+    imageUrl: `${SHOP_ASSET_BASE}/nursing-clinical-top.webp`,
     price: 350,
     stock: 24,
     lowStockThreshold: 10
@@ -338,7 +338,7 @@ const assetProducts: ProductSeed[] = [
     categorySlug: "uniforms",
     categoryIconUrl: "/assets/uniforms.svg",
     description: "Nursing uniform slacks",
-    imageUrl: `${SHOP_ASSET_BASE}/nursing-slacks.png`,
+    imageUrl: `${SHOP_ASSET_BASE}/nursing-slacks.webp`,
     price: 400,
     stock: 24,
     lowStockThreshold: 10
@@ -349,7 +349,7 @@ const assetProducts: ProductSeed[] = [
     categorySlug: "uniforms",
     categoryIconUrl: "/assets/uniforms.svg",
     description: "Nursing clinical smock gown",
-    imageUrl: `${SHOP_ASSET_BASE}/nursing-smock-gown.png`,
+    imageUrl: `${SHOP_ASSET_BASE}/nursing-smock-gown.webp`,
     price: 600,
     stock: 18,
     lowStockThreshold: 10
@@ -360,7 +360,7 @@ const assetProducts: ProductSeed[] = [
     categorySlug: "uniforms",
     categoryIconUrl: "/assets/uniforms.svg",
     description: "Med Tech top and pants set",
-    imageUrl: `${SHOP_ASSET_BASE}/MED TECH UNIFORM SET.png`,
+    imageUrl: `${SHOP_ASSET_BASE}/MED TECH UNIFORM SET.webp`,
     price: 600,
     stock: 24,
     lowStockThreshold: 10
@@ -371,7 +371,7 @@ const assetProducts: ProductSeed[] = [
     categorySlug: "uniforms",
     categoryIconUrl: "/assets/uniforms.svg",
     description: "Med Tech white uniform top",
-    imageUrl: `${SHOP_ASSET_BASE}/MED TECH UNIFORM.png`,
+    imageUrl: `${SHOP_ASSET_BASE}/MED TECH UNIFORM.webp`,
     price: 350,
     stock: 24,
     lowStockThreshold: 10
@@ -382,7 +382,7 @@ const assetProducts: ProductSeed[] = [
     categorySlug: "uniforms",
     categoryIconUrl: "/assets/uniforms.svg",
     description: "Med Tech uniform pants",
-    imageUrl: `${SHOP_ASSET_BASE}/MED TECH UNIFORM PANTS.png`,
+    imageUrl: `${SHOP_ASSET_BASE}/MED TECH UNIFORM PANTS.webp`,
     price: 400,
     stock: 24,
     lowStockThreshold: 10
@@ -393,7 +393,7 @@ const assetProducts: ProductSeed[] = [
     categorySlug: "id-accessories",
     categoryIconUrl: "/assets/id-accessories.svg",
     description: "University ID lace",
-    imageUrl: `${SHOP_ASSET_BASE}/wesleyan-id-lace-new.png`,
+    imageUrl: `${SHOP_ASSET_BASE}/wesleyan-id-lace-new.webp`,
     price: 175,
     stock: 50,
     lowStockThreshold: 10
@@ -404,7 +404,7 @@ const assetProducts: ProductSeed[] = [
     categorySlug: "id-accessories",
     categoryIconUrl: "/assets/id-accessories.svg",
     description: "Black WUP ID lace",
-    imageUrl: `${SHOP_ASSET_BASE}/wup-black-id-lace.png`,
+    imageUrl: `${SHOP_ASSET_BASE}/wup-black-id-lace.webp`,
     price: 175,
     stock: 50,
     lowStockThreshold: 10
@@ -415,7 +415,7 @@ const assetProducts: ProductSeed[] = [
     categorySlug: "textbooks",
     categoryIconUrl: "/assets/textbooks.svg",
     description: "Medical Laboratory Science textbook",
-    imageUrl: `${SHOP_ASSET_BASE}/ChatGPT Image Jul 10, 2026, 12_06_22 PM (1).png`,
+    imageUrl: `${SHOP_ASSET_BASE}/ChatGPT Image Jul 10, 2026, 12_06_22 PM (1).webp`,
     price: 645,
     stock: 12,
     lowStockThreshold: 5
@@ -426,7 +426,7 @@ const assetProducts: ProductSeed[] = [
     categorySlug: "textbooks",
     categoryIconUrl: "/assets/textbooks.svg",
     description: "Nursing drug guide reference book",
-    imageUrl: `${SHOP_ASSET_BASE}/ChatGPT Image Jul 10, 2026, 12_06_22 PM (2).png`,
+    imageUrl: `${SHOP_ASSET_BASE}/ChatGPT Image Jul 10, 2026, 12_06_22 PM (2).webp`,
     price: 900,
     stock: 12,
     lowStockThreshold: 5
@@ -437,7 +437,7 @@ const assetProducts: ProductSeed[] = [
     categorySlug: "textbooks",
     categoryIconUrl: "/assets/textbooks.svg",
     description: "Fundamentals of Nursing textbook, volume 1",
-    imageUrl: `${SHOP_ASSET_BASE}/ChatGPT Image Jul 10, 2026, 12_06_23 PM (3).png`,
+    imageUrl: `${SHOP_ASSET_BASE}/ChatGPT Image Jul 10, 2026, 12_06_23 PM (3).webp`,
     price: 1070,
     stock: 12,
     lowStockThreshold: 5
@@ -448,7 +448,7 @@ const assetProducts: ProductSeed[] = [
     categorySlug: "textbooks",
     categoryIconUrl: "/assets/textbooks.svg",
     description: "Fundamentals of Nursing textbook, volume 2",
-    imageUrl: `${SHOP_ASSET_BASE}/ChatGPT Image Jul 10, 2026, 12_06_23 PM (4).png`,
+    imageUrl: `${SHOP_ASSET_BASE}/ChatGPT Image Jul 10, 2026, 12_06_23 PM (4).webp`,
     price: 1070,
     stock: 12,
     lowStockThreshold: 5
@@ -459,7 +459,7 @@ const assetProducts: ProductSeed[] = [
     categorySlug: "textbooks",
     categoryIconUrl: "/assets/textbooks.svg",
     description: "Nursing methods reference book",
-    imageUrl: `${SHOP_ASSET_BASE}/ChatGPT Image Jul 10, 2026, 12_06_23 PM (5).png`,
+    imageUrl: `${SHOP_ASSET_BASE}/ChatGPT Image Jul 10, 2026, 12_06_23 PM (5).webp`,
     price: 1070,
     stock: 12,
     lowStockThreshold: 5

@@ -38,6 +38,7 @@
     "receipts:tokens:backfill": "npm run build && node scripts/backfill-receipt-public-tokens.mjs",
     "push:keys": "web-push generate-vapid-keys",
     "security:encrypt-existing": "tsx src/scripts/encrypt-existing-sensitive-data.ts",
+    "data:reset:testing": "tsx src/scripts/reset-testing-data.ts",
     "seed:wup-catalog": "tsx src/scripts/seed-new-uniform-products.ts"
   },
   "dependencies": {

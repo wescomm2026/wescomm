@@ -41,6 +41,8 @@ function createReceipt({
     reservationId,
     totalAmount,
     paymentMethod: "CASH",
+    collectionChannel: "TREASURER",
+    officialReceiptNumber: `OR-${code}`,
     status: "VERIFIED",
     publicVerificationUrl: `http://127.0.0.1:3000/verify-receipt#v=${verificationToken}`,
     receiptImageUrl: null,
@@ -153,8 +155,8 @@ async function mockReceiptApis(page: Page) {
       return;
     }
 
-    if (path === "/api/backend/realtime/events") {
-      await route.fulfill({ status: 200, contentType: "text/event-stream", body: "" });
+    if (path === "/api/backend/realtime/updates") {
+      await json(route, { cursor: "0", hasMore: false, events: [] });
       return;
     }
 
@@ -199,7 +201,9 @@ test("View Receipt isolates the transaction selected by its unique receipt id", 
   await expect(page.getByRole("dialog")).toHaveCount(1);
   await expect(dialog.getByRole("heading", { name: `Digital receipt ${SECOND_RECEIPT_CODE}` })).toBeVisible();
   await expect(dialog.getByText("1 x Second Receipt Item", { exact: true })).toBeVisible();
-  await expect(dialog.getByText("Pay at Commissary", { exact: true })).toBeVisible();
+  await expect(dialog.getByText("Cash", { exact: true })).toBeVisible();
+  await expect(dialog.getByText("Treasury", { exact: true })).toBeVisible();
+  await expect(dialog.getByText(`OR-${SECOND_RECEIPT_CODE}`, { exact: true })).toBeVisible();
   await expect(dialog.getByText("July 16, 2026, 10:00 AM–12:00 PM", { exact: true })).toBeVisible();
   await expect(dialog.getByText(`RSV-${SECOND_RECEIPT_CODE}`, { exact: true })).toBeVisible();
   await expect(dialog.getByText(/First Receipt Item/)).toHaveCount(0);
