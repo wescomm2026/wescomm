@@ -77,6 +77,8 @@ const variantSchema = z.object({
   lowStockThreshold: inventoryIntegerSchema.default(2)
 });
 
+const lowStockPercentSchema = z.coerce.number().int().min(1).max(100);
+
 const syncVariantsSchema = z.object({
   optionName: z.string().trim().min(1).max(80),
   variants: z.array(z.object({
@@ -99,7 +101,8 @@ const createProductSchema = z
     status: z.enum(PRODUCT_STATUSES).optional(),
     saleMode: z.enum(PRODUCT_SALE_MODES).default("SIMPLE"),
     stock: inventoryIntegerSchema.default(0),
-    lowStockThreshold: inventoryIntegerSchema.default(10),
+    lowStockThreshold: inventoryIntegerSchema.optional(),
+    lowStockPercent: lowStockPercentSchema.optional(),
     variants: z.array(variantSchema).max(100).optional(),
     notes: z.string().trim().max(500).optional(),
     initialUnitCost: acquisitionCostSchema.optional(),
@@ -135,6 +138,9 @@ const createProductSchema = z
     if (input.audienceScope === "SPECIFIC_DEPARTMENTS" && !(input.departmentIds?.length)) {
       context.addIssue({ code: z.ZodIssueCode.custom, message: "Choose at least one department.", path: ["departmentIds"] });
     }
+    if (input.lowStockPercent !== undefined && input.lowStockThreshold !== undefined) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: "Choose a low-stock percentage instead of a manual threshold.", path: ["lowStockPercent"] });
+    }
   });
 
 const updateProductSchema = z.object({
@@ -149,6 +155,7 @@ const updateProductSchema = z.object({
   status: z.enum(PRODUCT_STATUSES).optional(),
   stock: inventoryIntegerSchema.optional(),
   lowStockThreshold: inventoryIntegerSchema.optional(),
+  lowStockPercent: lowStockPercentSchema.optional(),
   isActive: z.boolean().optional(),
   notes: z.string().trim().max(500).optional()
 }).superRefine((input, context) => {
@@ -158,6 +165,9 @@ const updateProductSchema = z.object({
       message: "On Sale is derived automatically when old price is greater than selling price.",
       path: ["status"]
     });
+  }
+  if (input.lowStockPercent !== undefined && input.lowStockThreshold !== undefined) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Choose a low-stock percentage instead of a manual threshold.", path: ["lowStockPercent"] });
   }
 });
 
@@ -173,7 +183,8 @@ const restockSchema = z
     unitCost: acquisitionCostSchema.optional(),
     sellingPrice: acquisitionCostSchema.optional(),
     receivedAt: receivedAtSchema.optional(),
-    supplierNote: z.string().trim().max(500).optional()
+    supplierNote: z.string().trim().max(500).optional(),
+    lowStockPercent: lowStockPercentSchema.optional()
   })
   .superRefine((input, context) => {
     if (input.mode === "add" && input.quantity <= 0) {
@@ -225,7 +236,8 @@ const reconcileSkuInventorySchema = z
   .object({
     optionGroups: z.array(skuOptionGroupSchema).min(1).max(12).optional(),
     skus: z.array(skuDefinitionSchema).min(1).max(500),
-    notes: z.string().trim().max(500).optional()
+    notes: z.string().trim().max(500).optional(),
+    lowStockPercent: lowStockPercentSchema.optional()
   })
   .superRefine((input, context) => {
     const valueCount = input.optionGroups?.reduce((total, group) => total + group.values.length, 0) ?? 0;
@@ -252,7 +264,8 @@ const restockSkuInventorySchema = z.object({
   unitCost: acquisitionCostSchema.optional(),
   sellingPrice: acquisitionCostSchema.optional(),
   receivedAt: receivedAtSchema.optional(),
-  supplierNote: z.string().trim().max(500).optional()
+  supplierNote: z.string().trim().max(500).optional(),
+  lowStockPercent: lowStockPercentSchema.optional()
 }).superRefine((input, context) => {
   if (input.mode === "add" && input.unitCost === undefined) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: "Unit acquisition cost is required for every restock.", path: ["unitCost"] });
@@ -457,6 +470,7 @@ staffProductsRoutes.post(
       sellingPrice: input.sellingPrice,
       receivedAt: input.receivedAt,
       supplierNote: input.supplierNote,
+      lowStockPercent: input.lowStockPercent,
       performedById: request.auth!.id
     });
     await publishInventoryChange(product.id, "restocked");
@@ -489,6 +503,7 @@ staffProductsRoutes.put(
       productId: productIdSchema.parse(request.params.id),
       skus: input.skus,
       optionGroups: input.optionGroups,
+      lowStockPercent: input.lowStockPercent,
       performedById: request.auth!.id,
       notes: input.notes
     });
@@ -511,7 +526,8 @@ staffProductsRoutes.post(
       unitCost: input.unitCost,
       sellingPrice: input.sellingPrice,
       receivedAt: input.receivedAt,
-      supplierNote: input.supplierNote
+      supplierNote: input.supplierNote,
+      lowStockPercent: input.lowStockPercent
     });
     await publishInventoryChange(product.id, "sku-restocked");
     response.json({ product });

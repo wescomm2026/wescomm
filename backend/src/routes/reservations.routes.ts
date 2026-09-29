@@ -5,51 +5,24 @@ import { createRateLimiter, userRateLimitKey } from "../middleware/rate-limit.js
 import { requireRole } from "../middleware/require-role.js";
 import {
   cancelStudentReservation,
+  confirmReservationsBulk,
   createReservation,
   getReservation,
   listReservations,
+  previewBulkReservationConfirmation,
   updateReservationStatus
 } from "../services/reservation.service.js";
 import { rescheduleReservation } from "../services/pickup-policy.service.js";
-import { PAYMENT_METHODS, RESERVATION_STATUSES } from "../types/app.js";
+import { createReservationSchema, updateStatusSchema } from "../domain/reservation-checkout-schemas.js";
+import { RESERVATION_STATUSES } from "../types/app.js";
 import { asyncHandler } from "../utils/async-handler.js";
 import { measureRequestPhase } from "../middleware/request-timing.js";
 import { scheduleOutboxProcessing } from "../services/outbox.service.js";
 import { invalidateOperationalReadCaches } from "../services/operational-cache.service.js";
+import { MAX_BULK_CONFIRMATIONS } from "../domain/reservation-bulk-confirmation.js";
 
 export const reservationsRoutes = Router();
 
-const createReservationSchema = z.object({
-    paymentMethod: z.enum(PAYMENT_METHODS).default("PAY_AT_COMMISSARY"),
-    preferredCollectionChannel: z.enum(["COMMISSARY", "TREASURER"] as const).default("COMMISSARY"),
-    pickupDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Pickup date must use YYYY-MM-DD."),
-    pickupSlotId: z.string().uuid(),
-    pickupPolicyVersion: z.number().int().positive(),
-    policyAcceptance: z.object({
-      accepted: z.boolean().optional(),
-      version: z.string().trim().min(1).max(32).optional()
-    }).strict().optional(),
-    items: z
-      .array(
-        z.object({
-          productId: z.string().uuid(),
-          skuId: z.string().uuid().optional(),
-          variantSummary: z.string().trim().max(500).optional(),
-          quantity: z.number().int().positive().max(20)
-        })
-      )
-      .min(1)
-      .max(25)
-  });
-
-const updateStatusSchema = z.object({
-  status: z.enum(RESERVATION_STATUSES),
-  settlement: z.object({
-    paymentMethod: z.enum(["CASH", "GCASH", "OTHER"] as const),
-    collectionChannel: z.enum(["COMMISSARY", "TREASURER"] as const),
-    officialReceiptNumber: z.string().trim().max(100).optional()
-  }).optional()
-});
 const rescheduleSchema = z.object({
   expectedScheduleRevision: z.number().int().positive(),
   pickupDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Pickup date must use YYYY-MM-DD."),
@@ -73,6 +46,14 @@ const reservationListQuerySchema = z.object({
   }
 });
 const idempotencyKeySchema = z.string().trim().min(16).max(128).regex(/^[A-Za-z0-9._:-]+$/, "Invalid checkout request key.");
+const bulkConfirmationPreviewSchema = z.object({
+  reservationIds: z.array(z.string().uuid()).min(1).max(MAX_BULK_CONFIRMATIONS).optional(),
+  query: z.string().trim().max(120).optional()
+});
+const bulkConfirmationExecuteSchema = z.object({
+  reservationIds: z.array(z.string().uuid()).min(1).max(MAX_BULK_CONFIRMATIONS),
+  previewToken: z.string().regex(/^[a-f0-9]{64}$/)
+});
 const reservationCreateLimiter = createRateLimiter({
   namespace: "reservation-create",
   windowMs: 10 * 60 * 1000,
@@ -96,6 +77,39 @@ reservationsRoutes.get(
       listReservations(request.auth!.id, request.auth!.role, filters)
     );
     response.json(page);
+  })
+);
+
+reservationsRoutes.post(
+  "/bulk-confirm/preview",
+  requireAuth,
+  requireRole("STAFF", "ADMIN"),
+  reservationStatusLimiter,
+  asyncHandler(async (request: AuthenticatedRequest, response) => {
+    const input = bulkConfirmationPreviewSchema.parse(request.body);
+    const preview = await previewBulkReservationConfirmation(input);
+    response.json({ preview });
+  })
+);
+
+reservationsRoutes.post(
+  "/bulk-confirm",
+  requireAuth,
+  requireRole("STAFF", "ADMIN"),
+  reservationStatusLimiter,
+  asyncHandler(async (request: AuthenticatedRequest, response) => {
+    const input = bulkConfirmationExecuteSchema.parse(request.body);
+    const idempotencyKey = idempotencyKeySchema.parse(request.get("Idempotency-Key") ?? "");
+    const result = await measureRequestPhase(response, "reservation_bulk_confirmation", () => confirmReservationsBulk({
+      ...input,
+      idempotencyKey,
+      actorId: request.auth!.id,
+      actorRole: request.auth!.role
+    }));
+    await invalidateOperationalReadCaches();
+    scheduleOutboxProcessing();
+    response.setHeader("Idempotent-Replayed", result.idempotentReplay ? "true" : "false");
+    response.json({ result });
   })
 );
 

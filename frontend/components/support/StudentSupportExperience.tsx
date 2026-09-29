@@ -31,7 +31,7 @@ const quickQuestions = [
   { label: "Browse FAQs", message: "FAQ" },
   { label: "Product availability", message: "Available ba ang item na ito? Pangalan ng item: " },
   { label: "My reservation", message: "Ano na ang status ng reservation ko? Reservation code: " },
-  { label: "GCash payment", message: "Paki-check ang status ng GCash payment ko. Reservation code: " },
+  { label: "Payment status", message: "Paki-check ang status ng payment ko. Reservation code: " },
   { label: "My receipt", message: "Paki-check ang receipt ko. Receipt code: " },
   { label: "Pickup schedule", message: "Kailan ko puwedeng i-pick up ang reservation ko? Reservation code: " },
   { label: "Cancellation", message: "Puwede ko pa bang i-cancel ang reservation ko? Reservation code: " }
@@ -1140,7 +1140,7 @@ export function StudentSupportExperience() {
                     <p className="mb-1 px-1 text-[11px] font-bold text-primary">WesBot</p>
                     <div className="rounded-[20px] rounded-bl-md bg-white px-4 py-3 text-sm text-[#17211b] shadow-sm ring-1 ring-[#dfe8e0]">
                       <p className="whitespace-pre-wrap leading-6">
-                        Hi! I&apos;m WesBot. Ask me about products, live availability, reservations, GCash payments, receipts, cancellations, or pickup schedules.
+                        Hi! I&apos;m WesBot. Ask me about products, live availability, reservations, payments, receipts, cancellations, or pickup schedules.
                       </p>
                     </div>
                   </div>

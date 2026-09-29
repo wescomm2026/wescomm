@@ -34,13 +34,15 @@ function ChartPanel({ title, children }: { title: string; children: React.ReactN
 }
 
 export function AdminSummaryCharts({ summary, embedded = false }: { summary: BackendReportSummary; embedded?: boolean }) {
+  const primaryTrend = summary.reportBasis === "COLLECTION" ? summary.collectionTrend : summary.salesTrend;
+  const primaryTrendLabel = summary.reportBasis === "COLLECTION" ? "Cash Collection Trend" : "Recognized Sales Trend";
   const totalStatus = summary.reservationStatusDistribution.reduce((total, item) => total + item.value, 0);
   const panels = (
     <>
-      <ChartPanel title="Sales Trend">
+      <ChartPanel title={primaryTrendLabel}>
         <div className="h-[310px] p-4">
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={summary.salesTrend} margin={{ top: 10, right: 10, left: -12, bottom: 0 }}>
+            <LineChart data={primaryTrend} margin={{ top: 10, right: 10, left: -12, bottom: 0 }}>
               <CartesianGrid vertical={false} stroke="#e5ebe6" />
               <XAxis dataKey="day" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
               <YAxis tickFormatter={(value) => `PHP ${Math.round(Number(value) / 1000)}K`} tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
@@ -92,7 +94,7 @@ export function AdminReportsCharts({ summary }: { summary: BackendReportSummary 
     .slice(0, 3);
 
   return (
-    <section className="grid gap-5 xl:grid-cols-2 2xl:grid-cols-3">
+    <section id="reservation-status" className="scroll-mt-24 grid gap-5 xl:grid-cols-2 2xl:grid-cols-3">
       <ChartPanel title="Top Categories by Sales">
         <div className="h-[330px] p-4">
           <ResponsiveContainer width="100%" height="100%">

@@ -331,6 +331,7 @@ test("receipt status and payment method filters are combined server-side", async
 
 function reportSummary(preset: BackendReportSummary["range"]["preset"]): BackendReportSummary {
   return {
+    generatedAt: "2026-08-01T01:00:00.000Z",
     range: {
       preset,
       from: preset === "ALL_TIME" ? null : "2026-07-01",
@@ -338,6 +339,9 @@ function reportSummary(preset: BackendReportSummary["range"]["preset"]): Backend
       granularity: preset === "ALL_TIME" ? "MONTHLY" : "DAILY",
       label: preset === "LAST_MONTH" ? "Last Month" : preset === "ALL_TIME" ? "All Time" : "Last 30 Days"
     },
+    filters: { collectionChannel: "ALL", categoryId: null, basis: "COLLECTION" },
+    reportBasis: "COLLECTION",
+    cashOnlyPolicy: { effectiveAt: "2026-09-27T16:00:00.000Z", enabled: true },
     totalSales: 1500,
     cogs: 900,
     grossProfit: 600,
@@ -355,11 +359,21 @@ function reportSummary(preset: BackendReportSummary["range"]["preset"]): Backend
     treasurerCollections: [],
     uncostedQuantity: 0,
     unverifiedInventoryQuantity: 0,
-    onlineGcashRevenue: 900,
-    payAtCommissaryRevenue: 600,
+    cashRevenue: 600,
+    commissaryCashRevenue: 300,
+    treasuryCashRevenue: 300,
+    inPersonRevenue: 900,
+    legacyOnlineRevenue: 600,
+    legacyInPersonRevenue: 300,
     paymentMethodBreakdown: {
-      onlineGcash: { amount: 900, receipts: 3 },
-      payAtCommissary: { amount: 600, receipts: 2 }
+      cash: { amount: 600, receipts: 2 },
+      inPerson: { amount: 900, receipts: 3 },
+      legacyOnline: { amount: 600, receipts: 2 },
+      legacyInPerson: { amount: 300, receipts: 1 }
+    },
+    cashCollectionChannelBreakdown: {
+      commissary: { amount: 300, payments: 1 },
+      treasurer: { amount: 300, payments: 1 }
     },
     totalReservations: 8,
     pendingReservations: 1,
@@ -372,7 +386,34 @@ function reportSummary(preset: BackendReportSummary["range"]["preset"]): Backend
     receiptsToVerify: 1,
     totalReceipts: 5,
     activeConversations: 2,
+    comparison: {
+      available: preset !== "ALL_TIME",
+      label: preset === "ALL_TIME" ? null : "Previous period",
+      cashRevenue: { current: 600, previous: 500, difference: 100, percentChange: 20 },
+      recognizedSales: { current: 1500, previous: 1200, difference: 300, percentChange: 25 },
+      grossProfit: { current: 600, previous: 480, difference: 120, percentChange: 25 },
+      reservations: { current: 8, previous: 6, difference: 2, percentChange: 33.33 }
+    },
+    reconciliation: {
+      status: "NEEDS_REVIEW",
+      exceptionCount: 1,
+      amountAtRisk: 300,
+      truncated: false,
+      counts: { MISSING_TREASURY_OR: 1 },
+      items: [{
+        type: "MISSING_TREASURY_OR",
+        label: "Treasury payment missing OR",
+        severity: "MEDIUM",
+        reservationId: "reservation-1",
+        referenceCode: "WES-2026-001",
+        paymentId: "payment-1",
+        receiptId: null,
+        eventAt: "2026-07-01T01:00:00.000Z",
+        amount: 300
+      }]
+    },
     salesTrend: [{ key: "2026-07-01", day: "Jul 1", sales: 1500, receipts: 5 }],
+    collectionTrend: [{ key: "2026-07-01", day: "Jul 1", sales: 600, receipts: 2 }],
     categorySales: [
       { category: "Books", amount: 450, quantity: 3, sales: 450, cogs: 270, grossProfit: 180 },
       { category: "Other Items", amount: 100, quantity: 1, sales: 100, cogs: 60, grossProfit: 40 },
@@ -381,12 +422,29 @@ function reportSummary(preset: BackendReportSummary["range"]["preset"]): Backend
       { category: "Supplies", amount: 250, quantity: 2, sales: 250, cogs: 150, grossProfit: 100 }
     ],
     itemSales: [
-      { productId: "product-1", item: "PE Shirt", category: "Uniforms", quantity: 5, sales: 1500, cogs: 900, grossProfit: 600 },
-      { productId: "product-2", item: "Jogging Pants", category: "PE Uniforms", quantity: 4, sales: 900, cogs: 540, grossProfit: 360 },
-      { productId: "product-3", item: "Book A", category: "Books", quantity: 3, sales: 450, cogs: 270, grossProfit: 180 },
-      { productId: "product-4", item: "Notebook", category: "Supplies", quantity: 2, sales: 250, cogs: 150, grossProfit: 100 },
-      { productId: "product-5", item: "ID Lace", category: "Other Items", quantity: 1, sales: 100, cogs: 60, grossProfit: 40 }
+      { productId: "product-1", item: "PE Shirt", category: "Uniforms", quantity: 5, sales: 1500, cogs: 900, grossProfit: 600, marginPercent: 40 },
+      { productId: "product-2", item: "Jogging Pants", category: "PE Uniforms", quantity: 4, sales: 900, cogs: 540, grossProfit: 360, marginPercent: 40 },
+      { productId: "product-3", item: "Book A", category: "Books", quantity: 3, sales: 450, cogs: 270, grossProfit: 180, marginPercent: 40 },
+      { productId: "product-4", item: "Notebook", category: "Supplies", quantity: 2, sales: 250, cogs: 150, grossProfit: 100, marginPercent: 40 },
+      { productId: "product-5", item: "ID Lace", category: "Other Items", quantity: 1, sales: 100, cogs: 60, grossProfit: 40, marginPercent: 40 }
     ],
+    inventoryPlanning: [{
+      productId: "product-1",
+      item: "PE Shirt",
+      category: "Uniforms",
+      stock: 3,
+      lowStockThreshold: 5,
+      unitsSold: 5,
+      sales: 1500,
+      cogs: 900,
+      grossProfit: 600,
+      marginPercent: 40,
+      stockCoverDays: 18,
+      suggestedReorderQuantity: 7,
+      status: "REORDER",
+      recommendation: "Reorder 7 unit(s) to restore a practical stock buffer.",
+      lastSoldAt: "2026-07-01T01:00:00.000Z"
+    }],
     reservationStatusDistribution: [{ status: "COMPLETED", label: "Completed", value: 5, percent: 100 }],
     inventoryInsights: []
   };
@@ -414,19 +472,24 @@ test("historical reports request the selected range and render payment-method re
   await page.goto("/admin/reports");
   await dismissWelcomeGate(page);
   await expect(page.getByRole("heading", { name: "Sales, inventory value, and planning analytics" })).toBeVisible();
-  await page.getByLabel("Revenue period").selectOption("LAST_MONTH");
+  await expect(page.getByRole("heading", { name: "Start here: how to read this report" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Cash and record reconciliation" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Products and margin" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Inventory action list" })).toBeVisible();
+  await page.getByLabel("Report period").selectOption("LAST_MONTH");
 
   await expect.poll(() => presets.includes("LAST_MONTH")).toBe(true);
+  await page.getByRole("button", { name: "Copy Link" }).click();
+  await expect(page).toHaveURL(/preset=LAST_MONTH/);
+  await expect(page).toHaveURL(/basis=COLLECTION/);
+  await expect(page.getByRole("button", { name: /Link Copied|Link Ready in Address Bar/ })).toBeVisible();
   await expect(page.getByText("PHP 900.00", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("PHP 600.00", { exact: true }).first()).toBeVisible();
-  await expect(page.getByText("Range: Last Month. Exports use this exact verified-receipt range.")).toBeVisible();
-  const categorySection = page.locator("section").filter({ has: page.getByRole("heading", { name: "Sales by category" }) }).first();
-  await expect(categorySection.locator("details")).toHaveCount(3);
-  await expect(categorySection.locator("details").first()).toContainText("Uniforms");
-  await categorySection.getByRole("button", { name: "Show all categories (5)" }).click();
-  await expect(categorySection.locator("details")).toHaveCount(5);
-  await categorySection.getByRole("button", { name: "Show top 3" }).click();
-  await expect(categorySection.locator("details")).toHaveCount(3);
+  await expect(page.getByText("Range: Last Month. Cash uses the payment date; recognized sales use the completion date.")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Top Categories by Sales" })).toBeVisible();
+  await expect(page.getByRole("cell", { name: "PE Shirt", exact: true })).toBeVisible();
+  await expect(page.getByText("WES-2026-001", { exact: true })).toBeVisible();
+  await expect(page.getByText("Historical payment audit", { exact: true })).toBeVisible();
   expect(unhandled).toEqual([]);
 });
 

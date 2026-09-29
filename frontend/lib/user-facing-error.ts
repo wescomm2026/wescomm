@@ -13,6 +13,7 @@ const messageByCode: Record<string, string> = {
   UPSTREAM_RATE_LIMITED: "WESCOMM is receiving many requests right now. Please wait a moment and try again.",
   INVALID_CURSOR: "This list changed while you were viewing it. Refresh the page and try again.",
   PAYMONGO_DISABLED: "Online GCash payment is temporarily unavailable. Choose another payment option or try again later.",
+  ONLINE_PAYMENTS_DISCONTINUED: "Online payments are no longer offered. Please pay in cash at the Commissary or Treasury.",
   PAYMONGO_API_NOT_CONFIGURED: "Online GCash payment is temporarily unavailable. Choose another payment option or try again later.",
   PAYMONGO_AUTH_FAILED: "Online GCash payment is temporarily unavailable. Please try again later.",
   PAYMONGO_CHECKOUT_NOT_FOUND: "This payment link is no longer available. Start the payment again from your reservation.",

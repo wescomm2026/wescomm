@@ -5,7 +5,7 @@ export type PendingReservationRequest = {
   key: string;
 };
 
-const RESERVATION_REQUEST_KEY_PREFIX = "wescomm_reservation_request:v4";
+const RESERVATION_REQUEST_KEY_PREFIX = "wescomm_reservation_request:v5";
 const RESERVATION_REQUEST_TTL_MS = 24 * 60 * 60 * 1000;
 
 type StoredReservationRequest = PendingReservationRequest & {
@@ -21,7 +21,6 @@ function createRequestKey() {
 
 function requestFingerprint(payload: CreateReservationPayload) {
   const canonicalPayload = JSON.stringify({
-    paymentMethod: payload.paymentMethod,
     preferredCollectionChannel: payload.preferredCollectionChannel,
     pickupDate: payload.pickupDate,
     pickupSlotId: payload.pickupSlotId,

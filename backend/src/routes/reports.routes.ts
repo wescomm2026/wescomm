@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { REPORT_RANGE_PRESETS } from "../domain/report-range.js";
+import { REPORT_BASES } from "../domain/report-insights.js";
 import { requireAuth } from "../middleware/auth.js";
 import { requireRole } from "../middleware/require-role.js";
 import { getReportSummary } from "../services/report.service.js";
@@ -21,6 +22,7 @@ reportsRoutes.get(
       granularity: z.enum(["AUTO", "DAILY", "MONTHLY"]).optional(),
       collectionChannel: z.enum(["COMMISSARY", "TREASURER"] as const).optional(),
       categoryId: z.string().uuid().optional(),
+      basis: z.enum(REPORT_BASES).optional(),
       fresh: z.literal("1").optional()
     }).parse(request.query);
     const { fresh, ...range } = query;

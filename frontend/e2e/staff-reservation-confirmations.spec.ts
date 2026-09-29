@@ -65,6 +65,7 @@ async function mockReservations(page: Page) {
     reservation("00000000-0000-4000-8000-000000000306", "WES-TREASURY-0306", "READY_FOR_PICKUP", "TREASURER")
   ];
   const statusUpdates: string[] = [];
+  const bulkConfirmations: string[][] = [];
   const unhandled: string[] = [];
 
   await page.route("**/api/backend/**", async (route) => {
@@ -91,6 +92,22 @@ async function mockReservations(page: Page) {
       await json(route, { items: reservations, nextCursor: null });
       return;
     }
+    if (path === "/api/backend/reservations/bulk-confirm/preview" && request.method() === "POST") {
+      const payload = request.postDataJSON() as { reservationIds?: string[] };
+      const eligible = reservations
+        .filter((entry) => entry.status === "PENDING" && (!payload.reservationIds || payload.reservationIds.includes(entry.id)))
+        .map((entry) => ({ reservationId: entry.id, referenceCode: entry.referenceCode, studentName: entry.student?.fullName ?? "Student", eligible: true, reason: null, reasonLabel: null }));
+      await json(route, { preview: { scope: payload.reservationIds ? "SELECTED" : "FILTERED", eligibleCount: eligible.length, totalEligible: eligible.length, skippedCount: 0, truncated: false, eligible, skipped: [], reservationIds: eligible.map((entry) => entry.reservationId), previewToken: "a".repeat(64) } });
+      return;
+    }
+    if (path === "/api/backend/reservations/bulk-confirm" && request.method() === "POST") {
+      const payload = request.postDataJSON() as { reservationIds: string[] };
+      bulkConfirmations.push(payload.reservationIds);
+      const confirmed = reservations.filter((entry) => payload.reservationIds.includes(entry.id) && entry.status === "PENDING");
+      reservations = reservations.map((entry) => payload.reservationIds.includes(entry.id) && entry.status === "PENDING" ? { ...entry, status: "CONFIRMED" as const } : entry);
+      await json(route, { result: { confirmedCount: confirmed.length, skippedCount: 0, confirmed: confirmed.map((entry) => ({ reservationId: entry.id, referenceCode: entry.referenceCode })), skipped: [], idempotentReplay: false } });
+      return;
+    }
 
     const match = path.match(/^\/api\/backend\/reservations\/([^/]+)\/status$/);
     if (match && request.method() === "PATCH") {
@@ -111,8 +128,24 @@ async function mockReservations(page: Page) {
     await json(route, { error: "Unexpected API request in reservation confirmation test." }, 500);
   });
 
-  return { statusUpdates, unhandled };
+  return { statusUpdates, bulkConfirmations, unhandled };
 }
+
+test("staff can preview and confirm all eligible pending reservations", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "Focused bulk-confirmation flow runs once.");
+  const requests = await mockReservations(page);
+  await page.goto("/staff/reservations");
+  await dismissWelcomeGate(page);
+
+  await page.getByRole("button", { name: "Confirm all eligible" }).click();
+  const dialog = page.getByRole("alertdialog", { name: "Confirm 1 reservation?" });
+  await expect(dialog).toContainText("oldest first");
+  await dialog.getByRole("button", { name: "Confirm eligible reservations" }).click();
+
+  await expect(page.getByText("1 reservation confirmed.")).toBeVisible();
+  expect(requests.bulkConfirmations).toEqual([["00000000-0000-4000-8000-000000000304"]]);
+  expect(requests.unhandled).toEqual([]);
+});
 
 const viewports = [
   { name: "desktop", width: 1440, height: 900 },
@@ -129,6 +162,7 @@ for (const viewport of viewports) {
     await page.goto("/staff/reservations");
     await dismissWelcomeGate(page);
     await expect(page.getByRole("heading", { name: "Reservation queue" })).toBeVisible();
+    await page.getByRole("combobox").selectOption("All");
 
     const confirmRow = page.locator("article").filter({ hasText: "WES-CONFIRM-0304" });
     const confirmButton = confirmRow.getByRole("button", { name: "Confirm", exact: true });
@@ -162,7 +196,7 @@ for (const viewport of viewports) {
     const paymentDialog = page.getByRole("dialog", { name: "Complete WES-TREASURY-0306" });
     await expect(paymentDialog.getByRole("button", { name: "Treasury" })).toHaveAttribute("aria-pressed", "true");
     await expect(paymentDialog.getByLabel("Treasury official receipt number")).toBeVisible();
-    await expect(paymentDialog.getByLabel("Payment method")).toHaveValue("CASH");
+    await expect(paymentDialog.getByText("Cash", { exact: true })).toBeVisible();
     await page.keyboard.press("Escape");
     expect(requests.unhandled).toEqual([]);
   });

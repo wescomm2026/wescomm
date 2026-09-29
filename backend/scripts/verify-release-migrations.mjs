@@ -115,6 +115,17 @@ const releaseMigrations = [
       /ADD COLUMN IF NOT EXISTS "preferred_collection_channel" "collection_channel" NOT NULL DEFAULT 'COMMISSARY'/,
       /final audited channel remains payments\.collection_channel/
     ]
+  },
+  {
+    directory: "20260928000000_add_bulk_confirmation_queue_and_stock_alert_policy",
+    required: [
+      /ADD COLUMN "stock_target" INTEGER NOT NULL DEFAULT 0/,
+      /ADD COLUMN "low_stock_percent" INTEGER NOT NULL DEFAULT 25/,
+      /CREATE TABLE "reservation_bulk_actions"/,
+      /reservations_confirmation_queue_idx/,
+      /reservation_bulk_actions" ENABLE ROW LEVEL SECURITY/,
+      /REVOKE ALL PRIVILEGES ON TABLE "reservation_bulk_actions" FROM PUBLIC/
+    ]
   }
 ];
 

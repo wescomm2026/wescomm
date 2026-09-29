@@ -15,39 +15,9 @@ import {
   type ReportRangeOptions
 } from "@/lib/api";
 import { markWelcomeContentReady } from "@/lib/welcome-readiness";
+import { EMPTY_REPORT_SUMMARY } from "@/lib/report-summary";
 
-export const emptySummary: BackendReportSummary = {
-  range: { preset: "LAST_30_DAYS", from: null, to: "", granularity: "DAILY", label: "Last 30 Days" },
-  totalSales: 0,
-  cogs: 0,
-  grossProfit: 0,
-  commissaryCollection: 0,
-  treasurerCollection: 0,
-  collectionChannelBreakdown: { commissary: { amount: 0, payments: 0 }, treasurer: { amount: 0, payments: 0 } },
-  commissaryPaymentBreakdown: { cash: { amount: 0, payments: 0 }, gcash: { amount: 0, payments: 0 }, other: { amount: 0, payments: 0 } },
-  treasurerCollections: [],
-  uncostedQuantity: 0,
-  unverifiedInventoryQuantity: 0,
-  onlineGcashRevenue: 0,
-  payAtCommissaryRevenue: 0,
-  paymentMethodBreakdown: { onlineGcash: { amount: 0, receipts: 0 }, payAtCommissary: { amount: 0, receipts: 0 } },
-  totalReservations: 0,
-  pendingReservations: 0,
-  lowStockItems: 0,
-  outOfStockItems: 0,
-  totalProducts: 0,
-  inventoryValue: 0,
-  activeUsers: 0,
-  roleCounts: { students: 0, staff: 0, admins: 0 },
-  receiptsToVerify: 0,
-  totalReceipts: 0,
-  activeConversations: 0,
-  salesTrend: [],
-  categorySales: [],
-  itemSales: [],
-  reservationStatusDistribution: [],
-  inventoryInsights: []
-};
+export const emptySummary = EMPTY_REPORT_SUMMARY;
 
 export function mergeUniqueById<T extends { id: string }>(items: T[]) {
   const byId = new Map<string, T>();
@@ -80,9 +50,16 @@ export function formatAuditDate(value: string) {
 }
 
 export function formatAuditAction(value: string) {
+  const acronyms = new Set(["AI", "FAQ", "ID", "OR", "QR", "SKU"]);
   return value
     .split("_")
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .filter(Boolean)
+    .map((part, index) => {
+      const upper = part.toUpperCase();
+      if (acronyms.has(upper)) return upper;
+      const lower = part.toLowerCase();
+      return index === 0 ? lower.charAt(0).toUpperCase() + lower.slice(1) : lower;
+    })
     .join(" ");
 }
 

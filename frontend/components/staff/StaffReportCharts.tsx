@@ -45,6 +45,8 @@ function EmptyPanel({ children }: { children: ReactNode }) {
 }
 
 export function StaffReportCharts({ summary }: { summary: BackendReportSummary }) {
+  const primaryTrend = summary.reportBasis === "COLLECTION" ? summary.collectionTrend : summary.salesTrend;
+  const primaryTrendLabel = summary.reportBasis === "COLLECTION" ? "Cash Collection Trend" : "Recognized Sales Trend";
   const reservationStatus = summary.reservationStatusDistribution.map((status, index) => ({
     name: status.label,
     value: status.value,
@@ -56,16 +58,16 @@ export function StaffReportCharts({ summary }: { summary: BackendReportSummary }
     .slice(0, 3);
 
   return (
-    <section className="grid gap-5 xl:grid-cols-2 2xl:grid-cols-3">
-      <ChartCard title="Sales Trend" action="Last 7 days">
+    <section id="reservation-status" className="scroll-mt-24 grid gap-5 xl:grid-cols-2 2xl:grid-cols-3">
+      <ChartCard title={primaryTrendLabel} action={summary.range.label}>
         <div className="h-[310px] p-4">
-          {summary.salesTrend.length ? (
+          {primaryTrend.length ? (
             <>
               <div className="mb-3 flex flex-wrap gap-4 text-xs text-[#647068]">
-                <span className="flex items-center gap-2"><span className="h-1 w-5 rounded bg-primary" /> Live sales</span>
+                <span className="flex items-center gap-2"><span className="h-1 w-5 rounded bg-primary" /> {summary.reportBasis === "COLLECTION" ? "Cash received by payment date" : "Completed sales by completion date"}</span>
               </div>
               <ResponsiveContainer width="100%" height="88%">
-                <LineChart data={summary.salesTrend} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
+                <LineChart data={primaryTrend} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
                   <CartesianGrid vertical={false} stroke="#e5ebe6" />
                   <XAxis dataKey="day" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
                   <YAxis tickFormatter={(value) => `PHP ${Math.round(Number(value) / 1000)}K`} tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
@@ -74,7 +76,7 @@ export function StaffReportCharts({ summary }: { summary: BackendReportSummary }
                 </LineChart>
               </ResponsiveContainer>
             </>
-          ) : <EmptyPanel>No sales trend data yet.</EmptyPanel>}
+          ) : <EmptyPanel>No {summary.reportBasis === "COLLECTION" ? "cash collection" : "completed sales"} trend data yet.</EmptyPanel>}
         </div>
       </ChartCard>
 

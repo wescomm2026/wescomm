@@ -3,7 +3,6 @@ import { createHash } from "node:crypto";
 export const RESERVATION_IDEMPOTENCY_TTL_HOURS = 24;
 
 type ReservationRequestForHash = {
-  paymentMethod: string;
   preferredCollectionChannel: string;
   pickupDate: string;
   pickupSlotId: string;
@@ -37,7 +36,6 @@ function canonicalItems(items: ReservationRequestForHash["items"]) {
 
 export function hashReservationRequest(input: ReservationRequestForHash) {
   const canonicalRequest = JSON.stringify({
-    paymentMethod: input.paymentMethod,
     preferredCollectionChannel: input.preferredCollectionChannel,
     pickupDate: input.pickupDate,
     pickupSlotId: input.pickupSlotId,

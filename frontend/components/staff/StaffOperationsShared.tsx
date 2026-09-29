@@ -38,6 +38,8 @@ export type Product = {
   imageUrl: string;
   imageStoragePath: string | null;
   stock: number;
+  stockTarget: number;
+  lowStockPercent: number;
   minimum: number;
   price: number;
   oldPrice: number | null;
@@ -52,6 +54,8 @@ export type Product = {
     id: string;
     code?: string | null;
     stock: number;
+    stockTarget: number;
+    lowStockPercent: number;
     lowStockThreshold: number;
     variantIds: string[];
     options: Array<{ optionName: string; optionValue: string }>;
@@ -61,6 +65,8 @@ export type Product = {
     optionName: string;
     optionValue: string;
     stock: number;
+    stockTarget: number;
+    lowStockPercent: number;
     lowStockThreshold: number;
   }>;
 };
@@ -189,6 +195,8 @@ export function mapStaffProduct(product: StaffProduct): Product {
     imageUrl: asset.image,
     imageStoragePath: product.imageStoragePath ?? null,
     stock: product.stock,
+    stockTarget: product.stockTarget ?? product.stock,
+    lowStockPercent: product.lowStockPercent ?? 25,
     minimum: product.lowStockThreshold,
     price: numericValue(product.price),
     oldPrice: product.oldPrice === null || product.oldPrice === undefined ? null : numericValue(product.oldPrice),
@@ -199,19 +207,23 @@ export function mapStaffProduct(product: StaffProduct): Product {
     targetDepartments: product.targetDepartments ?? [],
     skuInventoryEnabled: Boolean(product.skuInventoryEnabled),
     inventoryReconciledAt: product.inventoryReconciledAt ?? null,
-    skus: (product.skus ?? []).map((sku) => ({
+    skus: (product.skus ?? []).flatMap((sku) => sku.id ? [{
       id: sku.id,
       code: sku.code,
       stock: sku.stock,
+      stockTarget: sku.stockTarget ?? sku.stock,
+      lowStockPercent: sku.lowStockPercent ?? product.lowStockPercent ?? 25,
       lowStockThreshold: sku.lowStockThreshold,
       variantIds: sku.variantIds ?? [],
       options: sku.options ?? []
-    })),
+    }] : []),
     variants: (product.variants ?? []).flatMap((variant) => variant.id ? [{
       id: variant.id,
       optionName: variant.optionName,
       optionValue: variant.optionValue,
       stock: variant.stock,
+      stockTarget: variant.stockTarget ?? variant.stock,
+      lowStockPercent: variant.lowStockPercent ?? product.lowStockPercent ?? 25,
       lowStockThreshold: variant.lowStockThreshold
     }] : []).sort((left, right) => {
       if (left.optionName.toLowerCase() !== right.optionName.toLowerCase()) return left.optionName.localeCompare(right.optionName);
@@ -371,7 +383,7 @@ export function mapStaffReceipt(row: BackendReceipt): StaffReceiptRow {
     total: Number(row.totalAmount),
     status: formatStaffReceiptStatus(row.status),
     backendStatus: row.status,
-    verifiedBy: row.issuedBy?.fullName ?? "",
+    verifiedBy: row.status === "VERIFIED" ? row.issuedBy?.fullName ?? "" : "",
     receipt: row
   };
 }

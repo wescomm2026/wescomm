@@ -12,7 +12,7 @@ export default function ContactPage() {
     <LegalDocument
       eyebrow="WESCOMM support"
       title="Contact Us"
-      summary="Reach the WESCOMM team for help with reservations, GCash payments, receipts, account access, or privacy concerns."
+      summary="Reach the WESCOMM team for help with reservations, payments, receipts, account access, or privacy concerns."
     >
       <section className="grid gap-5 md:grid-cols-2">
         <div className="rounded-2xl border border-[#cfe0d1] bg-white p-6 shadow-[0_8px_24px_rgba(0,0,0,0.035)] sm:p-8">
@@ -54,7 +54,7 @@ export default function ContactPage() {
       <LegalSection title="Choose the right support path">
         <div className="grid gap-4 sm:grid-cols-2">
           <a href="mailto:wescomm2026@gmail.com?subject=WESCOMM%20Reservation%20Support" className="rounded-xl border border-[#d9e5da] p-4 font-bold text-primary transition-colors hover:bg-[#f3f8f4] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2">Reservation or pickup concern</a>
-          <a href="mailto:wescomm2026@gmail.com?subject=WESCOMM%20Payment%20Support" className="rounded-xl border border-[#d9e5da] p-4 font-bold text-primary transition-colors hover:bg-[#f3f8f4] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2">GCash payment concern</a>
+          <a href="mailto:wescomm2026@gmail.com?subject=WESCOMM%20Payment%20Support" className="rounded-xl border border-[#d9e5da] p-4 font-bold text-primary transition-colors hover:bg-[#f3f8f4] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2">Payment concern (including historical GCash)</a>
           <a href="mailto:wescomm2026@gmail.com?subject=WESCOMM%20Refund%20or%20Cancellation%20Request" className="rounded-xl border border-[#d9e5da] p-4 font-bold text-primary transition-colors hover:bg-[#f3f8f4] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2">Refund or cancellation request</a>
           <a href="mailto:wescomm2026@gmail.com?subject=WESCOMM%20Privacy%20Request" className="rounded-xl border border-[#d9e5da] p-4 font-bold text-primary transition-colors hover:bg-[#f3f8f4] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2">Privacy or account-data request</a>
         </div>

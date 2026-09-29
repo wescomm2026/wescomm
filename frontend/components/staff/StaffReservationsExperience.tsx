@@ -4,7 +4,7 @@ import { userFacingErrorMessage } from "@/lib/user-facing-error";
 
 import Link from "next/link";
 import { useCallback, useDeferredValue, useEffect, useRef, useState } from "react";
-import { Ban, CalendarClock, CircleDollarSign, X } from "lucide-react";
+import { Ban, CalendarClock, CheckCheck, CircleDollarSign, X } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import { useRealtimeRefresh } from "@/components/realtime/RealtimeProvider";
 import { ActionLoadingOverlay } from "@/components/ui/ActionLoadingOverlay";
@@ -16,6 +16,8 @@ import { useAccessibleDialog } from "@/components/ui/useAccessibleDialog";
 import {
   getReservationFromApi,
   getReservationPageFromApi,
+  confirmReservationsBulkFromApi,
+  previewBulkReservationConfirmationFromApi,
   updateReservationStatusFromApi,
   rescheduleReservationFromApi,
   type BackendReservationStatus
@@ -40,19 +42,22 @@ export function StaffReservationsExperience() {
   const confirm = useConfirmationDialog();
   const [rows, setRows] = useState<StaffReservationRow[]>([]);
   const [search, setSearch] = useState("");
-  const [status, setStatus] = useState("All");
+  // This is an operations queue: surface the actionable pending work first.
+  const [status, setStatus] = useState("Pending");
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [submittingId, setSubmittingId] = useState("");
+  const [bulkSubmitting, setBulkSubmitting] = useState(false);
+  const [selectedPendingIds, setSelectedPendingIds] = useState<Set<string>>(() => new Set());
   const [rescheduleRow, setRescheduleRow] = useState<StaffReservationRow | null>(null);
   const [pickupSelection, setPickupSelection] = useState<PickupSelection | null>(null);
   const [rescheduleReason, setRescheduleReason] = useState("");
   const [completionRow, setCompletionRow] = useState<StaffReservationRow | null>(null);
   const [collectionChannel, setCollectionChannel] = useState<CollectionChannel>("COMMISSARY");
-  const [completionPaymentMethod, setCompletionPaymentMethod] = useState<"CASH" | "GCASH" | "OTHER">("CASH");
+  const [completionPaymentMethod] = useState<"CASH">("CASH");
   const [officialReceiptNumber, setOfficialReceiptNumber] = useState("");
   const rescheduleDialog = useAccessibleDialog<HTMLElement>(Boolean(rescheduleRow), () => setRescheduleRow(null));
   const completionDialog = useAccessibleDialog<HTMLFormElement>(Boolean(completionRow), () => setCompletionRow(null));
@@ -168,10 +173,44 @@ export function StaffReservationsExperience() {
 
   const filtered = rows;
 
+  const confirmBulk = async (reservationIds?: string[]) => {
+    const session = getStoredStaffSession();
+    if (!session.token || bulkSubmitting) return;
+    setBulkSubmitting(true);
+    setError("");
+    try {
+      const preview = await previewBulkReservationConfirmationFromApi(session.token, {
+        ...(reservationIds?.length ? { reservationIds } : {}),
+        ...(!reservationIds?.length && search.trim() ? { query: search.trim() } : {})
+      });
+      if (!preview.eligibleCount) {
+        setNotice(preview.skippedCount
+          ? "No selected reservation is eligible for bulk confirmation. Review the schedule or payment notes."
+          : "There are no eligible pending reservations in this queue.");
+        return;
+      }
+      const accepted = await confirm({
+        title: `Confirm ${preview.eligibleCount} reservation${preview.eligibleCount === 1 ? "" : "s"}?`,
+        description: `${preview.eligibleCount} eligible pending reservation${preview.eligibleCount === 1 ? "" : "s"} will move to Confirmed, oldest first.${preview.skippedCount ? ` ${preview.skippedCount} ineligible record${preview.skippedCount === 1 ? " will" : "s will"} be skipped.` : ""}${preview.truncated ? " This batch is limited to the oldest 100; run it again for the remaining queue." : ""}`,
+        confirmLabel: "Confirm eligible reservations",
+        tone: "default"
+      });
+      if (!accepted) return;
+      const result = await confirmReservationsBulkFromApi(session.token, preview);
+      setSelectedPendingIds(new Set());
+      await loadReservations();
+      setNotice(`${result.confirmedCount} reservation${result.confirmedCount === 1 ? "" : "s"} confirmed.${result.skippedCount ? ` ${result.skippedCount} changed or needed review and were skipped.` : ""}`);
+    } catch (bulkError) {
+      setError(userFacingErrorMessage(bulkError, "Unable to confirm the pending reservations."));
+    } finally {
+      setBulkSubmitting(false);
+    }
+  };
+
   const updateStatus = async (
     row: StaffReservationRow,
     nextStatus: BackendReservationStatus,
-    settlement?: { paymentMethod: "CASH" | "GCASH" | "OTHER"; collectionChannel: "COMMISSARY" | "TREASURER"; officialReceiptNumber?: string },
+    settlement?: { paymentMethod: "CASH"; collectionChannel: "COMMISSARY" | "TREASURER"; officialReceiptNumber?: string },
     skipConfirmation = false
   ) => {
     const session = getStoredStaffSession();
@@ -237,7 +276,6 @@ export function StaffReservationsExperience() {
     }
     setCompletionRow(row);
     setCollectionChannel(row.preferredCollectionChannel);
-    setCompletionPaymentMethod(row.reservation.paymentMethod === "E_WALLET_AT_PICKUP" ? "GCASH" : "CASH");
     setOfficialReceiptNumber("");
     setError("");
   };
@@ -293,9 +331,18 @@ export function StaffReservationsExperience() {
         eyebrow="Reservations"
         title="Reservation queue"
         detail="Confirm requests and prepare scheduled pickups from live student checkout data."
-        action={<Button variant="secondary" onClick={() => void loadReservations()} disabled={loading || Boolean(submittingId)}>Refresh</Button>}
+        action={<div className="flex flex-wrap gap-2"><Button variant="secondary" onClick={() => void loadReservations()} disabled={loading || Boolean(submittingId) || bulkSubmitting}>Refresh</Button>{status === "Pending" ? <Button onClick={() => void confirmBulk()} disabled={loading || bulkSubmitting}><CheckCheck className="size-4" />{bulkSubmitting ? "Checking queue..." : "Confirm all eligible"}</Button> : null}</div>}
       />
-      <Toolbar search={search} onSearch={setSearch} status={status} onStatus={setStatus} placeholder="Search reference, student, or item" statuses={["Pending", "Confirmed", "Ready for Pick-up", "Completed", "Cancelled", "No-show"]} />
+      <Toolbar search={search} onSearch={(value) => { setSearch(value); setSelectedPendingIds(new Set()); }} status={status} onStatus={(value) => { setStatus(value); setSelectedPendingIds(new Set()); }} placeholder="Search reference, student, or item" statuses={["Pending", "Confirmed", "Ready for Pick-up", "Completed", "Cancelled", "No-show"]} />
+      {status === "Pending" ? (
+        <section className="flex flex-col gap-3 rounded-lg border border-border bg-white p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between" aria-label="Bulk reservation confirmation">
+          <div><p className="text-sm font-extrabold text-foreground">Bulk confirmation</p><p className="mt-1 text-xs leading-5 text-muted-foreground">Only eligible Pending reservations are included. Schedule-review and unconfirmed historical-payment records stay untouched.</p></div>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" variant="secondary" className="h-10" onClick={() => setSelectedPendingIds(new Set(filtered.filter((row) => row.backendStatus === "PENDING" && row.pickupReviewStatus !== "NEEDS_REVIEW" && (!row.onlineGcash || row.paymentConfirmed)).map((row) => row.id)))} disabled={!filtered.length || bulkSubmitting}>Select visible eligible</Button>
+            <Button type="button" className="h-10" onClick={() => void confirmBulk(Array.from(selectedPendingIds))} disabled={!selectedPendingIds.size || bulkSubmitting}>Confirm selected ({selectedPendingIds.size})</Button>
+          </div>
+        </section>
+      ) : null}
       {error ? <p className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p> : null}
       <div className="grid gap-3">
         {loading ? (
@@ -304,6 +351,7 @@ export function StaffReservationsExperience() {
           const nextStatus = getNextReservationStatus(row.backendStatus);
           const paymentBlocksProgress = row.onlineGcash && !row.paymentConfirmed;
           const noShowEligible = row.backendStatus === "READY_FOR_PICKUP" && Boolean(row.pickupEnd) && Date.now() >= new Date(row.pickupEnd!).getTime() + 24 * 60 * 60 * 1000;
+          const bulkEligible = row.backendStatus === "PENDING" && row.pickupReviewStatus !== "NEEDS_REVIEW" && (!row.onlineGcash || row.paymentConfirmed);
           return (
             <article key={row.id} className="content-visibility-auto relative grid gap-4 overflow-hidden rounded-lg border border-border bg-white p-4 shadow-sm lg:grid-cols-[1fr_1.2fr_1.2fr_1fr_auto_auto] lg:items-center">
               <ActionLoadingOverlay
@@ -311,7 +359,7 @@ export function StaffReservationsExperience() {
                 title="Updating reservation"
                 detail="We are saving the status and updating the reservation timeline."
               />
-              <div><p className="font-extrabold">{row.reference}</p><p className="text-xs text-muted-foreground">{row.student}</p></div>
+              <div className="flex items-start gap-3">{status === "Pending" ? <input type="checkbox" checked={selectedPendingIds.has(row.id)} disabled={!bulkEligible || bulkSubmitting} onChange={(event) => setSelectedPendingIds((current) => { const next = new Set(current); if (event.target.checked) next.add(row.id); else next.delete(row.id); return next; })} aria-label={`Select ${row.reference} for confirmation`} className="mt-1 size-4 accent-primary" /> : null}<div><p className="font-extrabold">{row.reference}</p><p className="text-xs text-muted-foreground">{row.student}</p>{status === "Pending" && !bulkEligible ? <p className="mt-1 text-xs font-semibold text-amber-800">Bulk confirmation unavailable</p> : null}</div></div>
               <div><p className="text-sm font-bold">{row.item}</p><p className="mt-1 text-xs leading-5 text-muted-foreground">{row.itemDetails}</p><p className="text-xs text-muted-foreground">Quantity: {row.quantity}</p></div>
               <div><p className="text-sm"><span className="font-bold text-primary">Pickup:</span> {row.pickup}</p>{row.pickupReviewStatus === "NEEDS_REVIEW" ? <p className="mt-1 text-xs font-bold text-amber-800">Needs review: {row.pickupReviewReason}</p> : null}</div>
               <div className="text-sm">
@@ -325,7 +373,7 @@ export function StaffReservationsExperience() {
                 {nextStatus ? (
                   <Button
                     className="h-10"
-                    disabled={Boolean(submittingId) || paymentBlocksProgress}
+                    disabled={Boolean(submittingId) || bulkSubmitting || paymentBlocksProgress}
                     title={paymentBlocksProgress ? "Wait for secure PayMongo payment confirmation before processing this reservation." : undefined}
                     onClick={() => nextStatus === "COMPLETED" ? openCompletion(row) : void updateStatus(row, nextStatus)}
                   >
@@ -401,7 +449,7 @@ export function StaffReservationsExperience() {
                   {(["COMMISSARY", "TREASURER"] as const).map((channel) => <Button key={channel} type="button" aria-pressed={collectionChannel === channel} variant={collectionChannel === channel ? "primary" : "secondary"} className="h-12" onClick={() => { setCollectionChannel(channel); if (channel === "COMMISSARY") setOfficialReceiptNumber(""); }}>{COLLECTION_CHANNEL_LABELS[channel]}</Button>)}
                 </div>
               </fieldset>
-              <label className="grid gap-1.5 text-sm font-bold">Payment method<select required value={completionPaymentMethod} onChange={(event) => setCompletionPaymentMethod(event.target.value as "CASH" | "GCASH" | "OTHER")} className="h-12 rounded-md border border-border bg-white px-3 font-normal outline-none focus:border-primary"><option value="CASH">Cash</option><option value="GCASH">GCash</option><option value="OTHER">Other</option></select><span className="text-xs font-normal text-muted-foreground">Recorded separately from the collection channel and shown on the student receipt.</span></label>
+              <label className="grid gap-1.5 text-sm font-bold">Payment method<span className="inline-flex h-12 items-center rounded-md border border-border bg-white px-3 font-normal">Cash</span><span className="text-xs font-normal text-muted-foreground">Cash is the only accepted method. The collection channel is recorded on the student receipt.</span></label>
               {collectionChannel === "TREASURER" ? <label className="grid gap-1.5 text-sm font-bold">Treasury official receipt number<input required autoFocus type="text" maxLength={100} value={officialReceiptNumber} onChange={(event) => setOfficialReceiptNumber(event.target.value)} placeholder="Example: OR-102938" className="h-12 rounded-md border border-border px-3 font-normal uppercase outline-none focus:border-primary" /><span className="text-xs font-normal text-muted-foreground">Required for payments collected by the school Treasury and kept in the audit trail.</span></label> : null}
               <div className="rounded-md bg-primary/10 px-4 py-3 text-xs leading-5 text-foreground">Confirming will verify payment, release the items, consume the oldest inventory batches through FIFO, and post Sales, COGS, and Gross Profit.</div>
               <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end"><Button type="button" variant="secondary" onClick={() => setCompletionRow(null)} disabled={Boolean(submittingId)}>Cancel</Button><Button type="submit" disabled={Boolean(submittingId) || (collectionChannel === "TREASURER" && !officialReceiptNumber.trim())}>{submittingId ? "Saving..." : "Confirm payment & release"}</Button></div>

@@ -192,6 +192,12 @@ export type BackendReservation = {
   payment?: BackendPaymentSummary | null;
   createdAt: string;
   updatedAt: string;
+  confirmationQueue?: {
+    position: number;
+    ahead: number;
+    total: number;
+    calculatedAt: string;
+  } | null;
   student?: BackendProfileSummary | null;
   items: Array<{
     id: string;
@@ -224,7 +230,6 @@ export type BackendReservation = {
 };
 
 export type CreateReservationPayload = {
-  paymentMethod: BackendPaymentMethod;
   preferredCollectionChannel: CollectionChannel;
   pickupDate: string;
   pickupSlotId: string;
@@ -801,12 +806,23 @@ export type BackendAdminUser = {
 };
 
 export type BackendReportSummary = {
+  generatedAt: string;
   range: {
     preset: ReportRangePreset;
     from: string | null;
     to: string;
     granularity: "DAILY" | "MONTHLY";
     label: string;
+  };
+  filters: {
+    collectionChannel: "ALL" | "COMMISSARY" | "TREASURER";
+    categoryId: string | null;
+    basis: "COLLECTION" | "COMPLETION";
+  };
+  reportBasis: "COLLECTION" | "COMPLETION";
+  cashOnlyPolicy: {
+    effectiveAt: string;
+    enabled: boolean;
   };
   totalSales: number;
   cogs: number;
@@ -825,18 +841,28 @@ export type BackendReportSummary = {
   treasurerCollections: Array<{
     paymentId: string;
     paidAt: string;
-    officialReceiptNumber: string;
+    officialReceiptNumber: string | null;
     orderReference: string;
     items: string;
     amount: number;
   }>;
   uncostedQuantity: number;
   unverifiedInventoryQuantity: number;
-  onlineGcashRevenue: number;
-  payAtCommissaryRevenue: number;
+  cashRevenue: number;
+  commissaryCashRevenue: number;
+  treasuryCashRevenue: number;
+  inPersonRevenue: number;
+  legacyOnlineRevenue: number;
+  legacyInPersonRevenue: number;
   paymentMethodBreakdown: {
-    onlineGcash: { amount: number; receipts: number };
-    payAtCommissary: { amount: number; receipts: number };
+    cash: { amount: number; receipts: number };
+    inPerson: { amount: number; receipts: number };
+    legacyOnline: { amount: number; receipts: number };
+    legacyInPerson: { amount: number; receipts: number };
+  };
+  cashCollectionChannelBreakdown: {
+    commissary: { amount: number; payments: number };
+    treasurer: { amount: number; payments: number };
   };
   totalReservations: number;
   pendingReservations: number;
@@ -853,7 +879,39 @@ export type BackendReportSummary = {
   receiptsToVerify: number;
   totalReceipts: number;
   activeConversations: number;
+  comparison: {
+    available: boolean;
+    label: string | null;
+    cashRevenue: BackendReportComparisonMetric;
+    recognizedSales: BackendReportComparisonMetric;
+    grossProfit: BackendReportComparisonMetric;
+    reservations: BackendReportComparisonMetric;
+  };
+  reconciliation: {
+    status: "CLEAN" | "NEEDS_REVIEW";
+    exceptionCount: number;
+    amountAtRisk: number;
+    truncated: boolean;
+    counts: Partial<Record<BackendReportReconciliationType, number>>;
+    items: Array<{
+      type: BackendReportReconciliationType;
+      label: string;
+      severity: "HIGH" | "MEDIUM";
+      reservationId: string;
+      referenceCode: string;
+      paymentId: string | null;
+      receiptId: string | null;
+      eventAt: string;
+      amount: number;
+    }>;
+  };
   salesTrend: Array<{
+    key: string;
+    day: string;
+    sales: number;
+    receipts: number;
+  }>;
+  collectionTrend: Array<{
     key: string;
     day: string;
     sales: number;
@@ -867,6 +925,23 @@ export type BackendReportSummary = {
     cogs: number;
     grossProfit: number;
   }>;
+  inventoryPlanning: Array<{
+    productId: string;
+    item: string;
+    category: string;
+    stock: number;
+    lowStockThreshold: number;
+    unitsSold: number;
+    sales: number;
+    cogs: number;
+    grossProfit: number;
+    marginPercent: number | null;
+    stockCoverDays: number | null;
+    suggestedReorderQuantity: number;
+    status: "OUT_OF_STOCK" | "REORDER" | "NO_SALES" | "SLOW_MOVING" | "HEALTHY";
+    recommendation: string;
+    lastSoldAt: string | null;
+  }>;
   itemSales: Array<{
     productId: string;
     item: string;
@@ -875,6 +950,7 @@ export type BackendReportSummary = {
     sales: number;
     cogs: number;
     grossProfit: number;
+    marginPercent: number | null;
   }>;
   reservationStatusDistribution: Array<{
     status: string;
@@ -888,6 +964,21 @@ export type BackendReportSummary = {
     recommendation: string;
   }>;
 };
+
+export type BackendReportComparisonMetric = {
+  current: number;
+  previous: number;
+  difference: number;
+  percentChange: number | null;
+};
+
+export type BackendReportReconciliationType =
+  | "MISSING_TREASURY_OR"
+  | "PAYMENT_RECEIPT_MISMATCH"
+  | "COMPLETED_WITHOUT_PAID_PAYMENT"
+  | "COMPLETED_WITHOUT_VERIFIED_RECEIPT"
+  | "PAID_NOT_COMPLETED"
+  | "POST_CUTOVER_NON_CASH";
 
 export type BackendWesbotUsageSummary = {
   model: string;
@@ -952,6 +1043,7 @@ export type ReportRangeOptions = {
   granularity?: "AUTO" | "DAILY" | "MONTHLY";
   collectionChannel?: "COMMISSARY" | "TREASURER";
   categoryId?: string;
+  basis?: "COLLECTION" | "COMPLETION";
 };
 
 export type BackendDashboardProduct = {
@@ -1475,6 +1567,64 @@ export async function updateReservationStatusFromApi(
   return data;
 }
 
+export type BackendBulkConfirmationPreview = {
+  scope: "SELECTED" | "FILTERED";
+  eligibleCount: number;
+  totalEligible: number;
+  skippedCount: number;
+  truncated: boolean;
+  eligible: Array<{
+    reservationId: string;
+    referenceCode: string;
+    studentName: string;
+    eligible: true;
+    reason: null;
+    reasonLabel: null;
+  }>;
+  skipped: Array<{
+    reservationId: string;
+    referenceCode: string;
+    studentName: string;
+    eligible: false;
+    reason: "NOT_PENDING" | "SCHEDULE_REVIEW_REQUIRED" | "ONLINE_PAYMENT_NOT_PAID";
+    reasonLabel: string;
+  }>;
+  reservationIds: string[];
+  previewToken: string;
+};
+
+export async function previewBulkReservationConfirmationFromApi(
+  token: string,
+  input: { reservationIds?: string[]; query?: string }
+) {
+  const data = await authApiFetch<{ preview: BackendBulkConfirmationPreview }>("/reservations/bulk-confirm/preview", token, {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+  return data.preview;
+}
+
+export async function confirmReservationsBulkFromApi(
+  token: string,
+  preview: Pick<BackendBulkConfirmationPreview, "reservationIds" | "previewToken">
+) {
+  const idempotencyKey = `reservation-bulk-confirm:${crypto.randomUUID()}`;
+  const data = await authApiFetch<{
+    result: {
+      confirmedCount: number;
+      skippedCount: number;
+      confirmed: Array<{ reservationId: string; referenceCode: string }>;
+      skipped: Array<{ reservationId: string; reason: string }>;
+      idempotentReplay: boolean;
+    };
+  }>("/reservations/bulk-confirm", token, {
+    method: "POST",
+    headers: { "Idempotency-Key": idempotencyKey },
+    body: JSON.stringify(preview)
+  });
+  return data.result;
+}
+
 export async function confirmReservationNoShowFromApi(token: string, reservationId: string) {
   return authApiFetch<{
     reservation: BackendReservation;
@@ -1919,6 +2069,7 @@ function reportQuery(options: ReportRangeOptions = {}, fresh = false) {
   if (options.granularity) params.set("granularity", options.granularity);
   if (options.collectionChannel) params.set("collectionChannel", options.collectionChannel);
   if (options.categoryId) params.set("categoryId", options.categoryId);
+  if (options.basis) params.set("basis", options.basis);
   if (fresh) params.set("fresh", "1");
   return params.size ? `?${params.toString()}` : "";
 }

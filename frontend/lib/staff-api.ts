@@ -16,6 +16,8 @@ export type StaffProductVariant = {
   optionName: string;
   optionValue: string;
   stock: number;
+  stockTarget?: number;
+  lowStockPercent?: number;
   lowStockThreshold: number;
 };
 
@@ -23,6 +25,8 @@ export type StaffProductSku = {
   id: string;
   code?: string | null;
   stock: number;
+  stockTarget?: number;
+  lowStockPercent?: number;
   lowStockThreshold: number;
   isActive?: boolean;
   variantIds: string[];
@@ -44,6 +48,8 @@ export type StaffProduct = {
   isOnSale?: boolean;
   status: "IN_STOCK" | "RESTOCK_SOON" | "OUT_OF_STOCK" | "ON_SALE";
   stock: number;
+  stockTarget?: number;
+  lowStockPercent?: number;
   lowStockThreshold: number;
   isActive: boolean;
   saleMode: ProductSaleMode;
@@ -66,6 +72,7 @@ export type StaffProductPayload = {
   oldPrice?: number | null;
   saleMode?: ProductSaleMode;
   stock?: number;
+  lowStockPercent?: number;
   lowStockThreshold?: number;
   variants?: Array<{
     optionName: string;
@@ -340,6 +347,7 @@ export async function restockStaffProduct(
     sellingPrice?: number;
     receivedAt?: string;
     supplierNote?: string;
+    lowStockPercent?: number;
   }
 ) {
   const data = await staffFetch<{ product: StaffProduct }>(`/staff/products/${productId}/restock`, token, {
@@ -373,11 +381,12 @@ export async function reconcileStaffProductSkuInventory(
   productId: string,
   skus: StaffSkuDefinition[],
   notes?: string,
-  optionGroups?: StaffSkuOptionGroupDefinition[]
+  optionGroups?: StaffSkuOptionGroupDefinition[],
+  lowStockPercent?: number
 ) {
   const data = await staffFetch<{ product: StaffProduct }>(`/staff/products/${productId}/sku-inventory`, token, {
     method: "PUT",
-    body: JSON.stringify({ skus, notes, optionGroups })
+    body: JSON.stringify({ skus, notes, optionGroups, lowStockPercent })
   });
   return data.product;
 }
@@ -393,6 +402,7 @@ export async function restockStaffProductSkus(
     sellingPrice?: number;
     receivedAt?: string;
     supplierNote?: string;
+    lowStockPercent?: number;
   }
 ) {
   const data = await staffFetch<{ product: StaffProduct }>(`/staff/products/${productId}/skus/restock`, token, {

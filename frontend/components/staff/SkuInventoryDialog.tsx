@@ -22,6 +22,8 @@ export type SkuInventoryDialogProduct = {
   name: string;
   imageUrl: string;
   stock: number;
+  stockTarget: number;
+  lowStockPercent: number;
   price: number;
   skuInventoryEnabled: boolean;
   inventoryReconciledAt?: string | null;
@@ -30,6 +32,8 @@ export type SkuInventoryDialogProduct = {
     optionName: string;
     optionValue: string;
     stock: number;
+    stockTarget: number;
+    lowStockPercent: number;
     lowStockThreshold: number;
   }>;
   skus: Array<{
@@ -188,6 +192,7 @@ export function SkuInventoryDialog({
   const [sellingPrice, setSellingPrice] = useState(() => product.price.toFixed(2));
   const [receivedAt, setReceivedAt] = useState(() => new Date().toISOString().slice(0, 10));
   const [supplierNote, setSupplierNote] = useState("");
+  const [lowStockPercent, setLowStockPercent] = useState(() => product.lowStockPercent);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [batchResult, setBatchResult] = useState<StaffInventoryBatchResult | null>(null);
@@ -211,6 +216,8 @@ export function SkuInventoryDialog({
     0
   );
   const resultingTotal = stockMode === "set" ? restockAmount : product.stock + restockAmount;
+  const resultingStockTarget = Math.max(product.stockTarget, resultingTotal);
+  const resultingLowStockThreshold = Math.ceil(resultingStockTarget * lowStockPercent / 100);
   const enteredUnitCost = unitCost.trim() ? Number(unitCost) : null;
   const enteredSellingPrice = sellingPrice.trim() ? Number(sellingPrice) : null;
   const estimatedUnitProfit = enteredSellingPrice !== null && Number.isFinite(enteredSellingPrice) && enteredUnitCost !== null && Number.isFinite(enteredUnitCost) ? enteredSellingPrice - enteredUnitCost : null;
@@ -355,7 +362,7 @@ export function SkuInventoryDialog({
         return {
           optionValueKeys,
           stock: requiredInventoryInteger(row.stock, `Combination ${index + 1} stock`),
-          lowStockThreshold: requiredInventoryInteger(row.threshold, `Combination ${index + 1} alert level`)
+          lowStockThreshold: Math.ceil(requiredInventoryInteger(row.stock, `Combination ${index + 1} stock`) * lowStockPercent / 100)
         };
       });
 
@@ -375,7 +382,8 @@ export function SkuInventoryDialog({
         product.id,
         skus,
         "Atomic option structure and physical inventory reconciliation from staff dashboard.",
-        optionGroups
+        optionGroups,
+        lowStockPercent
       );
       onSaved(updated);
     } catch (saveError) {
@@ -423,6 +431,7 @@ export function SkuInventoryDialog({
       const updated = await restockStaffProductSkus(token, product.id, {
         mode: stockMode,
         quantities,
+        lowStockPercent,
         notes: stockMode === "add" ? "New stock received." : "Available stock count corrected.",
         ...(stockMode === "add" ? {
           unitCost: parsedUnitCost,
@@ -513,7 +522,7 @@ export function SkuInventoryDialog({
                 </div>
                 <div className="mt-3 overflow-x-auto rounded-lg border border-border">
                   <table className="w-full min-w-[720px] text-sm">
-                    <thead className="bg-[#f6f9f6] text-left text-xs font-bold text-muted-foreground"><tr>{groups.map((group) => <th key={group.key} className="px-3 py-3">{group.name || "Unnamed option"}</th>)}<th className="px-3 py-3">Exact available</th><th className="px-3 py-3">Warn at</th><th className="w-12 px-3 py-3" /></tr></thead>
+                    <thead className="bg-[#f6f9f6] text-left text-xs font-bold text-muted-foreground"><tr>{groups.map((group) => <th key={group.key} className="px-3 py-3">{group.name || "Unnamed option"}</th>)}<th className="px-3 py-3">Exact available</th><th className="px-3 py-3">Auto alert</th><th className="w-12 px-3 py-3" /></tr></thead>
                     <tbody className="divide-y divide-[#e7ece8]">
                       {rows.map((row, rowIndex) => (
                         <tr key={row.key} className="[content-visibility:auto]">
@@ -526,7 +535,7 @@ export function SkuInventoryDialog({
                             </td>
                           ))}
                           <td className="px-3 py-3"><input type="number" min="0" max="10000000" step="1" inputMode="numeric" value={row.stock} onChange={(event) => setRows((current) => current.map((entry, index) => index === rowIndex ? { ...entry, stock: event.target.value } : entry))} aria-label={`Combination ${rowIndex + 1} exact available stock`} className="h-10 w-28 rounded-md border px-2 text-center outline-none focus:border-primary" /></td>
-                          <td className="px-3 py-3"><input type="number" min="0" max="10000000" step="1" inputMode="numeric" value={row.threshold} onChange={(event) => setRows((current) => current.map((entry, index) => index === rowIndex ? { ...entry, threshold: event.target.value } : entry))} aria-label={`Combination ${rowIndex + 1} low stock alert`} className="h-10 w-20 rounded-md border px-2 text-center outline-none focus:border-primary" /></td>
+                          <td className="px-3 py-3"><div aria-label={`Combination ${rowIndex + 1} automatic low stock alert`} className="grid h-10 w-20 place-items-center rounded-md border bg-[#f6f9f6] px-2 text-center text-xs font-bold text-muted-foreground">≤ {Math.ceil(displayInventoryInteger(row.stock) * lowStockPercent / 100)}</div></td>
                           <td className="px-3 py-3"><button type="button" disabled={rows.length === 1 || submitting} onClick={() => setRows((current) => current.filter((_, index) => index !== rowIndex))} aria-label={`Remove combination ${rowIndex + 1}`} className="grid size-8 place-items-center rounded-md text-red-600 hover:bg-red-50 disabled:opacity-30"><X className="size-4" /></button></td>
                         </tr>
                       ))}
@@ -534,7 +543,7 @@ export function SkuInventoryDialog({
                   </table>
                 </div>
                 <button type="button" onClick={() => setRows((current) => [...current, { key: draftKey("row"), selections: Object.fromEntries(groups.map((group) => [group.key, ""])), stock: "0", threshold: "2" }])} disabled={submitting || rows.length >= 500} className="mt-3 inline-flex items-center gap-2 text-sm font-bold text-primary hover:underline disabled:opacity-40"><Plus className="size-4" /> Add combination</button>
-                <div className="mt-5 rounded-lg bg-primary/10 px-4 py-3"><p className="font-extrabold text-foreground">New available total: {exactTotal} items</p><p className="mt-0.5 text-xs text-muted-foreground">Calculated from the physical combinations above.</p></div>
+                <div className="mt-5 grid gap-3 rounded-lg border border-border bg-[#fbfdfb] p-4 sm:grid-cols-[220px_1fr] sm:items-end"><label className="grid gap-1.5 text-sm font-semibold">Low-stock warning<select aria-label="Low-stock warning" value={lowStockPercent} onChange={(event) => setLowStockPercent(Number(event.target.value))} className="h-11 rounded-md border bg-white px-3 font-normal outline-none focus:border-primary"><option value={10}>10% — very low</option><option value={20}>20% — low</option><option value={25}>25% — recommended</option><option value={30}>30% — early warning</option><option value={40}>40% — extra early</option><option value={50}>50% — half stock</option></select></label><div><p className="font-extrabold text-foreground">New available total: {exactTotal} items</p><p className="mt-1 text-xs leading-5 text-muted-foreground">Every combination gets the same {lowStockPercent}% policy automatically; staff no longer enters alert quantities manually.</p></div></div>
               </section>
             </>
           ) : (
@@ -569,6 +578,20 @@ export function SkuInventoryDialog({
                   <p className="mt-3 text-xs leading-5 text-muted-foreground">The selling price applies to the whole product and future sales. The same acquisition cost applies to this delivery; completed historical sales keep their original price and FIFO cost allocation.</p>
                 </section>
               ) : null}
+              <section className="mt-5 rounded-lg border border-border bg-[#fbfdfb] p-4">
+                <label className="grid gap-1.5 text-sm font-semibold sm:max-w-xs">
+                  Low-stock warning
+                  <select value={lowStockPercent} onChange={(event) => setLowStockPercent(Number(event.target.value))} className="h-11 rounded-md border bg-white px-3 font-normal outline-none focus:border-primary">
+                    <option value={10}>10% — very low</option>
+                    <option value={20}>20% — low</option>
+                    <option value={25}>25% — recommended</option>
+                    <option value={30}>30% — early warning</option>
+                    <option value={40}>40% — extra early</option>
+                    <option value={50}>50% — half stock</option>
+                  </select>
+                </label>
+                <p className="mt-3 text-xs leading-5 text-muted-foreground">The product warning will be <strong className="text-foreground">{resultingLowStockThreshold} items or fewer</strong>, based on a stable target of {resultingStockTarget}. The same percentage is applied automatically to every physical combination.</p>
+              </section>
               <div className="mt-5 flex items-center gap-3 rounded-lg bg-primary/10 px-4 py-3"><RefreshCw className="size-5 text-primary" /><div><p className="font-extrabold text-foreground">{stockMode === "add" ? `Total items to add: ${restockAmount}` : `Corrected available total: ${resultingTotal}`}</p><p className="mt-0.5 text-xs text-muted-foreground">{stockMode === "add" ? `After saving: ${resultingTotal} available items` : "The product total will be recalculated from these exact available counts."}</p></div></div>
               <button type="button" onClick={() => { setGroups(initialStructure.groups); setRows(initialStructure.rows); setMode("reconcile"); setError(""); }} className="mt-4 text-xs font-bold text-primary hover:underline">Edit options and rebuild combinations</button>
             </>

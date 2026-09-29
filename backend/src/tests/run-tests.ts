@@ -107,10 +107,15 @@ await import("./wesbot-ai-usage.test.js");
 await import("./public-receipt.test.js");
 await import("./receipt-integrity.test.js");
 await import("./report-range.test.js");
+await import("./report-insights.test.js");
+await import("./stock-alert-policy.test.js");
+await import("./reservation-bulk-confirmation.test.js");
 await import("./operations-v2-architecture.test.js");
 await import("./operations-lifecycle-architecture.test.js");
 await import("./conversation-retention.test.js");
 await import("./online-payment.test.js");
+await import("./cash-only-payments.test.js");
+await import("./payment-conversion-cli-policy.test.js");
 await import("./paymongo-webhook.test.js");
 await import("./paymongo-payment-validation.test.js");
 await import("./paymongo-lifecycle-safety.test.js");
@@ -129,5 +134,6 @@ if (process.env.RUN_DATABASE_INTEGRATION_TESTS === "true") {
   await import("./conversation-archive-postgres.integration.test.js");
   await import("./conversation-message-edit-postgres.integration.test.js");
   await import("./pickup-capacity-postgres.integration.test.js");
+  await import("./online-payment-conversion-postgres.integration.test.js");
 }
 await import("./security.test.js");

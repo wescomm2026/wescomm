@@ -14,7 +14,6 @@ import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import {
   cancelMyReservationFromApi,
-  createGcashCheckoutFromApi,
   getReservationFromApi,
   getReservationPageFromApi,
   type BackendPaymentMethod,
@@ -33,11 +32,6 @@ import {
   writeServerState
 } from "@/lib/server-state";
 import { collectionChannelLabel, type CollectionChannel } from "@/lib/collection-channel";
-import {
-  getPaymentIdempotencyKey,
-  openTrustedPaymongoCheckout,
-  rememberPaymentCheckout
-} from "@/lib/payment-checkout";
 import { resolveShopProductAsset, shopProductCardImage } from "@/lib/shop-assets";
 import { calendarDayDifference, manilaDateKey } from "@/lib/manila-date";
 
@@ -64,6 +58,7 @@ type StoredReservation = {
   notes: string;
   status: ReservationStatus;
   createdAt: string;
+  confirmationQueue: BackendReservation["confirmationQueue"];
 };
 
 type ReservationStatus = "Pending" | "Confirmed" | "Ready for Pickup" | "Completed" | "Cancelled" | "No-show";
@@ -119,10 +114,15 @@ function formatBackendStatus(status: BackendReservationStatus): ReservationStatu
 function reservationGuidance(
   status: ReservationStatus,
   paymentMethod: BackendPaymentMethod,
-  payment: BackendPaymentSummary | null
+  payment: BackendPaymentSummary | null,
+  preferredCollectionChannel: CollectionChannel
 ) {
   const isOnlineGcash = paymentMethod === "PAYMONGO_GCASH";
   const isPaidOnline = isOnlineGcash && payment?.status === "PAID";
+  const cashLocation = preferredCollectionChannel === "TREASURER" ? "Treasury" : "Commissary";
+  const readyForPickupCashDetail = preferredCollectionChannel === "TREASURER"
+    ? "Pay in cash at the Treasury, keep your official receipt, and present it during pickup. Bring your reference code."
+    : "Pay in cash and claim your order at the Commissary during your pickup window. Bring your reference code.";
 
   if (status === "Pending") {
     if (isPaidOnline) {
@@ -132,10 +132,10 @@ function reservationGuidance(
       };
     }
     return {
-      title: isOnlineGcash ? "Online payment is not yet confirmed" : "Waiting for staff confirmation",
+      title: isOnlineGcash ? "Historical online payment record" : "Waiting for staff confirmation",
       detail: isOnlineGcash
-        ? "Your reservation is saved. Complete or check the secure GCash payment below before staff processing."
-        : "Your item is held while commissary staff reviews the reservation."
+        ? "Online payments are closed for new reservations. Staff is safely closing this historical payment record; check this reservation for its updated cash payment location."
+        : `Your item is held while staff reviews the reservation. You selected cash payment at the ${cashLocation}.`
     };
   }
   if (status === "Confirmed") {
@@ -150,8 +150,8 @@ function reservationGuidance(
       detail: isPaidOnline
         ? "Your GCash payment is confirmed. Bring your reference code during the pickup window."
         : isOnlineGcash
-          ? "Check the online payment status below before visiting the commissary."
-          : "Bring your reference code and complete payment at the commissary during the pickup window."
+          ? "This historical online payment is not confirmed. Wait for the reservation to show its cash payment location before pickup."
+          : readyForPickupCashDetail
     };
   }
   if (status === "Completed") {
@@ -234,7 +234,8 @@ function mapBackendReservations(rows: BackendReservation[]): StoredReservation[]
     payment: reservation.payment ?? null,
     notes: reservation.staffNotes?.trim() ?? "",
     status: formatBackendStatus(reservation.status),
-    createdAt: reservation.createdAt
+    createdAt: reservation.createdAt,
+    confirmationQueue: reservation.confirmationQueue ?? null
   }));
 }
 
@@ -261,11 +262,6 @@ function paymentStatusDisplay(status?: BackendPaymentStatus) {
 }
 
 function reservationPreviewAction(reservation: StoredReservation) {
-  const canContinuePayment = reservation.paymentMethod === "PAYMONGO_GCASH"
-    && reservation.payment?.status !== "PAID"
-    && (reservation.payment ? reservation.payment.canResume || reservation.payment.canRetry : true);
-
-  if (canContinuePayment) return "Continue payment";
   if (reservation.status === "Ready for Pickup") return "View pickup details";
   if (reservation.status === "Completed") return "View Details";
   return "View details";
@@ -323,6 +319,17 @@ function ReservationPreviewCard({
                 {firstItem.details ? <p className="mt-1 truncate text-xs text-[#657169]">{firstItem.details}</p> : null}
               </div>
             ) : <p className="mt-3 text-sm text-[#68746d]">Reservation item preview is unavailable.</p>}
+            {reservation.status === "Pending" && reservation.confirmationQueue ? (
+              <div className="mt-3 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2.5" aria-label={`Confirmation queue position ${reservation.confirmationQueue.position}`}>
+                <p className="text-xs font-extrabold text-primary">Confirmation queue #{reservation.confirmationQueue.position} of {reservation.confirmationQueue.total}</p>
+                <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
+                  {reservation.confirmationQueue.ahead === 0
+                    ? "Your request is first for this pickup schedule."
+                    : `${reservation.confirmationQueue.ahead} eligible request${reservation.confirmationQueue.ahead === 1 ? " is" : "s are"} ahead for this pickup schedule.`}
+                  {" "}Position may change when staff confirms or students cancel.
+                </p>
+              </div>
+            ) : null}
           </div>
         </div>
 
@@ -512,14 +519,16 @@ function ReservationDetails({
   accessToken: string;
   onCancelled: (reservation: BackendReservation) => void;
 }) {
-  const guidance = reservationGuidance(reservation.status, reservation.paymentMethod, reservation.payment);
+  const guidance = reservationGuidance(
+    reservation.status,
+    reservation.paymentMethod,
+    reservation.payment,
+    reservation.preferredCollectionChannel
+  );
   const totalQuantity = reservation.items.reduce((sum, item) => sum + item.quantity, 0);
-  const [paymentError, setPaymentError] = useState("");
-  const [openingPayment, setOpeningPayment] = useState(false);
   const [confirmingCancellation, setConfirmingCancellation] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [cancellationError, setCancellationError] = useState("");
-  const paymentErrorRef = useRef<HTMLParagraphElement | null>(null);
   const cancellationErrorRef = useRef<HTMLParagraphElement | null>(null);
   const isOnlineGcash = reservation.paymentMethod === "PAYMONGO_GCASH";
   const requiresStaffCancellation = paymentRequiresStaffCancellation(
@@ -528,38 +537,10 @@ function ReservationDetails({
   );
   const canSelfCancel = reservation.status === "Pending" && !requiresStaffCancellation;
   const selfCancellationClosed = reservation.status === "Confirmed" || reservation.status === "Ready for Pickup";
-  const canContinuePayment = isOnlineGcash
-    && reservation.payment?.status !== "PAID"
-    && (reservation.payment ? reservation.payment.canResume || reservation.payment.canRetry : true);
-
-  useEffect(() => {
-    if (paymentError) paymentErrorRef.current?.focus();
-  }, [paymentError]);
 
   useEffect(() => {
     if (cancellationError) cancellationErrorRef.current?.focus();
   }, [cancellationError]);
-
-  const continuePayment = async () => {
-    if (!accessToken || !canContinuePayment) return;
-    setOpeningPayment(true);
-    setPaymentError("");
-    try {
-      const checkout = await createGcashCheckoutFromApi(
-        accessToken,
-        reservation.id,
-        getPaymentIdempotencyKey(reservation.id, { renew: reservation.payment?.canRetry === true })
-      );
-      if (!rememberPaymentCheckout(checkout.payment, checkout.checkoutUrl)) {
-        throw new Error("WESCOMM blocked an invalid payment destination. Please try again.");
-      }
-      openTrustedPaymongoCheckout(checkout.checkoutUrl);
-    } catch (error) {
-      setPaymentError(userFacingErrorMessage(error, "Unable to continue this payment."));
-    } finally {
-      setOpeningPayment(false);
-    }
-  };
 
   const cancelReservation = async () => {
     if (!accessToken || !canSelfCancel) return;
@@ -648,14 +629,14 @@ function ReservationDetails({
       </section>
 
       {isOnlineGcash ? (
-        <section className="mx-4 mb-4 rounded-lg border border-[#d8e5d9] bg-[#fbfdfb] p-4 sm:mx-5 sm:mb-5" aria-label="Online payment status">
+        <section className="mx-4 mb-4 rounded-lg border border-[#d8e5d9] bg-[#fbfdfb] p-4 sm:mx-5 sm:mb-5" aria-label="Historical online payment status">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <p className="text-xs font-extrabold uppercase text-primary">PayMongo GCash</p>
+              <p className="text-xs font-extrabold uppercase text-primary">PayMongo GCash (historical)</p>
               <p className="mt-1 text-sm font-bold text-[#17211b]">
                 {reservation.payment?.status === "PAID"
                   ? "Payment confirmed by the secure server record"
-                  : "Payment is separate from the reservation status"}
+                  : "Online payments are closed. Staff is processing this historical record; follow the cash location shown by the reservation after conversion."}
               </p>
             </div>
             <StatusBadge status={paymentStatusDisplay(reservation.payment?.status)} />
@@ -664,19 +645,6 @@ function ReservationDetails({
             <p className="mt-3 break-all text-xs text-[#657169]">
               Payment reference: <strong>{reservation.payment.providerReference}</strong>
             </p>
-          ) : null}
-          {paymentError ? (
-            <p ref={paymentErrorRef} tabIndex={-1} role="alert" className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">
-              {paymentError}
-            </p>
-          ) : null}
-          {canContinuePayment ? (
-            <Button className="mt-3 min-h-11" onClick={() => void continuePayment()} disabled={openingPayment} aria-busy={openingPayment}>
-              <AssetIcon src="/assets/e-wallet.svg" className="size-5" />
-              {openingPayment
-                ? "Opening GCash..."
-                : reservation.payment?.canRetry ? "Try GCash Again" : "Continue GCash Payment"}
-            </Button>
           ) : null}
         </section>
       ) : null}

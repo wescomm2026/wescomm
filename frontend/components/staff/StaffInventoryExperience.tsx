@@ -103,6 +103,7 @@ export function StaffInventoryExperience() {
   const [restockSellingPrice, setRestockSellingPrice] = useState("");
   const [restockReceivedAt, setRestockReceivedAt] = useState(() => new Date().toISOString().slice(0, 10));
   const [restockSupplierNote, setRestockSupplierNote] = useState("");
+  const [restockLowStockPercent, setRestockLowStockPercent] = useState(25);
   const [batchResult, setBatchResult] = useState<StaffInventoryBatchResult | null>(null);
   const [openingCostDrafts, setOpeningCostDrafts] = useState<Record<string, string>>({});
   const [restockVariantQuantities, setRestockVariantQuantities] = useState<Record<string, string>>({});
@@ -114,6 +115,9 @@ export function StaffInventoryExperience() {
   const [addAudienceDepartmentIds, setAddAudienceDepartmentIds] = useState<string[]>([]);
   const [editAudienceScope, setEditAudienceScope] = useState<"ALL_STUDENTS" | "SPECIFIC_DEPARTMENTS">("ALL_STUDENTS");
   const [addSizeVariants, setAddSizeVariants] = useState<SizeVariantDraft[]>(defaultSizeVariantDrafts);
+  const [addSimpleStock, setAddSimpleStock] = useState(0);
+  const [addLowStockPercent, setAddLowStockPercent] = useState(25);
+  const [editLowStockPercent, setEditLowStockPercent] = useState(25);
   const [editImageFile, setEditImageFile] = useState<File | null>(null);
   const [editImagePreview, setEditImagePreview] = useState("");
   const [editSizeVariants, setEditSizeVariants] = useState<SizeVariantDraft[]>([]);
@@ -249,6 +253,18 @@ export function StaffInventoryExperience() {
     (total, variant) => total + Math.max(0, Number(variant.stock) || 0),
     0
   );
+  const addOpeningStock = addHasSizeVariants ? addSizeStockTotal : addSimpleStock;
+  const addLowStockThreshold = addOpeningStock === 0 ? 0 : Math.ceil(addOpeningStock * addLowStockPercent / 100);
+  const editLowStockThreshold = editingProduct
+    ? (editingProduct.stockTarget === 0 ? 0 : Math.ceil(editingProduct.stockTarget * editLowStockPercent / 100))
+    : 0;
+  const automaticEditVariantThreshold = (variantId: string | undefined, stock: string) => {
+    const persisted = variantId
+      ? editingProduct?.variants.find((variant) => variant.id === variantId)
+      : undefined;
+    const target = Math.max(persisted?.stockTarget ?? 0, Number(stock) || 0);
+    return target === 0 ? 0 : Math.ceil(target * (editingProduct?.lowStockPercent ?? 25) / 100);
+  };
   const editingVariantStructureUnlocked = Boolean(
     editingProduct
     && (
@@ -276,6 +292,8 @@ export function StaffInventoryExperience() {
     setAddAudienceScope("ALL_STUDENTS");
     setAddAudienceDepartmentIds([]);
     setAddSizeVariants(defaultSizeVariantDrafts());
+    setAddSimpleStock(0);
+    setAddLowStockPercent(25);
     setAdding(true);
   };
 
@@ -287,6 +305,8 @@ export function StaffInventoryExperience() {
     setAddAudienceScope("ALL_STUDENTS");
     setAddAudienceDepartmentIds([]);
     setAddSizeVariants(defaultSizeVariantDrafts());
+    setAddSimpleStock(0);
+    setAddLowStockPercent(25);
     setAdding(false);
   };
 
@@ -300,6 +320,8 @@ export function StaffInventoryExperience() {
       ? (isUniformClothOnly({ name: template.name, category: template.categoryName }) ? "CLOTH_ONLY" : "OPTIONS")
       : "SIMPLE";
     setAddSaleMode(template ? suggestedMode : "SIMPLE");
+    setAddSimpleStock(template?.stock ?? 0);
+    setAddLowStockPercent(25);
     setAddImagePreview(template?.imageUrl ?? "");
   };
 
@@ -309,6 +331,7 @@ export function StaffInventoryExperience() {
     setEditImageFile(null);
     setEditImagePreview(product.imageUrl);
     setEditAudienceScope(product.audienceScope);
+    setEditLowStockPercent(product.lowStockPercent);
     const sizeOptionName = preferredSizeOptionName(product.variants);
     setEditSizeOptionName(sizeOptionName);
     setEditSizeVariants(sortSizeVariants(product.variants.filter(
@@ -347,11 +370,14 @@ export function StaffInventoryExperience() {
     try {
       const variants = editSizeVariants.map((variant) => {
         const optionValue = variant.value.trim();
-        const lowStockThreshold = Number(variant.lowStockThreshold);
         if (!optionValue) throw new Error("Every size must have a name.");
-        if (!Number.isInteger(lowStockThreshold) || lowStockThreshold < 0) {
-          throw new Error(`${optionValue} low-stock alert must be a whole number of zero or more.`);
-        }
+        const currentVariant = variant.id
+          ? editingProduct.variants.find((entry) => entry.id === variant.id)
+          : undefined;
+        const stockTarget = Math.max(currentVariant?.stockTarget ?? 0, currentVariant?.stock ?? 0);
+        const lowStockThreshold = stockTarget === 0
+          ? 0
+          : Math.ceil(stockTarget * editingProduct.lowStockPercent / 100);
         return {
           ...(variant.id ? { id: variant.id } : {}),
           optionValue,
@@ -430,6 +456,7 @@ export function StaffInventoryExperience() {
     setRestockSellingPrice(product.price.toFixed(2));
     setRestockReceivedAt(new Date().toISOString().slice(0, 10));
     setRestockSupplierNote("");
+    setRestockLowStockPercent(product.lowStockPercent);
     setBatchResult(null);
     setOpeningCostDrafts({});
     void getStaffInventoryBatches(token, product.id).then((result) => {
@@ -559,6 +586,7 @@ export function StaffInventoryExperience() {
           }))
         } : {}),
         notes: restockMode === "add" ? "Stock added from staff inventory page." : "Exact stock set from staff inventory page.",
+        lowStockPercent: restockLowStockPercent,
         ...(restockMode === "add" ? {
           unitCost,
           sellingPrice,
@@ -711,6 +739,10 @@ export function StaffInventoryExperience() {
       ? restockingProduct.stock + restockEnteredQuantity
       : restockEnteredQuantity
     : 0;
+  const resultingStockTarget = restockingProduct
+    ? Math.max(restockingProduct.stockTarget, resultingStock)
+    : 0;
+  const resultingLowStockThreshold = Math.ceil(resultingStockTarget * restockLowStockPercent / 100);
   const enteredRestockUnitCost = restockUnitCost.trim() ? Number(restockUnitCost) : null;
   const enteredRestockSellingPrice = restockSellingPrice.trim() ? Number(restockSellingPrice) : null;
   const estimatedUnitGrossProfit = enteredRestockSellingPrice !== null && Number.isFinite(enteredRestockSellingPrice) && enteredRestockUnitCost !== null && Number.isFinite(enteredRestockUnitCost)
@@ -877,8 +909,8 @@ export function StaffInventoryExperience() {
                 <div className="hidden text-sm xl:block"><span className="font-extrabold text-primary">PHP {product.price.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
                 <div className="text-sm">
                   <span className="text-muted-foreground xl:hidden">Low-stock alert: </span>
-                  <span className="font-bold">{product.minimum}</span>
-                  <span className="ml-1 text-xs text-muted-foreground">items</span>
+                  <span className="font-bold">{product.lowStockPercent}%</span>
+                  <span className="ml-1 text-xs text-muted-foreground">(≤ {product.minimum} items)</span>
                 </div>
                 <div className="hidden flex-wrap gap-1 xl:col-span-2 xl:flex">
                   {product.saleMode === "OPTIONS" && product.skuInventoryEnabled ? (
@@ -942,8 +974,8 @@ export function StaffInventoryExperience() {
         </div>
       ) : null}
       {adding ? (
-        <div className="fixed inset-0 z-[10000] grid place-items-center bg-[#101820]/50 p-4">
-          <form ref={addDialog.dialogRef} {...addDialog.dialogProps} key={selectedTemplateId || "blank-product-form"} className="relative my-auto max-h-[calc(100vh-2rem)] w-full max-w-xl overflow-y-auto rounded-lg bg-white p-5 shadow-2xl" onSubmit={async (event) => {
+        <div className="fixed inset-0 z-[10000] grid place-items-center bg-[#101820]/55 p-0 backdrop-blur-[1px] sm:p-4">
+          <form ref={addDialog.dialogRef} {...addDialog.dialogProps} key={selectedTemplateId || "blank-product-form"} className="relative my-auto max-h-[100dvh] w-full max-w-2xl overflow-x-hidden overflow-y-auto bg-[#f6f9f6] shadow-2xl sm:max-h-[calc(100vh-2rem)] sm:rounded-xl" onSubmit={async (event) => {
             event.preventDefault();
             const form = new FormData(event.currentTarget);
             setSubmitting(true);
@@ -962,15 +994,11 @@ export function StaffInventoryExperience() {
                 ? addSizeVariants.map((variant) => {
                     const optionValue = variant.value.trim();
                     const stock = Number(variant.stock);
-                    const lowStockThreshold = Number(variant.lowStockThreshold);
                     if (!optionValue) throw new Error("Every size must have a name.");
                     if (!Number.isInteger(stock) || stock < 0) {
                       throw new Error(`${optionValue} stock must be a whole number of zero or more.`);
                     }
-                    if (!Number.isInteger(lowStockThreshold) || lowStockThreshold < 0) {
-                      throw new Error(`${optionValue} low-stock alert must be a whole number of zero or more.`);
-                    }
-                    return { optionName: "Size", optionValue, stock, lowStockThreshold };
+                    return { optionName: "Size", optionValue, stock };
                   })
                 : [];
 
@@ -1009,7 +1037,7 @@ export function StaffInventoryExperience() {
                 audienceScope: addAudienceScope,
                 departmentIds: addAudienceScope === "SPECIFIC_DEPARTMENTS" ? addAudienceDepartmentIds : [],
                 stock: openingStock,
-                lowStockThreshold: Number(form.get("minimum")),
+                lowStockPercent: addLowStockPercent,
                 ...(openingStock > 0 ? {
                   initialUnitCost: Number(initialUnitCostValue),
                   receivedAt: receivedAtValue,
@@ -1022,7 +1050,9 @@ export function StaffInventoryExperience() {
               // this as one request prevents a half-created product if the
               // browser loses connection after the first save.
               const finalProduct = createdProduct;
-              setProducts((current) => [...current, mapStaffProduct(finalProduct)].sort((left, right) => left.name.localeCompare(right.name)));
+              if (!finalProduct.id) throw new Error("The saved product response is missing its record ID. Refresh the inventory before trying again.");
+              const mappedProduct = mapStaffProduct(finalProduct);
+              setProducts((current) => mergeUniqueById([...current, mappedProduct]).sort((left, right) => left.name.localeCompare(right.name)));
               closeAddProduct();
               setNotice(`${finalProduct.name} added.`);
             } catch (createError) {
@@ -1032,20 +1062,21 @@ export function StaffInventoryExperience() {
             }
           }}>
             <ActionLoadingOverlay
+              key="add-product-loading-overlay"
               active={submitting}
               title="Saving new product"
               detail="We are saving the product and uploading its image if needed."
             />
-            <div className="flex items-start gap-3"><div><h2 id={addDialog.titleId} className="text-xl font-extrabold">Add product</h2><p className="mt-1 text-sm text-muted-foreground">Enter the basic product details and starting stock.</p></div><button type="button" data-dialog-autofocus onClick={closeAddProduct} disabled={submitting} aria-label="Close product form" className="ml-auto grid size-9 place-items-center rounded-md hover:bg-[#eef3ee] disabled:opacity-50"><X /></button></div>
-            <div className="mt-5 grid gap-5">
-              <section className="grid gap-3 rounded-lg border border-border bg-[#fbfdfb] p-4">
+            <div key="add-product-heading" className="sticky top-0 z-20 flex items-start gap-3 border-b border-border bg-white/95 px-5 py-4 backdrop-blur"><div><p className="text-[11px] font-bold uppercase tracking-[0.16em] text-primary">Inventory setup</p><h2 id={addDialog.titleId} className="mt-1 text-xl font-extrabold">Add inventory item</h2><p className="mt-1 text-sm text-muted-foreground">Set the product details, stock policy, and opening cost.</p></div><button type="button" data-dialog-autofocus onClick={closeAddProduct} disabled={submitting} aria-label="Close product form" className="ml-auto grid size-9 shrink-0 place-items-center rounded-md hover:bg-[#eef3ee] disabled:opacity-50"><X /></button></div>
+            <div key="add-product-fields" className="grid min-w-0 gap-4 p-4 pb-5 sm:p-5">
+              <section key="add-product-details" className="grid min-w-0 gap-3 overflow-hidden rounded-xl border border-border bg-white p-4 shadow-sm">
                 <div>
-                  <h3 className="font-extrabold text-foreground">Product details</h3>
+                  <div className="flex items-center gap-2"><span className="grid size-6 place-items-center rounded-full bg-primary text-xs font-extrabold text-white">1</span><h3 className="font-extrabold text-foreground">Product details</h3></div>
                   <p className="mt-1 text-xs leading-5 text-muted-foreground">Choose a template to fill common WUP details automatically, or leave it blank for a new item.</p>
                 </div>
-                <label className="grid gap-1.5 text-sm font-semibold">
+                <label className="grid min-w-0 gap-1.5 text-sm font-semibold">
                   Start from a WUP template <span className="font-normal text-muted-foreground">(optional)</span>
-                  <select value={selectedTemplateId} onChange={(event) => selectAddTemplate(event.target.value)} className="h-11 rounded-md border px-3 font-normal outline-none focus:border-primary">
+                  <select value={selectedTemplateId} onChange={(event) => selectAddTemplate(event.target.value)} className="h-11 w-full min-w-0 rounded-md border px-3 font-normal outline-none focus:border-primary">
                     <option value="">No template — enter details manually</option>
                     <optgroup label="Shop-ready items">
                       {assetTemplates.map((template) => (
@@ -1061,27 +1092,42 @@ export function StaffInventoryExperience() {
                 </label>
                 <label className="grid gap-1.5 text-sm font-semibold">
                   Product name
-                  <input name="name" required defaultValue={selectedTemplate?.name ?? ""} placeholder="Example: Senior High Men's Polo" className="h-11 rounded-md border px-3 font-normal" />
+                  <input name="name" required defaultValue={selectedTemplate?.name ?? ""} placeholder="Example: Senior High Men's Polo" className="h-11 w-full min-w-0 rounded-md border px-3 font-normal" />
                 </label>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <label className="grid gap-1.5 text-sm font-semibold">
                     Category
-                    <input name="category" required list="staff-category-options" defaultValue={selectedTemplate?.categoryName ?? ""} placeholder="Example: Uniforms" className="h-11 rounded-md border px-3 font-normal" />
+                    <input name="category" required list="staff-category-options" defaultValue={selectedTemplate?.categoryName ?? ""} placeholder="Example: Uniforms" className="h-11 w-full min-w-0 rounded-md border px-3 font-normal" />
                   </label>
                   <label className="grid gap-1.5 text-sm font-semibold">
-                    Price
-                    <input name="price" required type="number" min="0" step="0.01" defaultValue={selectedTemplate?.price ?? ""} placeholder="0.00" className="h-11 rounded-md border px-3 font-normal" />
+                    Selling price
+                    <input name="price" required type="number" min="0" step="0.01" defaultValue={selectedTemplate?.price ?? ""} placeholder="0.00" className="h-11 w-full min-w-0 rounded-md border px-3 font-normal" />
+                  </label>
+                </div>
+                <div className="grid gap-3 rounded-lg border border-primary/25 bg-primary/5 p-3 sm:grid-cols-2">
+                  <div className="sm:col-span-2">
+                    <p className="text-sm font-extrabold text-primary">Opening-stock cost</p>
+                    <p className="mt-1 text-xs leading-5 text-muted-foreground">Required only when starting stock is above zero. This creates the first FIFO batch; it is not saved as a permanent product cost.</p>
+                  </div>
+                  <label className="grid gap-1.5 text-sm font-semibold">Unit acquisition cost
+                    <input name="initialUnitCost" type="number" min="0" step="0.01" placeholder="0.00" className="h-11 w-full min-w-0 rounded-md border bg-white px-3 font-normal" />
+                  </label>
+                  <label className="grid gap-1.5 text-sm font-semibold">Date received
+                    <input name="receivedAt" type="date" defaultValue={new Date().toISOString().slice(0, 10)} className="h-11 w-full min-w-0 rounded-md border bg-white px-3 font-normal" />
+                  </label>
+                  <label className="grid gap-1.5 text-sm font-semibold sm:col-span-2">Supplier / reference <span className="font-normal text-muted-foreground">(optional)</span>
+                    <input name="supplierNote" maxLength={500} placeholder="Example: Supplier invoice SI-1024" className="h-11 w-full min-w-0 rounded-md border bg-white px-3 font-normal" />
                   </label>
                 </div>
                 <label className="grid gap-1.5 text-sm font-semibold">
                   Short description <span className="font-normal text-muted-foreground">(optional)</span>
-                  <input name="description" defaultValue={selectedTemplateDescription} placeholder="Short description shown with the product" className="h-11 rounded-md border px-3 font-normal" />
+                  <input name="description" defaultValue={selectedTemplateDescription} placeholder="Short description shown with the product" className="h-11 w-full min-w-0 rounded-md border px-3 font-normal" />
                 </label>
               </section>
 
-              <section className="grid gap-3 rounded-lg border border-border bg-[#fbfdfb] p-4">
+              <section key="add-product-image" className="grid min-w-0 gap-3 overflow-hidden rounded-xl border border-border bg-white p-4 shadow-sm">
                 <div>
-                  <h3 className="font-extrabold text-foreground">Product image</h3>
+                  <div className="flex items-center gap-2"><span className="grid size-6 place-items-center rounded-full bg-primary text-xs font-extrabold text-white">2</span><h3 className="font-extrabold text-foreground">Product image</h3></div>
                   <p className="mt-1 text-xs leading-5 text-muted-foreground">Upload an image if the selected template does not already have one.</p>
                 </div>
                 <div className="flex items-center gap-3">
@@ -1103,16 +1149,16 @@ export function StaffInventoryExperience() {
                 </details>
               </section>
 
-              <section className="grid gap-3 rounded-lg border border-border bg-[#fbfdfb] p-4">
-                <div><h3 className="font-extrabold text-foreground">Who is this item for?</h3><p className="mt-1 text-xs leading-5 text-muted-foreground">This changes Featured ranking only. Every student can still find the product through search.</p></div>
+              <section key="add-product-audience" className="grid min-w-0 gap-3 overflow-hidden rounded-xl border border-border bg-white p-4 shadow-sm">
+                <div><div className="flex items-center gap-2"><span className="grid size-6 place-items-center rounded-full bg-primary text-xs font-extrabold text-white">3</span><h3 className="font-extrabold text-foreground">Featured audience</h3></div><p className="mt-1 text-xs leading-5 text-muted-foreground">Choose who should see this item first. Every student can still find it through search.</p></div>
                 <label className="flex gap-3 rounded-md border bg-white p-3"><input type="radio" checked={addAudienceScope === "ALL_STUDENTS"} onChange={() => { setAddAudienceScope("ALL_STUDENTS"); setAddAudienceDepartmentIds([]); }} /><span className="text-sm font-bold">All Students</span></label>
                 <label className="flex gap-3 rounded-md border bg-white p-3"><input type="radio" checked={addAudienceScope === "SPECIFIC_DEPARTMENTS"} onChange={() => setAddAudienceScope("SPECIFIC_DEPARTMENTS")} /><span className="text-sm font-bold">Specific Department(s)</span></label>
                 {addAudienceScope === "SPECIFIC_DEPARTMENTS" ? <div className="grid gap-2 sm:grid-cols-2">{departments.map((department) => <label key={department.id} className="flex items-center gap-2 rounded-md border bg-white px-3 py-2 text-sm"><input type="checkbox" checked={addAudienceDepartmentIds.includes(department.id)} onChange={(event) => setAddAudienceDepartmentIds((current) => event.target.checked ? [...current, department.id] : current.filter((id) => id !== department.id))} />{department.code}</label>)}</div> : null}
               </section>
 
-              <section className="grid gap-4 rounded-lg border border-border bg-[#fbfdfb] p-4">
+              <section key="add-product-inventory" className="grid min-w-0 gap-4 overflow-hidden rounded-xl border border-border bg-white p-4 shadow-sm">
                 <div>
-                  <h3 className="font-extrabold text-foreground">Stock setup</h3>
+                  <div className="flex items-center gap-2"><span className="grid size-6 place-items-center rounded-full bg-primary text-xs font-extrabold text-white">4</span><h3 className="font-extrabold text-foreground">Stock setup</h3></div>
                   <p className="mt-1 text-xs leading-5 text-muted-foreground">Choose how staff will track this product. Uniforms normally use sizes.</p>
                 </div>
                 <div className="grid gap-2">
@@ -1182,50 +1228,44 @@ export function StaffInventoryExperience() {
                       </Button>
                       <p className="text-sm"><span className="text-muted-foreground">Total stock: </span><span className="font-extrabold text-primary">{addSizeStockTotal} pcs</span></p>
                     </div>
-                    <p className="text-xs leading-5 text-muted-foreground">Each size gets a default low-stock warning at 2 pcs. You can change that later from Manage.</p>
+                    <p className="text-xs leading-5 text-muted-foreground">The selected percentage below is applied automatically to every size.</p>
                   </div>
                 ) : (
                   <label className="grid gap-1.5 text-sm font-semibold">
                     Starting stock
-                    <input name="stock" required type="number" min="0" step="1" defaultValue={selectedTemplate?.stock ?? 0} placeholder="0" className="h-11 rounded-md border px-3 font-normal" />
+                    <input name="stock" required type="number" min="0" step="1" value={addSimpleStock} onChange={(event) => setAddSimpleStock(Number(event.target.value))} placeholder="0" className="h-11 w-full min-w-0 rounded-md border px-3 font-normal" />
                   </label>
                 )}
 
-                <label className="grid gap-1.5 text-sm font-semibold">
-                  Warn staff when total stock reaches
-                  <input name="minimum" required type="number" min="0" step="1" defaultValue={selectedTemplate?.lowStockThreshold ?? 10} className="h-11 rounded-md border px-3 font-normal" />
-                  <span className="text-xs font-normal leading-5 text-muted-foreground">Example: enter 10 to show a restock warning when 10 or fewer items remain.</span>
-                </label>
-
-                <div className="grid gap-3 rounded-md border border-primary/25 bg-primary/5 p-3 sm:grid-cols-2">
-                  <div className="sm:col-span-2">
-                    <p className="text-sm font-extrabold text-primary">Opening-stock cost</p>
-                    <p className="mt-1 text-xs leading-5 text-muted-foreground">Required only when starting stock is above zero. This creates the first FIFO batch; it is not saved as a permanent product cost.</p>
-                  </div>
-                  <label className="grid gap-1.5 text-sm font-semibold">Unit acquisition cost
-                    <input name="initialUnitCost" type="number" min="0" step="0.01" placeholder="0.00" className="h-11 rounded-md border bg-white px-3 font-normal" />
+                <div className="grid gap-3 rounded-md border border-border bg-white p-3 sm:grid-cols-[220px_1fr] sm:items-end">
+                  <label className="grid gap-1.5 text-sm font-semibold">
+                    Low-stock warning
+                    <select aria-label="Low-stock warning" value={addLowStockPercent} onChange={(event) => setAddLowStockPercent(Number(event.target.value))} className="h-11 w-full min-w-0 rounded-md border bg-white px-3 font-normal outline-none focus:border-primary">
+                      <option value={10}>10% — very low</option>
+                      <option value={20}>20% — low</option>
+                      <option value={25}>25% — recommended</option>
+                      <option value={30}>30% — early warning</option>
+                      <option value={40}>40% — extra early</option>
+                      <option value={50}>50% — half stock</option>
+                    </select>
                   </label>
-                  <label className="grid gap-1.5 text-sm font-semibold">Date received
-                    <input name="receivedAt" type="date" defaultValue={new Date().toISOString().slice(0, 10)} className="h-11 rounded-md border bg-white px-3 font-normal" />
-                  </label>
-                  <label className="grid gap-1.5 text-sm font-semibold sm:col-span-2">Supplier / reference <span className="font-normal text-muted-foreground">(optional)</span>
-                    <input name="supplierNote" maxLength={500} placeholder="Example: Supplier invoice SI-1024" className="h-11 rounded-md border bg-white px-3 font-normal" />
-                  </label>
+                  <p className="text-xs leading-5 text-muted-foreground">Based on {addOpeningStock} starting item{addOpeningStock === 1 ? "" : "s"}, staff will be warned at <strong className="text-foreground">{addLowStockThreshold} or fewer</strong>. This is calculated automatically for every size.</p>
                 </div>
+
               </section>
 
-              <details className="rounded-lg border border-border bg-white px-4 py-3 text-sm">
+              <details key="add-product-pricing" className="rounded-xl border border-border bg-white px-4 py-3 text-sm shadow-sm">
                 <summary className="cursor-pointer font-semibold text-muted-foreground">Optional pricing</summary>
                 <label className="mt-3 grid gap-1.5 text-sm font-semibold">
                   Old price <span className="font-normal text-muted-foreground">(only for sale/discount display)</span>
-                  <input name="oldPrice" type="number" min="0" step="0.01" placeholder="Leave blank if not on sale" className="h-11 rounded-md border px-3 font-normal" />
+                  <input name="oldPrice" type="number" min="0" step="0.01" placeholder="Leave blank if not on sale" className="h-11 w-full min-w-0 rounded-md border px-3 font-normal" />
                 </label>
               </details>
 
-              <datalist id="staff-category-options">{categoryOptions.map((category) => <option key={category} value={category} />)}</datalist>
-              <div className="flex justify-end gap-2">
-                <Button type="button" variant="secondary" onClick={closeAddProduct} disabled={submitting}>Cancel</Button>
-                <Button type="submit" disabled={submitting}>{submitting ? "Saving..." : "Add product"}</Button>
+              <datalist key="add-product-category-options" id="staff-category-options">{categoryOptions.map((category) => <option key={category} value={category} />)}</datalist>
+              <div key="add-product-actions" className="sticky bottom-0 z-20 -mx-4 -mb-5 flex justify-end gap-2 border-t border-border bg-white/95 px-4 py-3 backdrop-blur sm:-mx-5 sm:px-5">
+                <Button type="button" variant="secondary" className="min-w-24" onClick={closeAddProduct} disabled={submitting}>Cancel</Button>
+                <Button type="submit" className="min-w-32" disabled={submitting}>{submitting ? "Saving..." : "Save product"}</Button>
               </div>
             </div>
           </form>
@@ -1276,7 +1316,7 @@ export function StaffInventoryExperience() {
                                ? "Choose which departments see this item first in Featured sorting."
                              : manageSection === "options"
                               ? "Manage Size, Waist, Length, Color, and other option labels without mixing them with stock counts."
-                              : "Manage size labels and low-stock warning levels."}
+                              : "Manage size labels; alert levels follow the product percentage automatically."}
                   </p>
                 </div>
                 <button type="button" data-dialog-autofocus onClick={closeEditor} disabled={submitting || savingVariants} aria-label="Close product manager" className="grid size-9 shrink-0 place-items-center rounded-md hover:bg-[#eef3ee] disabled:opacity-50"><X /></button>
@@ -1440,7 +1480,7 @@ export function StaffInventoryExperience() {
                       description: String(form.get("description") ?? "").trim() || null,
                       price: Number(form.get("price")),
                       oldPrice: String(form.get("oldPrice") ?? "").trim() ? Number(form.get("oldPrice")) : null,
-                      lowStockThreshold: Number(form.get("minimum")),
+                      lowStockPercent: editLowStockPercent,
                       notes: "Product details updated from staff inventory page."
                     });
                     const mappedProduct = mapStaffProduct(updatedProduct);
@@ -1475,7 +1515,10 @@ export function StaffInventoryExperience() {
                     <label className="grid min-w-0 gap-1.5 text-sm font-semibold"><span>Selling price</span><input name="price" required type="number" min="0" step="0.01" defaultValue={editingProduct.price} className="h-11 w-full min-w-0 rounded-md border px-3 font-normal outline-none focus:border-primary" /></label>
                     <label className="grid min-w-0 gap-1.5 text-sm font-semibold"><span>Old price <span className="text-xs font-normal text-muted-foreground">(optional)</span></span><input name="oldPrice" type="number" min="0" step="0.01" defaultValue={editingProduct.oldPrice ?? ""} className="h-11 w-full min-w-0 rounded-md border px-3 font-normal outline-none focus:border-primary" /></label>
                   </div>
-                  <label className="grid gap-1.5 text-sm font-semibold">Low-stock alert<input name="minimum" required type="number" min="0" step="1" defaultValue={editingProduct.minimum} className="h-11 rounded-md border px-3 font-normal outline-none focus:border-primary" /><span className="text-xs font-normal text-muted-foreground">WESCOMM warns staff when total stock reaches this number or lower.</span></label>
+                  <div className="grid gap-3 rounded-md border border-border bg-[#fbfdfb] p-3">
+                    <label className="grid gap-1.5 text-sm font-semibold">Low-stock warning<select aria-label="Low-stock warning" value={editLowStockPercent} onChange={(event) => setEditLowStockPercent(Number(event.target.value))} className="h-11 rounded-md border bg-white px-3 font-normal outline-none focus:border-primary"><option value={10}>10% — very low</option><option value={20}>20% — low</option><option value={25}>25% — recommended</option><option value={30}>30% — early warning</option><option value={40}>40% — extra early</option><option value={50}>50% — half stock</option></select></label>
+                    <p className="text-xs leading-5 text-muted-foreground">Using the stable stock target of {editingProduct.stockTarget}, WESCOMM will warn at <strong className="text-foreground">{editLowStockThreshold} items or fewer</strong>. The same percentage is applied automatically to sizes and inventory combinations.</p>
+                  </div>
                   <datalist id="staff-edit-category-options">{categoryOptions.map((category) => <option key={category} value={category} />)}</datalist>
                   <div className="sticky bottom-0 -mx-5 -mb-5 flex justify-end gap-2 border-t border-[#e1e8e2] bg-white px-5 py-4"><Button type="button" variant="secondary" onClick={() => setManageSection("menu")} disabled={submitting}>Cancel</Button><Button type="submit" disabled={submitting}>{submitting ? "Saving..." : "Save details"}</Button></div>
                 </form>
@@ -1535,6 +1578,7 @@ export function StaffInventoryExperience() {
                   product={{
                     id: editingProduct.id,
                     stock: editingProduct.stock,
+                    lowStockPercent: editingProduct.lowStockPercent,
                     skuInventoryEnabled: editingProduct.skuInventoryEnabled,
                     variants: editingProduct.variants.map((variant) => ({ ...variant })),
                     skus: editingProduct.skus.map((sku) => ({ variantIds: [...sku.variantIds] }))
@@ -1556,18 +1600,18 @@ export function StaffInventoryExperience() {
                     <div><p className="text-sm font-bold text-foreground">{editSizeVariants.length ? `${editSizeVariants.length} sizes configured` : "No sizes configured"}</p><p className="mt-1 text-xs text-muted-foreground">Stock quantities are changed from Update stock.</p></div>
                   </div>
                   <div className="flex items-center justify-between gap-3">
-                    <p className="text-xs leading-5 text-muted-foreground">{editingProduct.skuInventoryEnabled ? "Add or rename size labels here. Stock and low-stock alerts are managed under Inventory combinations." : "Set the size label and when staff should receive a low-stock warning."}</p>
+                    <p className="text-xs leading-5 text-muted-foreground">Add or rename size labels here. Low-stock levels use the product’s automatic {editingProduct.lowStockPercent}% policy.</p>
                     <Button type="button" variant="secondary" className="h-9 shrink-0 px-3" disabled={!editingVariantStructureUnlocked || savingVariants || submitting} onClick={() => setEditSizeVariants((current) => [...current, { key: variantDraftKey("size"), value: "", stock: "0", lowStockThreshold: "2" }])}><Plus className="size-4" /> Add size</Button>
                   </div>
                   {!editingVariantStructureUnlocked ? <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold leading-5 text-amber-800">Size names can only be added, removed, or renamed when this product has zero stock and no active reservations. Warning levels can still be changed now.</p> : null}
                   <div className="overflow-hidden rounded-lg border border-border bg-white">
-                    <div className="grid grid-cols-[1fr_64px_86px_36px] gap-2 bg-[#f6f9f6] px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-[#718078]"><span>Size</span><span>Stock</span><span>Warn at</span><span /></div>
+                    <div className="grid grid-cols-[1fr_64px_86px_36px] gap-2 bg-[#f6f9f6] px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-[#718078]"><span>Size</span><span>Stock</span><span>Auto alert</span><span /></div>
                     <div className="divide-y divide-[#e7ece8]">
                       {editSizeVariants.length ? editSizeVariants.map((variant, index) => (
                         <div key={variant.key} className="grid grid-cols-[1fr_64px_86px_36px] gap-2 p-3">
                           <input value={variant.value} disabled={Boolean(variant.id) && !editingVariantStructureUnlocked} onChange={(event) => setEditSizeVariants((current) => current.map((item) => item.key === variant.key ? { ...item, value: event.target.value } : item))} placeholder="Size" aria-label={`Size ${index + 1} name`} className="h-10 min-w-0 rounded-md border bg-white px-2 text-sm disabled:bg-[#f2f5f2] disabled:text-muted-foreground" />
                           <div className={cn("flex h-10 items-center justify-center rounded-md border bg-white px-2 text-sm font-bold", Number(variant.stock) <= Number(variant.lowStockThreshold) ? "border-amber-200 text-amber-800" : "text-foreground")}>{variant.id ? variant.stock : "New"}</div>
-                          <input type="number" min="0" step="1" inputMode="numeric" value={variant.lowStockThreshold} disabled={editingProduct.skuInventoryEnabled} title={editingProduct.skuInventoryEnabled ? "Set alerts under Inventory combinations." : undefined} onChange={(event) => setEditSizeVariants((current) => current.map((item) => item.key === variant.key ? { ...item, lowStockThreshold: event.target.value } : item))} aria-label={`${variant.value || `Size ${index + 1}`} low stock warning`} className="h-10 min-w-0 rounded-md border bg-white px-2 text-sm disabled:bg-[#f2f5f2] disabled:text-[#829087]" />
+                          <div aria-label={`${variant.value || `Size ${index + 1}`} automatic low stock alert`} className="flex h-10 min-w-0 items-center justify-center rounded-md border bg-[#f6f9f6] px-2 text-xs font-bold text-muted-foreground">{editingProduct.skuInventoryEnabled ? "Per SKU" : `≤ ${automaticEditVariantThreshold(variant.id, variant.stock)}`}</div>
                           <button type="button" disabled={!editingVariantStructureUnlocked || savingVariants || submitting || Boolean(variant.id && editingProduct.skus.some((sku) => sku.variantIds.includes(variant.id!)))} title={variant.id && editingProduct.skus.some((sku) => sku.variantIds.includes(variant.id!)) ? "This size is used by an inventory combination. Rebuild combinations before removing it." : undefined} onClick={() => setEditSizeVariants((current) => current.filter((item) => item.key !== variant.key))} aria-label={`Remove ${variant.value || `size ${index + 1}`}`} className="grid size-10 place-items-center rounded-md text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"><X className="size-4" /></button>
                         </div>
                       )) : <p className="px-4 py-5 text-sm text-muted-foreground">This product does not have sizes yet.</p>}
@@ -1764,6 +1808,27 @@ export function StaffInventoryExperience() {
                   <p className="mt-3 text-xs leading-5 text-muted-foreground">The selling price applies to the whole product and future sales. A new immutable FIFO cost batch will be created; completed historical sales keep their original price and cost allocation.</p>
                 </section>
               ) : null}
+
+              <section className="mt-5 rounded-lg border border-border bg-[#fbfdfb] p-4">
+                <label className="grid gap-1.5 text-sm font-semibold sm:max-w-xs">
+                  Low-stock warning
+                  <select
+                    value={restockLowStockPercent}
+                    onChange={(event) => setRestockLowStockPercent(Number(event.target.value))}
+                    className="h-11 rounded-md border bg-white px-3 font-normal outline-none focus:border-primary"
+                  >
+                    <option value={10}>10% — very low</option>
+                    <option value={20}>20% — low</option>
+                    <option value={25}>25% — recommended</option>
+                    <option value={30}>30% — early warning</option>
+                    <option value={40}>40% — extra early</option>
+                    <option value={50}>50% — half stock</option>
+                  </select>
+                </label>
+                <p className="mt-3 text-xs leading-5 text-muted-foreground">
+                  Staff will be warned at <strong className="text-foreground">{resultingLowStockThreshold} items or fewer</strong>, based on a stable target of {resultingStockTarget} items. The target can grow after a larger delivery, but it will not shrink as items are sold.
+                </p>
+              </section>
 
               <div className="mt-5 flex items-center gap-3 rounded-lg bg-primary/10 px-4 py-3">
                 <Plus className="size-6 shrink-0 text-primary" />

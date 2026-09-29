@@ -1,10 +1,10 @@
 import type { BackendPaymentMethod } from "@/lib/api";
 
 export function paymentMethodLabel(value: BackendPaymentMethod) {
-  if (value === "PAYMONGO_GCASH") return "GCash – Online";
-  if (value === "E_WALLET_AT_PICKUP") return "E-wallet at pickup";
+  if (value === "PAYMONGO_GCASH") return "Legacy GCash – Online";
+  if (value === "E_WALLET_AT_PICKUP") return "Legacy E-wallet at pickup";
   if (value === "CASH") return "Cash";
-  if (value === "GCASH") return "GCash";
+  if (value === "GCASH") return "Legacy GCash";
   if (value === "OTHER") return "Other";
   return "Cash at Pickup";
 }

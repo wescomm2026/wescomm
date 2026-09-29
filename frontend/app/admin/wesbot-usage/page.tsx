@@ -1,5 +1,5 @@
-import { AdminWesbotUsageExperience } from "@/components/admin/AdminWesbotUsageExperience";
+import { redirect } from "next/navigation";
 
 export default function Page() {
-  return <AdminWesbotUsageExperience />;
+  redirect("/admin/dashboard");
 }

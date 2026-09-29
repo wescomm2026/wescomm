@@ -134,6 +134,7 @@ async function mockInventory(page: Page) {
   await authorizeMockedWorkspace(page, "STAFF");
   const unhandled: string[] = [];
   const restoredRequests: string[] = [];
+  const createdRequests: Array<Record<string, unknown>> = [];
   let archivedProducts = [archivedProduct];
   await page.route("**/api/backend/**", async (route) => {
     const request = route.request();
@@ -166,6 +167,66 @@ async function mockInventory(page: Page) {
         products: archived ? archivedProducts : [clothProduct, optionProduct],
         categories: [category],
         nextCursor: null
+      });
+      return;
+    }
+    if (path === "/api/backend/staff/products" && request.method() === "POST") {
+      const payload = request.postDataJSON() as {
+        name: string;
+        categoryName: string;
+        description?: string | null;
+        imageUrl?: string | null;
+        price: number;
+        oldPrice?: number | null;
+        stock: number;
+        lowStockPercent: number;
+        saleMode: StaffProduct["saleMode"];
+        audienceScope?: StaffProduct["audienceScope"];
+        variants?: Array<{ optionName: string; optionValue: string; stock: number }>;
+      };
+      createdRequests.push(payload as unknown as Record<string, unknown>);
+      const variants = (payload.variants ?? []).map((variant, index) => ({
+        id: `00000000-0000-4000-8000-${String(300 + index).padStart(12, "0")}`,
+        ...variant,
+        stockTarget: variant.stock,
+        lowStockPercent: payload.lowStockPercent,
+        lowStockThreshold: Math.ceil(variant.stock * payload.lowStockPercent / 100)
+      }));
+      const skus = variants.map((variant, index) => ({
+        id: `00000000-0000-4000-8000-${String(400 + index).padStart(12, "0")}`,
+        code: `TEST-SKU-${index + 1}`,
+        stock: variant.stock,
+        stockTarget: variant.stock,
+        lowStockPercent: payload.lowStockPercent,
+        lowStockThreshold: variant.lowStockThreshold,
+        isActive: true,
+        variantIds: [variant.id],
+        options: [{ optionName: variant.optionName, optionValue: variant.optionValue }]
+      }));
+      await json(route, {
+        product: {
+          id: "00000000-0000-4000-8000-000000000299",
+          categoryId: category.id,
+          name: payload.name,
+          description: payload.description ?? null,
+          imageUrl: payload.imageUrl ?? null,
+          price: payload.price,
+          oldPrice: payload.oldPrice ?? null,
+          status: payload.stock > 0 ? "IN_STOCK" : "OUT_OF_STOCK",
+          stock: payload.stock,
+          stockTarget: payload.stock,
+          lowStockPercent: payload.lowStockPercent,
+          lowStockThreshold: Math.ceil(payload.stock * payload.lowStockPercent / 100),
+          isActive: true,
+          saleMode: payload.saleMode,
+          audienceScope: payload.audienceScope ?? "ALL_STUDENTS",
+          targetDepartments: [],
+          skuInventoryEnabled: variants.length > 0,
+          inventoryReconciledAt: variants.length ? "2026-09-28T00:00:00.000Z" : null,
+          category,
+          variants,
+          skus
+        }
       });
       return;
     }
@@ -204,7 +265,7 @@ async function mockInventory(page: Page) {
     unhandled.push(`${request.method()} ${path}`);
     await json(route, { error: "Unexpected API request in inventory test." }, 500);
   });
-  return { restoredRequests, unhandled };
+  return { restoredRequests, createdRequests, unhandled };
 }
 
 const viewports = [
@@ -212,6 +273,52 @@ const viewports = [
   { name: "short-laptop", width: 1366, height: 650 },
   { name: "mobile", width: 390, height: 844 }
 ] as const;
+
+test("add-product dialog uses percentage alerts without React key warnings", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "Console regression runs once.");
+  const keyWarnings: string[] = [];
+  page.on("console", (message) => {
+    if (message.type() === "error" && message.text().includes('unique "key" prop')) {
+      keyWarnings.push(message.text());
+    }
+  });
+  const { createdRequests, unhandled } = await mockInventory(page);
+
+  await page.goto("/staff/inventory");
+  await dismissWelcomeGate(page);
+  await expect(page.getByRole("heading", { name: "Centralized stock management" })).toBeVisible();
+  keyWarnings.length = 0;
+  await page.getByRole("button", { name: "Add product" }).click();
+
+  const dialog = page.getByRole("dialog", { name: "Add inventory item" });
+  await expect(dialog).toBeVisible();
+  const productDetails = dialog.locator("section").filter({ has: page.getByRole("heading", { name: "Product details" }) });
+  await expect(productDetails.getByText("Selling price", { exact: true })).toBeVisible();
+  await expect(productDetails.getByText("Opening-stock cost", { exact: true })).toBeVisible();
+  await expect(productDetails.getByLabel("Unit acquisition cost")).toBeVisible();
+  const stockSetup = dialog.locator("section").filter({ has: page.getByRole("heading", { name: "Stock setup" }) });
+  await expect(stockSetup.getByText("Opening-stock cost", { exact: true })).toHaveCount(0);
+  await expect(dialog.getByLabel("Low-stock warning")).toHaveValue("25");
+  await expect(dialog.getByText(/staff will be warned at 0 or fewer/i)).toBeVisible();
+  await dialog.getByLabel(/Start from a WUP template/).selectOption("elem-pe-shirt");
+  await expect(dialog.getByText(/applied automatically to every size/i)).toBeVisible();
+  await dialog.getByRole("button", { name: "Save product" }).click();
+  await expect(dialog).toBeHidden();
+  await expect(page.locator("article").filter({ hasText: "Elementary PE Shirt" })).toBeVisible();
+  expect(createdRequests).toHaveLength(1);
+  expect(createdRequests[0]).toMatchObject({ lowStockPercent: 25, saleMode: "OPTIONS" });
+  expect(createdRequests[0]).not.toHaveProperty("lowStockThreshold");
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("button", { name: "Add product" }).click();
+  const mobileDialog = page.getByRole("dialog", { name: "Add inventory item" });
+  await expect(mobileDialog).toBeVisible();
+  expect(await mobileDialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+  await mobileDialog.getByRole("button", { name: "Close product form" }).click();
+
+  expect(keyWarnings).toEqual([]);
+  expect(unhandled).toEqual([]);
+});
 
 for (const viewport of viewports) {
   test(`cloth-only and SKU inventory stay correct and responsive on ${viewport.name}`, async ({ page }, testInfo) => {
@@ -251,6 +358,8 @@ for (const viewport of viewports) {
     await expect(clothDialog.getByText("New items received")).toBeVisible();
     await expect(clothDialog.getByText("PHP 125.00", { exact: true })).toBeVisible();
     await clothDialog.getByLabel("New items received").fill("2");
+    await expect(clothDialog.getByLabel("Low-stock warning")).toHaveValue("25");
+    await expect(clothDialog.getByText(/warned at 5 items or fewer/)).toBeVisible();
     await clothDialog.getByLabel("Unit acquisition cost").fill("80");
     await expect(clothDialog.getByText(/PHP 45\.00 \/ item/)).toBeVisible();
     await clothDialog.getByLabel("Selling price", { exact: true }).fill("150");
@@ -295,6 +404,8 @@ for (const viewport of viewports) {
     await expect(skuDialog.getByText("Size: M · Color: Red", { exact: true })).toBeVisible();
     await expect(skuDialog.getByText("Size: L · Color: Blue", { exact: true })).toBeVisible();
     await skuDialog.getByLabel("Combination 1 new quantity").fill("1");
+    await expect(skuDialog.getByLabel("Low-stock warning")).toHaveValue("25");
+    await expect(skuDialog.getByText(/product warning will be 2 items or fewer/)).toBeVisible();
     await skuDialog.getByLabel("Unit acquisition cost").fill("200");
     await expect(skuDialog.getByText(/PHP 150\.00 \/ item/)).toBeVisible();
     await skuDialog.getByLabel("Selling price", { exact: true }).fill("400");

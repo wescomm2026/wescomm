@@ -394,7 +394,6 @@ export async function ensureReceiptForCompletedReservationInTransaction(
       totalAmount: Prisma.Decimal;
     };
     issuedById: string;
-    verified?: boolean;
   }
 ) {
   const receiptCode = createReceiptCode();
@@ -413,8 +412,8 @@ export async function ensureReceiptForCompletedReservationInTransaction(
       totalAmount: input.reservation.totalAmount,
       paymentMethod: input.reservation.paymentMethod,
       issuedById: input.issuedById,
-      status: input.verified ? "VERIFIED" : "PENDING",
-      verifiedAt: input.verified ? new Date() : null
+      status: "PENDING",
+      verifiedAt: null
     },
     select: receiptRecordSelect
   });
