@@ -262,6 +262,16 @@ export function StaffReports() {
           { title: "Cash Trend", headers: ["Period", "Amount", "Payments"], rows: summary.collectionTrend.map((item) => [item.day, formatCurrency(item.sales), item.receipts]) },
           { title: "Treasury OR Traceability", headers: ["Paid Date", "OR Number", "Reservation", "Items", "Amount"], rows: summary.treasurerCollections.map((item) => [new Date(item.paidAt).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" }), item.officialReceiptNumber ?? "Missing OR", item.orderReference, item.items, formatCurrency(item.amount)]) }
         ] },
+        { name: "Walk-in Sales", sections: [
+          { title: "Walk-in Summary", headers: ["Metric", "Value"], rows: [
+            ["Walk-in sales", formatCurrency(summary.walkInSales.amount)],
+            ["Walk-in receipts", formatNumber(summary.walkInSales.receipts)],
+            ["Walk-in COGS", formatCurrency(summary.walkInSales.cogs)],
+            ["Voided walk-in sales", formatNumber(summary.walkInVoids.count)],
+            ["Voided walk-in amount", formatCurrency(summary.walkInVoids.amount)]
+          ] },
+          { title: "Cashier Reconciliation", headers: ["Cashier", "Sales", "Sale Amount", "Voids", "Void Amount"], rows: summary.cashierReconciliation.length ? summary.cashierReconciliation.map((row) => [row.cashierName, formatNumber(row.saleCount), formatCurrency(row.sales), formatNumber(row.voidCount), formatCurrency(row.voids)]) : [["No walk-in sales", "0", "PHP 0.00", "0", "PHP 0.00"]] }
+        ] },
         { name: "Reconciliation", sections: [{
           title: "Exceptions",
           headers: ["Priority", "Issue", "Reservation", "Date", "Amount", "Payment ID", "Receipt ID"],
@@ -387,6 +397,22 @@ export function StaffReports() {
         <div className="overflow-hidden rounded-lg border border-border bg-white shadow-sm">
           <div className="border-b border-border px-5 py-4"><h2 className="font-extrabold text-foreground">Treasury collection report</h2><p className="mt-1 text-xs text-muted-foreground">Treasury payments only, with the required official receipt number.</p></div>
           <div className="overflow-x-auto"><table className="w-full min-w-[720px] text-left text-sm"><thead className="bg-muted/40 text-xs text-muted-foreground"><tr>{["Date", "OR number", "Order", "Items", "Amount"].map((heading) => <th key={heading} className="px-4 py-3 font-bold">{heading}</th>)}</tr></thead><tbody className="divide-y divide-border">{summary.treasurerCollections.length ? summary.treasurerCollections.map((payment) => <tr key={payment.paymentId}><td className="px-4 py-3">{new Date(payment.paidAt).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" })}</td><td className={payment.officialReceiptNumber ? "px-4 py-3 font-bold" : "px-4 py-3 font-bold text-red-700"}>{payment.officialReceiptNumber ?? "Missing OR"}</td><td className="px-4 py-3">{payment.orderReference}</td><td className="max-w-xs px-4 py-3 text-muted-foreground">{payment.items}</td><td className="px-4 py-3 font-extrabold text-primary">{formatCurrency(payment.amount)}</td></tr>) : <tr><td colSpan={5} className="px-4 py-6 text-center text-muted-foreground">No Treasury collections in this range.</td></tr>}</tbody></table></div>
+        </div>
+      </section>
+
+      <section id="walk-in-sales" className="scroll-mt-24 grid gap-4 lg:grid-cols-[0.8fr_1.2fr]">
+        <div className="rounded-lg border border-border bg-white p-5 shadow-sm">
+          <h2 className="font-extrabold text-foreground">Walk-in sales</h2>
+          <p className="mt-1 text-xs text-muted-foreground">Over-the-counter cash purchases recorded by staff, already included in cash collections.</p>
+          <dl className="mt-4 divide-y divide-border text-sm">
+            <div className="flex items-center justify-between gap-4 py-3"><dt className="font-bold">Sales<span className="ml-2 text-xs text-muted-foreground">{formatNumber(summary.walkInSales.receipts)} receipt(s)</span></dt><dd className="font-extrabold text-primary">{formatCurrency(summary.walkInSales.amount)}</dd></div>
+            <div className="flex items-center justify-between gap-4 py-3"><dt className="font-bold">COGS</dt><dd className="font-extrabold">{formatCurrency(summary.walkInSales.cogs)}</dd></div>
+            <div className="flex items-center justify-between gap-4 py-3"><dt className="font-bold">Voids<span className="ml-2 text-xs text-muted-foreground">{formatNumber(summary.walkInVoids.count)} voided</span></dt><dd className="font-extrabold text-red-700">{formatCurrency(summary.walkInVoids.amount)}</dd></div>
+          </dl>
+        </div>
+        <div className="overflow-hidden rounded-lg border border-border bg-white shadow-sm">
+          <div className="border-b border-border px-5 py-4"><h2 className="font-extrabold text-foreground">Cashier reconciliation</h2><p className="mt-1 text-xs text-muted-foreground">Walk-in sales and voids per cashier for the selected period.</p></div>
+          <div className="overflow-x-auto"><table className="w-full min-w-[680px] text-left text-sm"><thead className="bg-muted/40 text-xs text-muted-foreground"><tr>{["Cashier", "Sales", "Sale amount", "Voids", "Void amount"].map((heading) => <th key={heading} className="px-4 py-3 font-bold">{heading}</th>)}</tr></thead><tbody className="divide-y divide-border">{summary.cashierReconciliation.length ? summary.cashierReconciliation.map((row) => <tr key={`${row.cashierId ?? row.cashierName}`}><td className="px-4 py-3 font-semibold">{row.cashierName}</td><td className="px-4 py-3">{formatNumber(row.saleCount)}</td><td className="px-4 py-3 font-extrabold text-primary">{formatCurrency(row.sales)}</td><td className="px-4 py-3">{formatNumber(row.voidCount)}</td><td className="px-4 py-3 font-bold text-red-700">{formatCurrency(row.voids)}</td></tr>) : <tr><td colSpan={5} className="px-4 py-6 text-center text-muted-foreground">No walk-in sales in this range.</td></tr>}</tbody></table></div>
         </div>
       </section>
 

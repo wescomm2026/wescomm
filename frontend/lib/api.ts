@@ -293,6 +293,14 @@ export type BackendReceipt = {
       } | null;
     }>;
   } | null;
+  walkInSaleItems?: Array<{
+    id: string;
+    productName: string;
+    options: Array<{ optionName: string; optionValue: string }>;
+    quantity: number;
+    unitPrice: string | number;
+    subtotal: string | number;
+  }>;
 };
 
 export type BackendCursorPage<T> = {
@@ -879,6 +887,23 @@ export type BackendReportSummary = {
   receiptsToVerify: number;
   totalReceipts: number;
   activeConversations: number;
+  walkInSales: {
+    amount: number;
+    receipts: number;
+    cogs: number;
+  };
+  walkInVoids: {
+    count: number;
+    amount: number;
+  };
+  cashierReconciliation: Array<{
+    cashierId: string | null;
+    cashierName: string;
+    saleCount: number;
+    sales: number;
+    voidCount: number;
+    voids: number;
+  }>;
   comparison: {
     available: boolean;
     label: string | null;

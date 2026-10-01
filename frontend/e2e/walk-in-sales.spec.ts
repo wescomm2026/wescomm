@@ -1,0 +1,257 @@
+import { expect, test, type Route } from "@playwright/test";
+import type { BackendAuthProfile, BackendOperationalStudent } from "../lib/api";
+import type { StaffProduct, WalkInReceipt } from "../lib/staff-api";
+import { authorizeMockedWorkspace, dismissWelcomeGate } from "./helpers";
+
+const staffProfile: BackendAuthProfile = {
+  id: "00000000-0000-4000-8000-000000000601",
+  role: "STAFF",
+  studentNumber: null,
+  fullName: "Walk-in QA Cashier",
+  email: "walkin.qa@wesleyan.edu.ph",
+  phone: null,
+  department: "Commissary",
+  departmentId: null,
+  onboardingCompletedAt: null,
+  address: null,
+  avatarUrl: null
+};
+
+const skuProduct: StaffProduct = {
+  id: "00000000-0000-4000-8000-000000000602",
+  categoryId: "00000000-0000-4000-8000-000000000603",
+  name: "PE Shirt With Variants",
+  description: "Physical stock is tracked per size and color combination.",
+  imageUrl: null,
+  price: "350.00",
+  oldPrice: null,
+  status: "IN_STOCK",
+  stock: 7,
+  lowStockThreshold: 2,
+  isActive: true,
+  saleMode: "OPTIONS",
+  skuInventoryEnabled: true,
+  inventoryReconciledAt: "2026-09-28T08:00:00.000Z",
+  category: { id: "00000000-0000-4000-8000-000000000603", name: "Uniforms", slug: "uniforms" },
+  variants: [
+    { id: "size-m", optionName: "Size", optionValue: "M", stock: 4, lowStockThreshold: 1 },
+    { id: "size-l", optionName: "Size", optionValue: "L", stock: 3, lowStockThreshold: 1 },
+    { id: "color-red", optionName: "Color", optionValue: "Red", stock: 4, lowStockThreshold: 1 },
+    { id: "color-blue", optionName: "Color", optionValue: "Blue", stock: 3, lowStockThreshold: 1 }
+  ],
+  skus: [
+    {
+      id: "sku-m-red",
+      code: "PE-M-RED",
+      stock: 4,
+      lowStockThreshold: 1,
+      isActive: true,
+      variantIds: ["size-m", "color-red"],
+      options: [
+        { optionName: "Size", optionValue: "M" },
+        { optionName: "Color", optionValue: "Red" }
+      ]
+    },
+    {
+      id: "sku-l-blue",
+      code: "PE-L-BLUE",
+      stock: 3,
+      lowStockThreshold: 1,
+      isActive: true,
+      variantIds: ["size-l", "color-blue"],
+      options: [
+        { optionName: "Size", optionValue: "L" },
+        { optionName: "Color", optionValue: "Blue" }
+      ]
+    }
+  ]
+};
+
+const student: BackendOperationalStudent = {
+  id: "00000000-0000-4000-8000-000000000604",
+  fullName: "Juan Dela Cruz",
+  email: "juan.delacruz@wesleyan.edu.ph",
+  studentNumber: "2026-0001",
+  department: "College of Arts",
+  avatarUrl: null,
+  createdAt: "2026-08-01T00:00:00.000Z",
+  reservationCount: 0,
+  receiptCount: 0,
+  offenseCount: 0,
+  activeRestriction: null
+};
+
+function json(route: Route, body: unknown, status = 200) {
+  return route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
+}
+
+async function handleShellRequest(route: Route) {
+  const path = new URL(route.request().url()).pathname;
+  if (path === "/api/backend/auth/me") {
+    await json(route, { profile: staffProfile });
+    return true;
+  }
+  if (path === "/api/backend/auth/departments") {
+    await json(route, { departments: [] });
+    return true;
+  }
+  if (path === "/api/backend/notifications") {
+    await json(route, { notifications: [], nextCursor: null });
+    return true;
+  }
+  if (path === "/api/backend/notifications/unread-count") {
+    await json(route, { unreadCount: 0 });
+    return true;
+  }
+  if (path === "/api/backend/realtime/updates") {
+    await json(route, { cursor: "0", hasMore: false, events: [] });
+    return true;
+  }
+  return false;
+}
+
+test("staff record a SKU walk-in sale with cash, then void it to restore stock", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "One full walk-in sale transaction is sufficient.");
+  let salePayload: Record<string, unknown> | null = null;
+  let voidPayload: Record<string, unknown> | null = null;
+  let receipt: WalkInReceipt | null = null;
+  const unhandled: string[] = [];
+  await authorizeMockedWorkspace(page, "STAFF");
+
+  await page.route("**/api/backend/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (await handleShellRequest(route)) return;
+
+    if (path === "/api/backend/staff/products" && request.method() === "GET") {
+      const query = new URL(request.url()).searchParams.get("query") ?? "";
+      return json(route, {
+        products: query && skuProduct.name.toLowerCase().includes(query.toLowerCase()) ? [skuProduct] : [],
+        categories: [],
+        nextCursor: null
+      });
+    }
+    if (path === "/api/backend/staff/students" && request.method() === "GET") {
+      return json(route, { items: [student], nextCursor: null });
+    }
+    if (path === "/api/backend/staff/walk-in-sales" && request.method() === "GET") {
+      return json(route, { items: receipt ? [receipt] : [], nextCursor: null });
+    }
+    if (path === "/api/backend/staff/walk-in-sales" && request.method() === "POST") {
+      salePayload = request.postDataJSON() as Record<string, unknown>;
+      const items = (salePayload.items as Array<{ productId: string; skuId?: string; quantity: number }>) ?? [];
+      const total = items.reduce((sum, item) => sum + item.quantity * 350, 0);
+      const cashReceived = Number(salePayload.cashReceived ?? 0);
+      const clientSaleId = String(salePayload.clientSaleId ?? "");
+      receipt = {
+        id: "00000000-0000-4000-8000-000000000605",
+        receiptCode: "RCT-2026-TEST01",
+        studentId: String(salePayload.studentId),
+        totalAmount: total.toFixed(2),
+        paymentMethod: "CASH",
+        status: "VERIFIED",
+        issuedAt: "2026-09-28T08:30:00.000Z",
+        verifiedAt: "2026-09-28T08:30:00.000Z",
+        voidedAt: null,
+        createdAt: "2026-09-28T08:30:00.000Z",
+        updatedAt: "2026-09-28T08:30:00.000Z",
+        student: { id: student.id, fullName: student.fullName, email: student.email, studentNumber: student.studentNumber },
+        issuedBy: { id: staffProfile.id, fullName: staffProfile.fullName },
+        sale: {
+          cashTendered: cashReceived.toFixed(2),
+          changeDue: Math.max(0, cashReceived - total).toFixed(2),
+          cashierId: staffProfile.id,
+          cashierName: staffProfile.fullName,
+          clientSaleId,
+          voidedById: null,
+          voidReason: null,
+          voidedAt: null
+        },
+        items: items.map((item, index) => ({
+          id: `00000000-0000-4000-8000-${String(700 + index).padStart(12, "0")}`,
+          productId: item.productId,
+          skuId: item.skuId ?? null,
+          variantId: null,
+          productName: skuProduct.name,
+          options: item.skuId === "sku-m-red"
+            ? [{ optionName: "Size", optionValue: "M" }, { optionName: "Color", optionValue: "Red" }]
+            : [{ optionName: "Size", optionValue: "L" }, { optionName: "Color", optionValue: "Blue" }],
+          quantity: item.quantity,
+          unitPrice: "350.00",
+          subtotal: (item.quantity * 350).toFixed(2)
+        }))
+      };
+      return json(route, { receipt });
+    }
+    if (/\/api\/backend\/staff\/walk-in-sales\/[^/]+\/void$/.test(path) && request.method() === "POST") {
+      voidPayload = request.postDataJSON() as Record<string, unknown>;
+      receipt = receipt
+        ? {
+            ...receipt,
+            status: "VOIDED",
+            voidedAt: "2026-09-28T09:00:00.000Z",
+            updatedAt: "2026-09-28T09:00:00.000Z",
+            sale: receipt.sale ? {
+              ...receipt.sale,
+              voidedById: staffProfile.id,
+              voidReason: String(voidPayload.reason ?? ""),
+              voidedAt: "2026-09-28T09:00:00.000Z"
+            } : null
+          }
+        : null;
+      return json(route, { receipt });
+    }
+
+    unhandled.push(`${request.method()} ${path}`);
+    return json(route, { error: "Unexpected API request in walk-in sale test." }, 500);
+  });
+
+  await page.goto("/staff/walk-in-sales");
+  await dismissWelcomeGate(page);
+  await expect(page.getByRole("heading", { name: "Record physical-store purchases" })).toBeVisible();
+
+  await page.getByPlaceholder("Search product to add...").fill("PE Shirt");
+  await page.getByRole("button", { name: /PE Shirt With Variants/ }).click();
+
+  const saveButton = page.getByRole("button", { name: "Save sale & deduct stock" });
+  await expect(saveButton).toBeDisabled();
+
+  await page.getByLabel("Combination").selectOption("sku-m-red");
+  await page.getByPlaceholder("Type to search students").fill("Dela Cruz");
+  await page.getByRole("button", { name: /Juan Dela Cruz/ }).click();
+  await page.getByLabel(/Cash received/).fill("500.00");
+
+  await expect(saveButton).toBeEnabled();
+  await saveButton.click();
+
+  const success = page.getByRole("dialog");
+  await expect(success.getByText("Sale recorded")).toBeVisible();
+  await expect(success.getByText("RCT-2026-TEST01")).toBeVisible();
+  await expect(success.getByText(/Change/)).toBeVisible();
+
+  expect(salePayload).not.toBeNull();
+  const recordedSale = salePayload as unknown as {
+    items: Array<{ productId: string; skuId?: string; variantId?: string; quantity: number }>;
+    cashReceived: number;
+    clientSaleId: string;
+  };
+  expect(recordedSale.items[0]?.skuId).toBe("sku-m-red");
+  expect(recordedSale.items[0]?.variantId).toBeUndefined();
+  expect(recordedSale.items[0]?.quantity).toBe(1);
+  expect(recordedSale.cashReceived).toBe(500);
+  expect(recordedSale.clientSaleId).toMatch(/^[0-9a-f-]{36}$/);
+
+  await success.getByRole("button", { name: "Done" }).click();
+
+  await expect(page.getByText("RCT-2026-TEST01").first()).toBeVisible();
+  await page.getByRole("button", { name: "Void & restore stock" }).click();
+
+  const voidDialog = page.getByRole("dialog");
+  await voidDialog.getByLabel("Reason (required)").fill("Wrong size handed to the student");
+  await voidDialog.getByRole("button", { name: "Void & restore stock" }).click();
+
+  await expect(voidDialog).toBeHidden();
+  expect(voidPayload).toEqual({ reason: "Wrong size handed to the student" });
+  await expect(page.getByText("RCT-2026-TEST01 voided and stock restored.")).toBeVisible();
+  expect(unhandled).toEqual([]);
+});

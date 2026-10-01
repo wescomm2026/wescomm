@@ -93,21 +93,32 @@ function formatReceiptDateTime(value: string) {
 
 function mapBackendReceipt(receipt: BackendReceipt): Receipt {
   const issued = formatReceiptDateTime(receipt.issuedAt || receipt.createdAt);
-  const items = receipt.reservation?.items.length
+  const reservationItems = receipt.reservation?.items.length
     ? receipt.reservation.items.map((item) => ({
         name: item.product?.name ?? "Campus Item",
         detail: item.variantSummary || item.product?.description || "Reserved item",
         quantity: item.quantity,
         unitPrice: Number(item.unitPrice)
       }))
-    : [
-        {
-          name: receipt.reservation?.referenceCode ?? "Commissary Purchase",
-          detail: "Completed transaction",
-          quantity: 1,
-          unitPrice: Number(receipt.totalAmount)
-        }
-      ];
+    : null;
+  const walkInItems = receipt.walkInSaleItems?.length
+    ? receipt.walkInSaleItems.map((item) => ({
+        name: item.productName,
+        detail: item.options.length
+          ? item.options.map((option) => `${option.optionName}: ${option.optionValue}`).join(", ")
+          : "Walk-in purchase",
+        quantity: item.quantity,
+        unitPrice: Number(item.unitPrice)
+      }))
+    : null;
+  const items = reservationItems ?? walkInItems ?? [
+    {
+      name: receipt.reservation?.referenceCode ?? "Commissary Purchase",
+      detail: "Completed transaction",
+      quantity: 1,
+      unitPrice: Number(receipt.totalAmount)
+    }
+  ];
   const subtotal = items.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
 
   return {

@@ -126,6 +126,25 @@ const releaseMigrations = [
       /reservation_bulk_actions" ENABLE ROW LEVEL SECURITY/,
       /REVOKE ALL PRIVILEGES ON TABLE "reservation_bulk_actions" FROM PUBLIC/
     ]
+  },
+  {
+    directory: "20261001000000_add_walk_in_sales",
+    required: [
+      /CREATE TABLE "walk_in_sales"/,
+      /CREATE TABLE "walk_in_sale_items"/,
+      /CREATE TABLE "walk_in_sale_cost_allocations"/,
+      /"cash_tendered" DECIMAL\(12,2\) NOT NULL/,
+      /"client_sale_id" VARCHAR\(64\) NOT NULL/,
+      /"request_fingerprint" CHAR\(64\) NOT NULL/,
+      /walk_in_sales_client_sale_id_key/,
+      /"voided_by_id" UUID/,
+      /"void_reason" VARCHAR\(300\)/,
+      /REFERENCES "inventory_batches"\("id"\) ON DELETE RESTRICT/,
+      /walk_in_sales" ENABLE ROW LEVEL SECURITY/,
+      /walk_in_sale_items" ENABLE ROW LEVEL SECURITY/,
+      /walk_in_sale_cost_allocations" ENABLE ROW LEVEL SECURITY/,
+      /REVOKE ALL PRIVILEGES ON TABLE "walk_in_sale_cost_allocations" FROM PUBLIC/
+    ]
   }
 ];
 

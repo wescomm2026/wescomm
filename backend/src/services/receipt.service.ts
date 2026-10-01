@@ -51,6 +51,11 @@ type RawPublicReceipt = {
         }> | null;
       }>
     | null;
+  walk_in_sale_items:
+    | Array<{
+        quantity: number;
+      }>
+    | null;
 };
 
 const publicReceiptSelect = `
@@ -66,20 +71,23 @@ const publicReceiptSelect = `
     items:reservation_items(
       quantity
     )
+  ),
+  walk_in_sale_items:walk_in_sale_items(
+    quantity
   )
 `;
 
-function createReceiptCode() {
+export function createReceiptCode() {
   const year = new Date().getFullYear();
   const suffix = randomBytes(5).toString("hex").toUpperCase();
   return `RCT-${year}-${suffix}`;
 }
 
-function createVerificationHash() {
+export function createVerificationHash() {
   return randomBytes(32).toString("hex");
 }
 
-function createPublicVerificationToken() {
+export function createPublicVerificationToken() {
   const token = randomBytes(32).toString("base64url");
   return {
     token,
@@ -100,7 +108,7 @@ function publicVerificationUrl(encryptedToken: string | null) {
 function mapPublicReceipt(row: RawPublicReceipt) {
   const student = firstRow(row.student);
   const reservation = firstRow(row.reservation);
-  const itemSummary = summarizePublicReceiptItems(reservation?.items);
+  const itemSummary = summarizePublicReceiptItems(reservation?.items ?? row.walk_in_sale_items);
 
   return {
     receiptCode: row.receipt_code,
@@ -144,6 +152,17 @@ const receiptRecordSelect = Prisma.validator<Prisma.ReceiptSelect>()({
   updatedAt: true,
   student: { select: { id: true, fullName: true, email: true, studentNumber: true } },
   issuedBy: { select: { id: true, fullName: true, email: true, studentNumber: true } },
+  walkInSaleItems: {
+    select: {
+      id: true,
+      productNameSnapshot: true,
+      optionSnapshot: true,
+      quantity: true,
+      unitPrice: true,
+      subtotal: true
+    },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }]
+  },
   reservation: {
     select: {
       id: true,
@@ -212,6 +231,14 @@ function mapPrismaReceipt(receipt: ReceiptRecord) {
           studentNumber: receipt.issuedBy.studentNumber
         }
       : null,
+    walkInSaleItems: receipt.walkInSaleItems.map((item) => ({
+      id: item.id,
+      productName: item.productNameSnapshot,
+      options: (item.optionSnapshot as Array<{ optionName: string; optionValue: string }> | null) ?? [],
+      quantity: item.quantity,
+      unitPrice: item.unitPrice.toString(),
+      subtotal: item.subtotal.toString()
+    })),
     reservation: receipt.reservation
       ? {
           id: receipt.reservation.id,
@@ -335,11 +362,12 @@ export async function verifyReceiptToken(token: string) {
           status: true,
           items: { select: { quantity: true } }
         }
-      }
+      },
+      walkInSaleItems: { select: { quantity: true } }
     }
   });
   if (!receipt) return null;
-  const itemSummary = summarizePublicReceiptItems(receipt.reservation?.items);
+  const itemSummary = summarizePublicReceiptItems(receipt.reservation?.items ?? receipt.walkInSaleItems);
   return {
     receiptCode: receipt.receiptCode,
     totalAmount: receipt.totalAmount.toString(),

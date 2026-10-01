@@ -10,6 +10,7 @@ export const studentNav = [
 export const staffNav = [
   { href: "/staff", label: "Dashboard", iconSrc: "/assets/home.svg" },
   { href: "/staff/inventory", label: "Inventory", iconSrc: "/assets/all-items.svg" },
+  { href: "/staff/walk-in-sales", label: "Walk-in Sales", iconSrc: "/assets/receipts.svg" },
   { href: "/staff/reservations", label: "Reservations", iconSrc: "/assets/reservations.svg" },
   { href: "/staff/pickup-schedule", label: "Pickup Schedule", iconSrc: "/assets/pick-up.svg" },
   { href: "/staff/students", label: "Students", iconSrc: "/assets/my-profile.svg" },
@@ -24,6 +25,7 @@ export const staffNav = [
 export const adminNav = [
   { href: "/admin/dashboard", label: "Dashboard", iconSrc: "/assets/home.svg" },
   { href: "/admin/inventory", label: "Inventory", iconSrc: "/assets/all-items.svg" },
+  { href: "/admin/walk-in-sales", label: "Walk-in Sales", iconSrc: "/assets/receipts.svg" },
   { href: "/admin/reservations", label: "Reservations", iconSrc: "/assets/reservations.svg" },
   { href: "/admin/pickup-schedule", label: "Pickup Schedule", iconSrc: "/assets/pick-up.svg" },
   { href: "/admin/students", label: "Students", iconSrc: "/assets/my-profile.svg" },

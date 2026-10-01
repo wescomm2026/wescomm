@@ -386,6 +386,9 @@ function reportSummary(preset: BackendReportSummary["range"]["preset"]): Backend
     receiptsToVerify: 1,
     totalReceipts: 5,
     activeConversations: 2,
+    walkInSales: { amount: 300, receipts: 1, cogs: 180 },
+    walkInVoids: { count: 0, amount: 0 },
+    cashierReconciliation: [],
     comparison: {
       available: preset !== "ALL_TIME",
       label: preset === "ALL_TIME" ? null : "Previous period",

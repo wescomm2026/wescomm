@@ -3,6 +3,7 @@ import "dotenv/config";
 import { PrismaClient, ProductStatus } from "@prisma/client";
 import { createClient } from "@supabase/supabase-js";
 import { databaseTargetFingerprint } from "../domain/payment-conversion-cli-policy.js";
+import { assertSafeStagingMutationEnvironment } from "../domain/staging-data-policy.js";
 
 const prisma = new PrismaClient();
 const applyFlag = "--apply";
@@ -13,16 +14,10 @@ function databaseLocation() {
   const rawUrl = process.env.DATABASE_URL;
   if (!rawUrl) throw new Error("DATABASE_URL is required.");
   const url = new URL(rawUrl);
-  const isLocal = url.hostname === "localhost" || url.hostname === "127.0.0.1";
   const database = decodeURIComponent(url.pathname.replace(/^\/+/, ""));
-  const username = decodeURIComponent(url.username);
-  const projectFromUsername = username.match(/\.([a-z0-9]+)$/i)?.[1]?.toLowerCase() ?? null;
-  const projectFromHost = url.hostname.match(/^db\.([a-z0-9]+)\.supabase\.co$/i)?.[1]?.toLowerCase() ?? null;
   return {
     host: url.hostname,
-    database,
-    isLocal,
-    projectRef: projectFromUsername ?? projectFromHost
+    database
   };
 }
 
@@ -36,18 +31,6 @@ function supabaseLocation() {
   const projectRef = url.hostname.match(/^([a-z0-9]+)\.supabase\.co$/i)?.[1]?.toLowerCase() ?? null;
   if (!projectRef) throw new Error("The Supabase project reference could not be identified safely.");
   return { url: rawUrl, serviceRoleKey, projectRef };
-}
-
-function assertNonProductionEnvironment() {
-  const productionLabels = [
-    process.env.NODE_ENV,
-    process.env.APP_ENV,
-    process.env.VERCEL_ENV,
-    process.env.VERCEL_TARGET_ENV
-  ].map((value) => value?.trim().toLowerCase());
-  if (productionLabels.includes("production")) {
-    throw new Error("Reset refused because the environment is marked as production.");
-  }
 }
 
 function createSupabaseAdminClient(url: string, serviceRoleKey: string) {
@@ -71,26 +54,66 @@ async function listAllAuthUsers(client: SupabaseAdminClient) {
 }
 
 async function currentCounts(authUserCount: number) {
-  const [profiles, reservations, reservationBulkActions, receipts, payments, conversations, notifications, auditLogs] = await Promise.all([
+  const [
+    profiles,
+    reservations,
+    reservationBulkActions,
+    receipts,
+    walkInSales,
+    walkInSaleItems,
+    walkInSaleCostAllocations,
+    payments,
+    conversations,
+    notifications,
+    inventoryBatches,
+    inventoryMovements,
+    realtimeEvents,
+    outboxEvents,
+    authSessions,
+    auditLogs
+  ] = await Promise.all([
     prisma.profile.count(),
     prisma.reservation.count(),
     prisma.reservationBulkAction.count(),
     prisma.receipt.count(),
+    prisma.walkInSale.count(),
+    prisma.walkInSaleItem.count(),
+    prisma.walkInSaleCostAllocation.count(),
     prisma.payment.count(),
     prisma.conversation.count(),
     prisma.notification.count(),
+    prisma.inventoryBatch.count(),
+    prisma.inventoryMovement.count(),
+    prisma.realtimeEvent.count(),
+    prisma.outboxEvent.count(),
+    prisma.authSession.count(),
     prisma.auditLog.count()
   ]);
-  return { authUsers: authUserCount, profiles, reservations, reservationBulkActions, receipts, payments, conversations, notifications, auditLogs };
+  return {
+    authUsers: authUserCount,
+    profiles,
+    reservations,
+    reservationBulkActions,
+    receipts,
+    walkInSales,
+    walkInSaleItems,
+    walkInSaleCostAllocations,
+    payments,
+    conversations,
+    notifications,
+    inventoryBatches,
+    inventoryMovements,
+    realtimeEvents,
+    outboxEvents,
+    authSessions,
+    auditLogs
+  };
 }
 
 async function main() {
-  assertNonProductionEnvironment();
+  const target = assertSafeStagingMutationEnvironment(process.env);
   const location = databaseLocation();
   const supabase = supabaseLocation();
-  if (!location.isLocal && location.projectRef !== supabase.projectRef) {
-    throw new Error("Reset refused because DATABASE_URL and Supabase Auth point to different projects.");
-  }
   const fingerprint = databaseTargetFingerprint(process.env.DATABASE_URL);
   const expectedConfirmation = `${confirmationPrefix}${fingerprint}`;
   const dryRun = !process.argv.includes(applyFlag);
@@ -115,9 +138,10 @@ async function main() {
     console.log(JSON.stringify({
       mode: "DRY_RUN",
       target: {
-        hostType: location.isLocal ? "local" : "remote-development",
+        environment: "staging",
+        host: location.host,
         database: location.database,
-        supabaseProjectRef: supabase.projectRef,
+        supabaseProjectRef: target.stagingProjectRef,
         fingerprint
       },
       wouldDelete: before,
@@ -154,6 +178,9 @@ async function main() {
     };
 
     await remove("orderItemCostAllocations", transaction.orderItemCostAllocation.deleteMany());
+    await remove("walkInSaleCostAllocations", transaction.walkInSaleCostAllocation.deleteMany());
+    await remove("walkInSaleItems", transaction.walkInSaleItem.deleteMany());
+    await remove("walkInSales", transaction.walkInSale.deleteMany());
     await remove("payments", transaction.payment.deleteMany());
     await remove("receipts", transaction.receipt.deleteMany());
     await remove("paymongoWebhookEvents", transaction.paymongoWebhookEvent.deleteMany());
@@ -220,9 +247,15 @@ async function main() {
     reservationBulkActions: await prisma.reservationBulkAction.count(),
     receipts: await prisma.receipt.count(),
     payments: await prisma.payment.count(),
+    walkInSales: await prisma.walkInSale.count(),
+    walkInSaleItems: await prisma.walkInSaleItem.count(),
+    walkInSaleCostAllocations: await prisma.walkInSaleCostAllocation.count(),
     inventoryBatches: await prisma.inventoryBatch.count(),
     inventoryMovements: await prisma.inventoryMovement.count(),
     notifications: await prisma.notification.count(),
+    realtimeEvents: await prisma.realtimeEvent.count(),
+    outboxEvents: await prisma.outboxEvent.count(),
+    authSessions: await prisma.authSession.count(),
     conversations: await prisma.conversation.count(),
     auditLogs: await prisma.auditLog.count(),
     nonZeroProducts: await prisma.product.count({ where: { stock: { not: 0 } } }),
@@ -236,13 +269,45 @@ async function main() {
   const preserved = Object.fromEntries(preservedLabels.map((label, index) => [label, preservedBefore[index]]));
   console.log(JSON.stringify({
     mode: "APPLIED",
-    target: { hostType: location.isLocal ? "local" : "remote-development", database: location.database, supabaseProjectRef: supabase.projectRef, fingerprint },
+    target: {
+      environment: "staging",
+      host: location.host,
+      database: location.database,
+      supabaseProjectRef: target.stagingProjectRef,
+      fingerprint
+    },
     preserved,
     deleted,
     deletedAuthUsers,
     verification
   }, null, 2));
 
+  const expectedZeroChecks = [
+    "profiles",
+    "reservations",
+    "reservationBulkActions",
+    "receipts",
+    "payments",
+    "walkInSales",
+    "walkInSaleItems",
+    "walkInSaleCostAllocations",
+    "inventoryBatches",
+    "inventoryMovements",
+    "notifications",
+    "realtimeEvents",
+    "outboxEvents",
+    "authSessions",
+    "conversations",
+    "auditLogs",
+    "nonZeroProducts",
+    "nonZeroVariants",
+    "nonZeroSkus",
+    "authUsers"
+  ] as const;
+  const failedZeroChecks = expectedZeroChecks.filter((key) => verification[key] !== 0);
+  if (failedZeroChecks.length) {
+    throw new Error(`Reset verification failed for: ${failedZeroChecks.join(", ")}.`);
+  }
   if (authDeletionFailures.length || remainingAuthUsers.length) {
     throw new Error("Application data was reset, but one or more Supabase Auth users could not be deleted. Re-run the same command safely.");
   }

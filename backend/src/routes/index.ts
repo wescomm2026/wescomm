@@ -23,6 +23,7 @@ import { staffStudentsRoutes } from "./staff-students.routes.js";
 import { staffUsersRoutes } from "./staff-users.routes.js";
 import { uploadsRoutes } from "./uploads.routes.js";
 import { usersRoutes } from "./users.routes.js";
+import { walkInSalesRoutes } from "./walk-in-sales.routes.js";
 import { wishlistRoutes } from "./wishlist.routes.js";
 import { wesbotUsageRoutes } from "./wesbot-usage.routes.js";
 
@@ -49,6 +50,7 @@ apiRoutes.use("/staff/students", staffStudentsRoutes);
 apiRoutes.use("/staff/users", staffUsersRoutes);
 apiRoutes.use("/staff/uploads", uploadsRoutes);
 apiRoutes.use("/staff/inventory", inventoryRoutes);
+apiRoutes.use("/staff/walk-in-sales", walkInSalesRoutes);
 apiRoutes.use("/staff/search", globalSearchRoutes);
 apiRoutes.use("/staff/dashboard", dashboardRoutes);
 apiRoutes.use("/staff/reports", reportsRoutes);

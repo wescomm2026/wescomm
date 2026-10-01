@@ -211,7 +211,7 @@ function slugify(value: string) {
   return slug || "category";
 }
 
-function deriveProductStatus(stock: number, lowStockThreshold: number, currentStatus?: ProductStatus) {
+export function deriveProductStatus(stock: number, lowStockThreshold: number, currentStatus?: ProductStatus) {
   if (stock <= 0) return "OUT_OF_STOCK";
   if (currentStatus === "ON_SALE") return "ON_SALE";
   if (stock <= lowStockThreshold) return "RESTOCK_SOON";

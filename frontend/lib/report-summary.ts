@@ -45,6 +45,9 @@ export const EMPTY_REPORT_SUMMARY: BackendReportSummary = {
   receiptsToVerify: 0,
   totalReceipts: 0,
   activeConversations: 0,
+  walkInSales: { amount: 0, receipts: 0, cogs: 0 },
+  walkInVoids: { count: 0, amount: 0 },
+  cashierReconciliation: [],
   comparison: {
     available: false,
     label: null,

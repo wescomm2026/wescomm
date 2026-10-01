@@ -105,7 +105,8 @@ separately but deploy together under one project, domain, and release.
 8. The root vercel.json is required. It routes /api/* to the Express service and
    all other paths to the Next.js service. If Vercel says vercel.json is missing,
    push the latest main branch and click Refresh before deploying.
-9. Open Environment Variables and add the following for Production and Preview:
+9. Open Environment Variables and add the following for Production only.
+   Do not copy these Production database/Auth values to Preview:
 
    NODE_ENV=production
    FRONTEND_ORIGIN=https://wescomm.vercel.app
@@ -302,6 +303,27 @@ Severity guide:
 
 PART 8 - NORMAL UPDATE FLOW AFTER FIRST DEPLOYMENT
 --------------------------------------------------
+Dedicated Staging branch:
+1. Create and protect a permanent `staging` branch.
+2. In Vercel, assign `staging.wescomm.store` to the staging deployment and add
+   all Staging Supabase/runtime variables as Preview variables scoped only to
+   the `staging` branch. Generic Preview variables must not contain a usable
+   DATABASE_URL, DIRECT_URL, or service-role key.
+3. Add a protected GitHub Environment named `staging`, restrict it to the
+   `staging` branch, and require an approver when available.
+4. Add `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`, and optionally
+   `STAGING_PROTECTION_BYPASS_SECRET` to that GitHub Environment. Add the
+   non-secret variable `STAGING_DOMAIN=staging.wescomm.store`.
+5. Push the release candidate to `staging` and wait for the `Release gate`.
+6. Run the `Deploy protected WESCOMM staging` workflow from the staging branch
+   and enter `DEPLOY_STAGING`. It verifies the exact commit, validates that all
+   database URLs point to the declared Staging Supabase project, applies and
+   verifies migrations, builds the exact commit, deploys it, assigns the stable
+   domain, and waits for `/api/health/ready`.
+
+Automatic Git deployments for `staging` are intentionally disabled in
+vercel.json so a code deployment cannot race ahead of its database migration.
+
 Create a branch for each change:
 
   git switch -c fix/short-description

@@ -58,6 +58,60 @@ function buildTrendRows(rows: Array<{ key: string; sales: string | number; recei
   return result;
 }
 
+function mergeTrendRowSets(
+  primary: Array<{ key: string; sales: string | number; receipts: number }>,
+  secondary: Array<{ key: string; sales: string | number; receipts: number }>
+) {
+  const merged = new Map<string, { key: string; sales: number; receipts: number }>();
+  for (const row of [...primary, ...secondary]) {
+    const current = merged.get(row.key) ?? { key: row.key, sales: 0, receipts: 0 };
+    current.sales += toNumber(row.sales);
+    current.receipts += row.receipts;
+    merged.set(row.key, current);
+  }
+  return Array.from(merged.values())
+    .sort((left, right) => left.key.localeCompare(right.key))
+    .map((row) => ({ key: row.key, sales: row.sales.toString(), receipts: row.receipts }));
+}
+
+function mergeCategorySales(
+  primary: Array<{ category: string; sales: string; cogs: string; quantity: number }>,
+  secondary: Array<{ category: string; sales: string; cogs: string; quantity: number }>
+) {
+  const merged = new Map<string, { category: string; sales: number; cogs: number; quantity: number }>();
+  for (const row of [...primary, ...secondary]) {
+    const current = merged.get(row.category) ?? { category: row.category, sales: 0, cogs: 0, quantity: 0 };
+    current.sales += toNumber(row.sales);
+    current.cogs += toNumber(row.cogs);
+    current.quantity += row.quantity;
+    merged.set(row.category, current);
+  }
+  return Array.from(merged.values()).sort((left, right) => right.sales - left.sales);
+}
+
+function mergeItemSales(
+  primary: Array<{ productId: string; item: string; category: string; quantity: number; sales: string; cogs: string }>,
+  secondary: Array<{ productId: string; item: string; category: string; quantity: number; sales: string; cogs: string }>
+) {
+  const merged = new Map<string, { productId: string; item: string; category: string; quantity: number; sales: number; cogs: number }>();
+  for (const row of [...primary, ...secondary]) {
+    const key = `${row.productId}:${row.item}`;
+    const current = merged.get(key) ?? {
+      productId: row.productId,
+      item: row.item,
+      category: row.category,
+      quantity: 0,
+      sales: 0,
+      cogs: 0
+    };
+    current.quantity += row.quantity;
+    current.sales += toNumber(row.sales);
+    current.cogs += toNumber(row.cogs);
+    merged.set(key, current);
+  }
+  return Array.from(merged.values()).sort((left, right) => right.sales - left.sales);
+}
+
 function previousReportWindow(range: ResolvedReportRange) {
   if (!range.fromInclusive) return { fromInclusive: null, toExclusive: null, label: null };
   const durationMs = range.toExclusive.getTime() - range.fromInclusive.getTime();
@@ -91,6 +145,12 @@ async function buildReportSummary(options: FinancialReportInput = {}) {
     salesTrendRows: Array<{ key: string; sales: string; receipts: number }>;
     categorySalesRows: Array<{ category: string; sales: string; cogs: string; quantity: number }>;
     itemSalesRows: Array<{ productId: string; item: string; category: string; quantity: number; sales: string; cogs: string }>;
+    walkInSaleAggregate: { totalSales: string; cogs: string; count: number; uncostedQuantity: number };
+    walkInVoidAggregate: { count: number; amount: string };
+    walkInSalesTrendRows: Array<{ key: string; sales: string; receipts: number }>;
+    walkInCategorySalesRows: Array<{ category: string; sales: string; cogs: string; quantity: number }>;
+    walkInItemSalesRows: Array<{ productId: string; item: string; category: string; quantity: number; sales: string; cogs: string }>;
+    walkInCashierRows: Array<{ cashierId: string | null; cashierName: string; saleCount: number; sales: string; voidCount: number; voids: string }>;
   };
 
   type ComparisonRow = {
@@ -98,6 +158,8 @@ async function buildReportSummary(options: FinancialReportInput = {}) {
     cogs: string;
     cashRevenue: string;
     totalReservations: number;
+    walkInSales: string;
+    walkInCogs: string;
   };
   type ReconciliationRow = {
     type: ReportReconciliationType;
@@ -264,7 +326,113 @@ async function buildReportSummary(options: FinancialReportInput = {}) {
           AND (${options.collectionChannel ?? null}::text IS NULL OR payment.collection_channel::text = ${options.collectionChannel ?? null}::text)
           AND (${options.categoryId ?? null}::uuid IS NULL OR COALESCE(item.category_id_snapshot, product.category_id) = ${options.categoryId ?? null}::uuid)
         GROUP BY item.product_id, item.product_name_snapshot, COALESCE(item.category_name_snapshot, category.name, 'Uncategorized') ORDER BY SUM(item.subtotal) DESC
-      ) grouped), '[]'::jsonb) AS "itemSalesRows"
+      ) grouped), '[]'::jsonb) AS "itemSalesRows",
+      (SELECT jsonb_build_object(
+        'totalSales', COALESCE(SUM(item.subtotal), 0)::text,
+        'cogs', COALESCE(SUM(cost.cogs), 0)::text,
+        'count', COUNT(DISTINCT sale.receipt_id)::integer,
+        'uncostedQuantity', COALESCE(SUM(GREATEST(item.quantity - COALESCE(cost.quantity, 0), 0)), 0)::integer
+      ) FROM walk_in_sale_items item
+        INNER JOIN walk_in_sales sale ON sale.id = item.sale_id
+        INNER JOIN receipts receipt ON receipt.id = sale.receipt_id
+        LEFT JOIN LATERAL (
+          SELECT SUM(allocation.quantity)::integer AS quantity, SUM(allocation.quantity * allocation.unit_cost) AS cogs
+          FROM walk_in_sale_cost_allocations allocation
+          WHERE allocation.walk_in_sale_item_id = item.id AND allocation.reversed_at IS NULL
+        ) cost ON TRUE
+        WHERE receipt.status = 'VERIFIED'::receipt_status
+          AND (${range.fromInclusive}::timestamptz IS NULL OR COALESCE(receipt.verified_at, receipt.issued_at) >= ${range.fromInclusive})
+          AND COALESCE(receipt.verified_at, receipt.issued_at) < ${range.toExclusive}
+          AND (${options.collectionChannel ?? null}::text IS NULL OR 'COMMISSARY'::text = ${options.collectionChannel ?? null}::text)
+          AND (${options.categoryId ?? null}::uuid IS NULL OR (SELECT category_id FROM products WHERE id = item.product_id) = ${options.categoryId ?? null}::uuid)
+      ) AS "walkInSaleAggregate",
+      (SELECT jsonb_build_object(
+        'count', COUNT(*)::integer,
+        'amount', COALESCE(SUM(receipt.total_amount), 0)::text
+      ) FROM receipts receipt
+        INNER JOIN walk_in_sales sale ON sale.receipt_id = receipt.id
+        WHERE receipt.status = 'VOIDED'::receipt_status
+          AND (${range.fromInclusive}::timestamptz IS NULL OR COALESCE(receipt.voided_at, receipt.updated_at) >= ${range.fromInclusive})
+          AND COALESCE(receipt.voided_at, receipt.updated_at) < ${range.toExclusive}
+          AND (${options.collectionChannel ?? null}::text IS NULL OR 'COMMISSARY'::text = ${options.collectionChannel ?? null}::text)
+      ) AS "walkInVoidAggregate",
+      COALESCE((SELECT jsonb_agg(to_jsonb(grouped)) FROM (
+        SELECT CASE WHEN ${range.granularity}::text = 'MONTHLY'
+          THEN TO_CHAR(COALESCE(receipt.verified_at, receipt.issued_at) AT TIME ZONE 'Asia/Manila', 'YYYY-MM')
+          ELSE TO_CHAR(COALESCE(receipt.verified_at, receipt.issued_at) AT TIME ZONE 'Asia/Manila', 'YYYY-MM-DD') END AS key,
+          COALESCE(SUM(item.subtotal), 0)::text AS sales, COUNT(DISTINCT receipt.id)::integer AS receipts
+        FROM walk_in_sale_items item
+        INNER JOIN walk_in_sales sale ON sale.id = item.sale_id
+        INNER JOIN receipts receipt ON receipt.id = sale.receipt_id
+        WHERE receipt.status = 'VERIFIED'::receipt_status
+          AND (${range.fromInclusive}::timestamptz IS NULL OR COALESCE(receipt.verified_at, receipt.issued_at) >= ${range.fromInclusive})
+          AND COALESCE(receipt.verified_at, receipt.issued_at) < ${range.toExclusive}
+          AND (${options.collectionChannel ?? null}::text IS NULL OR 'COMMISSARY'::text = ${options.collectionChannel ?? null}::text)
+          AND (${options.categoryId ?? null}::uuid IS NULL OR (SELECT category_id FROM products WHERE id = item.product_id) = ${options.categoryId ?? null}::uuid)
+        GROUP BY key ORDER BY key
+      ) grouped), '[]'::jsonb) AS "walkInSalesTrendRows",
+      COALESCE((SELECT jsonb_agg(to_jsonb(grouped)) FROM (
+        SELECT COALESCE(category.name, 'Uncategorized') AS category,
+          SUM(item.quantity)::integer AS quantity, COALESCE(SUM(item.subtotal), 0)::text AS sales,
+          COALESCE(SUM((SELECT SUM(allocation.quantity * allocation.unit_cost) FROM walk_in_sale_cost_allocations allocation WHERE allocation.walk_in_sale_item_id = item.id AND allocation.reversed_at IS NULL)), 0)::text AS cogs
+        FROM walk_in_sale_items item
+        INNER JOIN walk_in_sales sale ON sale.id = item.sale_id
+        INNER JOIN receipts receipt ON receipt.id = sale.receipt_id
+        INNER JOIN products product ON product.id = item.product_id
+        INNER JOIN categories category ON category.id = product.category_id
+        WHERE receipt.status = 'VERIFIED'::receipt_status
+          AND (${range.fromInclusive}::timestamptz IS NULL OR COALESCE(receipt.verified_at, receipt.issued_at) >= ${range.fromInclusive})
+          AND COALESCE(receipt.verified_at, receipt.issued_at) < ${range.toExclusive}
+          AND (${options.collectionChannel ?? null}::text IS NULL OR 'COMMISSARY'::text = ${options.collectionChannel ?? null}::text)
+          AND (${options.categoryId ?? null}::uuid IS NULL OR product.category_id = ${options.categoryId ?? null}::uuid)
+        GROUP BY category.name ORDER BY SUM(item.subtotal) DESC
+      ) grouped), '[]'::jsonb) AS "walkInCategorySalesRows",
+      COALESCE((SELECT jsonb_agg(to_jsonb(grouped)) FROM (
+        SELECT item.product_id AS "productId", item.product_name_snapshot AS item,
+          COALESCE(category.name, 'Uncategorized') AS category,
+          SUM(item.quantity)::integer AS quantity, COALESCE(SUM(item.subtotal), 0)::text AS sales,
+          COALESCE(SUM((SELECT SUM(allocation.quantity * allocation.unit_cost) FROM walk_in_sale_cost_allocations allocation WHERE allocation.walk_in_sale_item_id = item.id AND allocation.reversed_at IS NULL)), 0)::text AS cogs
+        FROM walk_in_sale_items item
+        INNER JOIN walk_in_sales sale ON sale.id = item.sale_id
+        INNER JOIN receipts receipt ON receipt.id = sale.receipt_id
+        INNER JOIN products product ON product.id = item.product_id
+        INNER JOIN categories category ON category.id = product.category_id
+        WHERE receipt.status = 'VERIFIED'::receipt_status
+          AND (${range.fromInclusive}::timestamptz IS NULL OR COALESCE(receipt.verified_at, receipt.issued_at) >= ${range.fromInclusive})
+          AND COALESCE(receipt.verified_at, receipt.issued_at) < ${range.toExclusive}
+          AND (${options.collectionChannel ?? null}::text IS NULL OR 'COMMISSARY'::text = ${options.collectionChannel ?? null}::text)
+          AND (${options.categoryId ?? null}::uuid IS NULL OR product.category_id = ${options.categoryId ?? null}::uuid)
+        GROUP BY item.product_id, item.product_name_snapshot, category.name ORDER BY SUM(item.subtotal) DESC
+      ) grouped), '[]'::jsonb) AS "walkInItemSalesRows",
+      COALESCE((SELECT jsonb_agg(to_jsonb(grouped)) FROM (
+        SELECT events."cashierId", events."cashierName",
+          SUM(events."saleCount")::integer AS "saleCount",
+          COALESCE(SUM(events.sales), 0)::text AS sales,
+          SUM(events."voidCount")::integer AS "voidCount",
+          COALESCE(SUM(events.voids), 0)::text AS voids
+        FROM (
+          SELECT sale.cashier_id AS "cashierId", sale.cashier_name_snapshot AS "cashierName",
+            1::integer AS "saleCount", receipt.total_amount AS sales,
+            0::integer AS "voidCount", 0::numeric AS voids
+          FROM walk_in_sales sale
+          INNER JOIN receipts receipt ON receipt.id = sale.receipt_id
+          WHERE receipt.status IN ('VERIFIED'::receipt_status, 'VOIDED'::receipt_status)
+            AND (${range.fromInclusive}::timestamptz IS NULL OR COALESCE(receipt.verified_at, receipt.issued_at) >= ${range.fromInclusive})
+            AND COALESCE(receipt.verified_at, receipt.issued_at) < ${range.toExclusive}
+            AND (${options.collectionChannel ?? null}::text IS NULL OR 'COMMISSARY'::text = ${options.collectionChannel ?? null}::text)
+          UNION ALL
+          SELECT sale.cashier_id AS "cashierId", sale.cashier_name_snapshot AS "cashierName",
+            0::integer AS "saleCount", 0::numeric AS sales,
+            1::integer AS "voidCount", receipt.total_amount AS voids
+          FROM walk_in_sales sale
+          INNER JOIN receipts receipt ON receipt.id = sale.receipt_id
+          WHERE receipt.status = 'VOIDED'::receipt_status
+            AND (${range.fromInclusive}::timestamptz IS NULL OR COALESCE(sale.voided_at, receipt.voided_at, receipt.updated_at) >= ${range.fromInclusive})
+            AND COALESCE(sale.voided_at, receipt.voided_at, receipt.updated_at) < ${range.toExclusive}
+            AND (${options.collectionChannel ?? null}::text IS NULL OR 'COMMISSARY'::text = ${options.collectionChannel ?? null}::text)
+        ) events
+        GROUP BY events."cashierId", events."cashierName"
+      ) grouped), '[]'::jsonb) AS "walkInCashierRows"
   `),
     prisma.$queryRaw<ComparisonRow[]>(Prisma.sql`
       SELECT
@@ -314,7 +482,32 @@ async function buildReportSummary(options: FinancialReportInput = {}) {
               SELECT 1 FROM reservation_items item WHERE item.reservation_id = reservation.id
                 AND COALESCE(item.category_id_snapshot, (SELECT category_id FROM products WHERE id = item.product_id)) = ${options.categoryId ?? null}::uuid
             ))
-        ), 0)::integer AS "totalReservations"
+        ), 0)::integer AS "totalReservations",
+        COALESCE((SELECT SUM(walk_in_item.subtotal) FROM (
+          SELECT item.subtotal
+          FROM walk_in_sale_items item
+          INNER JOIN walk_in_sales sale ON sale.id = item.sale_id
+          INNER JOIN receipts receipt ON receipt.id = sale.receipt_id
+          WHERE ${comparisonWindow.fromInclusive}::timestamptz IS NOT NULL
+            AND receipt.status = 'VERIFIED'::receipt_status
+            AND COALESCE(receipt.verified_at, receipt.issued_at) >= ${comparisonWindow.fromInclusive}
+            AND COALESCE(receipt.verified_at, receipt.issued_at) < ${comparisonWindow.toExclusive}
+            AND (${options.collectionChannel ?? null}::text IS NULL OR 'COMMISSARY'::text = ${options.collectionChannel ?? null}::text)
+            AND (${options.categoryId ?? null}::uuid IS NULL OR (SELECT category_id FROM products WHERE id = item.product_id) = ${options.categoryId ?? null}::uuid)
+        ) walk_in_item), 0)::text AS "walkInSales",
+        COALESCE((SELECT SUM(allocation.quantity * allocation.unit_cost)
+          FROM walk_in_sale_cost_allocations allocation
+          INNER JOIN walk_in_sale_items item ON item.id = allocation.walk_in_sale_item_id
+          INNER JOIN walk_in_sales sale ON sale.id = item.sale_id
+          INNER JOIN receipts receipt ON receipt.id = sale.receipt_id
+          WHERE ${comparisonWindow.fromInclusive}::timestamptz IS NOT NULL
+            AND allocation.reversed_at IS NULL
+            AND receipt.status = 'VERIFIED'::receipt_status
+            AND COALESCE(receipt.verified_at, receipt.issued_at) >= ${comparisonWindow.fromInclusive}
+            AND COALESCE(receipt.verified_at, receipt.issued_at) < ${comparisonWindow.toExclusive}
+            AND (${options.collectionChannel ?? null}::text IS NULL OR 'COMMISSARY'::text = ${options.collectionChannel ?? null}::text)
+            AND (${options.categoryId ?? null}::uuid IS NULL OR (SELECT category_id FROM products WHERE id = item.product_id) = ${options.categoryId ?? null}::uuid)
+        ), 0)::text AS "walkInCogs"
     `),
     prisma.$queryRaw<ReconciliationRow[]>(Prisma.sql`
       WITH exceptions AS (
@@ -389,22 +582,40 @@ async function buildReportSummary(options: FinancialReportInput = {}) {
       FROM products product
       INNER JOIN categories category ON category.id = product.category_id
       LEFT JOIN LATERAL (
-        SELECT SUM(item.quantity)::integer AS quantity, SUM(item.subtotal) AS sales,
-          SUM(COALESCE((SELECT SUM(allocation.quantity * allocation.unit_cost)
-            FROM order_item_cost_allocations allocation
-            WHERE allocation.reservation_item_id = item.id AND allocation.reversed_at IS NULL), 0)) AS cogs,
-          MAX(COALESCE(reservation.completed_at, receipt.verified_at, receipt.issued_at)) AS "lastSoldAt"
-        FROM reservation_items item
-        INNER JOIN reservations reservation ON reservation.id = item.reservation_id
-        INNER JOIN receipts receipt ON receipt.reservation_id = reservation.id
-        INNER JOIN payments payment ON payment.reservation_id = reservation.id
-        WHERE item.product_id = product.id
-          AND reservation.status = 'COMPLETED'::reservation_status
-          AND receipt.status = 'VERIFIED'::receipt_status
-          AND payment.status = 'PAID'::payment_record_status
-          AND (${range.fromInclusive}::timestamptz IS NULL OR COALESCE(reservation.completed_at, receipt.verified_at, receipt.issued_at) >= ${range.fromInclusive})
-          AND COALESCE(reservation.completed_at, receipt.verified_at, receipt.issued_at) < ${range.toExclusive}
-          AND (${options.collectionChannel ?? null}::text IS NULL OR payment.collection_channel::text = ${options.collectionChannel ?? null}::text)
+        SELECT SUM(combined.quantity)::integer AS quantity, SUM(combined.sales) AS sales,
+          SUM(combined.cogs) AS cogs, MAX(combined."lastSoldAt") AS "lastSoldAt"
+        FROM (
+          SELECT item.quantity AS quantity, item.subtotal AS sales,
+            COALESCE((SELECT SUM(allocation.quantity * allocation.unit_cost)
+              FROM order_item_cost_allocations allocation
+              WHERE allocation.reservation_item_id = item.id AND allocation.reversed_at IS NULL), 0) AS cogs,
+            COALESCE(reservation.completed_at, receipt.verified_at, receipt.issued_at) AS "lastSoldAt"
+          FROM reservation_items item
+          INNER JOIN reservations reservation ON reservation.id = item.reservation_id
+          INNER JOIN receipts receipt ON receipt.reservation_id = reservation.id
+          INNER JOIN payments payment ON payment.reservation_id = reservation.id
+          WHERE item.product_id = product.id
+            AND reservation.status = 'COMPLETED'::reservation_status
+            AND receipt.status = 'VERIFIED'::receipt_status
+            AND payment.status = 'PAID'::payment_record_status
+            AND (${range.fromInclusive}::timestamptz IS NULL OR COALESCE(reservation.completed_at, receipt.verified_at, receipt.issued_at) >= ${range.fromInclusive})
+            AND COALESCE(reservation.completed_at, receipt.verified_at, receipt.issued_at) < ${range.toExclusive}
+            AND (${options.collectionChannel ?? null}::text IS NULL OR payment.collection_channel::text = ${options.collectionChannel ?? null}::text)
+          UNION ALL
+          SELECT walk_in_item.quantity AS quantity, walk_in_item.subtotal AS sales,
+            COALESCE((SELECT SUM(walk_allocation.quantity * walk_allocation.unit_cost)
+              FROM walk_in_sale_cost_allocations walk_allocation
+              WHERE walk_allocation.walk_in_sale_item_id = walk_in_item.id AND walk_allocation.reversed_at IS NULL), 0) AS cogs,
+            COALESCE(walk_receipt.verified_at, walk_receipt.issued_at) AS "lastSoldAt"
+          FROM walk_in_sale_items walk_in_item
+          INNER JOIN walk_in_sales walk_sale ON walk_sale.id = walk_in_item.sale_id
+          INNER JOIN receipts walk_receipt ON walk_receipt.id = walk_sale.receipt_id
+          WHERE walk_in_item.product_id = product.id
+            AND walk_receipt.status = 'VERIFIED'::receipt_status
+            AND (${range.fromInclusive}::timestamptz IS NULL OR COALESCE(walk_receipt.verified_at, walk_receipt.issued_at) >= ${range.fromInclusive})
+            AND COALESCE(walk_receipt.verified_at, walk_receipt.issued_at) < ${range.toExclusive}
+            AND (${options.collectionChannel ?? null}::text IS NULL OR 'COMMISSARY'::text = ${options.collectionChannel ?? null}::text)
+        ) combined
       ) sale ON TRUE
       WHERE product.is_active = true
         AND (${options.categoryId ?? null}::uuid IS NULL OR product.category_id = ${options.categoryId ?? null}::uuid)
@@ -427,22 +638,31 @@ async function buildReportSummary(options: FinancialReportInput = {}) {
   const payload = rows[0] ?? {
     productMetrics: { totalProducts: 0, lowStockItems: 0, outOfStockItems: 0, inventoryValue: "0", unverifiedInventoryQuantity: 0 },
     reservationGroups: [], saleAggregate: { totalSales: "0", cogs: "0", count: 0, uncostedQuantity: 0 }, collectionGroups: [], cashChannelGroups: [], methodGroups: [], commissaryMethodGroups: [], treasurerPaymentRows: [], pendingReceiptCount: 0,
-    userGroups: [], activeConversations: 0, salesTrendRows: [], categorySalesRows: [], itemSalesRows: []
+    userGroups: [], activeConversations: 0, salesTrendRows: [], categorySalesRows: [], itemSalesRows: [],
+    walkInSaleAggregate: { totalSales: "0", cogs: "0", count: 0, uncostedQuantity: 0 }, walkInVoidAggregate: { count: 0, amount: "0" },
+    walkInSalesTrendRows: [], walkInCategorySalesRows: [], walkInItemSalesRows: [], walkInCashierRows: []
   };
-  const totalSales = toNumber(payload.saleAggregate.totalSales);
-  const cogs = toNumber(payload.saleAggregate.cogs);
+  const walkInSalesAmount = toNumber(payload.walkInSaleAggregate.totalSales);
+  const walkInCogsAmount = toNumber(payload.walkInSaleAggregate.cogs);
+  const totalSales = toNumber(payload.saleAggregate.totalSales) + walkInSalesAmount;
+  const cogs = toNumber(payload.saleAggregate.cogs) + walkInCogsAmount;
   const channels = Object.fromEntries(payload.collectionGroups.map((group) => [group.channel, group]));
   const commissaryMethods = Object.fromEntries(payload.commissaryMethodGroups.map((group) => [group.method, group]));
   const paymentRevenue = classifyReportPaymentRevenue({
-    methodGroups: payload.methodGroups,
-    cashChannelGroups: payload.cashChannelGroups
+    methodGroups: payload.walkInSaleAggregate.count
+      ? [...payload.methodGroups, { method: "CASH", amount: payload.walkInSaleAggregate.totalSales, count: payload.walkInSaleAggregate.count }]
+      : payload.methodGroups,
+    cashChannelGroups: payload.walkInSaleAggregate.count
+      ? [...payload.cashChannelGroups, { channel: "COMMISSARY", amount: payload.walkInSaleAggregate.totalSales, count: payload.walkInSaleAggregate.count }]
+      : payload.cashChannelGroups
   });
   const roles = Object.fromEntries(payload.userGroups.map((group) => [group.role, group.count]));
   const totalReservations = payload.reservationGroups.reduce((sum, group) => sum + group.count, 0);
   const grossProfit = totalSales - cogs;
-  const previous = comparisonRows[0] ?? { totalSales: "0", cogs: "0", cashRevenue: "0", totalReservations: 0 };
-  const previousSales = toNumber(previous.totalSales);
-  const previousCogs = toNumber(previous.cogs);
+  const previous = comparisonRows[0] ?? { totalSales: "0", cogs: "0", cashRevenue: "0", totalReservations: 0, walkInSales: "0", walkInCogs: "0" };
+  const previousSales = toNumber(previous.totalSales) + toNumber(previous.walkInSales);
+  const previousCogs = toNumber(previous.cogs) + toNumber(previous.walkInCogs);
+  const previousCashRevenue = toNumber(previous.cashRevenue) + toNumber(previous.walkInSales);
   const visibleReconciliationRows = reconciliationRows.slice(0, MAX_RECONCILIATION_ROWS);
   const riskTypes = new Set<ReportReconciliationType>([
     "PAYMENT_RECEIPT_MISMATCH",
@@ -536,18 +756,37 @@ async function buildReportSummary(options: FinancialReportInput = {}) {
       commissary: { amount: paymentRevenue.commissaryCash.amount, payments: paymentRevenue.commissaryCash.payments },
       treasurer: { amount: paymentRevenue.treasuryCash.amount, payments: paymentRevenue.treasuryCash.payments }
     },
-    uncostedQuantity: payload.saleAggregate.uncostedQuantity,
+    uncostedQuantity: payload.saleAggregate.uncostedQuantity + payload.walkInSaleAggregate.uncostedQuantity,
     unverifiedInventoryQuantity: payload.productMetrics.unverifiedInventoryQuantity,
     totalReservations, pendingReservations: payload.reservationGroups.find((group) => group.status === "PENDING")?.count ?? 0,
     lowStockItems: payload.productMetrics.lowStockItems, outOfStockItems: payload.productMetrics.outOfStockItems,
     totalProducts: payload.productMetrics.totalProducts, inventoryValue: toNumber(payload.productMetrics.inventoryValue),
     activeUsers: payload.userGroups.reduce((sum, group) => sum + group.count, 0),
     roleCounts: { students: roles.STUDENT ?? 0, staff: roles.STAFF ?? 0, admins: roles.ADMIN ?? 0 },
-    receiptsToVerify: payload.pendingReceiptCount, totalReceipts: payload.saleAggregate.count, activeConversations: payload.activeConversations,
+    receiptsToVerify: payload.pendingReceiptCount,
+    totalReceipts: payload.saleAggregate.count + payload.walkInSaleAggregate.count,
+    activeConversations: payload.activeConversations,
+    walkInSales: {
+      amount: walkInSalesAmount,
+      receipts: payload.walkInSaleAggregate.count,
+      cogs: walkInCogsAmount
+    },
+    walkInVoids: {
+      count: payload.walkInVoidAggregate.count,
+      amount: toNumber(payload.walkInVoidAggregate.amount)
+    },
+    cashierReconciliation: payload.walkInCashierRows.map((row) => ({
+      cashierId: row.cashierId,
+      cashierName: row.cashierName,
+      saleCount: row.saleCount,
+      sales: toNumber(row.sales),
+      voidCount: row.voidCount,
+      voids: toNumber(row.voids)
+    })),
     comparison: {
       available: Boolean(comparisonWindow.fromInclusive),
       label: comparisonWindow.label,
-      cashRevenue: buildReportComparisonMetric(paymentRevenue.cash.amount, toNumber(previous.cashRevenue)),
+      cashRevenue: buildReportComparisonMetric(paymentRevenue.cash.amount, previousCashRevenue),
       recognizedSales: buildReportComparisonMetric(totalSales, previousSales),
       grossProfit: buildReportComparisonMetric(grossProfit, previousSales - previousCogs),
       reservations: buildReportComparisonMetric(totalReservations, previous.totalReservations)
@@ -560,24 +799,26 @@ async function buildReportSummary(options: FinancialReportInput = {}) {
       counts: reconciliationCounts,
       items: reconciliationItems
     },
-    salesTrend: buildTrendRows(payload.salesTrendRows, range),
-    collectionTrend: buildTrendRows(cashTrendRows, range),
-    categorySales: payload.categorySalesRows.map((row) => ({ category: row.category, quantity: row.quantity, amount: toNumber(row.sales), sales: toNumber(row.sales), cogs: toNumber(row.cogs), grossProfit: toNumber(row.sales) - toNumber(row.cogs) })),
-    itemSales: payload.itemSalesRows.map((row) => {
-      const sales = toNumber(row.sales);
-      const itemCogs = toNumber(row.cogs);
-      const itemGrossProfit = sales - itemCogs;
-      return {
-        productId: row.productId,
-        item: row.item,
-        category: row.category,
-        quantity: row.quantity,
-        sales,
-        cogs: itemCogs,
-        grossProfit: itemGrossProfit,
-        marginPercent: sales > 0 ? Math.round((itemGrossProfit / sales) * 1_000) / 10 : null
-      };
-    }),
+    salesTrend: buildTrendRows(mergeTrendRowSets(payload.salesTrendRows, payload.walkInSalesTrendRows), range),
+    collectionTrend: buildTrendRows(mergeTrendRowSets(cashTrendRows, payload.walkInSalesTrendRows), range),
+    categorySales: mergeCategorySales(payload.categorySalesRows, payload.walkInCategorySalesRows)
+      .map((row) => ({ category: row.category, quantity: row.quantity, amount: row.sales, sales: row.sales, cogs: row.cogs, grossProfit: row.sales - row.cogs })),
+    itemSales: mergeItemSales(payload.itemSalesRows, payload.walkInItemSalesRows)
+      .map((row) => {
+        const sales = row.sales;
+        const itemCogs = row.cogs;
+        const itemGrossProfit = sales - itemCogs;
+        return {
+          productId: row.productId,
+          item: row.item,
+          category: row.category,
+          quantity: row.quantity,
+          sales,
+          cogs: itemCogs,
+          grossProfit: itemGrossProfit,
+          marginPercent: sales > 0 ? Math.round((itemGrossProfit / sales) * 1_000) / 10 : null
+        };
+      }),
     inventoryPlanning,
     reservationStatusDistribution: payload.reservationGroups.map((group) => ({ status: group.status, label: reservationStatusLabel(group.status), value: group.count, percent: totalReservations ? Math.round(group.count / totalReservations * 1000) / 10 : 0 })),
     inventoryInsights: [

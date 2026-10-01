@@ -818,6 +818,7 @@ model InventoryBatch {
   sku               ProductSku?               @relation(fields: [skuId], references: [id], onDelete: Restrict)
   createdBy         Profile?                  @relation("InventoryBatchCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   costAllocations   OrderItemCostAllocation[]
+  walkInAllocations WalkInSaleCostAllocation[]
 
   @@index([productId, receivedAt, id])
   @@index([skuId, receivedAt, id])
@@ -889,12 +890,76 @@ model Receipt {
   student                          Profile       @relation("StudentReceipts", fields: [studentId], references: [id], onDelete: Cascade)
   reservation                      Reservation?  @relation(fields: [reservationId], references: [id], onDelete: SetNull)
   issuedBy                         Profile?      @relation("IssuedReceipts", fields: [issuedById], references: [id], onDelete: SetNull)
+  walkInSale                       WalkInSale?
+  walkInSaleItems                  WalkInSaleItem[]
 
   @@index([studentId, issuedAt(sort: Desc), id(sort: Desc)])
   @@index([status, issuedAt(sort: Desc), id(sort: Desc)])
   @@index([status, verifiedAt(sort: Desc), id(sort: Desc)])
   @@index([paymentMethod, status, verifiedAt(sort: Desc), id(sort: Desc)])
   @@map("receipts")
+}
+
+model WalkInSale {
+  id                  String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  receiptId           String           @unique @map("receipt_id") @db.Uuid
+  studentId           String           @map("student_id") @db.Uuid
+  cashierId           String?          @map("cashier_id") @db.Uuid
+  cashierNameSnapshot String           @map("cashier_name_snapshot")
+  clientSaleId        String           @unique @map("client_sale_id")
+  requestFingerprint  String           @map("request_fingerprint") @db.Char(64)
+  cashTendered        Decimal          @map("cash_tendered") @db.Decimal(12, 2)
+  changeDue           Decimal          @map("change_due") @db.Decimal(12, 2)
+  voidedById          String?          @map("voided_by_id") @db.Uuid
+  voidReason          String?          @map("void_reason")
+  voidedAt            DateTime?        @map("voided_at") @db.Timestamptz(6)
+  createdAt           DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime         @default(now()) @map("updated_at") @db.Timestamptz(6)
+  receipt             Receipt          @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  items               WalkInSaleItem[]
+
+  @@index([createdAt(sort: Desc), id(sort: Desc)])
+  @@index([cashierId, createdAt(sort: Desc)])
+  @@map("walk_in_sales")
+}
+
+model WalkInSaleItem {
+  id                  String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  saleId              String   @map("sale_id") @db.Uuid
+  receiptId           String   @map("receipt_id") @db.Uuid
+  productId           String   @map("product_id") @db.Uuid
+  skuId               String?  @map("sku_id") @db.Uuid
+  variantId           String?  @map("variant_id") @db.Uuid
+  productNameSnapshot String   @map("product_name_snapshot")
+  optionSnapshot      Json?    @map("option_snapshot")
+  quantity            Int
+  unitPrice           Decimal  @map("unit_price") @db.Decimal(12, 2)
+  subtotal            Decimal  @map("subtotal") @db.Decimal(12, 2)
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  sale                WalkInSale @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  receipt             Receipt  @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  costAllocations     WalkInSaleCostAllocation[]
+
+  @@index([receiptId, createdAt(sort: Asc)])
+  @@index([saleId, createdAt(sort: Asc)])
+  @@index([productId, createdAt(sort: Desc)])
+  @@map("walk_in_sale_items")
+}
+
+model WalkInSaleCostAllocation {
+  id               String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  walkInSaleItemId String        @map("walk_in_sale_item_id") @db.Uuid
+  inventoryBatchId String        @map("inventory_batch_id") @db.Uuid
+  quantity         Int
+  unitCost         Decimal       @map("unit_cost") @db.Decimal(12, 2)
+  reversedAt       DateTime?     @map("reversed_at") @db.Timestamptz(6)
+  createdAt        DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  item             WalkInSaleItem @relation(fields: [walkInSaleItemId], references: [id], onDelete: Cascade)
+  batch            InventoryBatch @relation(fields: [inventoryBatchId], references: [id], onDelete: Restrict)
+
+  @@index([walkInSaleItemId])
+  @@index([inventoryBatchId])
+  @@map("walk_in_sale_cost_allocations")
 }
 
 model Notification {

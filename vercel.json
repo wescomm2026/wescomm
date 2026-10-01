@@ -5,7 +5,8 @@
   "git": {
     "deploymentEnabled": {
       "agent/wescomm-stabilization": false,
-      "main": false
+      "main": false,
+      "staging": false
     }
   },
   "services": {

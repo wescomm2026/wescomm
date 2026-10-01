@@ -174,6 +174,92 @@ export async function allocateFifoCostsInTransaction(
   }
 }
 
+export async function allocateWalkInSaleCostsInTransaction(
+  tx: Transaction,
+  input: { walkInSaleItemId: string; productId: string; skuId: string | null; quantity: number; note?: string | null }
+) {
+  const batches = await tx.$queryRaw<Array<{
+    id: string;
+    quantity_remaining: number;
+    unit_cost: Prisma.Decimal;
+    cost_verified: boolean;
+  }>>(Prisma.sql`
+    SELECT "id", "quantity_remaining", "unit_cost", "cost_verified"
+    FROM "inventory_batches"
+    WHERE "product_id" = ${input.productId}::uuid
+      AND ${input.skuId}::uuid IS NOT DISTINCT FROM "sku_id"
+      AND "quantity_remaining" > 0
+    ORDER BY "received_at" ASC, "id" ASC
+    FOR UPDATE
+  `);
+  const available = batches.reduce((sum, batch) => sum + batch.quantity_remaining, 0);
+  if (available < input.quantity) {
+    throw new HttpError(
+      409,
+      "Cost batches do not cover this walk-in sale quantity. Reconcile opening inventory costs first.",
+      "BATCH_BALANCE_INSUFFICIENT"
+    );
+  }
+
+  const requiredBatches = [] as typeof batches;
+  let requiredQuantity = input.quantity;
+  for (const batch of batches) {
+    if (!requiredQuantity) break;
+    requiredBatches.push(batch);
+    requiredQuantity -= Math.min(requiredQuantity, batch.quantity_remaining);
+  }
+  if (requiredBatches.some((batch) => !batch.cost_verified)) {
+    throw new HttpError(
+      409,
+      "This item has an opening inventory batch without a verified acquisition cost. Set its opening cost before recording the sale.",
+      "UNVERIFIED_BATCH_COST"
+    );
+  }
+
+  let remaining = input.quantity;
+  for (const batch of batches) {
+    if (!remaining) break;
+    const quantity = Math.min(remaining, batch.quantity_remaining);
+    await tx.inventoryBatch.update({
+      where: { id: batch.id },
+      data: { quantityRemaining: { decrement: quantity } }
+    });
+    await tx.walkInSaleCostAllocation.create({
+      data: {
+        walkInSaleItemId: input.walkInSaleItemId,
+        inventoryBatchId: batch.id,
+        quantity,
+        unitCost: batch.unit_cost
+      },
+      select: { id: true }
+    });
+    remaining -= quantity;
+  }
+}
+
+export async function reverseWalkInSaleCostAllocationsInTransaction(
+  tx: Transaction,
+  input: { walkInSaleItemId: string }
+) {
+  const allocations = await tx.walkInSaleCostAllocation.findMany({
+    where: { walkInSaleItemId: input.walkInSaleItemId, reversedAt: null },
+    select: { id: true, inventoryBatchId: true, quantity: true }
+  });
+  const now = new Date();
+  for (const allocation of allocations) {
+    await tx.inventoryBatch.update({
+      where: { id: allocation.inventoryBatchId },
+      data: { quantityRemaining: { increment: allocation.quantity } }
+    });
+    await tx.walkInSaleCostAllocation.update({
+      where: { id: allocation.id },
+      data: { reversedAt: now },
+      select: { id: true }
+    });
+  }
+  return allocations.length;
+}
+
 export async function listInventoryBatches(productId: string) {
   const batches = await prisma.inventoryBatch.findMany({
     where: { productId },
@@ -211,11 +297,19 @@ export async function verifyOpeningBatchCost(input: { productId: string; batchId
   const batch = await prisma.$transaction(async (tx) => {
     const current = await tx.inventoryBatch.findFirst({
       where: { id: input.batchId, productId: input.productId },
-      select: { id: true, batchCode: true, costVerified: true, costAllocations: { take: 1, select: { id: true } } }
+      select: {
+        id: true,
+        batchCode: true,
+        costVerified: true,
+        costAllocations: { take: 1, select: { id: true } },
+        walkInAllocations: { take: 1, select: { id: true } }
+      }
     });
     if (!current) throw new HttpError(404, "Inventory batch not found.");
     if (current.costVerified) throw new HttpError(409, "This batch cost has already been verified and is immutable.", "BATCH_COST_IMMUTABLE");
-    if (current.costAllocations.length) throw new HttpError(409, "This opening batch was already used by a sale and requires an audited correction.", "BATCH_COST_ALREADY_ALLOCATED");
+    if (current.costAllocations.length || current.walkInAllocations.length) {
+      throw new HttpError(409, "This opening batch was already used by a sale and requires an audited correction.", "BATCH_COST_ALREADY_ALLOCATED");
+    }
     return tx.inventoryBatch.update({
       where: { id: current.id },
       data: { unitCost: new Prisma.Decimal(input.unitCost), costVerified: true },
