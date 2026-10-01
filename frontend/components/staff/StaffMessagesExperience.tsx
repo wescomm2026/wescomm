@@ -44,6 +44,13 @@ import {
   Notice
 } from "@/components/staff/StaffOperationsShared";
 
+function clearConversationDeepLink() {
+  const url = new URL(window.location.href);
+  if (!url.searchParams.has("conversationId")) return;
+  url.searchParams.delete("conversationId");
+  window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+}
+
 export function StaffMessagesExperience() {
   const { user } = useStudentAuth();
   const confirm = useConfirmationDialog();
@@ -83,7 +90,7 @@ export function StaffMessagesExperience() {
   const threadRequestRef = useRef(new Map<string, number>());
   const threadAbortRef = useRef(new Map<string, AbortController>());
   const selected = useMemo(
-    () => conversations.find((conversation) => conversation.id === selectedId) ?? conversations[0] ?? null,
+    () => conversations.find((conversation) => conversation.id === selectedId) ?? null,
     [conversations, selectedId]
   );
   const isAdmin = user?.role === "ADMIN";
@@ -166,7 +173,7 @@ export function StaffMessagesExperience() {
       const conversationId = new URL(window.location.href).searchParams.get("conversationId");
       setSelectedId((current) => conversationId && rows.some((conversation) => conversation.id === conversationId)
         ? conversationId
-        : rows.some((conversation) => conversation.id === current) ? current : rows[0]?.id || "");
+        : rows.some((conversation) => conversation.id === current) ? current : "");
       if (conversationId && rows.some((conversation) => conversation.id === conversationId)) setThreadOpen(true);
     } catch (messageError) {
       if (requestId === conversationRequestRef.current && !background && !isRequestAbortError(messageError)) {
@@ -347,18 +354,29 @@ export function StaffMessagesExperience() {
   ), [conversations, search, status]);
 
   const openConversation = (conversationId: string) => {
+    clearConversationDeepLink();
     stickToBottomRef.current = true;
     setSelectedId(conversationId);
     setThreadOpen(true);
   };
 
   const closeConversation = () => {
+    clearConversationDeepLink();
     const session = getStoredStaffSession();
     if (session.token && selected) {
       void updateConversationTypingFromApi(session.token, selected.id, false);
     }
     setThreadOpen(false);
+    setSelectedId("");
     setReply("");
+  };
+
+  const changeConversationView = (view: "ACTIVE" | "ARCHIVED" | "DELETED") => {
+    if (view === conversationView) return;
+    clearConversationDeepLink();
+    setSelectedId("");
+    setThreadOpen(false);
+    setConversationView(view);
   };
 
   const handleMessageScroll = () => {
@@ -725,9 +743,9 @@ export function StaffMessagesExperience() {
           </div>
 
           <div className={cn("grid gap-1 border-b border-[#edf1ed] p-2", isAdmin ? "grid-cols-3" : "grid-cols-2")} aria-label="Conversation view">
-            <button type="button" onClick={() => setConversationView("ACTIVE")} aria-pressed={conversationView === "ACTIVE"} className={cn("rounded-lg px-3 py-2 text-xs font-extrabold", conversationView === "ACTIVE" ? "bg-primary text-white" : "text-[#68746d] hover:bg-[#eef4ef]")}>Active</button>
-            <button type="button" onClick={() => setConversationView("ARCHIVED")} aria-pressed={conversationView === "ARCHIVED"} className={cn("rounded-lg px-3 py-2 text-xs font-extrabold", conversationView === "ARCHIVED" ? "bg-primary text-white" : "text-[#68746d] hover:bg-[#eef4ef]")}>Archived</button>
-            {isAdmin ? <button type="button" onClick={() => setConversationView("DELETED")} aria-pressed={conversationView === "DELETED"} className={cn("rounded-lg px-3 py-2 text-xs font-extrabold", conversationView === "DELETED" ? "bg-red-700 text-white" : "text-[#68746d] hover:bg-red-50 hover:text-red-700")}>Deleted</button> : null}
+            <button type="button" onClick={() => changeConversationView("ACTIVE")} aria-pressed={conversationView === "ACTIVE"} className={cn("rounded-lg px-3 py-2 text-xs font-extrabold", conversationView === "ACTIVE" ? "bg-primary text-white" : "text-[#68746d] hover:bg-[#eef4ef]")}>Active</button>
+            <button type="button" onClick={() => changeConversationView("ARCHIVED")} aria-pressed={conversationView === "ARCHIVED"} className={cn("rounded-lg px-3 py-2 text-xs font-extrabold", conversationView === "ARCHIVED" ? "bg-primary text-white" : "text-[#68746d] hover:bg-[#eef4ef]")}>Archived</button>
+            {isAdmin ? <button type="button" onClick={() => changeConversationView("DELETED")} aria-pressed={conversationView === "DELETED"} className={cn("rounded-lg px-3 py-2 text-xs font-extrabold", conversationView === "DELETED" ? "bg-red-700 text-white" : "text-[#68746d] hover:bg-red-50 hover:text-red-700")}>Deleted</button> : null}
           </div>
 
           <div className="space-y-2 border-b border-[#edf1ed] p-3">
@@ -797,7 +815,7 @@ export function StaffMessagesExperience() {
           )}
           </div>
         </aside>
-        {selected ? (
+        {selected && threadOpen ? (
           <div
             data-testid="staff-conversation-thread"
             className={cn("h-full min-h-0 min-w-0 flex-col lg:flex", threadOpen ? "flex" : "hidden")}

@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="gDark" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0b783a"/>
+      <stop offset="100%" stop-color="#08582c"/>
+    </linearGradient>
+    <linearGradient id="gLime" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#a8d61e"/>
+      <stop offset="100%" stop-color="#96cb1f"/>
+    </linearGradient>
+    <linearGradient id="gCheck" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#b3dd2b"/>
+      <stop offset="100%" stop-color="#89c91f"/>
+    </linearGradient>
+    <style>
+      .outline{fill:none;stroke:url(#gDark);stroke-width:18;stroke-linecap:round;stroke-linejoin:round;vector-effect:non-scaling-stroke}
+      .dot{fill:url(#gDark)}
+      .ray{stroke:#F9C400;stroke-width:16;stroke-linecap:round;vector-effect:non-scaling-stroke}
+    </style>
+  </defs>
+
+  <!-- calendar -->
+  <rect x="118" y="114" width="252" height="252" rx="36" fill="#fff" class="outline"/>
+  <path d="M118 151c0-20.4 16.6-37 37-37h178c20.4 0 37 16.6 37 37v56H118z" fill="url(#gLime)"/>
+  <path d="M118 151c0-20.4 16.6-37 37-37h178c20.4 0 37 16.6 37 37" class="outline"/>
+  <line x1="182" y1="88" x2="182" y2="140" class="outline"/>
+  <line x1="306" y1="88" x2="306" y2="140" class="outline"/>
+
+  <circle cx="180" cy="235" r="13" class="dot"/>
+  <circle cx="244" cy="235" r="13" class="dot"/>
+  <circle cx="308" cy="235" r="13" class="dot"/>
+  <circle cx="180" cy="300" r="13" class="dot"/>
+  <circle cx="244" cy="300" r="13" class="dot"/>
+  <circle cx="308" cy="300" r="13" class="dot"/>
+
+  <!-- badge -->
+  <circle cx="344" cy="344" r="90" fill="#fff" stroke="url(#gDark)" stroke-width="18" vector-effect="non-scaling-stroke"/>
+  <circle cx="344" cy="344" r="60" fill="url(#gDark)"/>
+  <path d="M316 346l19 20 39-41" fill="none" stroke="url(#gCheck)" stroke-width="19" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+
+  <!-- accent rays: short, symmetrical, and kept clear of the calendar/check badge -->
+  <line x1="58" y1="228" x2="84" y2="254" class="ray"/>
+  <line x1="44" y1="286" x2="82" y2="300" class="ray"/>
+  <line x1="454" y1="228" x2="480" y2="202" class="ray"/>
+  <line x1="458" y1="286" x2="496" y2="272" class="ray"/>
+</svg>

@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 import { canonicalSkuVariantKey, normalizeSkuOptionName } from "../domain/sku-inventory.js";
+import { nextStockAlertPolicy } from "../domain/stock-alert-policy.js";
 import { prisma } from "../lib/prisma.js";
 import { HttpError } from "../utils/http-error.js";
 import { requireNoActiveInventoryReservations } from "../utils/inventory-reservation.js";
@@ -9,6 +10,7 @@ import { safelyRecordAuditLog } from "./audit-log.service.js";
 import { createNotificationsForRolesBestEffort } from "./notification.service.js";
 import { getInventoryProduct, INVENTORY_WRITE_TRANSACTION_OPTIONS } from "./inventory.service.js";
 import { createBackInStockNotificationsInTransaction } from "./wishlist-notification.service.js";
+import { adjustInventoryBatchesInTransaction, createInventoryBatchInTransaction, requireRestockCost } from "./inventory-cost.service.js";
 
 export type SkuDefinitionInput = {
   variantIds?: string[];
@@ -83,6 +85,7 @@ export async function reconcileProductSkuInventory(input: {
   productId: string;
   skus: SkuDefinitionInput[];
   optionGroups?: SkuOptionGroupDefinitionInput[];
+  lowStockPercent?: number;
   performedById: string;
   notes?: string;
 }) {
@@ -100,10 +103,13 @@ export async function reconcileProductSkuInventory(input: {
         id: true,
         name: true,
         stock: true,
+        stockTarget: true,
+        lowStockPercent: true,
         status: true,
         lowStockThreshold: true,
         isActive: true,
         saleMode: true,
+        skuInventoryEnabled: true,
         variants: {
           select: { id: true, optionName: true, optionValue: true, lowStockThreshold: true },
           orderBy: [{ optionName: "asc" }, { optionValue: "asc" }]
@@ -261,7 +267,10 @@ export async function reconcileProductSkuInventory(input: {
       }
 
       const stock = requireInventoryInteger(sku.stock, 0, `Combination ${index + 1} stock`, "SKU_INVALID_STOCK");
-      const lowStockThreshold = requireInventoryInteger(
+      const alertPolicy = input.lowStockPercent === undefined
+        ? null
+        : nextStockAlertPolicy({ previousTarget: 0, resultingStock: stock, lowStockPercent: input.lowStockPercent });
+      const lowStockThreshold = alertPolicy?.lowStockThreshold ?? requireInventoryInteger(
         sku.lowStockThreshold,
         2,
         `Combination ${index + 1} alert level`,
@@ -272,10 +281,17 @@ export async function reconcileProductSkuInventory(input: {
         throw new HttpError(400, `Combination ${index + 1} is duplicated.`, "SKU_DUPLICATE_COMBINATION");
       }
       seenCombinations.add(combinationKey);
-      return { variantIds, stock, lowStockThreshold };
+      return { variantIds, stock, lowStockThreshold, alertPolicy };
     });
 
     const previousStock = product.stock;
+    if (product.skuInventoryEnabled && previousStock > 0) {
+      throw new HttpError(
+        409,
+        "Set all current SKU quantities to zero before rebuilding inventory combinations. This protects existing FIFO cost batches.",
+        "SKU_REBUILD_HAS_COSTED_STOCK"
+      );
+    }
     // Retire previous definitions instead of deleting them so completed reservation and
     // inventory-movement references remain auditable. Active reservations are blocked above.
     await transaction.productSku.updateMany({
@@ -358,6 +374,8 @@ export async function reconcileProductSkuInventory(input: {
         productId: input.productId,
         code: `SKU-${randomUUID().slice(0, 8).toUpperCase()}`,
         stock: sku.stock,
+        stockTarget: sku.alertPolicy?.stockTarget ?? sku.stock,
+        ...(sku.alertPolicy ? { lowStockPercent: sku.alertPolicy.lowStockPercent } : {}),
         lowStockThreshold: sku.lowStockThreshold,
         isActive: true,
         optionSnapshot: sku.variantIds.map((variantId) => {
@@ -381,12 +399,47 @@ export async function reconcileProductSkuInventory(input: {
       await transaction.productSkuVariant.createMany({ data: skuVariantLinks });
     }
 
+    if (!product.skuInventoryEnabled) {
+      // A first-time conversion from legacy total stock cannot prove which old
+      // cost layer belongs to which physical combination. Retire only the
+      // remaining legacy balance and create explicit review-required opening
+      // batches for each SKU instead of inventing a cost allocation.
+      await transaction.inventoryBatch.updateMany({
+        where: { productId: input.productId, skuId: null, quantityRemaining: { gt: 0 } },
+        data: { quantityRemaining: 0 }
+      });
+      for (const sku of skuRows) {
+        if (sku.stock <= 0) continue;
+        await adjustInventoryBatchesInTransaction(transaction, {
+          productId: input.productId,
+          skuId: sku.id,
+          difference: sku.stock,
+          createdById: input.performedById,
+          note: "Opening SKU balance from inventory setup; verify the acquisition cost before release."
+        });
+      }
+    }
+
     const totalStock = normalizedSkus.reduce((total, sku) => total + sku.stock, 0);
-    const status = deriveProductStatus(totalStock, product.lowStockThreshold, product.status);
+    const productAlertPolicy = input.lowStockPercent === undefined
+      ? null
+      : nextStockAlertPolicy({
+          previousTarget: product.stockTarget,
+          resultingStock: totalStock,
+          previousPercent: product.lowStockPercent,
+          lowStockPercent: input.lowStockPercent
+        });
+    const productThreshold = productAlertPolicy?.lowStockThreshold ?? product.lowStockThreshold;
+    const status = deriveProductStatus(totalStock, productThreshold, product.status);
     await transaction.product.update({
       where: { id: input.productId },
       data: {
         stock: totalStock,
+        ...(productAlertPolicy ? {
+          stockTarget: productAlertPolicy.stockTarget,
+          lowStockPercent: productAlertPolicy.lowStockPercent,
+          lowStockThreshold: productAlertPolicy.lowStockThreshold
+        } : {}),
         status,
         skuInventoryEnabled: true,
         inventoryReconciledAt: new Date(),
@@ -396,6 +449,21 @@ export async function reconcileProductSkuInventory(input: {
     });
 
     await syncDerivedVariantStocks(transaction, input.productId);
+
+    if (input.lowStockPercent !== undefined) {
+      await transaction.$executeRaw`
+        UPDATE "product_variants"
+        SET
+          "stock_target" = GREATEST("stock_target", "stock"),
+          "low_stock_percent" = ${input.lowStockPercent},
+          "low_stock_threshold" = CASE
+            WHEN GREATEST("stock_target", "stock") = 0 THEN 0
+            ELSE CEIL(GREATEST("stock_target", "stock") * ${input.lowStockPercent} / 100.0)::integer
+          END,
+          "updated_at" = CURRENT_TIMESTAMP
+        WHERE "product_id" = ${input.productId}::uuid
+      `;
+    }
 
     await transaction.inventoryMovement.create({
       data: {
@@ -460,7 +528,27 @@ export async function restockProductSkus(input: {
   quantities: SkuStockQuantityInput[];
   performedById: string;
   notes?: string;
+  unitCost?: number;
+  sellingPrice?: number;
+  receivedAt?: Date;
+  supplierNote?: string;
+  lowStockPercent?: number;
 }) {
+  if (input.mode === "add") {
+    requireRestockCost({
+      unitCost: input.unitCost ?? Number.NaN,
+      receivedAt: input.receivedAt ?? new Date(Number.NaN),
+      supplierNote: input.supplierNote
+    });
+  }
+  if (input.sellingPrice !== undefined && (
+    !Number.isFinite(input.sellingPrice)
+    || input.sellingPrice < 0
+    || input.sellingPrice > 10_000_000
+    || Number(input.sellingPrice.toFixed(2)) !== input.sellingPrice
+  )) {
+    throw new HttpError(400, "Selling price must be from PHP 0.00 to PHP 10,000,000.00 with up to two decimal places.", "INVALID_SELLING_PRICE");
+  }
   const result = await prisma.$transaction(async (transaction) => {
     const locked = await lockProductForUpdate(transaction, input.productId);
     if (!locked) throw new HttpError(404, "Product not found.");
@@ -471,6 +559,9 @@ export async function restockProductSkus(input: {
         id: true,
         name: true,
         stock: true,
+        stockTarget: true,
+        lowStockPercent: true,
+        price: true,
         status: true,
         lowStockThreshold: true,
         saleMode: true,
@@ -481,6 +572,8 @@ export async function restockProductSkus(input: {
           select: {
             id: true,
             stock: true,
+            stockTarget: true,
+            lowStockPercent: true,
             lowStockThreshold: true,
             optionValues: { select: { variant: { select: { optionName: true, optionValue: true } } } }
           }
@@ -519,40 +612,50 @@ export async function restockProductSkus(input: {
     }
 
     const previousProductStock = product.stock;
-    const changes: Array<{
-      skuId: string;
-      previousStock: number;
-      newStock: number;
-      lowStockThreshold: number;
-      label: string;
-    }> = [];
-
-    for (const sku of product.skus) {
+    const skuUpdates = product.skus.map((sku) => {
       const entered = requestedById.get(sku.id);
       const newStock = input.mode === "set"
         ? (entered ?? sku.stock)
         : sku.stock + (entered ?? 0);
-      if (newStock === sku.stock) continue;
       const label = sku.optionValues.length
         ? sku.optionValues.map((link) => `${link.variant.optionName}: ${link.variant.optionValue}`).join(" / ")
         : "Standard item";
-      changes.push({ skuId: sku.id, previousStock: sku.stock, newStock, lowStockThreshold: sku.lowStockThreshold, label });
-    }
+      const alertPolicy = nextStockAlertPolicy({
+        previousTarget: sku.stockTarget,
+        resultingStock: newStock,
+        previousPercent: sku.lowStockPercent,
+        lowStockPercent: input.lowStockPercent
+      });
+      return {
+        skuId: sku.id,
+        previousStock: sku.stock,
+        previousLowStockThreshold: sku.lowStockThreshold,
+        newStock,
+        label,
+        ...alertPolicy
+      };
+    });
+    const changes = skuUpdates.filter((change) => change.newStock !== change.previousStock);
 
-    if (changes.length) {
-      const stockRows = changes.map((change) => Prisma.sql`
-        (${change.skuId}::uuid, ${change.newStock}::integer)
+    if (skuUpdates.length) {
+      const stockRows = skuUpdates.map((change) => Prisma.sql`
+        (${change.skuId}::uuid, ${change.newStock}::integer, ${change.stockTarget}::integer, ${change.lowStockPercent}::integer, ${change.lowStockThreshold}::integer)
       `);
       await transaction.$executeRaw`
         UPDATE "product_skus" AS ps
         SET
           "stock" = next."stock",
+          "stock_target" = next."stock_target",
+          "low_stock_percent" = next."low_stock_percent",
+          "low_stock_threshold" = next."low_stock_threshold",
           "updated_at" = CURRENT_TIMESTAMP
-        FROM (VALUES ${Prisma.join(stockRows)}) AS next("id", "stock")
+        FROM (VALUES ${Prisma.join(stockRows)}) AS next("id", "stock", "stock_target", "low_stock_percent", "low_stock_threshold")
         WHERE ps."product_id" = ${input.productId}::uuid
           AND ps."is_active" = true
           AND ps."id" = next."id"
       `;
+    }
+    if (changes.length) {
       await transaction.inventoryMovement.createMany({
         data: changes.map((change) => ({
           productId: input.productId,
@@ -565,15 +668,52 @@ export async function restockProductSkus(input: {
           notes: input.notes ?? `${input.mode === "set" ? "Corrected" : "Updated"} ${change.label} stock.`
         }))
       });
+      for (const change of changes) {
+        const difference = change.newStock - change.previousStock;
+        if (input.mode === "add") {
+          await createInventoryBatchInTransaction(transaction, {
+            productId: input.productId,
+            skuId: change.skuId,
+            quantity: difference,
+            unitCost: input.unitCost!,
+            receivedAt: input.receivedAt!,
+            supplierNote: input.supplierNote ?? input.notes,
+            createdById: input.performedById
+          });
+        } else {
+          await adjustInventoryBatchesInTransaction(transaction, {
+            productId: input.productId,
+            skuId: change.skuId,
+            difference,
+            createdById: input.performedById,
+            note: input.notes
+          });
+        }
+      }
     }
 
-    const nextStockBySkuId = new Map(changes.map((change) => [change.skuId, change.newStock]));
-    const nextSkuStocks = product.skus.map((sku) => nextStockBySkuId.get(sku.id) ?? sku.stock);
+    const nextSkuStocks = skuUpdates.map((sku) => sku.newStock);
     const totalStock = nextSkuStocks.reduce((total, stock) => total + stock, 0);
-    const status = deriveProductStatus(totalStock, product.lowStockThreshold, product.status);
+    const productAlertPolicy = nextStockAlertPolicy({
+      previousTarget: product.stockTarget,
+      resultingStock: totalStock,
+      previousPercent: product.lowStockPercent,
+      lowStockPercent: input.lowStockPercent
+    });
+    const status = deriveProductStatus(totalStock, productAlertPolicy.lowStockThreshold, product.status);
+    const previousSellingPrice = Number(product.price);
+    const nextSellingPrice = input.sellingPrice ?? previousSellingPrice;
     await transaction.product.update({
       where: { id: input.productId },
-      data: { stock: totalStock, status, updatedAt: new Date() },
+      data: {
+        stock: totalStock,
+        stockTarget: productAlertPolicy.stockTarget,
+        lowStockPercent: productAlertPolicy.lowStockPercent,
+        lowStockThreshold: productAlertPolicy.lowStockThreshold,
+        status,
+        price: nextSellingPrice,
+        updatedAt: new Date()
+      },
       select: { id: true }
     });
     await syncDerivedVariantStocks(transaction, input.productId);
@@ -613,11 +753,21 @@ export async function restockProductSkus(input: {
       eventId: productMovementId
     });
 
-    return { productName: product.name, previousProductStock, totalStock, changes };
+    return {
+      productName: product.name,
+      previousProductStock,
+      totalStock,
+      changes,
+      previousSellingPrice,
+      nextSellingPrice,
+      productAlertPolicy
+    };
   }, INVENTORY_WRITE_TRANSACTION_OPTIONS);
 
   for (const change of result.changes) {
-    if (change.newStock <= change.lowStockThreshold && change.previousStock > change.lowStockThreshold) {
+    const wasLowStock = change.previousStock <= change.previousLowStockThreshold;
+    const isLowStock = change.newStock <= change.lowStockThreshold;
+    if (isLowStock && !wasLowStock) {
       await createNotificationsForRolesBestEffort(["STAFF", "ADMIN"], {
         title: `Low stock: ${result.productName}`,
         message: `${change.label} has only ${change.newStock} item${change.newStock === 1 ? "" : "s"} left.`,
@@ -640,6 +790,12 @@ export async function restockProductSkus(input: {
     metadata: {
       previousStock: result.previousProductStock,
       newStock: result.totalStock,
+      stockTarget: result.productAlertPolicy.stockTarget,
+      lowStockPercent: result.productAlertPolicy.lowStockPercent,
+      lowStockThreshold: result.productAlertPolicy.lowStockThreshold,
+      previousSellingPrice: result.previousSellingPrice,
+      newSellingPrice: result.nextSellingPrice,
+      sellingPriceChanged: result.previousSellingPrice !== result.nextSellingPrice,
       changes: result.changes
     }
   });

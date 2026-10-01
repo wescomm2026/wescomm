@@ -48,13 +48,13 @@ export default function PrivacyPage() {
         <LegalList>
           <li>Account information such as name, Wesleyan email address, student number, department, phone number, address, and profile image when provided.</li>
           <li>Reservation and purchase information, including selected products, variants, quantities, pickup schedules, status, receipts, and support records.</li>
-          <li>Online payment records such as internal references, PayMongo references, amount, fee, net amount, payment method, status, and timestamps.</li>
+          <li>Historical online payment records such as internal references, PayMongo references, amount, fee, net amount, payment method, status, and timestamps.</li>
           <li>Security information such as sign-in activity, device or browser details, support reference numbers, activity records, notification preferences, and registered notification devices.</li>
           <li>Policy acceptance records, including the authenticated account, policy version, acceptance context, and acceptance time.</li>
           <li>Messages and other information you voluntarily provide when contacting WESCOMM Support.</li>
         </LegalList>
         <LegalNote>
-          GCash credentials, GCash PINs, and wallet authorization codes are entered on provider-controlled pages. WESCOMM does not ask for or store them.
+          Online payments are no longer offered for new reservations; WESCOMM now accepts cash only at the Commissary or Treasury. Historical provider records from prior online payments may still be retained for receipts, refunds, reports, and audit. GCash credentials, GCash PINs, and wallet authorization codes were entered on provider-controlled pages. WESCOMM does not ask for or store them.
         </LegalNote>
       </LegalSection>
 
@@ -71,7 +71,7 @@ export default function PrivacyPage() {
 
       <LegalSection id="providers" title="3. Service providers and authorized access">
         <p>
-          Information is available only to authorized University personnel and service providers that need it to operate WESCOMM. Depending on the feature used, these providers include Supabase for authentication and data services, Vercel for application hosting, Brevo for verification email delivery, PayMongo for online payments, and Google Gemini for optional AI-assisted WesBot routing or wording.
+          Information is available only to authorized University personnel and service providers that need it to operate WESCOMM. Depending on the feature used, these providers include Supabase for authentication and data services, Vercel for application hosting, Brevo for verification email delivery, PayMongo for historical online payments, and Google Gemini for optional AI-assisted WesBot routing or wording.
         </p>
         <p>
           Before optional WesBot text is sent to Gemini, WESCOMM removes recognized email addresses, phone numbers, student-number-like values, reservation references, receipt codes, and system reference numbers. WesBot still uses verified WESCOMM information and business rules as the source of factual answers.

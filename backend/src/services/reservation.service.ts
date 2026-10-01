@@ -17,6 +17,12 @@ import {
 } from "../domain/policy-acceptance.js";
 import { assertStudentCanCancelReservation } from "../domain/student-reservation-cancellation.js";
 import {
+  MAX_BULK_CONFIRMATIONS,
+  bulkConfirmationBlockReason,
+  bulkConfirmationPreviewToken,
+  bulkConfirmationReasonLabel
+} from "../domain/reservation-bulk-confirmation.js";
+import {
   assertReservationTransition,
   deriveProductStatus,
   reservationStatusLabel
@@ -25,6 +31,7 @@ import { resolveReservationVariantSelections } from "../domain/variant-stock.js"
 import { sameSkuVariantSelection } from "../domain/sku-inventory.js";
 import { prisma } from "../lib/prisma.js";
 import { ensureReceiptForCompletedReservationInTransaction } from "./receipt.service.js";
+import { allocateFifoCostsInTransaction } from "./inventory-cost.service.js";
 import { validatePickupSelectionInTransaction } from "./pickup-policy.service.js";
 import { expireCheckoutAttemptBestEffort } from "./paymongo-reconciliation.service.js";
 import {
@@ -33,12 +40,13 @@ import {
   type NoShowPolicyOutcome
 } from "./restriction.service.js";
 import { OUTBOX_EVENT_TYPES } from "./outbox.service.js";
-import { publishRealtimeEvents, REALTIME_TOPICS, wakeRealtimeBroker } from "./realtime-event.service.js";
+import { publishRealtimeEvents, REALTIME_TOPICS } from "./realtime-event.service.js";
 import {
   createBackInStockNotificationsInTransaction
 } from "./wishlist-notification.service.js";
 import {
   type AppRole,
+  type CollectionChannel,
   type OnlinePaymentStatus,
   type PaymentMethod,
   type RawProfileSummary,
@@ -142,8 +150,10 @@ function nonOptionReservationSummary(summary?: string | null) {
 type SkuReservationRecord = {
   id: string;
   productId: string;
+  code: string | null;
   stock: number;
   lowStockThreshold: number;
+  optionSnapshot: Prisma.JsonValue;
   optionValues: Array<{ variantId: string }>;
 };
 
@@ -239,6 +249,7 @@ const reservationRecordSelect = Prisma.validator<Prisma.ReservationSelect>()({
   pickupPolicyVersion: { select: { id: true, version: true } },
   pickupTimeSlot: { select: { id: true, label: true, startMinute: true, endMinute: true } },
   paymentMethod: true,
+  preferredCollectionChannel: true,
   totalAmount: true,
   staffNotes: true,
   createdAt: true,
@@ -287,6 +298,9 @@ const reservationRecordSelect = Prisma.validator<Prisma.ReservationSelect>()({
       id: true,
       reservationId: true,
       productId: true,
+      productNameSnapshot: true,
+      skuCodeSnapshot: true,
+      optionSnapshot: true,
       variantSummary: true,
       quantity: true,
       unitPrice: true,
@@ -325,6 +339,7 @@ function mapPrismaReservation(reservation: ReservationRecord) {
     pickupPolicyVersion: reservation.pickupPolicyVersion?.version ?? null,
     pickupSlot: reservation.pickupTimeSlot,
     paymentMethod: reservation.paymentMethod,
+    preferredCollectionChannel: reservation.preferredCollectionChannel,
     totalAmount: reservation.totalAmount.toString(),
     staffNotes: reservation.staffNotes,
     createdAt: reservation.createdAt.toISOString(),
@@ -364,6 +379,9 @@ function mapPrismaReservation(reservation: ReservationRecord) {
       id: item.id,
       reservationId: item.reservationId,
       productId: item.productId,
+      productNameSnapshot: item.productNameSnapshot,
+      skuCodeSnapshot: item.skuCodeSnapshot,
+      optionSnapshot: item.optionSnapshot,
       variantSummary: item.variantSummary,
       quantity: item.quantity,
       unitPrice: item.unitPrice.toString(),
@@ -371,7 +389,7 @@ function mapPrismaReservation(reservation: ReservationRecord) {
       createdAt: item.createdAt.toISOString(),
       product: {
         id: item.product.id,
-        name: item.product.name,
+        name: item.productNameSnapshot,
         description: item.product.description,
         imageUrl: item.product.imageUrl,
         price: item.product.price.toString(),
@@ -396,6 +414,7 @@ const staffReservationListSelect = Prisma.validator<Prisma.ReservationSelect>()(
   pickupPolicyVersion: { select: { id: true, version: true } },
   pickupTimeSlot: { select: { id: true, label: true, startMinute: true, endMinute: true } },
   paymentMethod: true,
+  preferredCollectionChannel: true,
   totalAmount: true,
   staffNotes: true,
   createdAt: true,
@@ -424,6 +443,9 @@ const staffReservationListSelect = Prisma.validator<Prisma.ReservationSelect>()(
       id: true,
       reservationId: true,
       productId: true,
+      productNameSnapshot: true,
+      skuCodeSnapshot: true,
+      optionSnapshot: true,
       variantSummary: true,
       quantity: true,
       unitPrice: true,
@@ -451,6 +473,7 @@ function mapStaffReservationList(reservation: StaffReservationListRecord) {
     pickupPolicyVersion: reservation.pickupPolicyVersion?.version ?? null,
     pickupSlot: reservation.pickupTimeSlot,
     paymentMethod: reservation.paymentMethod,
+    preferredCollectionChannel: reservation.preferredCollectionChannel,
     totalAmount: reservation.totalAmount.toString(),
     staffNotes: reservation.staffNotes,
     createdAt: reservation.createdAt.toISOString(),
@@ -482,14 +505,80 @@ function mapStaffReservationList(reservation: StaffReservationListRecord) {
       id: item.id,
       reservationId: item.reservationId,
       productId: item.productId,
+      productNameSnapshot: item.productNameSnapshot,
+      skuCodeSnapshot: item.skuCodeSnapshot,
+      optionSnapshot: item.optionSnapshot,
       variantSummary: item.variantSummary,
       quantity: item.quantity,
       unitPrice: item.unitPrice.toString(),
       subtotal: item.subtotal.toString(),
       createdAt: item.createdAt.toISOString(),
-      product: { id: item.product.id, name: item.product.name }
+      product: { id: item.product.id, name: item.productNameSnapshot }
     }))
   };
+}
+
+type ConfirmationQueueRow = {
+  reservationId: string;
+  position: number;
+  total: number;
+};
+
+async function confirmationQueueByReservationId(reservationIds: string[]) {
+  if (!reservationIds.length) return new Map<string, { position: number; ahead: number; total: number; calculatedAt: string }>();
+  const rows = await prisma.$queryRaw<ConfirmationQueueRow[]>(Prisma.sql`
+    SELECT target.id AS "reservationId",
+      (SELECT COUNT(*)::integer
+        FROM reservations queued
+        WHERE queued.status = 'PENDING'::reservation_status
+          AND queued.pickup_review_status <> 'NEEDS_REVIEW'::pickup_review_status
+          AND queued.pickup_start = target.pickup_start
+          AND queued.pickup_end = target.pickup_end
+          AND queued.pickup_time_slot_id IS NOT DISTINCT FROM target.pickup_time_slot_id
+          AND (queued.payment_method <> 'PAYMONGO_GCASH'::payment_method OR EXISTS (
+            SELECT 1 FROM online_payments payment
+            WHERE payment.reservation_id = queued.id AND payment.status = 'PAID'::online_payment_status
+          ))
+          AND (queued.created_at, queued.id) <= (target.created_at, target.id)
+      ) AS position,
+      (SELECT COUNT(*)::integer
+        FROM reservations queued
+        WHERE queued.status = 'PENDING'::reservation_status
+          AND queued.pickup_review_status <> 'NEEDS_REVIEW'::pickup_review_status
+          AND queued.pickup_start = target.pickup_start
+          AND queued.pickup_end = target.pickup_end
+          AND queued.pickup_time_slot_id IS NOT DISTINCT FROM target.pickup_time_slot_id
+          AND (queued.payment_method <> 'PAYMONGO_GCASH'::payment_method OR EXISTS (
+            SELECT 1 FROM online_payments payment
+            WHERE payment.reservation_id = queued.id AND payment.status = 'PAID'::online_payment_status
+          ))
+      ) AS total
+    FROM reservations target
+    WHERE target.id IN (${Prisma.join(reservationIds)})
+      AND target.status = 'PENDING'::reservation_status
+      AND target.pickup_review_status <> 'NEEDS_REVIEW'::pickup_review_status
+      AND target.pickup_start IS NOT NULL
+      AND target.pickup_end IS NOT NULL
+      AND (target.payment_method <> 'PAYMONGO_GCASH'::payment_method OR EXISTS (
+        SELECT 1 FROM online_payments payment
+        WHERE payment.reservation_id = target.id AND payment.status = 'PAID'::online_payment_status
+      ))
+  `);
+  const calculatedAt = new Date().toISOString();
+  return new Map(rows.map((row) => [row.reservationId, {
+    position: row.position,
+    ahead: Math.max(0, row.position - 1),
+    total: row.total,
+    calculatedAt
+  }]));
+}
+
+async function attachConfirmationQueue<T extends { id: string }>(reservations: T[]) {
+  const queue = await confirmationQueueByReservationId(reservations.map((reservation) => reservation.id));
+  return reservations.map((reservation) => ({
+    ...reservation,
+    confirmationQueue: queue.get(reservation.id) ?? null
+  }));
 }
 
 export type ReservationListOptions = {
@@ -529,6 +618,16 @@ export async function listReservations(userId: string, role: AppRole, options: R
             ]
           }
         }
+      }, {
+        items: {
+          some: {
+            OR: [
+              { variantSummary: { contains: query, mode: "insensitive" as const } },
+              { productNameSnapshot: { contains: query, mode: "insensitive" as const } },
+              { skuCodeSnapshot: { contains: query, mode: "insensitive" as const } }
+            ]
+          }
+        }
       }])
     ];
   }
@@ -542,18 +641,201 @@ export async function listReservations(userId: string, role: AppRole, options: R
       ...(cursorId ? { cursor: { id: cursorId }, skip: 1 } : {}),
       take: limit + 1
     });
-    return createPage(rows.map(mapPrismaReservation), limit);
+    return createPage(await attachConfirmationQueue(rows.map(mapPrismaReservation)), limit);
   }
 
   const rows = await prisma.reservation.findMany({
     where,
     select: staffReservationListSelect,
     relationLoadStrategy: "join",
-    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    orderBy: options.status === "PENDING"
+      ? [{ createdAt: "asc" }, { id: "asc" }]
+      : [{ createdAt: "desc" }, { id: "desc" }],
     ...(cursorId ? { cursor: { id: cursorId }, skip: 1 } : {}),
     take: limit + 1
   });
   return createPage(rows.map(mapStaffReservationList), limit);
+}
+
+const bulkConfirmationCandidateSelect = Prisma.validator<Prisma.ReservationSelect>()({
+  id: true,
+  referenceCode: true,
+  status: true,
+  pickupReviewStatus: true,
+  paymentMethod: true,
+  updatedAt: true,
+  student: { select: { fullName: true } },
+  onlinePayment: { select: { status: true } }
+});
+
+type BulkConfirmationCandidate = Prisma.ReservationGetPayload<{ select: typeof bulkConfirmationCandidateSelect }>;
+
+function bulkConfirmationSearchFilter(query?: string): Prisma.ReservationWhereInput {
+  const normalized = query?.trim();
+  if (!normalized) return {};
+  return {
+    OR: [
+      { referenceCode: { contains: normalized, mode: "insensitive" } },
+      { student: { is: { OR: [
+        { fullName: { contains: normalized, mode: "insensitive" } },
+        { email: { contains: normalized, mode: "insensitive" } },
+        { studentNumber: { contains: normalized, mode: "insensitive" } }
+      ] } } },
+      { items: { some: { OR: [
+        { variantSummary: { contains: normalized, mode: "insensitive" } },
+        { productNameSnapshot: { contains: normalized, mode: "insensitive" } },
+        { skuCodeSnapshot: { contains: normalized, mode: "insensitive" } }
+      ] } } }
+    ]
+  };
+}
+
+function bulkConfirmationEligibilityFilter(): Prisma.ReservationWhereInput {
+  return {
+    status: "PENDING",
+    pickupReviewStatus: { not: "NEEDS_REVIEW" },
+    OR: [
+      { paymentMethod: { not: "PAYMONGO_GCASH" } },
+      { onlinePayment: { is: { status: "PAID" } } }
+    ]
+  };
+}
+
+function mapBulkConfirmationCandidate(candidate: BulkConfirmationCandidate) {
+  const reason = bulkConfirmationBlockReason({
+    status: candidate.status as ReservationStatus,
+    pickupReviewStatus: candidate.pickupReviewStatus,
+    paymentMethod: candidate.paymentMethod as PaymentMethod,
+    paymentStatus: candidate.onlinePayment?.status as OnlinePaymentStatus | undefined
+  });
+  return {
+    reservationId: candidate.id,
+    referenceCode: candidate.referenceCode,
+    studentName: candidate.student.fullName,
+    eligible: reason === null,
+    reason,
+    reasonLabel: reason ? bulkConfirmationReasonLabel(reason) : null
+  };
+}
+
+export async function previewBulkReservationConfirmation(input: {
+  reservationIds?: string[];
+  query?: string;
+}) {
+  const selectedIds = input.reservationIds?.slice(0, MAX_BULK_CONFIRMATIONS);
+  const selectedMode = Boolean(selectedIds?.length);
+  const searchFilter = bulkConfirmationSearchFilter(input.query);
+  const baseWhere: Prisma.ReservationWhereInput = selectedMode
+    ? { id: { in: selectedIds } }
+    : { AND: [{ status: "PENDING" }, searchFilter] };
+  const eligibleWhere: Prisma.ReservationWhereInput = selectedMode
+    ? { AND: [{ id: { in: selectedIds } }, bulkConfirmationEligibilityFilter()] }
+    : { AND: [searchFilter, bulkConfirmationEligibilityFilter()] };
+
+  const [candidateRows, totalEligible] = await Promise.all([
+    prisma.reservation.findMany({
+      // Filtered batches must be selected from the eligible set itself. Otherwise,
+      // an old block of permanently ineligible rows could consume the page limit
+      // and starve newer reservations that are safe to confirm.
+      where: selectedMode ? baseWhere : eligibleWhere,
+      select: bulkConfirmationCandidateSelect,
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      take: selectedMode ? MAX_BULK_CONFIRMATIONS : MAX_BULK_CONFIRMATIONS + 1
+    }),
+    prisma.reservation.count({ where: eligibleWhere })
+  ]);
+  const mapped = candidateRows.map(mapBulkConfirmationCandidate);
+  const eligible = mapped.filter((candidate) => candidate.eligible).slice(0, MAX_BULK_CONFIRMATIONS);
+  const skipped = mapped.filter((candidate) => !candidate.eligible);
+  const reservationIds = eligible.map((candidate) => candidate.reservationId);
+  return {
+    scope: selectedMode ? "SELECTED" as const : "FILTERED" as const,
+    eligibleCount: reservationIds.length,
+    totalEligible,
+    skippedCount: skipped.length,
+    truncated: totalEligible > MAX_BULK_CONFIRMATIONS,
+    eligible,
+    skipped,
+    reservationIds,
+    previewToken: bulkConfirmationPreviewToken(reservationIds)
+  };
+}
+
+export async function confirmReservationsBulk(input: {
+  reservationIds: string[];
+  previewToken: string;
+  idempotencyKey: string;
+  actorId: string;
+  actorRole: AppRole;
+}) {
+  const reservationIds = Array.from(new Set(input.reservationIds));
+  if (!reservationIds.length || reservationIds.length > MAX_BULK_CONFIRMATIONS) {
+    throw new HttpError(400, `Choose from 1 to ${MAX_BULK_CONFIRMATIONS} reservations.`, "BULK_CONFIRMATION_SIZE_INVALID");
+  }
+  const expectedToken = bulkConfirmationPreviewToken(reservationIds);
+  if (input.previewToken !== expectedToken) {
+    throw new HttpError(409, "The bulk-confirmation preview changed. Review the current eligible reservations and try again.", "BULK_CONFIRMATION_PREVIEW_CHANGED");
+  }
+
+  const existing = await prisma.reservationBulkAction.findUnique({
+    where: { actorId_idempotencyKey: { actorId: input.actorId, idempotencyKey: input.idempotencyKey } }
+  });
+  if (existing && existing.requestHash !== expectedToken) {
+    throw new HttpError(409, "This bulk request key was already used for a different set of reservations.", "BULK_CONFIRMATION_KEY_REUSED");
+  }
+  if (existing?.result) return { ...(existing.result as Record<string, unknown>), idempotentReplay: true };
+  if (existing) {
+    throw new HttpError(409, "This bulk confirmation is already being processed. Refresh the queue in a moment.", "BULK_CONFIRMATION_IN_PROGRESS");
+  }
+  if (!existing) {
+    try {
+      await prisma.reservationBulkAction.create({
+        data: { actorId: input.actorId, idempotencyKey: input.idempotencyKey, requestHash: expectedToken }
+      });
+    } catch (error) {
+      if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== "P2002") throw error;
+      const raced = await prisma.reservationBulkAction.findUnique({
+        where: { actorId_idempotencyKey: { actorId: input.actorId, idempotencyKey: input.idempotencyKey } }
+      });
+      if (raced?.requestHash !== expectedToken) {
+        throw new HttpError(409, "This bulk request key was already used for a different set of reservations.", "BULK_CONFIRMATION_KEY_REUSED");
+      }
+      if (raced.result) return { ...(raced.result as Record<string, unknown>), idempotentReplay: true };
+      throw new HttpError(409, "This bulk confirmation is already being processed. Refresh the queue in a moment.", "BULK_CONFIRMATION_IN_PROGRESS");
+    }
+  }
+
+  const confirmed: Array<{ reservationId: string; referenceCode: string }> = [];
+  const skipped: Array<{ reservationId: string; reason: string }> = [];
+  for (const reservationId of reservationIds) {
+    try {
+      const result = await updateReservationStatus(
+        reservationId,
+        "CONFIRMED",
+        input.actorId,
+        input.actorRole,
+        undefined,
+        { requireBulkEligible: true }
+      );
+      confirmed.push({ reservationId, referenceCode: result.reservation.referenceCode });
+    } catch (error) {
+      skipped.push({
+        reservationId,
+        reason: error instanceof HttpError ? error.message : "Reservation could not be confirmed."
+      });
+    }
+  }
+  const result = {
+    confirmedCount: confirmed.length,
+    skippedCount: skipped.length,
+    confirmed,
+    skipped
+  };
+  await prisma.reservationBulkAction.updateMany({
+    where: { actorId: input.actorId, idempotencyKey: input.idempotencyKey, requestHash: expectedToken, result: { equals: Prisma.DbNull } },
+    data: { result, updatedAt: new Date() }
+  });
+  return { ...result, idempotentReplay: false };
 }
 
 export async function getReservation(userId: string, role: AppRole, reservationId: string) {
@@ -566,7 +848,9 @@ export async function getReservation(userId: string, role: AppRole, reservationI
     relationLoadStrategy: "join"
   });
   if (!reservation) throw new HttpError(404, "Reservation not found.");
-  return mapPrismaReservation(reservation);
+  const mapped = mapPrismaReservation(reservation);
+  if (role !== "STUDENT") return mapped;
+  return (await attachConfirmationQueue([mapped]))[0]!;
 }
 
 async function loadReservationCommandResult(reservationId: string) {
@@ -592,7 +876,7 @@ function assertIdempotencyPayloadMatches(existingHash: string, requestHash: stri
 export async function createReservation(input: {
   studentId: string;
   idempotencyKey: string;
-  paymentMethod: PaymentMethod;
+  preferredCollectionChannel: CollectionChannel;
   pickupDate: string;
   pickupSlotId: string;
   pickupPolicyVersion: number;
@@ -604,10 +888,6 @@ export async function createReservation(input: {
     quantity: number;
   }>;
 }) {
-  if (input.paymentMethod === "PAYMONGO_GCASH" && !env.PAYMONGO_ENABLED) {
-    throw new HttpError(503, "Online GCash payment is not available.", "PAYMONGO_DISABLED");
-  }
-
   const policyVersion = assertCurrentCheckoutPolicyAcceptance(input.policyAcceptance);
   const requestHash = hashReservationRequest({
     ...input,
@@ -669,6 +949,19 @@ export async function createReservation(input: {
           select: { id: true }
         });
 
+        if (env.REQUIRE_STUDENT_ONBOARDING) {
+          const studentProfile = await tx.profile.findUnique({
+            where: { id: input.studentId },
+            select: { departmentId: true, studentNumber: true, onboardingCompletedAt: true }
+          });
+          if (!studentProfile?.departmentId || !studentProfile.studentNumber?.trim() || !studentProfile.onboardingCompletedAt) {
+            throw new HttpError(
+              409,
+              "Complete your Department and Student ID before making a reservation.",
+              "STUDENT_PROFILE_INCOMPLETE"
+            );
+          }
+        }
         await assertReservationAccessInTransaction(tx, input.studentId);
         const pickup = await validatePickupSelectionInTransaction(tx, input);
 
@@ -686,7 +979,7 @@ export async function createReservation(input: {
             isActive: true,
             saleMode: true,
             skuInventoryEnabled: true,
-            category: { select: { name: true, slug: true, iconUrl: true } }
+            category: { select: { id: true, name: true, slug: true, iconUrl: true } }
           },
           relationLoadStrategy: "join"
         });
@@ -717,8 +1010,10 @@ export async function createReservation(input: {
               select: {
                 id: true,
                 productId: true,
+                code: true,
                 stock: true,
                 lowStockThreshold: true,
+                optionSnapshot: true,
                 optionValues: { select: { variantId: true } }
               },
               relationLoadStrategy: "join"
@@ -776,7 +1071,8 @@ export async function createReservation(input: {
           data: {
             studentId: input.studentId,
             referenceCode,
-            paymentMethod: input.paymentMethod,
+            paymentMethod: "PAY_AT_COMMISSARY",
+            preferredCollectionChannel: input.preferredCollectionChannel,
             pickupStart: pickup.pickupStart,
             pickupEnd: pickup.pickupEnd,
             pickupPolicyVersionId: pickup.policy.id,
@@ -796,6 +1092,7 @@ export async function createReservation(input: {
             pickupReviewReason: true,
             scheduleRevision: true,
             paymentMethod: true,
+            preferredCollectionChannel: true,
             totalAmount: true,
             createdAt: true,
             updatedAt: true
@@ -806,10 +1103,16 @@ export async function createReservation(input: {
           data: input.items.map((item, itemIndex) => {
             const product = products.find((entry) => entry.id === item.productId)!;
             const unitPrice = Number(product.price ?? 0);
+            const selectedSku = productSkus.find((sku) => sku.id === itemSkuIds.get(itemIndex));
             return {
               reservationId: reservation.id,
               productId: item.productId,
               skuId: itemSkuIds.get(itemIndex) ?? null,
+              productNameSnapshot: product.name,
+              categoryIdSnapshot: product.category.id,
+              categoryNameSnapshot: product.category.name,
+              skuCodeSnapshot: selectedSku?.code ?? null,
+              optionSnapshot: (selectedSku?.optionSnapshot ?? []) as Prisma.InputJsonValue,
               variantSummary: product.saleMode === "OPTIONS"
                 ? item.variantSummary ?? null
                 : nonOptionReservationSummary(item.variantSummary),
@@ -823,6 +1126,9 @@ export async function createReservation(input: {
             reservationId: true,
             productId: true,
             skuId: true,
+            productNameSnapshot: true,
+            skuCodeSnapshot: true,
+            optionSnapshot: true,
             variantSummary: true,
             quantity: true,
             unitPrice: true,
@@ -991,6 +1297,7 @@ export async function createReservation(input: {
               itemCount: createdItems.reduce((sum, item) => sum + item.quantity, 0),
               totalAmount,
               paymentMethod: reservation.paymentMethod,
+              preferredCollectionChannel: reservation.preferredCollectionChannel,
               checkoutPolicyVersion: policyVersion,
               idempotencyKey: input.idempotencyKey,
               lowStockAlerts
@@ -1034,6 +1341,7 @@ export async function createReservation(input: {
           pickupPolicyVersion: pickup.policy.version,
           pickupSlot: pickup.slot,
           paymentMethod: reservation.paymentMethod,
+          preferredCollectionChannel: reservation.preferredCollectionChannel,
           totalAmount: reservation.totalAmount.toString(),
           staffNotes: null,
           createdAt: reservation.createdAt.toISOString(),
@@ -1047,6 +1355,9 @@ export async function createReservation(input: {
               id: item.id,
               reservationId: item.reservationId,
               productId: item.productId,
+              productNameSnapshot: item.productNameSnapshot,
+              skuCodeSnapshot: item.skuCodeSnapshot,
+              optionSnapshot: item.optionSnapshot,
               variantSummary: item.variantSummary,
               quantity: item.quantity,
               unitPrice: item.unitPrice.toString(),
@@ -1054,7 +1365,7 @@ export async function createReservation(input: {
               createdAt: item.createdAt.toISOString(),
               product: {
                 id: product.id,
-                name: product.name,
+                name: item.productNameSnapshot,
                 description: product.description,
                 imageUrl: product.imageUrl,
                 price: product.price.toString(),
@@ -1120,7 +1431,6 @@ export async function createReservation(input: {
       throw error;
     });
 
-  if (!transactionResult.idempotentReplay) wakeRealtimeBroker();
   return transactionResult;
 }
 
@@ -1128,7 +1438,13 @@ export async function updateReservationStatus(
   reservationId: string,
   status: ReservationStatus,
   performedById?: string,
-  actorRole?: AppRole
+  actorRole?: AppRole,
+  settlement?: {
+    paymentMethod: "CASH";
+    collectionChannel: CollectionChannel;
+    officialReceiptNumber?: string | null;
+  },
+  requirements?: { requireBulkEligible?: boolean }
 ) {
   const result = await withReservationSerializationRetry(() => prisma.$transaction(
       async (tx) => {
@@ -1139,6 +1455,7 @@ export async function updateReservationStatus(
             studentId: true,
             referenceCode: true,
             status: true,
+            pickupReviewStatus: true,
             paymentMethod: true,
             totalAmount: true,
             pickupEnd: true,
@@ -1146,6 +1463,7 @@ export async function updateReservationStatus(
               select: {
                 id: true,
                 status: true,
+                paidAt: true,
                 attempts: {
                   where: { status: { in: ["CREATING", "CREATE_UNKNOWN", "ACTIVE", "EXPIRY_REQUESTED"] } },
                   select: { id: true }
@@ -1154,6 +1472,7 @@ export async function updateReservationStatus(
             },
             items: {
               select: {
+                id: true,
                 productId: true,
                 skuId: true,
                 variantSummary: true,
@@ -1165,6 +1484,18 @@ export async function updateReservationStatus(
         });
 
         if (!existingReservation) throw new HttpError(404, "Reservation not found.");
+
+        if (requirements?.requireBulkEligible) {
+          const reason = bulkConfirmationBlockReason({
+            status: existingReservation.status as ReservationStatus,
+            pickupReviewStatus: existingReservation.pickupReviewStatus,
+            paymentMethod: existingReservation.paymentMethod as PaymentMethod,
+            paymentStatus: existingReservation.onlinePayment?.status as OnlinePaymentStatus | undefined
+          });
+          if (reason) {
+            throw new HttpError(409, bulkConfirmationReasonLabel(reason), `BULK_CONFIRMATION_${reason}`);
+          }
+        }
 
         if (actorRole === "STUDENT") {
           if (!performedById) throw new HttpError(401, "Authentication is required.");
@@ -1207,6 +1538,32 @@ export async function updateReservationStatus(
         }
 
         const statusChanged = existingReservation.status !== status;
+        const completesSale = statusChanged && status === "COMPLETED";
+        const completionPayment = completesSale
+          ? existingReservation.paymentMethod === "PAYMONGO_GCASH"
+            ? {
+                paymentMethod: "GCASH" as const,
+                collectionChannel: "COMMISSARY" as const,
+                officialReceiptNumber: null,
+                paidAt: existingReservation.onlinePayment?.paidAt ?? new Date()
+              }
+            : settlement
+              ? {
+                  ...settlement,
+                  officialReceiptNumber: settlement.officialReceiptNumber?.trim() || null,
+                  paidAt: new Date()
+                }
+              : null
+          : null;
+        if (completesSale && !completionPayment) {
+          throw new HttpError(400, "Payment details are required before releasing this order.", "PAYMENT_DETAILS_REQUIRED");
+        }
+        if (
+          completionPayment?.collectionChannel === "TREASURER"
+          && !completionPayment.officialReceiptNumber
+        ) {
+          throw new HttpError(400, "Treasury official receipt number is required.", "TREASURER_OR_REQUIRED");
+        }
         const releasesHeldStock = statusChanged && (status === "CANCELLED" || status === "NO_SHOW");
         const releaseMovementType = status === "NO_SHOW" ? "RESERVATION_NO_SHOW" : "RESERVATION_CANCEL";
         const releaseNote = status === "NO_SHOW" ? "released after confirmed no-show" : "cancelled";
@@ -1238,10 +1595,31 @@ export async function updateReservationStatus(
           where: { id: reservationId },
           data: {
             status: status as PrismaReservationStatus,
+            ...(completesSale ? { completedAt: new Date() } : {}),
             updatedAt: new Date()
           },
           select: { id: true }
         });
+
+        if (completesSale && completionPayment) {
+          await allocateFifoCostsInTransaction(tx, existingReservation.items.map((item) => ({
+            id: item.id,
+            productId: item.productId,
+            skuId: item.skuId,
+            quantity: item.quantity
+          })));
+          await tx.payment.create({
+            data: {
+              reservationId: existingReservation.id,
+              amount: existingReservation.totalAmount,
+              paymentMethod: completionPayment.paymentMethod,
+              collectionChannel: completionPayment.collectionChannel,
+              officialReceiptNumber: completionPayment.officialReceiptNumber,
+              paidAt: completionPayment.paidAt,
+              verifiedById: performedById!
+            }
+          });
+        }
 
         if (releasesHeldStock) {
           const releasedQuantityByProduct = existingReservation.items.reduce((map, item) => {
@@ -1498,7 +1876,7 @@ export async function updateReservationStatus(
               studentId: existingReservation.studentId,
               referenceCode: existingReservation.referenceCode,
               status: "COMPLETED",
-              paymentMethod: existingReservation.paymentMethod as PaymentMethod,
+              paymentMethod: (completionPayment?.paymentMethod ?? existingReservation.paymentMethod) as PaymentMethod,
               totalAmount: existingReservation.totalAmount
             },
             issuedById: performedById!
@@ -1595,6 +1973,13 @@ export async function updateReservationStatus(
     .catch((error) => {
       if (error instanceof HttpError) throw error;
       if (
+        error instanceof Prisma.PrismaClientKnownRequestError
+        && error.code === "P2002"
+        && JSON.stringify(error.meta?.target ?? "").includes("official_receipt_number")
+      ) {
+        throw new HttpError(409, "That Treasury OR number is already recorded on another payment.", "TREASURER_OR_DUPLICATE");
+      }
+      if (
         error instanceof Prisma.PrismaClientKnownRequestError &&
         (error.code === "P2002" || error.code === "P2034")
       ) {
@@ -1608,7 +1993,6 @@ export async function updateReservationStatus(
       throw error;
     });
 
-  if (result.previousStatus !== result.nextStatus || result.receiptCreated) wakeRealtimeBroker();
 
   if (result.paymentCleanupAttemptIds.length) {
     await Promise.allSettled(

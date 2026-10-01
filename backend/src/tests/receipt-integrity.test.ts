@@ -29,11 +29,24 @@ test("completion creates or repairs its receipt inside the serializable reservat
   const outbox = source("src/services/outbox.service.ts");
 
   assert.match(reservations, /prisma\.\$transaction\([\s\S]*ensureReceiptForCompletedReservationInTransaction\(tx/);
+  assert.doesNotMatch(reservations, /verified:\s*true/);
   assert.doesNotMatch(reservations, /createReceiptForReservation/);
   assert.match(receipts, /tx\.receipt\.upsert\([\s\S]*where: \{ reservationId: input\.reservation\.id \}/);
+  assert.match(receipts, /status:\s*"PENDING"/);
+  assert.doesNotMatch(receipts, /status:\s*input\.verified/);
   assert.match(receipts, /type: OUTBOX_EVENT_TYPES\.receiptCreated/);
   assert.match(outbox, /receiptCreated: "RECEIPT_CREATED"/);
   assert.match(outbox, /processReceiptCreated/);
+});
+
+test("receipt integrity audit validates the finalized payment instead of the reservation payment intent", () => {
+  const audit = source("scripts/audit-receipt-invariants.mjs");
+
+  assert.match(audit, /LEFT JOIN "payments" payment ON payment\."reservation_id" = reservation\."id"/);
+  assert.match(audit, /receipt\."payment_method" IS DISTINCT FROM payment\."payment_method"/);
+  assert.match(audit, /payment\."amount" IS DISTINCT FROM reservation\."total_amount"/);
+  assert.match(audit, /completedWithoutPayment/);
+  assert.doesNotMatch(audit, /receipt\."payment_method" IS DISTINCT FROM reservation\."payment_method"/);
 });
 
 test("the unsafe generic manual receipt endpoint and client-owned receipt fields are removed", () => {

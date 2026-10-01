@@ -98,7 +98,7 @@ test("conversation retention is Admin-only, recoverable for 90 days, and purge i
   assert.match(migration, /conversation_purge_records ENABLE ROW LEVEL SECURITY/);
   assert.match(migration, /REVOKE ALL PRIVILEGES ON TABLE public\.conversation_purge_records FROM PUBLIC/);
   assert.doesNotMatch(migration, /"subject"|"student_id"|"message" TEXT/);
-  assert.match(adminUi, /isAdmin \? <button[\s\S]*setConversationView\("DELETED"\)/);
+  assert.match(adminUi, /isAdmin \? <button[\s\S]*changeConversationView\("DELETED"\)/);
   assert.match(adminUi, /purgePhrase !== purgeDialog\.preview\.confirmationPhrase/);
   assert.match(adminUi, /useAccessibleDialog<HTMLElement>/);
 });

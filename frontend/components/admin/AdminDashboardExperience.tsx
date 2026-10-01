@@ -14,7 +14,6 @@ import {
   formatNumber,
   useAdminSummary
 } from "@/components/admin/AdminExperienceShared";
-import { useAdminWesbotUsage } from "@/components/admin/useAdminWesbotUsage";
 
 const AdminSummaryCharts = dynamic(
   () => import("@/components/admin/AdminCharts").then((module) => module.AdminSummaryCharts),
@@ -23,7 +22,6 @@ const AdminSummaryCharts = dynamic(
 
 export function AdminDashboardExperience() {
   const { user, ready, openAuth, summary, loading, initialLoadComplete, error, reload } = useAdminSummary();
-  const { usage: wesbotUsage, loading: wesbotLoading, reload: reloadWesbotUsage } = useAdminWesbotUsage();
   const accessState = <AdminAccessState ready={ready} user={user} openAuth={openAuth} />;
   if (!ready || !user || user.role !== "ADMIN") return accessState;
 
@@ -46,7 +44,7 @@ export function AdminDashboardExperience() {
         eyebrow="Admin dashboard"
         title="Commissary monitoring and decisions"
         detail="Track current sales, users, stock risk, reservations, receipts, and support activity in WESCOMM."
-        action={<Button variant="secondary" onClick={() => void Promise.all([reload(), reloadWesbotUsage()])} disabled={loading || wesbotLoading}><RefreshCw className="size-4" /> Refresh</Button>}
+        action={<Button variant="secondary" onClick={() => void reload()} disabled={loading}><RefreshCw className="size-4" /> Refresh</Button>}
       />
       {error ? <p className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p> : null}
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -61,12 +59,14 @@ export function AdminDashboardExperience() {
         <AdminStatCard title="Receipts to Verify" value={formatNumber(summary.receiptsToVerify)} detail="Pending staff/admin verification" iconSrc="/assets/scan-receipt.svg" href="/admin/receipt-verification" />
         <AdminStatCard title="Open Messages" value={formatNumber(summary.activeConversations)} detail="Student support conversations" iconSrc="/assets/messages.svg" href="/admin/messages" />
         <AdminStatCard
-          title="WesBot AI Budget"
-          value={wesbotUsage ? `$${wesbotUsage.estimatedSpendUsd.toFixed(2)} / $${wesbotUsage.budgetUsd.toFixed(2)}` : "Loading..."}
-          detail={wesbotUsage ? `${formatNumber(wesbotUsage.successfulCalls)} AI calls · ${wesbotUsage.budgetHealth.toLowerCase()}` : "Preparing privacy-safe usage data"}
-          iconSrc="/assets/chat-with-wesbot.svg"
-          tone={wesbotUsage && wesbotUsage.budgetPercent >= 90 ? "red" : wesbotUsage && wesbotUsage.budgetPercent >= 80 ? "yellow" : "green"}
-          href="/admin/wesbot-usage"
+          title="Records to Review"
+          value={formatNumber(summary.reconciliation.exceptionCount)}
+          detail={summary.reconciliation.exceptionCount
+            ? `${formatCurrency(summary.reconciliation.amountAtRisk)} needs reconciliation`
+            : "Cash and operational records are aligned"}
+          iconSrc="/assets/verified.svg"
+          tone={summary.reconciliation.exceptionCount ? "yellow" : "green"}
+          href="/admin/reports#report-reconciliation"
         />
       </section>
 

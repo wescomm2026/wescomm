@@ -45,8 +45,8 @@ export default function TermsPage() {
         <LegalList>
           <li>Select the correct item, quantity, variant, and pickup schedule before confirming.</li>
           <li>Monitor the reservation status and notifications for confirmation and pickup instructions.</li>
-          <li>Students may directly cancel only their own pending reservation when no confirmed GCash payment or refund issue requires review.</li>
-          <li>After confirmation, or when a pending reservation already has a confirmed online GCash payment, cancellation must be handled by authorized staff or an administrator under the refund rules.</li>
+          <li>Students may directly cancel only their own pending reservation when no confirmed historical online payment or refund issue requires review.</li>
+          <li>After confirmation, or when a pending reservation already has a confirmed historical online GCash payment, cancellation must be handled by authorized staff or an administrator under the refund rules.</li>
           <li>Bring any identification or transaction reference reasonably required for release.</li>
           <li>A reservation may be marked as a no-show only after its pickup window and the current 24-hour grace period have passed.</li>
           <li>Repeated confirmed no-shows may result in warnings or temporary reservation restrictions.</li>
@@ -55,12 +55,12 @@ export default function TermsPage() {
 
       <LegalSection title="5. Payments">
         <p>
-          WESCOMM may offer payment at pickup and online GCash through PayMongo. The payment options presented at checkout depend on service availability and the reservation.
+          WESCOMM accepts cash only for new reservations. Students may choose to pay at the Commissary or the Treasury. GCash, e-wallet, and online payments are not accepted for new reservations; historical online GCash records remain readable for receipts, refunds, reports, and audit.
         </p>
         <LegalList>
-          <li>Review the final amount before leaving WESCOMM for the PayMongo-hosted checkout page.</li>
-          <li>A browser redirect, screenshot, or success message alone is not proof of payment.</li>
-          <li>An online payment is confirmed only after WESCOMM receives and validates confirmation from the payment service.</li>
+          <li>Review the final amount before confirming your reservation.</li>
+          <li>Payment is recorded after authorized staff verifies the cash payment and issues or updates the official receipt.</li>
+          <li>For historical online payments, confirmation was recorded only after WESCOMM received and validated confirmation from the payment service.</li>
           <li>Do not pay again while a transaction is shown as processing or under review. Contact Support first.</li>
         </LegalList>
         <LegalNote>

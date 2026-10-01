@@ -20,6 +20,7 @@ import { type ProductSaleMode, type StaffProduct } from "@/lib/staff-api";
 import { resolveShopProductAsset } from "@/lib/shop-assets";
 import { cn } from "@/lib/utils";
 import { paymentMethodLabel } from "@/lib/payment-method";
+import { type CollectionChannel } from "@/lib/collection-channel";
 
 export function mergeUniqueById<T extends { id: string }>(items: T[]) {
   const byId = new Map<string, T>();
@@ -37,17 +38,24 @@ export type Product = {
   imageUrl: string;
   imageStoragePath: string | null;
   stock: number;
+  stockTarget: number;
+  lowStockPercent: number;
   minimum: number;
   price: number;
   oldPrice: number | null;
+  isOnSale: boolean;
   status: string;
   saleMode: ProductSaleMode;
+  audienceScope: "ALL_STUDENTS" | "SPECIFIC_DEPARTMENTS";
+  targetDepartments: Array<{ id: string; code: string; displayName: string }>;
   skuInventoryEnabled: boolean;
   inventoryReconciledAt: string | null;
   skus: Array<{
     id: string;
     code?: string | null;
     stock: number;
+    stockTarget: number;
+    lowStockPercent: number;
     lowStockThreshold: number;
     variantIds: string[];
     options: Array<{ optionName: string; optionValue: string }>;
@@ -57,6 +65,8 @@ export type Product = {
     optionName: string;
     optionValue: string;
     stock: number;
+    stockTarget: number;
+    lowStockPercent: number;
     lowStockThreshold: number;
   }>;
 };
@@ -73,7 +83,7 @@ export type SizeVariantDraft = {
   lowStockThreshold: string;
 };
 
-export type ManageSection = "menu" | "details" | "image" | "selling" | "sizes" | "options";
+export type ManageSection = "menu" | "details" | "image" | "selling" | "audience" | "sizes" | "options";
 
 export function variantDraftKey(value: string) {
   return `${value.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${Math.random().toString(36).slice(2, 8)}`;
@@ -112,9 +122,11 @@ export type StaffReservationRow = {
   reference: string;
   student: string;
   item: string;
+  itemDetails: string;
   quantity: number;
   pickup: string;
   payment: string;
+  preferredCollectionChannel: CollectionChannel;
   onlineGcash: boolean;
   paymentStatus: string;
   paymentConfirmed: boolean;
@@ -151,7 +163,6 @@ export function numericValue(value: StaffProduct["price"]) {
 
 export function staffStatusLabel(product: StaffProduct) {
   if (product.status === "OUT_OF_STOCK") return "Out of Stock";
-  if (product.isOnSale) return "On Sale";
   if (product.status === "RESTOCK_SOON" || product.stock <= product.lowStockThreshold) return "Needs Restock";
   return "Available";
 }
@@ -184,26 +195,35 @@ export function mapStaffProduct(product: StaffProduct): Product {
     imageUrl: asset.image,
     imageStoragePath: product.imageStoragePath ?? null,
     stock: product.stock,
+    stockTarget: product.stockTarget ?? product.stock,
+    lowStockPercent: product.lowStockPercent ?? 25,
     minimum: product.lowStockThreshold,
     price: numericValue(product.price),
     oldPrice: product.oldPrice === null || product.oldPrice === undefined ? null : numericValue(product.oldPrice),
+    isOnSale: Boolean(product.isOnSale),
     status: staffStatusLabel(product),
     saleMode: product.saleMode ?? "SIMPLE",
+    audienceScope: product.audienceScope ?? "ALL_STUDENTS",
+    targetDepartments: product.targetDepartments ?? [],
     skuInventoryEnabled: Boolean(product.skuInventoryEnabled),
     inventoryReconciledAt: product.inventoryReconciledAt ?? null,
-    skus: (product.skus ?? []).map((sku) => ({
+    skus: (product.skus ?? []).flatMap((sku) => sku.id ? [{
       id: sku.id,
       code: sku.code,
       stock: sku.stock,
+      stockTarget: sku.stockTarget ?? sku.stock,
+      lowStockPercent: sku.lowStockPercent ?? product.lowStockPercent ?? 25,
       lowStockThreshold: sku.lowStockThreshold,
       variantIds: sku.variantIds ?? [],
       options: sku.options ?? []
-    })),
+    }] : []),
     variants: (product.variants ?? []).flatMap((variant) => variant.id ? [{
       id: variant.id,
       optionName: variant.optionName,
       optionValue: variant.optionValue,
       stock: variant.stock,
+      stockTarget: variant.stockTarget ?? variant.stock,
+      lowStockPercent: variant.lowStockPercent ?? product.lowStockPercent ?? 25,
       lowStockThreshold: variant.lowStockThreshold
     }] : []).sort((left, right) => {
       if (left.optionName.toLowerCase() !== right.optionName.toLowerCase()) return left.optionName.localeCompare(right.optionName);
@@ -282,12 +302,16 @@ export function reservationMatchesStaffSearch(row: BackendReservation, value: st
     row.referenceCode,
     row.student?.fullName,
     row.student?.email,
-    row.student?.studentNumber
+    row.student?.studentNumber,
+    ...row.items.flatMap((item) => [item.product?.name, item.variantSummary])
   ].some((candidate) => candidate?.toLowerCase().includes(query));
 }
 
 export function mapStaffReservation(row: BackendReservation): StaffReservationRow {
   const items = row.items.map((item) => item.product?.name ?? "Campus Item");
+  const itemDetails = row.items
+    .map((item) => [item.product?.name ?? "Campus Item", item.variantSummary].filter(Boolean).join(" — "))
+    .join("; ");
   const quantity = row.items.reduce((total, item) => total + item.quantity, 0);
 
   return {
@@ -295,9 +319,11 @@ export function mapStaffReservation(row: BackendReservation): StaffReservationRo
     reference: row.referenceCode,
     student: row.student?.fullName || row.student?.email || "Student",
     item: items.length > 1 ? `${items[0]} + ${items.length - 1} more` : items[0] ?? "Campus Item",
+    itemDetails,
     quantity,
     pickup: formatStaffPickup(row.pickupStart, row.pickupEnd),
     payment: formatPaymentMethod(row.paymentMethod),
+    preferredCollectionChannel: row.preferredCollectionChannel ?? "COMMISSARY",
     onlineGcash: row.paymentMethod === "PAYMONGO_GCASH",
     paymentStatus: formatOnlinePaymentStatus(row.payment?.status),
     paymentConfirmed: row.paymentMethod !== "PAYMONGO_GCASH" || row.payment?.status === "PAID",
@@ -357,7 +383,7 @@ export function mapStaffReceipt(row: BackendReceipt): StaffReceiptRow {
     total: Number(row.totalAmount),
     status: formatStaffReceiptStatus(row.status),
     backendStatus: row.status,
-    verifiedBy: row.issuedBy?.fullName ?? "",
+    verifiedBy: row.status === "VERIFIED" ? row.issuedBy?.fullName ?? "" : "",
     receipt: row
   };
 }

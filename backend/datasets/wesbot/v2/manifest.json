@@ -9,7 +9,7 @@
   "semanticHoldoutExamples": 45,
   "multiturnExamples": 21,
   "clarificationExamples": 15,
-  "faqDrafts": 26,
+  "faqDrafts": 27,
   "productAliasEntries": 38,
   "notes": [
     "The upstream SQL seed is intentionally excluded and must never be executed directly.",

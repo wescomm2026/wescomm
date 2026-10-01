@@ -4,7 +4,7 @@ import { userFacingErrorMessage } from "@/lib/user-facing-error";
 
 import Link from "next/link";
 import { useCallback, useDeferredValue, useEffect, useRef, useState } from "react";
-import { Ban, CalendarClock, X } from "lucide-react";
+import { Ban, CalendarClock, CheckCheck, CircleDollarSign, X } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import { useRealtimeRefresh } from "@/components/realtime/RealtimeProvider";
 import { ActionLoadingOverlay } from "@/components/ui/ActionLoadingOverlay";
@@ -16,11 +16,15 @@ import { useAccessibleDialog } from "@/components/ui/useAccessibleDialog";
 import {
   getReservationFromApi,
   getReservationPageFromApi,
+  confirmReservationsBulkFromApi,
+  previewBulkReservationConfirmationFromApi,
   updateReservationStatusFromApi,
   rescheduleReservationFromApi,
   type BackendReservationStatus
 } from "@/lib/api";
 import { getStoredStaffSession } from "@/lib/staff-api";
+import { manilaDateKey } from "@/lib/manila-date";
+import { COLLECTION_CHANNEL_LABELS, type CollectionChannel } from "@/lib/collection-channel";
 import {
   mergeUniqueById,
   StaffReservationRow,
@@ -38,17 +42,25 @@ export function StaffReservationsExperience() {
   const confirm = useConfirmationDialog();
   const [rows, setRows] = useState<StaffReservationRow[]>([]);
   const [search, setSearch] = useState("");
-  const [status, setStatus] = useState("All");
+  // This is an operations queue: surface the actionable pending work first.
+  const [status, setStatus] = useState("Pending");
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [submittingId, setSubmittingId] = useState("");
+  const [bulkSubmitting, setBulkSubmitting] = useState(false);
+  const [selectedPendingIds, setSelectedPendingIds] = useState<Set<string>>(() => new Set());
   const [rescheduleRow, setRescheduleRow] = useState<StaffReservationRow | null>(null);
   const [pickupSelection, setPickupSelection] = useState<PickupSelection | null>(null);
   const [rescheduleReason, setRescheduleReason] = useState("");
+  const [completionRow, setCompletionRow] = useState<StaffReservationRow | null>(null);
+  const [collectionChannel, setCollectionChannel] = useState<CollectionChannel>("COMMISSARY");
+  const [completionPaymentMethod] = useState<"CASH">("CASH");
+  const [officialReceiptNumber, setOfficialReceiptNumber] = useState("");
   const rescheduleDialog = useAccessibleDialog<HTMLElement>(Boolean(rescheduleRow), () => setRescheduleRow(null));
+  const completionDialog = useAccessibleDialog<HTMLFormElement>(Boolean(completionRow), () => setCompletionRow(null));
   const deferredSearch = useDeferredValue(search);
   const requestSequenceRef = useRef(0);
   const requestAbortRef = useRef<AbortController | null>(null);
@@ -161,7 +173,46 @@ export function StaffReservationsExperience() {
 
   const filtered = rows;
 
-  const updateStatus = async (row: StaffReservationRow, nextStatus: BackendReservationStatus) => {
+  const confirmBulk = async (reservationIds?: string[]) => {
+    const session = getStoredStaffSession();
+    if (!session.token || bulkSubmitting) return;
+    setBulkSubmitting(true);
+    setError("");
+    try {
+      const preview = await previewBulkReservationConfirmationFromApi(session.token, {
+        ...(reservationIds?.length ? { reservationIds } : {}),
+        ...(!reservationIds?.length && search.trim() ? { query: search.trim() } : {})
+      });
+      if (!preview.eligibleCount) {
+        setNotice(preview.skippedCount
+          ? "No selected reservation is eligible for bulk confirmation. Review the schedule or payment notes."
+          : "There are no eligible pending reservations in this queue.");
+        return;
+      }
+      const accepted = await confirm({
+        title: `Confirm ${preview.eligibleCount} reservation${preview.eligibleCount === 1 ? "" : "s"}?`,
+        description: `${preview.eligibleCount} eligible pending reservation${preview.eligibleCount === 1 ? "" : "s"} will move to Confirmed, oldest first.${preview.skippedCount ? ` ${preview.skippedCount} ineligible record${preview.skippedCount === 1 ? " will" : "s will"} be skipped.` : ""}${preview.truncated ? " This batch is limited to the oldest 100; run it again for the remaining queue." : ""}`,
+        confirmLabel: "Confirm eligible reservations",
+        tone: "default"
+      });
+      if (!accepted) return;
+      const result = await confirmReservationsBulkFromApi(session.token, preview);
+      setSelectedPendingIds(new Set());
+      await loadReservations();
+      setNotice(`${result.confirmedCount} reservation${result.confirmedCount === 1 ? "" : "s"} confirmed.${result.skippedCount ? ` ${result.skippedCount} changed or needed review and were skipped.` : ""}`);
+    } catch (bulkError) {
+      setError(userFacingErrorMessage(bulkError, "Unable to confirm the pending reservations."));
+    } finally {
+      setBulkSubmitting(false);
+    }
+  };
+
+  const updateStatus = async (
+    row: StaffReservationRow,
+    nextStatus: BackendReservationStatus,
+    settlement?: { paymentMethod: "CASH"; collectionChannel: "COMMISSARY" | "TREASURER"; officialReceiptNumber?: string },
+    skipConfirmation = false
+  ) => {
     const session = getStoredStaffSession();
     if (!session.token) return;
 
@@ -192,24 +243,54 @@ export function StaffReservationsExperience() {
               confirmLabel: "Confirm reservation",
               tone: "default" as const
             };
-    const confirmed = await confirm(confirmation);
+    const confirmed = skipConfirmation || await confirm(confirmation);
     if (!confirmed) return;
 
     setSubmittingId(row.id);
     setError("");
 
     try {
-      const result = await updateReservationStatusFromApi(session.token, row.id, nextStatus);
+      const result = await updateReservationStatusFromApi(session.token, row.id, nextStatus, settlement);
       const mappedReservation = mapStaffReservation(result.reservation);
-      setRows((current) => current.map((item) => item.id === row.id ? mappedReservation : item));
+      const activeStatus = backendReservationStatusFilter(status);
+      const shouldRemainVisible = (!activeStatus || mappedReservation.backendStatus === activeStatus)
+        && reservationMatchesStaffSearch(result.reservation, deferredSearch);
+      setRows((current) => shouldRemainVisible
+        ? current.map((item) => item.id === row.id ? mappedReservation : item)
+        : current.filter((item) => item.id !== row.id));
+      setCompletionRow(null);
       setNotice(result.receipt
-        ? `${row.reference} completed. Receipt ${result.receipt.receiptCode} was generated for verification.`
+        ? `${row.reference} paid and released. Receipt ${result.receipt.receiptCode} is verified and FIFO cost was saved.`
         : `${row.reference} updated to ${mappedReservation.status}.`);
     } catch (reservationError) {
       setError(userFacingErrorMessage(reservationError, "Unable to update the reservation."));
     } finally {
       setSubmittingId("");
     }
+  };
+
+  const openCompletion = (row: StaffReservationRow) => {
+    if (row.onlineGcash) {
+      void updateStatus(row, "COMPLETED");
+      return;
+    }
+    setCompletionRow(row);
+    setCollectionChannel(row.preferredCollectionChannel);
+    setOfficialReceiptNumber("");
+    setError("");
+  };
+
+  const completeWithPayment = () => {
+    if (!completionRow) return;
+    if (collectionChannel === "TREASURER" && !officialReceiptNumber.trim()) {
+      setError("Enter the Treasury official receipt number before confirming payment.");
+      return;
+    }
+    void updateStatus(completionRow, "COMPLETED", {
+      paymentMethod: completionPaymentMethod,
+      collectionChannel,
+      officialReceiptNumber: collectionChannel === "TREASURER" ? officialReceiptNumber.trim() : undefined
+    }, true);
   };
 
   const openReschedule = (row: StaffReservationRow) => {
@@ -250,40 +331,51 @@ export function StaffReservationsExperience() {
         eyebrow="Reservations"
         title="Reservation queue"
         detail="Confirm requests and prepare scheduled pickups from live student checkout data."
-        action={<Button variant="secondary" onClick={() => void loadReservations()} disabled={loading || Boolean(submittingId)}>Refresh</Button>}
+        action={<div className="flex flex-wrap gap-2"><Button variant="secondary" onClick={() => void loadReservations()} disabled={loading || Boolean(submittingId) || bulkSubmitting}>Refresh</Button>{status === "Pending" ? <Button onClick={() => void confirmBulk()} disabled={loading || bulkSubmitting}><CheckCheck className="size-4" />{bulkSubmitting ? "Checking queue..." : "Confirm all eligible"}</Button> : null}</div>}
       />
-      <Toolbar search={search} onSearch={setSearch} status={status} onStatus={setStatus} placeholder="Search reference, student, or item" statuses={["Pending", "Confirmed", "Ready for Pick-up", "Completed", "Cancelled", "No-show"]} />
+      <Toolbar search={search} onSearch={(value) => { setSearch(value); setSelectedPendingIds(new Set()); }} status={status} onStatus={(value) => { setStatus(value); setSelectedPendingIds(new Set()); }} placeholder="Search reference, student, or item" statuses={["Pending", "Confirmed", "Ready for Pick-up", "Completed", "Cancelled", "No-show"]} />
+      {status === "Pending" ? (
+        <section className="flex flex-col gap-3 rounded-lg border border-border bg-white p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between" aria-label="Bulk reservation confirmation">
+          <div><p className="text-sm font-extrabold text-foreground">Bulk confirmation</p><p className="mt-1 text-xs leading-5 text-muted-foreground">Only eligible Pending reservations are included. Schedule-review and unconfirmed historical-payment records stay untouched.</p></div>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" variant="secondary" className="h-10" onClick={() => setSelectedPendingIds(new Set(filtered.filter((row) => row.backendStatus === "PENDING" && row.pickupReviewStatus !== "NEEDS_REVIEW" && (!row.onlineGcash || row.paymentConfirmed)).map((row) => row.id)))} disabled={!filtered.length || bulkSubmitting}>Select visible eligible</Button>
+            <Button type="button" className="h-10" onClick={() => void confirmBulk(Array.from(selectedPendingIds))} disabled={!selectedPendingIds.size || bulkSubmitting}>Confirm selected ({selectedPendingIds.size})</Button>
+          </div>
+        </section>
+      ) : null}
       {error ? <p className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p> : null}
       <div className="grid gap-3">
         {loading ? (
-          <div className="rounded-lg border border-[#dce5dd] bg-white p-6 text-sm font-semibold text-[#68746d] shadow-sm">Loading live reservations...</div>
+          <div className="rounded-lg border border-border bg-white p-6 text-sm font-semibold text-muted-foreground shadow-sm">Loading live reservations...</div>
         ) : filtered.length ? filtered.map((row) => {
           const nextStatus = getNextReservationStatus(row.backendStatus);
           const paymentBlocksProgress = row.onlineGcash && !row.paymentConfirmed;
           const noShowEligible = row.backendStatus === "READY_FOR_PICKUP" && Boolean(row.pickupEnd) && Date.now() >= new Date(row.pickupEnd!).getTime() + 24 * 60 * 60 * 1000;
+          const bulkEligible = row.backendStatus === "PENDING" && row.pickupReviewStatus !== "NEEDS_REVIEW" && (!row.onlineGcash || row.paymentConfirmed);
           return (
-            <article key={row.id} className="content-visibility-auto relative grid gap-4 overflow-hidden rounded-lg border border-[#dce5dd] bg-white p-4 shadow-sm lg:grid-cols-[1fr_1.2fr_1.2fr_1fr_auto_auto] lg:items-center">
+            <article key={row.id} className="content-visibility-auto relative grid gap-4 overflow-hidden rounded-lg border border-border bg-white p-4 shadow-sm lg:grid-cols-[1fr_1.2fr_1.2fr_1fr_auto_auto] lg:items-center">
               <ActionLoadingOverlay
                 active={submittingId === row.id}
                 title="Updating reservation"
                 detail="We are saving the status and updating the reservation timeline."
               />
-              <div><p className="font-extrabold">{row.reference}</p><p className="text-xs text-[#68746d]">{row.student}</p></div>
-              <div><p className="text-sm font-bold">{row.item}</p><p className="text-xs text-[#68746d]">Quantity: {row.quantity}</p></div>
+              <div className="flex items-start gap-3">{status === "Pending" ? <input type="checkbox" checked={selectedPendingIds.has(row.id)} disabled={!bulkEligible || bulkSubmitting} onChange={(event) => setSelectedPendingIds((current) => { const next = new Set(current); if (event.target.checked) next.add(row.id); else next.delete(row.id); return next; })} aria-label={`Select ${row.reference} for confirmation`} className="mt-1 size-4 accent-primary" /> : null}<div><p className="font-extrabold">{row.reference}</p><p className="text-xs text-muted-foreground">{row.student}</p>{status === "Pending" && !bulkEligible ? <p className="mt-1 text-xs font-semibold text-amber-800">Bulk confirmation unavailable</p> : null}</div></div>
+              <div><p className="text-sm font-bold">{row.item}</p><p className="mt-1 text-xs leading-5 text-muted-foreground">{row.itemDetails}</p><p className="text-xs text-muted-foreground">Quantity: {row.quantity}</p></div>
               <div><p className="text-sm"><span className="font-bold text-primary">Pickup:</span> {row.pickup}</p>{row.pickupReviewStatus === "NEEDS_REVIEW" ? <p className="mt-1 text-xs font-bold text-amber-800">Needs review: {row.pickupReviewReason}</p> : null}</div>
               <div className="text-sm">
                 <p><span className="font-bold text-primary">Payment:</span> {row.payment}</p>
+                {!row.onlineGcash ? <p className="mt-1 text-xs text-muted-foreground">Plans to pay at: <span className="font-bold text-foreground">{COLLECTION_CHANNEL_LABELS[row.preferredCollectionChannel]}</span></p> : null}
                 {row.onlineGcash ? <span className="mt-1 inline-flex"><StatusBadge status={row.paymentStatus} /></span> : null}
-                <span className="mt-1 block font-extrabold text-[#17211b]">PHP {row.total.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                <span className="mt-1 block font-extrabold text-foreground">PHP {row.total.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
               <StatusBadge status={row.status} />
               <div className="flex flex-wrap gap-2">
                 {nextStatus ? (
                   <Button
                     className="h-10"
-                    disabled={Boolean(submittingId) || paymentBlocksProgress}
+                    disabled={Boolean(submittingId) || bulkSubmitting || paymentBlocksProgress}
                     title={paymentBlocksProgress ? "Wait for secure PayMongo payment confirmation before processing this reservation." : undefined}
-                    onClick={() => void updateStatus(row, nextStatus)}
+                    onClick={() => nextStatus === "COMPLETED" ? openCompletion(row) : void updateStatus(row, nextStatus)}
                   >
                     {submittingId === row.id
                       ? "Saving..."
@@ -320,7 +412,7 @@ export function StaffReservationsExperience() {
             </article>
           );
         }) : (
-          <div className="rounded-lg border border-[#dce5dd] bg-white p-6 text-sm font-semibold text-[#68746d] shadow-sm">No matching reservations found.</div>
+          <div className="rounded-lg border border-border bg-white p-6 text-sm font-semibold text-muted-foreground shadow-sm">No matching reservations found.</div>
         )}
       </div>
       {nextCursor ? (
@@ -336,19 +428,48 @@ export function StaffReservationsExperience() {
         </div>
       ) : null}
       {notice ? <Notice text={notice} onClose={() => setNotice("")} /> : null}
+      {completionRow ? (
+        <div className="fixed inset-0 z-[10010] grid place-items-center overflow-y-auto bg-foreground/55 p-3" onMouseDown={(event) => { if (!submittingId && event.target === event.currentTarget) setCompletionRow(null); }}>
+          <form ref={completionDialog.dialogRef} {...completionDialog.dialogProps} onSubmit={(event) => { event.preventDefault(); completeWithPayment(); }} className="relative my-4 w-full max-w-xl overflow-hidden rounded-lg bg-white shadow-2xl">
+            <ActionLoadingOverlay active={submittingId === completionRow.id} title="Confirming payment and release" detail="Saving the collection record, FIFO cost, and verified receipt together." />
+            <header className="flex items-start gap-3 border-b border-border p-5 sm:p-6">
+              <span className="grid size-11 shrink-0 place-items-center rounded-md bg-primary/10 text-primary"><CircleDollarSign className="size-6" /></span>
+              <div className="min-w-0"><p className="text-xs font-bold uppercase text-primary">Payment and release</p><h2 id={completionDialog.titleId} className="mt-1 text-xl font-extrabold text-foreground">Complete {completionRow.reference}</h2><p className="mt-1 text-sm text-muted-foreground">Confirm who collected the payment before releasing the items.</p></div>
+              <button type="button" data-dialog-autofocus aria-label="Close payment dialog" onClick={() => setCompletionRow(null)} disabled={Boolean(submittingId)} className="ml-auto grid size-10 shrink-0 place-items-center rounded-md hover:bg-muted"><X className="size-5" /></button>
+            </header>
+            <div className="space-y-5 p-5 sm:p-6">
+              <div className="rounded-lg border border-border bg-muted/40 p-4">
+                <div className="flex items-center justify-between gap-4"><div><p className="text-sm font-bold text-foreground">{completionRow.student}</p><p className="mt-1 text-xs text-muted-foreground">{completionRow.item} · {completionRow.quantity} item(s)</p></div><div className="text-right"><p className="text-xs font-bold uppercase text-muted-foreground">Amount due</p><p className="text-xl font-extrabold text-primary">PHP {completionRow.total.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p></div></div>
+                <p className="mt-3 border-t pt-3 text-xs text-muted-foreground">Amount is taken from the reservation and cannot be edited here.</p>
+              </div>
+              <fieldset>
+                <legend className="text-sm font-extrabold text-foreground">Who collected the payment?</legend>
+                <p className="mt-1 text-xs text-muted-foreground">Student selected {COLLECTION_CHANNEL_LABELS[completionRow.preferredCollectionChannel]}. Confirm or correct it before release.</p>
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  {(["COMMISSARY", "TREASURER"] as const).map((channel) => <Button key={channel} type="button" aria-pressed={collectionChannel === channel} variant={collectionChannel === channel ? "primary" : "secondary"} className="h-12" onClick={() => { setCollectionChannel(channel); if (channel === "COMMISSARY") setOfficialReceiptNumber(""); }}>{COLLECTION_CHANNEL_LABELS[channel]}</Button>)}
+                </div>
+              </fieldset>
+              <label className="grid gap-1.5 text-sm font-bold">Payment method<span className="inline-flex h-12 items-center rounded-md border border-border bg-white px-3 font-normal">Cash</span><span className="text-xs font-normal text-muted-foreground">Cash is the only accepted method. The collection channel is recorded on the student receipt.</span></label>
+              {collectionChannel === "TREASURER" ? <label className="grid gap-1.5 text-sm font-bold">Treasury official receipt number<input required autoFocus type="text" maxLength={100} value={officialReceiptNumber} onChange={(event) => setOfficialReceiptNumber(event.target.value)} placeholder="Example: OR-102938" className="h-12 rounded-md border border-border px-3 font-normal uppercase outline-none focus:border-primary" /><span className="text-xs font-normal text-muted-foreground">Required for payments collected by the school Treasury and kept in the audit trail.</span></label> : null}
+              <div className="rounded-md bg-primary/10 px-4 py-3 text-xs leading-5 text-foreground">Confirming will verify payment, release the items, consume the oldest inventory batches through FIFO, and post Sales, COGS, and Gross Profit.</div>
+              <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end"><Button type="button" variant="secondary" onClick={() => setCompletionRow(null)} disabled={Boolean(submittingId)}>Cancel</Button><Button type="submit" disabled={Boolean(submittingId) || (collectionChannel === "TREASURER" && !officialReceiptNumber.trim())}>{submittingId ? "Saving..." : "Confirm payment & release"}</Button></div>
+            </div>
+          </form>
+        </div>
+      ) : null}
       {rescheduleRow ? (
-        <div className="fixed inset-0 z-[10000] grid place-items-center overflow-y-auto bg-[#101820]/55 p-3" onMouseDown={(event) => { if (!submittingId && event.target === event.currentTarget) setRescheduleRow(null); }}>
+        <div className="fixed inset-0 z-[10000] grid place-items-center overflow-y-auto bg-foreground/55 p-3" onMouseDown={(event) => { if (!submittingId && event.target === event.currentTarget) setRescheduleRow(null); }}>
           <section ref={rescheduleDialog.dialogRef} {...rescheduleDialog.dialogProps} className="relative my-4 w-full max-w-4xl overflow-hidden rounded-lg bg-white shadow-2xl">
             <ActionLoadingOverlay active={submittingId === rescheduleRow.id} title="Rescheduling pickup" detail="Saving the schedule history and notifying the student." />
-            <header className="flex items-start gap-3 border-b border-[#e3eae4] p-5 sm:p-6">
-              <span className="grid size-11 shrink-0 place-items-center rounded-md bg-[#e8f4e8] text-primary"><CalendarClock className="size-6" /></span>
-              <div><p className="text-xs font-bold uppercase text-primary">Authorized schedule change</p><h2 id={rescheduleDialog.titleId} className="mt-1 text-xl font-extrabold text-[#17211b]">Reschedule {rescheduleRow.reference}</h2><p className="mt-1 text-sm text-[#68746d]">Current: {rescheduleRow.pickup} · revision {rescheduleRow.scheduleRevision}</p></div>
-              <button type="button" data-dialog-autofocus aria-label="Close reschedule dialog" onClick={() => setRescheduleRow(null)} disabled={Boolean(submittingId)} className="ml-auto grid size-10 place-items-center rounded-md hover:bg-[#f1f5f1]"><X className="size-5" /></button>
+            <header className="flex items-start gap-3 border-b border-border p-5 sm:p-6">
+              <span className="grid size-11 shrink-0 place-items-center rounded-md bg-primary/10 text-primary"><CalendarClock className="size-6" /></span>
+              <div><p className="text-xs font-bold uppercase text-primary">Authorized schedule change</p><h2 id={rescheduleDialog.titleId} className="mt-1 text-xl font-extrabold text-foreground">Reschedule {rescheduleRow.reference}</h2><p className="mt-1 text-sm text-muted-foreground">Current: {rescheduleRow.pickup} · revision {rescheduleRow.scheduleRevision}</p></div>
+              <button type="button" data-dialog-autofocus aria-label="Close reschedule dialog" onClick={() => setRescheduleRow(null)} disabled={Boolean(submittingId)} className="ml-auto grid size-10 place-items-center rounded-md hover:bg-muted"><X className="size-5" /></button>
             </header>
             <div className="max-h-[calc(100svh-190px)] space-y-5 overflow-y-auto p-5 sm:p-6">
               {rescheduleRow.pickupReviewReason ? <p className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900">Review reason: {rescheduleRow.pickupReviewReason}</p> : null}
-              <PickupSchedulePicker selection={pickupSelection} onChange={setPickupSelection} disabled={Boolean(submittingId)} initialDate={rescheduleRow.reservation.pickupStart?.slice(0, 10)} title="Choose the new pickup date" />
-              <label className="grid gap-1.5 text-sm font-bold">Reason for rescheduling<textarea required minLength={5} maxLength={500} value={rescheduleReason} onChange={(event) => setRescheduleReason(event.target.value)} className="min-h-24 rounded-md border border-[#d3ddd4] px-3 py-2 font-normal outline-none focus:border-primary" placeholder="Explain the student-approved or operational reason." /></label>
+              <PickupSchedulePicker selection={pickupSelection} onChange={setPickupSelection} disabled={Boolean(submittingId)} initialDate={rescheduleRow.reservation.pickupStart ? manilaDateKey(rescheduleRow.reservation.pickupStart) ?? undefined : undefined} title="Choose the new pickup date" />
+              <label className="grid gap-1.5 text-sm font-bold">Reason for rescheduling<textarea required minLength={5} maxLength={500} value={rescheduleReason} onChange={(event) => setRescheduleReason(event.target.value)} className="min-h-24 rounded-md border border-border px-3 py-2 font-normal outline-none focus:border-primary" placeholder="Explain the student-approved or operational reason." /></label>
               <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end"><Button variant="secondary" onClick={() => setRescheduleRow(null)} disabled={Boolean(submittingId)}>Cancel</Button><Button onClick={() => void saveReschedule()} disabled={Boolean(submittingId) || !pickupSelection || rescheduleReason.trim().length < 5}>Save and notify student</Button></div>
             </div>
           </section>

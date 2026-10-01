@@ -1,5 +1,5 @@
 WESCOMM QA AND STAGING RUNBOOK
-Last updated: September 1, 2026
+Last updated: October 1, 2026
 
 PURPOSE
 This runbook verifies the student, staff, and admin experiences without changing
@@ -8,8 +8,9 @@ logout, and role-based API access. Checkout, inventory writes, email OTP, push
 delivery, and database recovery remain controlled manual checks on staging.
 
 CURRENT AUTOMATED RESULT - SEPTEMBER 1, 2026
-- Backend unit/regression/integration suite: 251 passed, 0 failed.
-- Release browser acceptance suite: 17 passed, 0 failed.
+- Backend unit/regression suite: 258 passed, 0 failed.
+- Release browser acceptance suite: 21 passed, 0 failed.
+- Onboarding browser contract: 1 passed, 0 failed, with onboarding explicitly enabled.
 - Frontend production build: passed; all 49 routes generated.
 - Fresh PostgreSQL replay: all 30 migrations and post-deploy checks passed.
 - Release migration preflight: passed for all three September release migrations.
@@ -200,11 +201,22 @@ Browser private/incognito mode is not a reliable push-notification test.
 6. HTTPS QA PREVIEW ENVIRONMENT
 ============================================================
 
+Isolation boundary:
+  - Production and Staging must use different Supabase project references.
+  - Generic feature-branch Previews must not inherit the Staging database,
+    service-role key, or DIRECT_URL. Scope those values to the staging branch.
+  - Set these identity values on the staging branch:
+      WESCOMM_ENV=staging
+      STAGING_SUPABASE_PROJECT_REF=<staging project ref>
+      PRODUCTION_SUPABASE_PROJECT_REF=<production project ref>
+  - Never copy Production data, storage objects, encryption keys, VAPID keys,
+    PayMongo live keys, or service-role keys into Staging.
+
 Backend:
   NODE_ENV=production
   VERCEL_ENV=preview (system-provided; do not set NODE_ENV=development)
   AUTH_ENABLE_DEV_LOGIN=true
-  AUTH_DEV_LOGIN_EMAILS=student@wesleyan.edu.ph,staff@wesleyan.edu.ph,admin@wesleyan.edu.ph
+  AUTH_DEV_LOGIN_EMAILS=student@wesleyan.edu.ph,qa.student02@wesleyan.edu.ph,staff@wesleyan.edu.ph,admin@wesleyan.edu.ph
   AUTH_DEV_LOGIN_PASSWORD=
     Set this through Vercel as a Sensitive, Preview-only, QA-branch-only random secret.
     Do not paste a placeholder. Use at least 20 random characters and store it in the approved password manager.
@@ -214,6 +226,9 @@ Backend:
   SUPABASE_SERVICE_ROLE_KEY=<separate QA service-role key>
   DATABASE_URL=<separate QA TLS pooler URL containing sslmode=require>
   DIRECT_URL=<separate QA TLS direct URL containing sslmode=require>
+  WESCOMM_ENV=staging
+  STAGING_SUPABASE_PROJECT_REF=<separate QA Supabase project ref>
+  PRODUCTION_SUPABASE_PROJECT_REF=<Production project ref; identifier only>
   DATA_ENCRYPTION_CURRENT_VERSION=v1
   DATA_ENCRYPTION_KEYS=<new QA-only versioned encryption key; never copy Production>
 
@@ -241,6 +256,24 @@ After deployment:
 [ ] No real Supabase access token is stored in Local Storage or Session Storage.
 [ ] Wrong-origin POST/PATCH/DELETE requests return 403.
 [ ] Student/staff/admin wrong-role API requests return 403.
+[ ] `npm run staging:verify` passes with the branch-scoped Staging variables.
+
+Staging fixtures and reset:
+  1. Verify the staging branch variables without copying Production values:
+       vercel env run -e preview --git-branch staging -- npm --prefix backend run staging:verify
+  2. Preview the destructive reset (dry-run is the default):
+       vercel env run -e preview --git-branch staging -- npm --prefix backend run staging:reset
+  3. Copy the exact fingerprint confirmation printed by the dry-run, then run
+     the apply command through the same branch-scoped environment:
+       vercel env run -e preview --git-branch staging -- npm --prefix backend run staging:reset -- --apply --delete-all-users --confirm-reset-testing-data:<fingerprint>
+  4. Preview and then apply deterministic fake fixtures:
+       vercel env run -e preview --git-branch staging -- npm --prefix backend run staging:seed
+       vercel env run -e preview --git-branch staging -- npm --prefix backend run staging:seed -- --apply --confirm-seed-staging:<fingerprint>
+
+The seed creates ten fake students, one Staff user, one Admin user, simple,
+variant, SKU/FIFO, and sold-out products, verified opening batches, and a seed
+audit entry. Transaction history should be created through the application so
+QA exercises the real reservation and walk-in-sale paths.
 
 Temporary public Production staff test (owner approval required):
   AUTH_ENABLE_DEV_LOGIN=false
@@ -312,6 +345,9 @@ The release is additive and must use Prisma's timestamp order:
 1. 20260831000000_add_closure_qr_students_support_lifecycle
 2. 20260901000000_add_pickup_slot_capacity
 3. 20260901010000_add_conversation_retention_purge
+4. 20260907000000_add_reservation_item_snapshots
+5. 20260907010000_add_departments_and_product_audiences
+6. 20260907020000_add_pickup_advance_mode
 
 Never run db push in staging or production. Before migration:
 [ ] Confirm an encrypted off-site backup and matching DATA_ENCRYPTION_KEYS.
@@ -327,6 +363,11 @@ Apply and verify on staging:
 Then verify GET /api/health/ready before running controlled acceptance tests.
 Production migration/deployment requires a separate explicit owner approval and
 the same successful staging evidence.
+
+Keep `REQUIRE_STUDENT_ONBOARDING=false` and
+`NEXT_PUBLIC_REQUIRE_STUDENT_ONBOARDING=false` through migration and the first
+application deployment. Audit the Department/Student ID backfill first. Enable
+both flags together only after the staged onboarding smoke test passes.
 
 Fresh plain-PostgreSQL CI databases do not include Supabase's standard roles.
 Before replaying migrations in CI only, run prisma:bootstrap:ci with the exact

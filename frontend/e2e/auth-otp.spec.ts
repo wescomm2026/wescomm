@@ -92,6 +92,7 @@ async function openLoginDialog(page: Page) {
 async function requestOtp(page: Page) {
   const dialog = await openLoginDialog(page);
   await dialog.getByRole("textbox").fill(SCHOOL_EMAIL);
+  await dialog.getByRole("checkbox", { name: /I agree to the Terms & Conditions/ }).check();
   await dialog.getByRole("button", { name: "Send verification code" }).click();
   return dialog;
 }

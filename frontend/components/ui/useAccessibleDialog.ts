@@ -30,7 +30,7 @@ function unlockBodyScroll() {
 
 function focusableElements(dialog: HTMLElement) {
   return Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
-    .filter((element) => !element.hidden && element.getAttribute("aria-hidden") !== "true");
+    .filter((element) => !element.hidden && !element.closest("[inert], [aria-hidden='true']"));
 }
 
 export function useAccessibleDialog<T extends HTMLElement = HTMLElement>(

@@ -17,7 +17,8 @@ export const OUTBOX_EVENT_TYPES = {
   receiptCreated: "RECEIPT_CREATED",
   receiptStatusChanged: "RECEIPT_STATUS_CHANGED",
   restrictionExpired: "RESTRICTION_EXPIRED",
-  productImageDelete: "PRODUCT_IMAGE_DELETE"
+  productImageDelete: "PRODUCT_IMAGE_DELETE",
+  onlinePaymentConvertedToCash: "ONLINE_PAYMENT_CONVERTED_TO_CASH"
 } as const;
 
 const reservationCreatedPayloadSchema = z.object({
@@ -68,6 +69,13 @@ const restrictionExpiredPayloadSchema = z.object({
 
 const productImageDeletePayloadSchema = z.object({
   path: z.string().min(1).max(300)
+});
+
+const onlinePaymentConvertedToCashPayloadSchema = z.object({
+  studentId: z.string().uuid(),
+  reservationId: z.string().uuid(),
+  referenceCode: z.string().min(1).max(80),
+  previousPaymentMethod: z.string().min(1).max(80)
 });
 
 const receiptStatusChangedPayloadSchema = z.object({
@@ -404,6 +412,34 @@ async function processReceiptCreated(event: ClaimedOutboxEvent) {
   });
 }
 
+async function processOnlinePaymentConvertedToCash(event: ClaimedOutboxEvent) {
+  const payload = onlinePaymentConvertedToCashPayloadSchema.parse(event.payload);
+
+  await createAuditOnce(event, {
+    actorId: null,
+    action: "ONLINE_PAYMENT_CONVERTED_TO_CASH",
+    entityType: "online_payment",
+    summary: `Converted open online payment to cash for reservation ${payload.referenceCode}.`,
+    metadata: {
+      reservationId: payload.reservationId,
+      referenceCode: payload.referenceCode,
+      previousPaymentMethod: payload.previousPaymentMethod,
+      newPaymentMethod: "PAY_AT_COMMISSARY",
+      collectionChannel: "COMMISSARY"
+    }
+  });
+
+  await createNotificationAndPush({
+    userId: payload.studentId,
+    role: "STUDENT",
+    type: "PAYMENT",
+    title: "Payment changed to cash",
+    message: `Reservation ${payload.referenceCode} can no longer be paid online. Please pay in cash at the Commissary.`,
+    actionUrl: "/student/reservations",
+    dedupeKey: `${event.id}:payment-converted-to-cash`
+  });
+}
+
 async function processEvent(event: ClaimedOutboxEvent) {
   if (event.type === OUTBOX_EVENT_TYPES.reservationCreated) {
     await processReservationCreated(event);
@@ -431,6 +467,10 @@ async function processEvent(event: ClaimedOutboxEvent) {
   }
   if (event.type === OUTBOX_EVENT_TYPES.productImageDelete) {
     await processProductImageDelete(event);
+    return;
+  }
+  if (event.type === OUTBOX_EVENT_TYPES.onlinePaymentConvertedToCash) {
+    await processOnlinePaymentConvertedToCash(event);
     return;
   }
   throw new Error(`Unsupported outbox event type: ${event.type}`);

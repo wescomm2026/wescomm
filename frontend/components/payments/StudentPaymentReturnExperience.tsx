@@ -9,17 +9,10 @@ import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import {
-  createGcashCheckoutFromApi,
   getPaymentFromApi,
   type BackendPaymentStatus,
   type BackendPaymentSummary
 } from "@/lib/api";
-import {
-  getPaymentIdempotencyKey,
-  getRememberedPaymentCheckout,
-  openTrustedPaymongoCheckout,
-  rememberPaymentCheckout
-} from "@/lib/payment-checkout";
 
 const POLL_DELAYS_MS = [0, 2_000, 3_000, 5_000, 7_000, 10_000, 10_000, 8_000] as const;
 const pollingStatuses = new Set<BackendPaymentStatus>([
@@ -46,15 +39,15 @@ function paymentDisplay(status: BackendPaymentStatus) {
   if (status === "AWAITING_PAYMENT") {
     return {
       badge: "Awaiting payment",
-      title: "Complete your GCash payment",
-      detail: "Your reservation is saved, but payment has not yet been confirmed. Continue only through the secure GCash payment page."
+      title: "Historical online payment",
+      detail: "Online payments are no longer offered. This historical checkout is being closed safely; check the reservation page for its current cash payment location."
     };
   }
   if (status === "INITIALIZING") {
     return {
       badge: "Initializing",
-      title: "Preparing payment confirmation",
-      detail: "WESCOMM is preparing the secure payment record. This usually takes only a moment."
+      title: "Historical online payment",
+      detail: "Online payments are no longer offered. This historical checkout is being closed safely; check the reservation page for its current cash payment location."
     };
   }
   if (status === "REFUND_REVIEW_REQUIRED") {
@@ -82,20 +75,20 @@ function paymentDisplay(status: BackendPaymentStatus) {
     return {
       badge: "Expired",
       title: "The payment session expired",
-      detail: "No payment was confirmed. You can start a new secure GCash session if WESCOMM allows it."
+      detail: "No payment was confirmed. Check the reservation page for the current cash payment location."
     };
   }
   if (status === "CANCELLED") {
     return {
       badge: "Cancelled",
       title: "The payment was cancelled",
-      detail: "No payment was confirmed. Your reservation remains the source of truth for the next available action."
+      detail: "No payment was confirmed. The reservation has been moved to cash payment; check its payment location before pickup."
     };
   }
   return {
     badge: "Failed",
     title: "The payment was not completed",
-    detail: "No successful payment was recorded. Try again only through WESCOMM if the option is available."
+    detail: "No successful payment was recorded. Check the reservation page for the current cash payment location."
   };
 }
 
@@ -108,7 +101,6 @@ export function StudentPaymentReturnExperience({ paymentId }: { paymentId: strin
   const [payment, setPayment] = useState<BackendPaymentSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [continuing, setContinuing] = useState(false);
   const [pollingComplete, setPollingComplete] = useState(false);
   const [error, setError] = useState("");
   const requestSequenceRef = useRef(0);
@@ -186,38 +178,7 @@ export function StudentPaymentReturnExperience({ paymentId }: { paymentId: strin
     };
   }, [accessToken, refreshPayment]);
 
-  const continuePayment = async () => {
-    if (!payment || !accessToken) return;
-    setContinuing(true);
-    setError("");
-
-    try {
-      const rememberedUrl = payment.canResume
-        ? getRememberedPaymentCheckout(payment.id, payment.reservationId)
-        : null;
-      if (rememberedUrl) {
-        openTrustedPaymongoCheckout(rememberedUrl);
-        return;
-      }
-
-      const checkout = await createGcashCheckoutFromApi(
-        accessToken,
-        payment.reservationId,
-        getPaymentIdempotencyKey(payment.reservationId, { renew: payment.canRetry })
-      );
-      if (!rememberPaymentCheckout(checkout.payment, checkout.checkoutUrl)) {
-        throw new Error("WESCOMM blocked an invalid payment destination. Please try again.");
-      }
-      openTrustedPaymongoCheckout(checkout.checkoutUrl);
-    } catch (paymentError) {
-      setError(userFacingErrorMessage(paymentError, "Unable to continue this payment."));
-    } finally {
-      setContinuing(false);
-    }
-  };
-
   const display = payment ? paymentDisplay(payment.status) : null;
-  const showContinue = Boolean(payment && (payment.canResume || payment.canRetry) && payment.status !== "PAID");
 
   return (
     <main className="mx-auto w-full max-w-3xl space-y-6" aria-labelledby="payment-return-title">
@@ -227,7 +188,7 @@ export function StudentPaymentReturnExperience({ paymentId }: { paymentId: strin
           GCash payment status
         </h1>
         <p className="mt-2 text-sm leading-6 text-[#657169]">
-          WESCOMM confirms the payment with the payment service. Returning to this page or showing a screenshot does not mark a payment as paid.
+          Online payments are closed for new reservations. This page keeps historical GCash payment records readable.
         </p>
       </header>
 
@@ -309,16 +270,10 @@ export function StudentPaymentReturnExperience({ paymentId }: { paymentId: strin
             <Link href="/student/reservations" className="sm:flex-1">
               <Button variant="secondary" className="h-12 w-full">View My Reservations</Button>
             </Link>
-            <Button className="h-12 sm:flex-1" onClick={() => void refreshPayment()} disabled={refreshing || continuing} aria-busy={refreshing}>
+            <Button className="h-12 sm:flex-1" onClick={() => void refreshPayment()} disabled={refreshing} aria-busy={refreshing}>
               <RefreshCw className={`size-4 ${refreshing ? "animate-spin" : ""}`} />
               {refreshing ? "Checking..." : "Refresh Status"}
             </Button>
-            {showContinue ? (
-              <Button className="h-12 sm:flex-1" onClick={() => void continuePayment()} disabled={continuing || refreshing} aria-busy={continuing}>
-                <WalletCards className="size-5" />
-                {continuing ? "Opening GCash..." : payment.canRetry ? "Try GCash Again" : "Continue to GCash"}
-              </Button>
-            ) : null}
           </div>
         </section>
       ) : null}

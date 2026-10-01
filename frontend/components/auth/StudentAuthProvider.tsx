@@ -18,6 +18,7 @@ import {
   BackendApiError,
   COOKIE_SESSION_TOKEN,
   onlineFetch,
+  completeOnboardingFromApi,
   updateMyProfileFromApi,
   type BackendAuthProfile
 } from "@/lib/api";
@@ -45,6 +46,8 @@ export type StudentUser = {
   role: AppRole;
   accessToken?: string;
   studentNumber: string;
+  departmentId: string;
+  onboardingCompletedAt: string;
   fullName: string;
   email: string;
   phone: string;
@@ -53,7 +56,8 @@ export type StudentUser = {
   avatarDataUrl?: string;
 };
 
-export type StudentProfileInput = Pick<StudentUser, "fullName" | "phone" | "department" | "address">;
+export type StudentProfileInput = Pick<StudentUser, "fullName" | "studentNumber" | "departmentId" | "phone" | "address">;
+export type StudentOnboardingInput = Pick<StudentUser, "departmentId" | "studentNumber" | "phone" | "address">;
 
 export type AuthResult = {
   success: boolean;
@@ -75,6 +79,7 @@ type StudentAuthContextValue = {
   isPasswordLoginAvailable: (email: string) => boolean;
   completeEmailLogin: () => Promise<AuthResult>;
   updateProfile: (input: StudentProfileInput) => Promise<AuthResult>;
+  completeOnboarding: (input: StudentOnboardingInput) => Promise<AuthResult>;
   logout: () => Promise<boolean>;
 };
 
@@ -95,6 +100,8 @@ const emptyStudentProfile: StudentUser = {
   id: "",
   role: "STUDENT",
   studentNumber: "",
+  departmentId: "",
+  onboardingCompletedAt: "",
   fullName: "",
   email: "",
   phone: "",
@@ -129,6 +136,8 @@ function mapProfileToSession(profile: BackendAuthProfile, accessToken = COOKIE_S
     role: profile.role,
     accessToken,
     studentNumber: profile.studentNumber ?? "",
+    departmentId: profile.departmentId ?? "",
+    onboardingCompletedAt: profile.onboardingCompletedAt ?? "",
     fullName: profile.fullName || profile.email,
     email: profile.email,
     phone: profile.phone ?? "",
@@ -718,8 +727,9 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
     try {
       const profile = await updateMyProfileFromApi(accessToken, {
         fullName: input.fullName.trim(),
+        studentNumber: input.studentNumber,
+        departmentId: input.departmentId,
         phone: input.phone.trim() || null,
-        department: input.department.trim() || null,
         address: input.address.trim() || null
       });
 
@@ -738,6 +748,29 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
         success: false,
         error: getAuthErrorMessage(error, "Unable to save your profile. Please try again.")
       };
+    }
+  }, [user?.accessToken, user?.id]);
+
+  const completeOnboarding = useCallback(async (input: StudentOnboardingInput): Promise<AuthResult> => {
+    if (!user?.id) return { success: false, error: "Log in again before completing onboarding." };
+    const requestGeneration = sessionGenerationRef.current;
+    const accountId = user.id;
+    try {
+      const profile = await completeOnboardingFromApi(user.accessToken ?? COOKIE_SESSION_TOKEN, {
+        departmentId: input.departmentId,
+        studentNumber: input.studentNumber,
+        phone: input.phone.trim() || null,
+        address: input.address.trim() || null
+      });
+      if (requestGeneration !== sessionGenerationRef.current || profile.id !== accountId) {
+        return { success: false, error: "The active account changed before onboarding completed." };
+      }
+      setUser((current) => current?.id === accountId
+        ? mapProfileToSession(profile, current.accessToken ?? COOKIE_SESSION_TOKEN)
+        : current);
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: getAuthErrorMessage(error, "Unable to complete onboarding.") };
     }
   }, [user?.accessToken, user?.id]);
 
@@ -770,9 +803,10 @@ export function StudentAuthProvider({ children }: { children: ReactNode }) {
       isPasswordLoginAvailable,
       completeEmailLogin,
       updateProfile,
+      completeOnboarding,
       logout
     }),
-    [user, ready, openAuth, openAuthAt, closeAuth, sendEmailOtp, verifyEmailOtp, loginWithTestAccount, isPasswordLoginAvailable, completeEmailLogin, updateProfile, logout]
+    [user, ready, openAuth, openAuthAt, closeAuth, sendEmailOtp, verifyEmailOtp, loginWithTestAccount, isPasswordLoginAvailable, completeEmailLogin, updateProfile, completeOnboarding, logout]
   );
 
   return (

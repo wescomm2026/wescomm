@@ -6,6 +6,7 @@ const DATE_KEY_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
 
 export type PickupPolicySnapshot = {
   version: number;
+  advanceMode: "OPEN_DAYS" | "CALENDAR_DAYS";
   minAdvanceDays: number;
   maxAdvanceDays: number;
   days: Array<{ weekday: number; enabled: boolean }>;
@@ -70,6 +71,13 @@ export function pickupDateColumnKey(value: Date) {
 
 export function resolvePickupBookingWindow(policy: PickupPolicySnapshot, now = new Date()): PickupBookingWindow {
   const serverDate = manilaDateKey(now);
+  if (policy.advanceMode === "CALENDAR_DAYS") {
+    return {
+      serverDate,
+      minDate: addCalendarDays(serverDate, policy.minAdvanceDays),
+      maxDate: addCalendarDays(serverDate, policy.maxAdvanceDays)
+    };
+  }
   const enabledWeekdays = new Set(policy.days.filter((day) => day.enabled).map((day) => day.weekday));
   if (!enabledWeekdays.size) {
     throw new HttpError(503, "Pickup scheduling is temporarily unavailable.", "PICKUP_POLICY_UNAVAILABLE");
@@ -101,11 +109,10 @@ export function pickupInstant(dateKey: string, minute: number) {
   return new Date(Date.UTC(year, month - 1, day, hour - 8, minuteOfHour));
 }
 
-export function validatePickupSelection(input: {
+export function validatePickupDate(input: {
   policy: PickupPolicySnapshot;
   policyVersion: number;
   pickupDate: string;
-  slotId: string;
   now?: Date;
 }) {
   const now = input.now ?? new Date();
@@ -139,14 +146,36 @@ export function validatePickupSelection(input: {
     throw new HttpError(400, `Pickup is closed on this date: ${closure.reason}`, "PICKUP_DATE_CLOSED");
   }
 
+  return { minDate, maxDate, now };
+}
+
+export function validatePickupSelection(input: {
+  policy: PickupPolicySnapshot;
+  policyVersion: number;
+  pickupDate: string;
+  slotId: string;
+  now?: Date;
+}) {
+  const { minDate, maxDate, now } = validatePickupDate(input);
+
   const slot = input.policy.timeSlots.find((entry) => entry.id === input.slotId && entry.isActive);
   if (!slot) {
     throw new HttpError(400, "The selected pickup time is no longer available.", "PICKUP_SLOT_UNAVAILABLE");
   }
 
+  const pickupStart = pickupInstant(input.pickupDate, slot.startMinute);
+  const pickupEnd = pickupInstant(input.pickupDate, slot.endMinute);
+  if (pickupStart.getTime() <= now.getTime()) {
+    throw new HttpError(
+      409,
+      "The selected pickup time has already started. Choose a later time.",
+      "PICKUP_SLOT_EXPIRED"
+    );
+  }
+
   return {
-    pickupStart: pickupInstant(input.pickupDate, slot.startMinute),
-    pickupEnd: pickupInstant(input.pickupDate, slot.endMinute),
+    pickupStart,
+    pickupEnd,
     slot,
     minDate,
     maxDate

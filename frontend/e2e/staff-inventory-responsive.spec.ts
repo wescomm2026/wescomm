@@ -18,6 +18,8 @@ const staffProfile: BackendAuthProfile = {
   email: "inventory.qa@wesleyan.edu.ph",
   phone: null,
   department: "Commissary",
+  departmentId: null,
+  onboardingCompletedAt: null,
   address: null,
   avatarUrl: null
 };
@@ -132,6 +134,7 @@ async function mockInventory(page: Page) {
   await authorizeMockedWorkspace(page, "STAFF");
   const unhandled: string[] = [];
   const restoredRequests: string[] = [];
+  const createdRequests: Array<Record<string, unknown>> = [];
   let archivedProducts = [archivedProduct];
   await page.route("**/api/backend/**", async (route) => {
     const request = route.request();
@@ -142,6 +145,10 @@ async function mockInventory(page: Page) {
       await json(route, { profile: staffProfile });
       return;
     }
+    if (path === "/api/backend/auth/departments" && request.method() === "GET") {
+      await json(route, { departments: [] });
+      return;
+    }
     if (path === "/api/backend/notifications" && request.method() === "GET") {
       await json(route, { notifications: [], nextCursor: null });
       return;
@@ -150,8 +157,8 @@ async function mockInventory(page: Page) {
       await json(route, { unreadCount: 0 });
       return;
     }
-    if (path === "/api/backend/realtime/events" && request.method() === "GET") {
-      await route.fulfill({ status: 200, contentType: "text/event-stream", body: "" });
+    if (path === "/api/backend/realtime/updates" && request.method() === "GET") {
+      await json(route, { cursor: "0", hasMore: false, events: [] });
       return;
     }
     if (path === "/api/backend/staff/products" && request.method() === "GET") {
@@ -160,6 +167,91 @@ async function mockInventory(page: Page) {
         products: archived ? archivedProducts : [clothProduct, optionProduct],
         categories: [category],
         nextCursor: null
+      });
+      return;
+    }
+    if (path === "/api/backend/staff/products" && request.method() === "POST") {
+      const payload = request.postDataJSON() as {
+        name: string;
+        categoryName: string;
+        description?: string | null;
+        imageUrl?: string | null;
+        price: number;
+        oldPrice?: number | null;
+        stock: number;
+        lowStockPercent: number;
+        saleMode: StaffProduct["saleMode"];
+        audienceScope?: StaffProduct["audienceScope"];
+        variants?: Array<{ optionName: string; optionValue: string; stock: number }>;
+      };
+      createdRequests.push(payload as unknown as Record<string, unknown>);
+      const variants = (payload.variants ?? []).map((variant, index) => ({
+        id: `00000000-0000-4000-8000-${String(300 + index).padStart(12, "0")}`,
+        ...variant,
+        stockTarget: variant.stock,
+        lowStockPercent: payload.lowStockPercent,
+        lowStockThreshold: Math.ceil(variant.stock * payload.lowStockPercent / 100)
+      }));
+      const skus = variants.map((variant, index) => ({
+        id: `00000000-0000-4000-8000-${String(400 + index).padStart(12, "0")}`,
+        code: `TEST-SKU-${index + 1}`,
+        stock: variant.stock,
+        stockTarget: variant.stock,
+        lowStockPercent: payload.lowStockPercent,
+        lowStockThreshold: variant.lowStockThreshold,
+        isActive: true,
+        variantIds: [variant.id],
+        options: [{ optionName: variant.optionName, optionValue: variant.optionValue }]
+      }));
+      await json(route, {
+        product: {
+          id: "00000000-0000-4000-8000-000000000299",
+          categoryId: category.id,
+          name: payload.name,
+          description: payload.description ?? null,
+          imageUrl: payload.imageUrl ?? null,
+          price: payload.price,
+          oldPrice: payload.oldPrice ?? null,
+          status: payload.stock > 0 ? "IN_STOCK" : "OUT_OF_STOCK",
+          stock: payload.stock,
+          stockTarget: payload.stock,
+          lowStockPercent: payload.lowStockPercent,
+          lowStockThreshold: Math.ceil(payload.stock * payload.lowStockPercent / 100),
+          isActive: true,
+          saleMode: payload.saleMode,
+          audienceScope: payload.audienceScope ?? "ALL_STUDENTS",
+          targetDepartments: [],
+          skuInventoryEnabled: variants.length > 0,
+          inventoryReconciledAt: variants.length ? "2026-09-28T00:00:00.000Z" : null,
+          category,
+          variants,
+          skus
+        }
+      });
+      return;
+    }
+    const batchProduct = [clothProduct, optionProduct].find((product) => path === `/api/backend/staff/products/${product.id}/batches`);
+    if (batchProduct && request.method() === "GET") {
+      const unitCost = batchProduct.id === clothProduct.id ? 80 : 200;
+      await json(route, {
+        batches: [{
+          id: `${batchProduct.id}-batch`,
+          batchCode: batchProduct.id === clothProduct.id ? "B-CLOTH-001" : "B-PE-001",
+          skuId: batchProduct.id === optionProduct.id ? optionProduct.skus?.[0]?.id ?? null : null,
+          quantityReceived: batchProduct.stock,
+          quantityRemaining: batchProduct.stock,
+          unitCost,
+          costVerified: true,
+          receivedAt: "2026-09-24T00:00:00.000Z",
+          supplierNote: "QA delivery",
+          sku: batchProduct.id === optionProduct.id ? { code: "PE-M-RED", optionSnapshot: [{ optionName: "Size", optionValue: "M" }, { optionName: "Color", optionValue: "Red" }] } : null
+        }],
+        summary: {
+          latestCost: unitCost,
+          averageInventoryCost: unitCost,
+          inventoryValue: batchProduct.stock * unitCost,
+          unverifiedQuantity: 0
+        }
       });
       return;
     }
@@ -173,13 +265,60 @@ async function mockInventory(page: Page) {
     unhandled.push(`${request.method()} ${path}`);
     await json(route, { error: "Unexpected API request in inventory test." }, 500);
   });
-  return { restoredRequests, unhandled };
+  return { restoredRequests, createdRequests, unhandled };
 }
 
 const viewports = [
   { name: "desktop", width: 1440, height: 900 },
+  { name: "short-laptop", width: 1366, height: 650 },
   { name: "mobile", width: 390, height: 844 }
 ] as const;
+
+test("add-product dialog uses percentage alerts without React key warnings", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "Console regression runs once.");
+  const keyWarnings: string[] = [];
+  page.on("console", (message) => {
+    if (message.type() === "error" && message.text().includes('unique "key" prop')) {
+      keyWarnings.push(message.text());
+    }
+  });
+  const { createdRequests, unhandled } = await mockInventory(page);
+
+  await page.goto("/staff/inventory");
+  await dismissWelcomeGate(page);
+  await expect(page.getByRole("heading", { name: "Centralized stock management" })).toBeVisible();
+  keyWarnings.length = 0;
+  await page.getByRole("button", { name: "Add product" }).click();
+
+  const dialog = page.getByRole("dialog", { name: "Add inventory item" });
+  await expect(dialog).toBeVisible();
+  const productDetails = dialog.locator("section").filter({ has: page.getByRole("heading", { name: "Product details" }) });
+  await expect(productDetails.getByText("Selling price", { exact: true })).toBeVisible();
+  await expect(productDetails.getByText("Opening-stock cost", { exact: true })).toBeVisible();
+  await expect(productDetails.getByLabel("Unit acquisition cost")).toBeVisible();
+  const stockSetup = dialog.locator("section").filter({ has: page.getByRole("heading", { name: "Stock setup" }) });
+  await expect(stockSetup.getByText("Opening-stock cost", { exact: true })).toHaveCount(0);
+  await expect(dialog.getByLabel("Low-stock warning")).toHaveValue("25");
+  await expect(dialog.getByText(/staff will be warned at 0 or fewer/i)).toBeVisible();
+  await dialog.getByLabel(/Start from a WUP template/).selectOption("elem-pe-shirt");
+  await expect(dialog.getByText(/applied automatically to every size/i)).toBeVisible();
+  await dialog.getByRole("button", { name: "Save product" }).click();
+  await expect(dialog).toBeHidden();
+  await expect(page.locator("article").filter({ hasText: "Elementary PE Shirt" })).toBeVisible();
+  expect(createdRequests).toHaveLength(1);
+  expect(createdRequests[0]).toMatchObject({ lowStockPercent: 25, saleMode: "OPTIONS" });
+  expect(createdRequests[0]).not.toHaveProperty("lowStockThreshold");
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("button", { name: "Add product" }).click();
+  const mobileDialog = page.getByRole("dialog", { name: "Add inventory item" });
+  await expect(mobileDialog).toBeVisible();
+  expect(await mobileDialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+  await mobileDialog.getByRole("button", { name: "Close product form" }).click();
+
+  expect(keyWarnings).toEqual([]);
+  expect(unhandled).toEqual([]);
+});
 
 for (const viewport of viewports) {
   test(`cloth-only and SKU inventory stay correct and responsive on ${viewport.name}`, async ({ page }, testInfo) => {
@@ -202,16 +341,37 @@ for (const viewport of viewports) {
     await expect(optionRow).toContainText("L · Blue · 3");
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 
+    if (viewport.width >= 1280) {
+      const productHeading = page.getByText("Product", { exact: true }).first();
+      const categoryHeading = page.getByText("Category", { exact: true }).first();
+      const [productBox, categoryBox] = await Promise.all([productHeading.boundingBox(), categoryHeading.boundingBox()]);
+      expect(productBox).not.toBeNull();
+      expect(categoryBox).not.toBeNull();
+      expect(Math.abs((productBox?.y ?? 0) - (categoryBox?.y ?? 0))).toBeLessThan(3);
+      expect(categoryBox?.x ?? 0).toBeGreaterThan((productBox?.x ?? 0) + (productBox?.width ?? 0));
+    }
+
     const clothUpdateButton = clothRow.getByRole("button", { name: "Update stock" });
     await clothUpdateButton.click();
     const clothDialog = page.getByRole("dialog", { name: "Update stock" });
     await expect(clothDialog).toBeVisible();
     await expect(clothDialog.getByText("New items received")).toBeVisible();
+    await expect(clothDialog.getByText("PHP 125.00", { exact: true })).toBeVisible();
     await clothDialog.getByLabel("New items received").fill("2");
+    await expect(clothDialog.getByLabel("Low-stock warning")).toHaveValue("25");
+    await expect(clothDialog.getByText(/warned at 5 items or fewer/)).toBeVisible();
+    await clothDialog.getByLabel("Unit acquisition cost").fill("80");
+    await expect(clothDialog.getByText(/PHP 45\.00 \/ item/)).toBeVisible();
+    await clothDialog.getByLabel("Selling price", { exact: true }).fill("150");
+    await expect(clothDialog.getByText(/PHP 70\.00 \/ item/)).toBeVisible();
     const clothSaveButton = clothDialog.getByRole("button", { name: "Confirm & add" });
+    const saveButtonBox = await clothSaveButton.boundingBox();
+    expect(saveButtonBox).not.toBeNull();
+    expect((saveButtonBox?.y ?? 0) + (saveButtonBox?.height ?? 0)).toBeLessThanOrEqual(viewport.height);
     await clothSaveButton.click();
     const clothConfirmation = page.getByRole("alertdialog", { name: "Add this inventory stock?" });
     await expect(clothConfirmation).toContainText("2 new items");
+    await expect(clothConfirmation).toContainText("selling price will change from PHP 125.00 to PHP 150.00");
     await expect(clothConfirmation.getByRole("button", { name: "Cancel" })).toBeFocused();
     await page.keyboard.press("Escape");
     await expect(clothDialog).toBeVisible();
@@ -224,6 +384,18 @@ for (const viewport of viewports) {
     await manageButton.click();
     const managerDialog = page.getByRole("dialog", { name: "Manage product" });
     await expect(managerDialog).toBeVisible();
+    await managerDialog.getByRole("button", { name: /^Edit details/ }).click();
+    const detailsDialog = page.getByRole("dialog", { name: "Edit details" });
+    await expect(detailsDialog.getByText("PHP 350.00", { exact: true }).first()).toBeVisible();
+    await expect(detailsDialog.getByText("PHP 200.00", { exact: true }).first()).toBeVisible();
+    await expect(detailsDialog.getByText("PHP 150.00 / item", { exact: true })).toBeVisible();
+    const sellingPriceInput = detailsDialog.getByLabel("Selling price", { exact: true });
+    const oldPriceInput = detailsDialog.getByLabel(/Old price/);
+    const [sellingPriceBox, oldPriceBox] = await Promise.all([sellingPriceInput.boundingBox(), oldPriceInput.boundingBox()]);
+    expect(sellingPriceBox).not.toBeNull();
+    expect(oldPriceBox).not.toBeNull();
+    expect(oldPriceBox?.y ?? 0).toBeGreaterThanOrEqual((sellingPriceBox?.y ?? 0) + (sellingPriceBox?.height ?? 0));
+    await detailsDialog.getByRole("button", { name: "Back to manage product" }).click();
     const combinationsButton = managerDialog.getByRole("button", { name: /^Inventory combinations/ });
     await combinationsButton.click();
 
@@ -232,10 +404,17 @@ for (const viewport of viewports) {
     await expect(skuDialog.getByText("Size: M · Color: Red", { exact: true })).toBeVisible();
     await expect(skuDialog.getByText("Size: L · Color: Blue", { exact: true })).toBeVisible();
     await skuDialog.getByLabel("Combination 1 new quantity").fill("1");
+    await expect(skuDialog.getByLabel("Low-stock warning")).toHaveValue("25");
+    await expect(skuDialog.getByText(/product warning will be 2 items or fewer/)).toBeVisible();
+    await skuDialog.getByLabel("Unit acquisition cost").fill("200");
+    await expect(skuDialog.getByText(/PHP 150\.00 \/ item/)).toBeVisible();
+    await skuDialog.getByLabel("Selling price", { exact: true }).fill("400");
+    await expect(skuDialog.getByText(/PHP 200\.00 \/ item/)).toBeVisible();
     const skuSaveButton = skuDialog.getByRole("button", { name: "Confirm & add" });
     await skuSaveButton.click();
     const skuConfirmation = page.getByRole("alertdialog", { name: "Add this inventory stock?" });
     await expect(skuConfirmation).toContainText("1 new item");
+    await expect(skuConfirmation).toContainText("selling price will change from PHP 350.00 to PHP 400.00");
     await page.keyboard.press("Escape");
     await expect(skuDialog).toBeVisible();
     await expect(skuSaveButton).toBeFocused();

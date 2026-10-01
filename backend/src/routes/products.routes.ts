@@ -13,7 +13,7 @@ const productQuerySchema = z.object({
   category: z.string().trim().max(120).optional(),
   status: z.enum(PRODUCT_STATUSES).optional(),
   sort: z.string().trim().max(40).optional(),
-  fresh: z.string().trim().max(40).optional()
+  fresh: z.literal("1").optional()
 });
 
 const productIdSchema = z.string().uuid();
@@ -29,7 +29,7 @@ productsRoutes.get(
   publicProductLimiter,
   asyncHandler(async (request, response) => {
     const { fresh, ...filters } = productQuerySchema.parse(request.query);
-    const products = await listProducts(filters, { bypassCache: Boolean(fresh) });
+    const products = await listProducts(filters, { bypassCache: fresh === "1" });
     response.setHeader(
       "Cache-Control",
       fresh

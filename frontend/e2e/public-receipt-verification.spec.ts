@@ -123,7 +123,7 @@ test("opaque QR fragment is removed before masked token verification", async ({ 
   await dismissWelcomeGate(page);
 
   await expect(page.getByRole("heading", { name: "RCT-2026-QR" })).toBeVisible();
-  await expect(page.getByText("GCash – Online", { exact: true })).toBeVisible();
+  await expect(page.getByText("Legacy GCash – Online", { exact: true })).toBeVisible();
   await expect(page.getByText("M*** S.", { exact: true })).toBeVisible();
   expect(submittedToken).toBe(token);
   expect(hashSeenAtRequest).toBe("");

@@ -115,6 +115,8 @@ function mapSessionProfile(row: {
   fullName: string;
   email: string;
   studentNumber: string | null;
+  departmentId: string | null;
+  onboardingCompletedAt: Date | null;
   phone: string | null;
   department: string | null;
   address: string | null;
@@ -128,6 +130,8 @@ function mapSessionProfile(row: {
     fullName: row.fullName,
     email: row.email,
     studentNumber: row.studentNumber,
+    departmentId: row.departmentId,
+    onboardingCompletedAt: row.onboardingCompletedAt?.toISOString() ?? null,
     phone: decryptSensitiveText(row.phone, "profile.phone"),
     department: row.department,
     address: decryptSensitiveText(row.address, "profile.address"),

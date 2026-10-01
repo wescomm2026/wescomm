@@ -26,6 +26,7 @@ import { reconcileProductSkuInventory, restockProductSkus } from "../services/sk
 import { invalidateOperationalReadCaches } from "../services/operational-cache.service.js";
 import { getProductDeletionEligibility, permanentlyDeleteProduct } from "../services/product-deletion.service.js";
 import { scheduleOutboxProcessing } from "../services/outbox.service.js";
+import { listInventoryBatches, verifyOpeningBatchCost } from "../services/inventory-cost.service.js";
 
 export const staffProductsRoutes = Router();
 
@@ -57,10 +58,17 @@ const categorySchema = {
   categoryIconUrl: optionalTextSchema
 };
 
+const audienceSchema = {
+  audienceScope: z.enum(["ALL_STUDENTS", "SPECIFIC_DEPARTMENTS"] as const).optional(),
+  departmentIds: z.array(z.string().uuid()).max(50).optional()
+};
+
 const inventoryIntegerSchema = z.preprocess(
   (value) => typeof value === "string" && value.trim() === "" ? Number.NaN : value,
   z.coerce.number().int().nonnegative().max(10_000_000)
 );
+const acquisitionCostSchema = z.coerce.number().nonnegative().max(10_000_000).multipleOf(0.01);
+const receivedAtSchema = z.coerce.date();
 
 const variantSchema = z.object({
   optionName: z.string().trim().min(1).max(80),
@@ -68,6 +76,8 @@ const variantSchema = z.object({
   stock: inventoryIntegerSchema.default(0),
   lowStockThreshold: inventoryIntegerSchema.default(2)
 });
+
+const lowStockPercentSchema = z.coerce.number().int().min(1).max(100);
 
 const syncVariantsSchema = z.object({
   optionName: z.string().trim().min(1).max(80),
@@ -81,6 +91,7 @@ const syncVariantsSchema = z.object({
 const createProductSchema = z
   .object({
     ...categorySchema,
+    ...audienceSchema,
     name: z.string().trim().min(2).max(160),
     description: optionalTextSchema,
     imageUrl: optionalTextSchema,
@@ -90,9 +101,13 @@ const createProductSchema = z
     status: z.enum(PRODUCT_STATUSES).optional(),
     saleMode: z.enum(PRODUCT_SALE_MODES).default("SIMPLE"),
     stock: inventoryIntegerSchema.default(0),
-    lowStockThreshold: inventoryIntegerSchema.default(10),
+    lowStockThreshold: inventoryIntegerSchema.optional(),
+    lowStockPercent: lowStockPercentSchema.optional(),
     variants: z.array(variantSchema).max(100).optional(),
-    notes: z.string().trim().max(500).optional()
+    notes: z.string().trim().max(500).optional(),
+    initialUnitCost: acquisitionCostSchema.optional(),
+    receivedAt: receivedAtSchema.optional(),
+    supplierNote: z.string().trim().max(500).optional()
   })
   .refine((input) => input.categoryId || input.categorySlug || input.categoryName, {
     message: "Category is required.",
@@ -120,10 +135,17 @@ const createProductSchema = z
         path: ["status"]
       });
     }
+    if (input.audienceScope === "SPECIFIC_DEPARTMENTS" && !(input.departmentIds?.length)) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: "Choose at least one department.", path: ["departmentIds"] });
+    }
+    if (input.lowStockPercent !== undefined && input.lowStockThreshold !== undefined) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: "Choose a low-stock percentage instead of a manual threshold.", path: ["lowStockPercent"] });
+    }
   });
 
 const updateProductSchema = z.object({
   ...categorySchema,
+  ...audienceSchema,
   name: z.string().trim().min(2).max(160).optional(),
   description: optionalTextSchema,
   imageUrl: optionalTextSchema,
@@ -133,6 +155,7 @@ const updateProductSchema = z.object({
   status: z.enum(PRODUCT_STATUSES).optional(),
   stock: inventoryIntegerSchema.optional(),
   lowStockThreshold: inventoryIntegerSchema.optional(),
+  lowStockPercent: lowStockPercentSchema.optional(),
   isActive: z.boolean().optional(),
   notes: z.string().trim().max(500).optional()
 }).superRefine((input, context) => {
@@ -142,6 +165,9 @@ const updateProductSchema = z.object({
       message: "On Sale is derived automatically when old price is greater than selling price.",
       path: ["status"]
     });
+  }
+  if (input.lowStockPercent !== undefined && input.lowStockThreshold !== undefined) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Choose a low-stock percentage instead of a manual threshold.", path: ["lowStockPercent"] });
   }
 });
 
@@ -153,7 +179,12 @@ const restockSchema = z
       variantId: z.string().uuid(),
       quantity: inventoryIntegerSchema
     })).max(100).optional(),
-    notes: z.string().trim().max(500).optional()
+    notes: z.string().trim().max(500).optional(),
+    unitCost: acquisitionCostSchema.optional(),
+    sellingPrice: acquisitionCostSchema.optional(),
+    receivedAt: receivedAtSchema.optional(),
+    supplierNote: z.string().trim().max(500).optional(),
+    lowStockPercent: lowStockPercentSchema.optional()
   })
   .superRefine((input, context) => {
     if (input.mode === "add" && input.quantity <= 0) {
@@ -162,6 +193,12 @@ const restockSchema = z
         message: "Quantity must be greater than 0 when adding stock.",
         path: ["quantity"]
       });
+    }
+    if (input.mode === "add" && input.unitCost === undefined) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: "Unit acquisition cost is required for every restock.", path: ["unitCost"] });
+    }
+    if (input.mode === "add" && !input.receivedAt) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: "Date received is required for every restock.", path: ["receivedAt"] });
     }
   });
 
@@ -199,7 +236,8 @@ const reconcileSkuInventorySchema = z
   .object({
     optionGroups: z.array(skuOptionGroupSchema).min(1).max(12).optional(),
     skus: z.array(skuDefinitionSchema).min(1).max(500),
-    notes: z.string().trim().max(500).optional()
+    notes: z.string().trim().max(500).optional(),
+    lowStockPercent: lowStockPercentSchema.optional()
   })
   .superRefine((input, context) => {
     const valueCount = input.optionGroups?.reduce((total, group) => total + group.values.length, 0) ?? 0;
@@ -222,12 +260,25 @@ const restockSkuInventorySchema = z.object({
     skuId: z.string().uuid(),
     quantity: inventoryIntegerSchema
   })).min(1).max(500),
-  notes: z.string().trim().max(500).optional()
+  notes: z.string().trim().max(500).optional(),
+  unitCost: acquisitionCostSchema.optional(),
+  sellingPrice: acquisitionCostSchema.optional(),
+  receivedAt: receivedAtSchema.optional(),
+  supplierNote: z.string().trim().max(500).optional(),
+  lowStockPercent: lowStockPercentSchema.optional()
+}).superRefine((input, context) => {
+  if (input.mode === "add" && input.unitCost === undefined) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Unit acquisition cost is required for every restock.", path: ["unitCost"] });
+  }
+  if (input.mode === "add" && !input.receivedAt) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Date received is required for every restock.", path: ["receivedAt"] });
+  }
 });
 
 const updateVariantSchema = variantSchema.partial();
 const productIdSchema = z.string().uuid();
 const variantIdSchema = z.string().uuid();
+const batchIdSchema = z.string().uuid();
 const inventoryListQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(50).optional(),
   cursor: z.string().trim().min(1).max(512).optional(),
@@ -304,6 +355,31 @@ staffProductsRoutes.post(
     const product = await createProduct(input, request.auth!.id);
     await publishInventoryChange(product.id, "created");
     response.status(201).json({ product });
+  })
+);
+
+staffProductsRoutes.get(
+  "/:id/batches",
+  asyncHandler(async (request, response) => {
+    const result = await listInventoryBatches(productIdSchema.parse(request.params.id));
+    response.json(result);
+  })
+);
+
+staffProductsRoutes.patch(
+  "/:id/batches/:batchId/cost",
+  inventoryWriteLimiter,
+  asyncHandler(async (request: AuthenticatedRequest, response) => {
+    const input = z.object({ unitCost: acquisitionCostSchema }).parse(request.body);
+    const productId = productIdSchema.parse(request.params.id);
+    const result = await verifyOpeningBatchCost({
+      productId,
+      batchId: batchIdSchema.parse(request.params.batchId),
+      unitCost: input.unitCost,
+      actorId: request.auth!.id
+    });
+    await publishInventoryChange(productId, "batch-cost-verified");
+    response.json(result);
   })
 );
 
@@ -390,6 +466,11 @@ staffProductsRoutes.post(
       mode: input.mode,
       variantQuantities: input.variantQuantities,
       notes: input.notes,
+      unitCost: input.unitCost,
+      sellingPrice: input.sellingPrice,
+      receivedAt: input.receivedAt,
+      supplierNote: input.supplierNote,
+      lowStockPercent: input.lowStockPercent,
       performedById: request.auth!.id
     });
     await publishInventoryChange(product.id, "restocked");
@@ -422,6 +503,7 @@ staffProductsRoutes.put(
       productId: productIdSchema.parse(request.params.id),
       skus: input.skus,
       optionGroups: input.optionGroups,
+      lowStockPercent: input.lowStockPercent,
       performedById: request.auth!.id,
       notes: input.notes
     });
@@ -440,7 +522,12 @@ staffProductsRoutes.post(
       mode: input.mode,
       quantities: input.quantities,
       performedById: request.auth!.id,
-      notes: input.notes
+      notes: input.notes,
+      unitCost: input.unitCost,
+      sellingPrice: input.sellingPrice,
+      receivedAt: input.receivedAt,
+      supplierNote: input.supplierNote,
+      lowStockPercent: input.lowStockPercent
     });
     await publishInventoryChange(product.id, "sku-restocked");
     response.json({ product });

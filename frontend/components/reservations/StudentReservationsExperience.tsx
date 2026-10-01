@@ -6,7 +6,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
-import { ArrowLeft, CalendarDays, ChevronRight, Clock3, X, XCircle } from "lucide-react";
+import { ArrowLeft, CalendarDays, CheckCircle2, ChevronRight, Clock3, CreditCard, Package, Tag, X, XCircle } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import { useRealtimeRefresh } from "@/components/realtime/RealtimeProvider";
 import { AssetIcon } from "@/components/ui/AssetIcon";
@@ -14,7 +14,6 @@ import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import {
   cancelMyReservationFromApi,
-  createGcashCheckoutFromApi,
   getReservationFromApi,
   getReservationPageFromApi,
   type BackendPaymentMethod,
@@ -32,12 +31,9 @@ import {
   useServerState,
   writeServerState
 } from "@/lib/server-state";
-import {
-  getPaymentIdempotencyKey,
-  openTrustedPaymongoCheckout,
-  rememberPaymentCheckout
-} from "@/lib/payment-checkout";
-import { resolveShopProductAsset } from "@/lib/shop-assets";
+import { collectionChannelLabel, type CollectionChannel } from "@/lib/collection-channel";
+import { resolveShopProductAsset, shopProductCardImage } from "@/lib/shop-assets";
+import { calendarDayDifference, manilaDateKey } from "@/lib/manila-date";
 
 type StoredReservationItem = {
   id: string;
@@ -57,10 +53,12 @@ type StoredReservation = {
   pickupDate: string | null;
   pickupTime: string | null;
   paymentMethod: BackendPaymentMethod;
+  preferredCollectionChannel: CollectionChannel;
   payment: BackendPaymentSummary | null;
   notes: string;
   status: ReservationStatus;
   createdAt: string;
+  confirmationQueue: BackendReservation["confirmationQueue"];
 };
 
 type ReservationStatus = "Pending" | "Confirmed" | "Ready for Pickup" | "Completed" | "Cancelled" | "No-show";
@@ -92,7 +90,7 @@ function formatCreatedAt(value: string) {
   const date = new Date(value);
   return Number.isNaN(date.getTime())
     ? value
-    : date.toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" });
+    : date.toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric", timeZone: "Asia/Manila" });
 }
 
 function formatMoney(value: string | number) {
@@ -116,10 +114,15 @@ function formatBackendStatus(status: BackendReservationStatus): ReservationStatu
 function reservationGuidance(
   status: ReservationStatus,
   paymentMethod: BackendPaymentMethod,
-  payment: BackendPaymentSummary | null
+  payment: BackendPaymentSummary | null,
+  preferredCollectionChannel: CollectionChannel
 ) {
   const isOnlineGcash = paymentMethod === "PAYMONGO_GCASH";
   const isPaidOnline = isOnlineGcash && payment?.status === "PAID";
+  const cashLocation = preferredCollectionChannel === "TREASURER" ? "Treasury" : "Commissary";
+  const readyForPickupCashDetail = preferredCollectionChannel === "TREASURER"
+    ? "Pay in cash at the Treasury, keep your official receipt, and present it during pickup. Bring your reference code."
+    : "Pay in cash and claim your order at the Commissary during your pickup window. Bring your reference code.";
 
   if (status === "Pending") {
     if (isPaidOnline) {
@@ -129,10 +132,10 @@ function reservationGuidance(
       };
     }
     return {
-      title: isOnlineGcash ? "Online payment is not yet confirmed" : "Waiting for staff confirmation",
+      title: isOnlineGcash ? "Historical online payment record" : "Waiting for staff confirmation",
       detail: isOnlineGcash
-        ? "Your reservation is saved. Complete or check the secure GCash payment below before staff processing."
-        : "Your item is held while commissary staff reviews the reservation."
+        ? "Online payments are closed for new reservations. Staff is safely closing this historical payment record; check this reservation for its updated cash payment location."
+        : `Your item is held while staff reviews the reservation. You selected cash payment at the ${cashLocation}.`
     };
   }
   if (status === "Confirmed") {
@@ -147,8 +150,8 @@ function reservationGuidance(
       detail: isPaidOnline
         ? "Your GCash payment is confirmed. Bring your reference code during the pickup window."
         : isOnlineGcash
-          ? "Check the online payment status below before visiting the commissary."
-          : "Bring your reference code and complete payment at the commissary during the pickup window."
+          ? "This historical online payment is not confirmed. Wait for the reservation to show its cash payment location before pickup."
+          : readyForPickupCashDetail
     };
   }
   if (status === "Completed") {
@@ -189,7 +192,7 @@ function formatBackendPayment(value: string) {
   if (value === "PAYMONGO_GCASH") return "GCash (Online)";
   if (value === "GCASH") return "GCash";
   if (value === "CASH") return "Cash";
-  return "Pay at Commissary";
+  return "Cash at Pickup";
 }
 
 function formatBackendTimeRange(startValue: string | null, endValue: string | null) {
@@ -224,21 +227,21 @@ function mapBackendReservations(rows: BackendReservation[]): StoredReservation[]
       };
     }),
     total: formatMoney(reservation.totalAmount),
-    pickupDate: reservation.pickupStart?.slice(0, 10) ?? null,
+    pickupDate: reservation.pickupStart ? manilaDateKey(reservation.pickupStart) : null,
     pickupTime: formatBackendTimeRange(reservation.pickupStart, reservation.pickupEnd),
     paymentMethod: reservation.paymentMethod,
+    preferredCollectionChannel: reservation.preferredCollectionChannel ?? "COMMISSARY",
     payment: reservation.payment ?? null,
     notes: reservation.staffNotes?.trim() ?? "",
     status: formatBackendStatus(reservation.status),
-    createdAt: reservation.createdAt
+    createdAt: reservation.createdAt,
+    confirmationQueue: reservation.confirmationQueue ?? null
   }));
 }
 
 function getPickupLabel(value: string) {
-  const pickup = new Date(`${value}T00:00:00`);
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const difference = Math.round((pickup.getTime() - today.getTime()) / 86400000);
+  const today = manilaDateKey(new Date());
+  const difference = today ? calendarDayDifference(today, value) : 0;
 
   if (difference === 0) return "Pickup today";
   if (difference === 1) return "Pickup tomorrow";
@@ -259,13 +262,8 @@ function paymentStatusDisplay(status?: BackendPaymentStatus) {
 }
 
 function reservationPreviewAction(reservation: StoredReservation) {
-  const canContinuePayment = reservation.paymentMethod === "PAYMONGO_GCASH"
-    && reservation.payment?.status !== "PAID"
-    && (reservation.payment ? reservation.payment.canResume || reservation.payment.canRetry : true);
-
-  if (canContinuePayment) return "Continue payment";
   if (reservation.status === "Ready for Pickup") return "View pickup details";
-  if (reservation.status === "Completed") return "View completed order";
+  if (reservation.status === "Completed") return "View Details";
   return "View details";
 }
 
@@ -283,79 +281,87 @@ function ReservationPreviewCard({
 
   return (
     <article
+      id={`reservation-${reservation.id}`}
       data-testid="reservation-preview-card"
-      className="overflow-hidden rounded-xl border border-[#dce5dd] bg-white shadow-sm transition hover:border-[#b8cfba] hover:shadow-[0_12px_30px_rgba(0,91,43,0.08)]"
+      className="scroll-mt-24 overflow-hidden rounded-2xl border border-[#dce5dd] bg-white shadow-soft transition hover:border-[#b8cfba] hover:shadow-md target:border-primary target:ring-2 target:ring-primary/30"
     >
       <button
         type="button"
         onClick={(event) => onOpen(event.currentTarget)}
         aria-label={`View details for reservation ${reservation.reference}`}
-        className="group block w-full text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
+        className="group block w-full p-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary sm:p-5"
       >
-        <div className="flex items-start justify-between gap-3 border-b border-[#e7ece8] px-4 py-3.5 sm:px-5">
-          <div className="min-w-0">
-            <p className="text-[11px] font-extrabold uppercase tracking-[0.08em] text-primary">Reservation</p>
-            <p className="mt-1 break-all text-sm font-extrabold text-[#17211b]">{reservation.reference}</p>
-            <p className="mt-1 text-xs font-semibold text-[#77817b]">Reserved {formatCreatedAt(reservation.createdAt)}</p>
+        <div className="flex items-start gap-3 sm:gap-4">
+          {firstItem ? (
+            <div className="relative size-20 shrink-0 overflow-hidden rounded-xl bg-[#eff5ef] sm:size-28">
+              <Image src={shopProductCardImage(firstItem.image)} alt={firstItem.name} fill sizes="(max-width: 639px) 80px, 112px" className="object-contain p-2" />
+            </div>
+          ) : null}
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div className="min-w-0">
+                <p className="text-[10px] font-extrabold uppercase tracking-wide text-primary sm:text-xs">Reservation</p>
+                <p className="mt-0.5 break-all text-sm font-extrabold text-[#17211b] sm:text-base">{reservation.reference}</p>
+                <p className="mt-1 text-[11px] font-medium text-[#657169] sm:text-xs">Reserved {formatCreatedAt(reservation.createdAt)}</p>
+              </div>
+              {reservation.status === "Completed" ? (
+                <span className="inline-flex items-center gap-1 rounded-full border border-[#bde4cc] bg-[#f0faf3] px-2 py-1 text-[11px] font-extrabold text-primary sm:px-3 sm:text-xs">
+                  <CheckCircle2 className="size-3.5" aria-hidden="true" /> Completed
+                </span>
+              ) : <StatusBadge status={reservation.status} />}
+            </div>
+            {firstItem ? (
+              <div className="mt-3">
+                <p className="text-[10px] font-extrabold uppercase tracking-wide text-primary sm:text-xs">{firstItem.category}</p>
+                <h3 className="mt-0.5 line-clamp-2 text-sm font-extrabold leading-snug text-[#17211b] sm:text-base">{firstItem.name}</h3>
+                <p className="mt-1 text-xs text-[#657169]"><span>{totalQuantity} item{totalQuantity === 1 ? "" : "s"} total</span><span aria-hidden="true"> · </span><span>Qty: {firstItem.quantity}</span></p>
+                {remainingLineItems ? <p className="mt-1 text-xs font-bold text-primary">+{remainingLineItems} more item{remainingLineItems === 1 ? "" : "s"}</p> : null}
+                {firstItem.details ? <p className="mt-1 truncate text-xs text-[#657169]">{firstItem.details}</p> : null}
+              </div>
+            ) : <p className="mt-3 text-sm text-[#68746d]">Reservation item preview is unavailable.</p>}
+            {reservation.status === "Pending" && reservation.confirmationQueue ? (
+              <div className="mt-3 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2.5" aria-label={`Confirmation queue position ${reservation.confirmationQueue.position}`}>
+                <p className="text-xs font-extrabold text-primary">Confirmation queue #{reservation.confirmationQueue.position} of {reservation.confirmationQueue.total}</p>
+                <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
+                  {reservation.confirmationQueue.ahead === 0
+                    ? "Your request is first for this pickup schedule."
+                    : `${reservation.confirmationQueue.ahead} eligible request${reservation.confirmationQueue.ahead === 1 ? " is" : "s are"} ahead for this pickup schedule.`}
+                  {" "}Position may change when staff confirms or students cancel.
+                </p>
+              </div>
+            ) : null}
           </div>
-          <StatusBadge status={reservation.status} />
         </div>
 
-        {firstItem ? (
-          <div className="grid grid-cols-[76px_1fr] gap-3 px-4 py-4 sm:grid-cols-[88px_1fr] sm:px-5">
-            <div className="relative size-[76px] overflow-hidden rounded-lg bg-[#eff5ef] sm:size-[88px]">
-              <Image src={firstItem.image} alt={firstItem.name} fill sizes="88px" className="object-contain p-2" />
-            </div>
-            <div className="min-w-0 self-center">
-              <p className="text-[11px] font-bold uppercase tracking-wide text-primary">{firstItem.category}</p>
-              <h3 className="mt-1 line-clamp-2 text-base font-extrabold leading-snug text-[#17211b]">{firstItem.name}</h3>
-              {firstItem.details ? (
-                <p className="mt-1 truncate text-xs font-semibold text-[#657169]">{firstItem.details}</p>
-              ) : null}
-              <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs font-semibold text-[#657169]">
-                <span>Qty: {firstItem.quantity}</span>
-                {remainingLineItems ? (
-                  <span className="rounded-full bg-[#edf5ee] px-2 py-1 font-bold text-primary">
-                    +{remainingLineItems} more item{remainingLineItems === 1 ? "" : "s"}
-                  </span>
-                ) : null}
-              </div>
-            </div>
-          </div>
-        ) : (
-          <p className="px-4 py-5 text-sm font-semibold text-[#68746d] sm:px-5">Reservation item preview is unavailable.</p>
-        )}
-
-        <div className="mx-4 rounded-lg bg-[#f3f8f3] px-3 py-2.5 text-sm sm:mx-5">
-          <div className="flex items-start gap-2.5">
-            <Clock3 className="mt-0.5 size-4 shrink-0 text-primary" />
-            <div className="min-w-0">
-              <p className="text-xs font-bold uppercase tracking-wide text-[#68746d]">Pickup</p>
-              {reservation.pickupDate ? (
-                <p className="mt-0.5 font-bold text-[#26322b]">
-                  {formatDate(reservation.pickupDate)}
-                  <span className="font-semibold text-[#68746d]"> · {reservation.pickupTime ?? "Time to be confirmed"}</span>
-                </p>
-              ) : (
-                <p className="mt-0.5 font-bold text-[#526158]">Awaiting staff confirmation</p>
-              )}
-            </div>
+        <div className="mt-4 flex items-start gap-3 rounded-xl border border-[#dce6dc] bg-[#edf7ee] px-3 py-3 text-sm sm:px-4">
+          <span className="grid size-9 shrink-0 place-items-center rounded-lg border border-[#dce6dc] bg-white text-primary"><CalendarDays className="size-5" aria-hidden="true" /></span>
+          <div className="min-w-0">
+            <p className="text-[10px] font-extrabold uppercase tracking-wide text-primary sm:text-xs">Pickup Schedule</p>
+            {reservation.pickupDate ? (
+              <>
+                <p className="mt-0.5 font-extrabold text-[#17211b]">{formatDate(reservation.pickupDate)}</p>
+                <p className="text-xs text-[#526158] sm:text-sm">{reservation.pickupTime ?? "Time to be confirmed"}</p>
+              </>
+            ) : <p className="mt-1 font-semibold text-[#526158]">Awaiting staff confirmation</p>}
           </div>
         </div>
 
         {isOnlineGcash ? (
-          <div className="mx-4 mt-3 flex items-center justify-between gap-3 rounded-lg border border-[#dce7dd] px-3 py-2 sm:mx-5">
+          <div className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-[#dce7dd] px-3 py-2">
             <span className="text-xs font-extrabold uppercase tracking-wide text-primary">GCash payment</span>
             <StatusBadge status={paymentStatusDisplay(reservation.payment?.status)} />
           </div>
         ) : null}
 
-        <div className="mt-4 flex items-end justify-between gap-4 border-t border-[#e7ece8] px-4 py-3.5 sm:px-5">
-          <div>
-            <p className="text-xs font-semibold text-[#77817b]">{totalQuantity} item{totalQuantity === 1 ? "" : "s"} total</p>
-            <p className="mt-0.5 text-lg font-extrabold text-primary">{reservation.total}</p>
+        <div className="mt-4 flex flex-wrap items-end justify-between gap-3 border-t border-[#e7ece8] pt-4">
+          <div className="flex items-center gap-2.5">
+            <span className="grid size-9 place-items-center rounded-full bg-[#eff5ef] text-primary"><Tag className="size-4" aria-hidden="true" /></span>
+            <div>
+              <p className="text-xs font-medium text-[#657169]">Total</p>
+              <p className="text-lg font-extrabold text-primary">{reservation.total}</p>
+            </div>
           </div>
-          <span className="inline-flex min-h-10 items-center gap-1 rounded-lg bg-[#eaf5eb] px-3 text-sm font-extrabold text-primary transition group-hover:bg-[#dceedd]">
+          <span className="inline-flex min-h-10 items-center gap-1 rounded-lg bg-primary px-3 text-xs font-extrabold text-white transition group-hover:bg-primary-hover sm:px-4 sm:text-sm">
             {reservationPreviewAction(reservation)}
             <ChevronRight className="size-4" />
           </span>
@@ -472,7 +478,7 @@ function ReservationDetailsModal({
         role="dialog"
         aria-modal="true"
         aria-label={`Reservation details ${reservation.reference}`}
-        className="flex h-[100svh] w-full flex-col overflow-hidden bg-[#f3f6f3] shadow-[0_30px_90px_rgba(0,0,0,0.3)] sm:max-h-[calc(100vh-3rem)] sm:max-w-[860px] sm:rounded-2xl sm:border sm:border-[#dce5dd]"
+        className="flex h-[100svh] w-full flex-col overflow-hidden bg-white shadow-overlay sm:max-h-[calc(100vh-3rem)] sm:max-w-[860px] sm:rounded-2xl sm:border sm:border-[#dce5dd]"
       >
         <header className="flex shrink-0 items-center gap-3 border-b border-[#dce5dd] bg-white px-4 py-3 sm:px-5">
           <button
@@ -486,10 +492,14 @@ function ReservationDetailsModal({
             <X className="hidden size-5 sm:block" />
           </button>
           <div className="min-w-0 flex-1">
-            <h2 className="text-base font-extrabold text-[#17211b] sm:text-lg">Reservation details</h2>
+            <h2 className="text-base font-extrabold text-[#17211b] sm:text-lg">Reservation Details</h2>
             <p className="mt-0.5 truncate text-xs font-bold text-primary">{reservation.reference}</p>
           </div>
-          <StatusBadge status={reservation.status} />
+          {reservation.status === "Completed" ? (
+            <span className="inline-flex items-center gap-1 rounded-full border border-[#bde4cc] bg-[#f0faf3] px-2 py-1 text-xs font-extrabold text-primary sm:px-3">
+              <CheckCircle2 className="size-4" aria-hidden="true" /> Completed
+            </span>
+          ) : <StatusBadge status={reservation.status} />}
         </header>
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:p-5">
           <ReservationDetails reservation={reservation} accessToken={accessToken} onCancelled={onCancelled} />
@@ -509,14 +519,16 @@ function ReservationDetails({
   accessToken: string;
   onCancelled: (reservation: BackendReservation) => void;
 }) {
-  const guidance = reservationGuidance(reservation.status, reservation.paymentMethod, reservation.payment);
+  const guidance = reservationGuidance(
+    reservation.status,
+    reservation.paymentMethod,
+    reservation.payment,
+    reservation.preferredCollectionChannel
+  );
   const totalQuantity = reservation.items.reduce((sum, item) => sum + item.quantity, 0);
-  const [paymentError, setPaymentError] = useState("");
-  const [openingPayment, setOpeningPayment] = useState(false);
   const [confirmingCancellation, setConfirmingCancellation] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [cancellationError, setCancellationError] = useState("");
-  const paymentErrorRef = useRef<HTMLParagraphElement | null>(null);
   const cancellationErrorRef = useRef<HTMLParagraphElement | null>(null);
   const isOnlineGcash = reservation.paymentMethod === "PAYMONGO_GCASH";
   const requiresStaffCancellation = paymentRequiresStaffCancellation(
@@ -525,38 +537,10 @@ function ReservationDetails({
   );
   const canSelfCancel = reservation.status === "Pending" && !requiresStaffCancellation;
   const selfCancellationClosed = reservation.status === "Confirmed" || reservation.status === "Ready for Pickup";
-  const canContinuePayment = isOnlineGcash
-    && reservation.payment?.status !== "PAID"
-    && (reservation.payment ? reservation.payment.canResume || reservation.payment.canRetry : true);
-
-  useEffect(() => {
-    if (paymentError) paymentErrorRef.current?.focus();
-  }, [paymentError]);
 
   useEffect(() => {
     if (cancellationError) cancellationErrorRef.current?.focus();
   }, [cancellationError]);
-
-  const continuePayment = async () => {
-    if (!accessToken || !canContinuePayment) return;
-    setOpeningPayment(true);
-    setPaymentError("");
-    try {
-      const checkout = await createGcashCheckoutFromApi(
-        accessToken,
-        reservation.id,
-        getPaymentIdempotencyKey(reservation.id, { renew: reservation.payment?.canRetry === true })
-      );
-      if (!rememberPaymentCheckout(checkout.payment, checkout.checkoutUrl)) {
-        throw new Error("WESCOMM blocked an invalid payment destination. Please try again.");
-      }
-      openTrustedPaymongoCheckout(checkout.checkoutUrl);
-    } catch (error) {
-      setPaymentError(userFacingErrorMessage(error, "Unable to continue this payment."));
-    } finally {
-      setOpeningPayment(false);
-    }
-  };
 
   const cancelReservation = async () => {
     if (!accessToken || !canSelfCancel) return;
@@ -575,28 +559,26 @@ function ReservationDetails({
   };
 
   return (
-    <div className="overflow-hidden rounded-xl border border-[#dce5dd] bg-white shadow-sm">
+    <div className="overflow-hidden rounded-2xl border border-[#dce5dd] bg-white shadow-soft">
       {reservation.items.length ? (
         <ul className="divide-y divide-[#e7ece8]">
           {reservation.items.map((item) => (
-            <li key={item.id} className="grid gap-4 p-4 sm:grid-cols-[96px_1fr] sm:p-5">
-              <div className="relative mx-auto h-24 w-24 overflow-hidden rounded-lg bg-[#eff5ef] sm:mx-0">
-                <Image src={item.image} alt={item.name} fill sizes="96px" className="object-contain p-2" />
+            <li key={item.id} className="grid grid-cols-[80px_1fr] gap-3 p-4 sm:grid-cols-[112px_1fr_auto] sm:gap-4 sm:p-5">
+              <div className="relative size-20 overflow-hidden rounded-xl border border-[#dce6dc] bg-[#f5faf5] sm:size-28">
+                <Image src={shopProductCardImage(item.image)} alt={item.name} fill sizes="(max-width: 639px) 80px, 112px" className="object-contain p-2" />
               </div>
               <div className="min-w-0">
                 <p className="text-xs font-bold uppercase text-primary">{item.category}</p>
-                <h3 className="mt-1 text-base font-extrabold text-[#17211b]">{item.name}</h3>
+                <h3 className="mt-1 text-base font-extrabold text-[#17211b] sm:text-lg">{item.name}</h3>
                 {item.details ? (
                   <div className="mt-3 rounded-md bg-[#f5f8f5] px-3 py-2">
                     <p className="text-xs font-bold uppercase text-[#68746d]">Selected item details</p>
                     <p className="mt-1 text-sm font-semibold text-primary">{item.details}</p>
                   </div>
                 ) : null}
-                <div className="mt-3 flex items-center justify-between gap-4 text-sm">
-                  <span className="font-semibold text-[#68746d]">Quantity: {item.quantity}</span>
-                  <span className="font-extrabold text-primary">{item.subtotal}</span>
-                </div>
+                <p className="mt-2 text-sm font-semibold text-[#68746d]">Quantity: {item.quantity}</p>
               </div>
+              <p className="col-start-2 text-sm font-extrabold text-primary sm:col-start-3 sm:text-right"><span className="mr-1 font-normal text-[#68746d] sm:block">Total</span>{item.subtotal}</p>
             </li>
           ))}
         </ul>
@@ -604,10 +586,10 @@ function ReservationDetails({
         <p className="p-5 text-sm font-semibold text-[#68746d]">Reservation item details are unavailable.</p>
       )}
 
-      <section className="mx-4 mb-4 mt-4 rounded-lg border border-[#bcd7bf] bg-[#edf7ee] p-4 sm:mx-5 sm:mb-5 sm:mt-5">
+      <section className="mx-4 mb-4 mt-4 rounded-xl border border-[#cfe2d1] bg-[#edf7ee] p-4 sm:mx-5 sm:mb-5 sm:mt-5">
         <div className="flex items-start gap-3">
-          <span className="grid size-11 shrink-0 place-items-center rounded-md bg-white">
-            <AssetIcon src="/assets/pick-up.svg" className="size-8" />
+          <span className="grid size-11 shrink-0 place-items-center rounded-lg border border-[#dce6dc] bg-white text-primary">
+            <CalendarDays className="size-6" aria-hidden="true" />
           </span>
           <div className="min-w-0 flex-1">
             {reservation.pickupDate ? (
@@ -631,25 +613,30 @@ function ReservationDetails({
         </div>
       </section>
 
-      <section className="mx-4 mb-4 rounded-lg border border-[#e0e8e1] bg-white p-4 sm:mx-5 sm:mb-5">
-        <p className="text-sm font-extrabold text-[#17211b]">{guidance.title}</p>
-        <p className="mt-1 text-sm leading-6 text-[#657169]">{guidance.detail}</p>
-        {reservation.status === "Completed" ? (
-          <Link href="/student/receipts" className="mt-3 inline-flex min-h-10 items-center rounded-md border border-[#bdd3c1] px-4 text-sm font-bold text-primary transition hover:bg-[#eef7ee]">
-            View Receipts
-          </Link>
-        ) : null}
+      <section className={`mx-4 mb-4 rounded-xl border p-4 sm:mx-5 sm:mb-5 ${reservation.status === "Completed" ? "border-[#cfe2d1] bg-[#f0faf3]" : "border-[#e0e8e1] bg-white"}`}>
+        <div className="flex flex-wrap items-center gap-3">
+          {reservation.status === "Completed" ? <CheckCircle2 className="size-6 shrink-0 text-primary" aria-hidden="true" /> : null}
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-extrabold text-[#17211b]">{guidance.title}</p>
+            <p className="mt-1 text-sm leading-6 text-[#657169]">{guidance.detail}</p>
+          </div>
+          {reservation.status === "Completed" ? (
+            <Link href="/student/receipts" className="inline-flex min-h-10 items-center rounded-lg border border-[#bdd3c1] bg-white px-4 text-sm font-bold text-primary transition hover:bg-[#eef7ee]">
+              View Receipts
+            </Link>
+          ) : null}
+        </div>
       </section>
 
       {isOnlineGcash ? (
-        <section className="mx-4 mb-4 rounded-lg border border-[#d8e5d9] bg-[#fbfdfb] p-4 sm:mx-5 sm:mb-5" aria-label="Online payment status">
+        <section className="mx-4 mb-4 rounded-lg border border-[#d8e5d9] bg-[#fbfdfb] p-4 sm:mx-5 sm:mb-5" aria-label="Historical online payment status">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <p className="text-xs font-extrabold uppercase text-primary">PayMongo GCash</p>
+              <p className="text-xs font-extrabold uppercase text-primary">PayMongo GCash (historical)</p>
               <p className="mt-1 text-sm font-bold text-[#17211b]">
                 {reservation.payment?.status === "PAID"
                   ? "Payment confirmed by the secure server record"
-                  : "Payment is separate from the reservation status"}
+                  : "Online payments are closed. Staff is processing this historical record; follow the cash location shown by the reservation after conversion."}
               </p>
             </div>
             <StatusBadge status={paymentStatusDisplay(reservation.payment?.status)} />
@@ -658,19 +645,6 @@ function ReservationDetails({
             <p className="mt-3 break-all text-xs text-[#657169]">
               Payment reference: <strong>{reservation.payment.providerReference}</strong>
             </p>
-          ) : null}
-          {paymentError ? (
-            <p ref={paymentErrorRef} tabIndex={-1} role="alert" className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">
-              {paymentError}
-            </p>
-          ) : null}
-          {canContinuePayment ? (
-            <Button className="mt-3 min-h-11" onClick={() => void continuePayment()} disabled={openingPayment} aria-busy={openingPayment}>
-              <AssetIcon src="/assets/e-wallet.svg" className="size-5" />
-              {openingPayment
-                ? "Opening GCash..."
-                : reservation.payment?.canRetry ? "Try GCash Again" : "Continue GCash Payment"}
-            </Button>
           ) : null}
         </section>
       ) : null}
@@ -751,23 +725,28 @@ function ReservationDetails({
       ) : null}
 
       <dl className="grid grid-cols-2 gap-x-4 gap-y-4 border-t border-[#e7ece8] px-4 py-4 text-sm sm:grid-cols-4 sm:px-5">
-        <div>
-          <dt className="text-xs font-semibold text-[#77817b]">Quantity</dt>
+        <div className="flex items-start gap-2">
+          <Package className="mt-0.5 size-5 shrink-0 text-primary" aria-hidden="true" />
+          <div><dt className="text-xs font-semibold text-[#77817b]">Items</dt>
           <dd className="mt-1 font-extrabold text-[#26322b]">
             {totalQuantity} item{totalQuantity === 1 ? "" : "s"}
-          </dd>
+          </dd></div>
         </div>
-        <div>
-          <dt className="text-xs font-semibold text-[#77817b]">Payment</dt>
+        <div className="flex items-start gap-2">
+          <CreditCard className="mt-0.5 size-5 shrink-0 text-primary" aria-hidden="true" />
+          <div><dt className="text-xs font-semibold text-[#77817b]">Payment Method</dt>
           <dd className="mt-1 font-bold text-[#26322b]">{formatBackendPayment(reservation.paymentMethod)}</dd>
+          <dd className="mt-1 text-xs text-[#68746d]">{reservation.paymentMethod === "PAYMONGO_GCASH" ? "Online · Commissary" : `Pay at ${collectionChannelLabel(reservation.preferredCollectionChannel)}`}</dd></div>
         </div>
-        <div>
-          <dt className="text-xs font-semibold text-[#77817b]">Total</dt>
-          <dd className="mt-1 font-extrabold text-primary">{reservation.total}</dd>
+        <div className="flex items-start gap-2">
+          <Tag className="mt-0.5 size-5 shrink-0 text-primary" aria-hidden="true" />
+          <div><dt className="text-xs font-semibold text-[#77817b]">Total</dt>
+          <dd className="mt-1 font-extrabold text-primary">{reservation.total}</dd></div>
         </div>
-        <div>
-          <dt className="text-xs font-semibold text-[#77817b]">Reserved on</dt>
-          <dd className="mt-1 font-bold text-[#26322b]">{formatCreatedAt(reservation.createdAt)}</dd>
+        <div className="flex items-start gap-2">
+          <CalendarDays className="mt-0.5 size-5 shrink-0 text-primary" aria-hidden="true" />
+          <div><dt className="text-xs font-semibold text-[#77817b]">Reserved on</dt>
+          <dd className="mt-1 font-bold text-[#26322b]">{formatCreatedAt(reservation.createdAt)}</dd></div>
         </div>
       </dl>
 
@@ -873,6 +852,15 @@ export function StudentReservationsExperience() {
 
   const reservations = useMemo(() => mapBackendReservations(reservationPage?.items ?? []), [reservationPage]);
 
+  useEffect(() => {
+    if (!ready || !reservations.length || !window.location.hash.startsWith("#reservation-")) return;
+    const hashId = decodeURIComponent(window.location.hash.slice(1));
+    const target = document.getElementById(hashId);
+    if (!target) return;
+    const frame = window.requestAnimationFrame(() => target.scrollIntoView({ behavior: "smooth", block: "center" }));
+    return () => window.cancelAnimationFrame(frame);
+  }, [ready, reservations]);
+
   const filteredReservations = useMemo(
     () => activeFilter === "All"
       ? reservations
@@ -908,7 +896,7 @@ export function StudentReservationsExperience() {
         </div>
         <Link href="/student/shop">
           <Button className="h-11 w-full sm:w-auto">
-            <AssetIcon src="/assets/new-reserve.svg" className="size-6" />
+            <AssetIcon src="/assets/new-reserve.svg" className="size-4" />
             Reserve another item
           </Button>
         </Link>
@@ -1014,7 +1002,7 @@ export function StudentReservationsExperience() {
             </span>
             <h2 className="mt-4 text-xl font-extrabold text-[#17211b]">No reservations yet</h2>
             <p className="mt-2 max-w-md text-sm leading-6 text-[#657169]">
-              Browse available campus essentials and use Buy Now to choose your item details and pickup schedule.
+              Browse available campus essentials and use Reserve Now to choose your item details and pickup schedule.
             </p>
             <Link href="/student/shop" className="mt-5">
               <Button>Browse Items</Button>

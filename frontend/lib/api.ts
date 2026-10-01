@@ -2,6 +2,7 @@ import type { CartProduct } from "@/components/cart/StudentCartProvider";
 import { resolveShopProductAsset } from "@/lib/shop-assets";
 import { isUniformClothOnly, sortProductOptionValues } from "@/lib/product-display";
 import { apiErrorMessage } from "@/lib/user-facing-error";
+import type { CollectionChannel } from "@/lib/collection-channel";
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "/api/backend";
 export const COOKIE_SESSION_TOKEN = "cookie-session";
@@ -12,6 +13,8 @@ export type BackendAuthProfile = {
   id: string;
   role: "STUDENT" | "STAFF" | "ADMIN";
   studentNumber: string | null;
+  departmentId: string | null;
+  onboardingCompletedAt: string | null;
   fullName: string;
   email: string;
   phone: string | null;
@@ -24,8 +27,23 @@ export type BackendAuthProfile = {
 
 export type UpdateMyProfilePayload = {
   fullName: string;
+  studentNumber: string;
+  departmentId: string;
   phone: string | null;
-  department: string | null;
+  address: string | null;
+};
+
+export type BackendDepartment = {
+  id: string;
+  code: string;
+  groupName: string;
+  displayName: string;
+};
+
+export type CompleteOnboardingPayload = {
+  departmentId: string;
+  studentNumber: string;
+  phone: string | null;
   address: string | null;
 };
 
@@ -62,6 +80,8 @@ export type BackendProduct = {
   status: "IN_STOCK" | "RESTOCK_SOON" | "OUT_OF_STOCK" | "ON_SALE";
   stock: number;
   saleMode?: ProductSaleMode;
+  audienceScope?: "ALL_STUDENTS" | "SPECIFIC_DEPARTMENTS";
+  targetDepartments?: Array<{ id: string; code: string; displayName: string }>;
   category?: BackendCategory | null;
   variants?: BackendVariant[];
   skuInventoryEnabled?: boolean;
@@ -82,7 +102,7 @@ export type BackendFaq = {
 };
 
 export type BackendReservationStatus = "PENDING" | "CONFIRMED" | "READY_FOR_PICKUP" | "COMPLETED" | "CANCELLED" | "NO_SHOW";
-export type BackendPaymentMethod = "PAY_AT_COMMISSARY" | "E_WALLET_AT_PICKUP" | "PAYMONGO_GCASH" | "CASH" | "GCASH";
+export type BackendPaymentMethod = "PAY_AT_COMMISSARY" | "E_WALLET_AT_PICKUP" | "PAYMONGO_GCASH" | "CASH" | "GCASH" | "OTHER";
 export type BackendPaymentStatus =
   | "INITIALIZING"
   | "AWAITING_PAYMENT"
@@ -104,6 +124,24 @@ export type BackendNotificationType =
 export type BackendConversationStatus = "OPEN" | "RESOLVED";
 export type BackendConversationMode = "BOT_ACTIVE" | "WAITING_FOR_STAFF" | "STAFF_ACTIVE" | "RESOLVED";
 export type BackendConversationMessageSenderType = "STUDENT" | "BOT" | "STAFF" | "SYSTEM";
+
+export type BackendRealtimeUpdate = {
+  id: string;
+  topic:
+    | "reservations"
+    | "receipts"
+    | "notifications"
+    | "conversations"
+    | "typing"
+    | "inventory"
+    | "dashboard"
+    | "reports"
+    | "restrictions"
+    | "users";
+  entityId: string | null;
+  payload: Record<string, unknown>;
+  createdAt: string;
+};
 
 export type BackendProfileSummary = {
   id: string;
@@ -148,15 +186,25 @@ export type BackendReservation = {
   pickupPolicyVersion: number | null;
   pickupSlot: BackendPickupTimeSlot | null;
   paymentMethod: BackendPaymentMethod;
+  preferredCollectionChannel?: CollectionChannel;
   totalAmount: string | number;
   staffNotes?: string | null;
   payment?: BackendPaymentSummary | null;
   createdAt: string;
   updatedAt: string;
+  confirmationQueue?: {
+    position: number;
+    ahead: number;
+    total: number;
+    calculatedAt: string;
+  } | null;
   student?: BackendProfileSummary | null;
   items: Array<{
     id: string;
     productId: string;
+    productNameSnapshot?: string;
+    skuCodeSnapshot?: string | null;
+    optionSnapshot?: Array<{ optionName: string; optionValue: string }>;
     variantSummary?: string | null;
     quantity: number;
     unitPrice: string | number;
@@ -182,7 +230,7 @@ export type BackendReservation = {
 };
 
 export type CreateReservationPayload = {
-  paymentMethod: BackendPaymentMethod;
+  preferredCollectionChannel: CollectionChannel;
   pickupDate: string;
   pickupSlotId: string;
   pickupPolicyVersion: number;
@@ -205,6 +253,8 @@ export type BackendReceipt = {
   reservationId: string | null;
   totalAmount: string | number;
   paymentMethod: BackendPaymentMethod;
+  collectionChannel?: CollectionChannel | null;
+  officialReceiptNumber?: string | null;
   status: BackendReceiptStatus;
   publicVerificationUrl: string | null;
   receiptImageUrl?: string | null;
@@ -243,6 +293,14 @@ export type BackendReceipt = {
       } | null;
     }>;
   } | null;
+  walkInSaleItems?: Array<{
+    id: string;
+    productName: string;
+    options: Array<{ optionName: string; optionValue: string }>;
+    quantity: number;
+    unitPrice: string | number;
+    subtotal: string | number;
+  }>;
 };
 
 export type BackendCursorPage<T> = {
@@ -280,6 +338,9 @@ export type BackendPickupSlotAvailability = {
     booked: number;
     remaining: number | null;
     isFull: boolean;
+    isExpired: boolean;
+    isUnavailable: boolean;
+    unavailableReason: "PICKUP_SLOT_EXPIRED" | "PICKUP_SLOT_FULL" | null;
   }>;
 };
 
@@ -287,6 +348,7 @@ export type BackendPickupPolicy = {
   id?: string;
   version: number;
   timezone: "Asia/Manila" | string;
+  advanceMode: "OPEN_DAYS" | "CALENDAR_DAYS";
   minAdvanceDays: number;
   maxAdvanceDays: number;
   minDate: string;
@@ -305,6 +367,7 @@ export type BackendPickupPolicy = {
 };
 
 export type PickupPolicyPayload = {
+  advanceMode: "OPEN_DAYS" | "CALENDAR_DAYS";
   minAdvanceDays: number;
   maxAdvanceDays: number;
   reason: string;
@@ -751,6 +814,7 @@ export type BackendAdminUser = {
 };
 
 export type BackendReportSummary = {
+  generatedAt: string;
   range: {
     preset: ReportRangePreset;
     from: string | null;
@@ -758,12 +822,55 @@ export type BackendReportSummary = {
     granularity: "DAILY" | "MONTHLY";
     label: string;
   };
+  filters: {
+    collectionChannel: "ALL" | "COMMISSARY" | "TREASURER";
+    categoryId: string | null;
+    basis: "COLLECTION" | "COMPLETION";
+  };
+  reportBasis: "COLLECTION" | "COMPLETION";
+  cashOnlyPolicy: {
+    effectiveAt: string;
+    enabled: boolean;
+  };
   totalSales: number;
-  onlineGcashRevenue: number;
-  payAtCommissaryRevenue: number;
+  cogs: number;
+  grossProfit: number;
+  commissaryCollection: number;
+  treasurerCollection: number;
+  collectionChannelBreakdown: {
+    commissary: { amount: number; payments: number };
+    treasurer: { amount: number; payments: number };
+  };
+  commissaryPaymentBreakdown: {
+    cash: { amount: number; payments: number };
+    gcash: { amount: number; payments: number };
+    other: { amount: number; payments: number };
+  };
+  treasurerCollections: Array<{
+    paymentId: string;
+    paidAt: string;
+    officialReceiptNumber: string | null;
+    orderReference: string;
+    items: string;
+    amount: number;
+  }>;
+  uncostedQuantity: number;
+  unverifiedInventoryQuantity: number;
+  cashRevenue: number;
+  commissaryCashRevenue: number;
+  treasuryCashRevenue: number;
+  inPersonRevenue: number;
+  legacyOnlineRevenue: number;
+  legacyInPersonRevenue: number;
   paymentMethodBreakdown: {
-    onlineGcash: { amount: number; receipts: number };
-    payAtCommissary: { amount: number; receipts: number };
+    cash: { amount: number; receipts: number };
+    inPerson: { amount: number; receipts: number };
+    legacyOnline: { amount: number; receipts: number };
+    legacyInPerson: { amount: number; receipts: number };
+  };
+  cashCollectionChannelBreakdown: {
+    commissary: { amount: number; payments: number };
+    treasurer: { amount: number; payments: number };
   };
   totalReservations: number;
   pendingReservations: number;
@@ -780,7 +887,56 @@ export type BackendReportSummary = {
   receiptsToVerify: number;
   totalReceipts: number;
   activeConversations: number;
+  walkInSales: {
+    amount: number;
+    receipts: number;
+    cogs: number;
+  };
+  walkInVoids: {
+    count: number;
+    amount: number;
+  };
+  cashierReconciliation: Array<{
+    cashierId: string | null;
+    cashierName: string;
+    saleCount: number;
+    sales: number;
+    voidCount: number;
+    voids: number;
+  }>;
+  comparison: {
+    available: boolean;
+    label: string | null;
+    cashRevenue: BackendReportComparisonMetric;
+    recognizedSales: BackendReportComparisonMetric;
+    grossProfit: BackendReportComparisonMetric;
+    reservations: BackendReportComparisonMetric;
+  };
+  reconciliation: {
+    status: "CLEAN" | "NEEDS_REVIEW";
+    exceptionCount: number;
+    amountAtRisk: number;
+    truncated: boolean;
+    counts: Partial<Record<BackendReportReconciliationType, number>>;
+    items: Array<{
+      type: BackendReportReconciliationType;
+      label: string;
+      severity: "HIGH" | "MEDIUM";
+      reservationId: string;
+      referenceCode: string;
+      paymentId: string | null;
+      receiptId: string | null;
+      eventAt: string;
+      amount: number;
+    }>;
+  };
   salesTrend: Array<{
+    key: string;
+    day: string;
+    sales: number;
+    receipts: number;
+  }>;
+  collectionTrend: Array<{
     key: string;
     day: string;
     sales: number;
@@ -789,6 +945,37 @@ export type BackendReportSummary = {
   categorySales: Array<{
     category: string;
     amount: number;
+    quantity: number;
+    sales: number;
+    cogs: number;
+    grossProfit: number;
+  }>;
+  inventoryPlanning: Array<{
+    productId: string;
+    item: string;
+    category: string;
+    stock: number;
+    lowStockThreshold: number;
+    unitsSold: number;
+    sales: number;
+    cogs: number;
+    grossProfit: number;
+    marginPercent: number | null;
+    stockCoverDays: number | null;
+    suggestedReorderQuantity: number;
+    status: "OUT_OF_STOCK" | "REORDER" | "NO_SALES" | "SLOW_MOVING" | "HEALTHY";
+    recommendation: string;
+    lastSoldAt: string | null;
+  }>;
+  itemSales: Array<{
+    productId: string;
+    item: string;
+    category: string;
+    quantity: number;
+    sales: number;
+    cogs: number;
+    grossProfit: number;
+    marginPercent: number | null;
   }>;
   reservationStatusDistribution: Array<{
     status: string;
@@ -802,6 +989,21 @@ export type BackendReportSummary = {
     recommendation: string;
   }>;
 };
+
+export type BackendReportComparisonMetric = {
+  current: number;
+  previous: number;
+  difference: number;
+  percentChange: number | null;
+};
+
+export type BackendReportReconciliationType =
+  | "MISSING_TREASURY_OR"
+  | "PAYMENT_RECEIPT_MISMATCH"
+  | "COMPLETED_WITHOUT_PAID_PAYMENT"
+  | "COMPLETED_WITHOUT_VERIFIED_RECEIPT"
+  | "PAID_NOT_COMPLETED"
+  | "POST_CUTOVER_NON_CASH";
 
 export type BackendWesbotUsageSummary = {
   model: string;
@@ -864,6 +1066,9 @@ export type ReportRangeOptions = {
   from?: string;
   to?: string;
   granularity?: "AUTO" | "DAILY" | "MONTHLY";
+  collectionChannel?: "COMMISSARY" | "TREASURER";
+  categoryId?: string;
+  basis?: "COLLECTION" | "COMPLETION";
 };
 
 export type BackendDashboardProduct = {
@@ -978,6 +1183,8 @@ export function mapBackendProduct(product: BackendProduct): CartProduct {
     count: String(product.stock),
     image: asset.image,
     saleMode,
+    audienceScope: product.audienceScope ?? "ALL_STUDENTS",
+    targetDepartmentIds: (product.targetDepartments ?? []).map((department) => department.id),
     inventorySetupRequired: saleMode === "OPTIONS" && Boolean(product.inventorySetupRequired),
     options: saleMode === "OPTIONS" ? groupOptions(product.variants) : [],
     skus: saleMode === "OPTIONS" && product.skuInventoryEnabled
@@ -1049,6 +1256,30 @@ export async function updateMyProfileFromApi(token: string, payload: UpdateMyPro
     body: JSON.stringify(payload)
   });
   return data.profile;
+}
+
+export async function getDepartmentsFromApi(token: string) {
+  const data = await authApiFetch<{ departments: BackendDepartment[] }>("/auth/departments", token);
+  return data.departments;
+}
+
+export async function completeOnboardingFromApi(token: string, payload: CompleteOnboardingPayload) {
+  const data = await authApiFetch<{ profile: BackendAuthProfile }>("/auth/onboarding", token, {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+  return data.profile;
+}
+
+export async function getRealtimeUpdatesFromApi(token: string, cursor?: string) {
+  const query = cursor && /^\d+$/.test(cursor)
+    ? `?cursor=${encodeURIComponent(cursor)}`
+    : "";
+  return authApiFetch<{
+    cursor: string;
+    hasMore: boolean;
+    events: BackendRealtimeUpdate[];
+  }>(`/realtime/updates${query}`, token, { cache: "no-store" });
 }
 
 const PRODUCT_CACHE_TTL_MS = 30_000;
@@ -1347,13 +1578,76 @@ export async function cancelMyReservationFromApi(token: string, reservationId: s
 export async function updateReservationStatusFromApi(
   token: string,
   reservationId: string,
-  status: BackendReservationStatus
+  status: BackendReservationStatus,
+  settlement?: {
+    paymentMethod: "CASH" | "GCASH" | "OTHER";
+    collectionChannel: "COMMISSARY" | "TREASURER";
+    officialReceiptNumber?: string;
+  }
 ) {
   const data = await authApiFetch<{ reservation: BackendReservation; receipt: BackendReceipt | null }>(`/reservations/${reservationId}/status`, token, {
     method: "PATCH",
-    body: JSON.stringify({ status })
+    body: JSON.stringify({ status, settlement })
   });
   return data;
+}
+
+export type BackendBulkConfirmationPreview = {
+  scope: "SELECTED" | "FILTERED";
+  eligibleCount: number;
+  totalEligible: number;
+  skippedCount: number;
+  truncated: boolean;
+  eligible: Array<{
+    reservationId: string;
+    referenceCode: string;
+    studentName: string;
+    eligible: true;
+    reason: null;
+    reasonLabel: null;
+  }>;
+  skipped: Array<{
+    reservationId: string;
+    referenceCode: string;
+    studentName: string;
+    eligible: false;
+    reason: "NOT_PENDING" | "SCHEDULE_REVIEW_REQUIRED" | "ONLINE_PAYMENT_NOT_PAID";
+    reasonLabel: string;
+  }>;
+  reservationIds: string[];
+  previewToken: string;
+};
+
+export async function previewBulkReservationConfirmationFromApi(
+  token: string,
+  input: { reservationIds?: string[]; query?: string }
+) {
+  const data = await authApiFetch<{ preview: BackendBulkConfirmationPreview }>("/reservations/bulk-confirm/preview", token, {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+  return data.preview;
+}
+
+export async function confirmReservationsBulkFromApi(
+  token: string,
+  preview: Pick<BackendBulkConfirmationPreview, "reservationIds" | "previewToken">
+) {
+  const idempotencyKey = `reservation-bulk-confirm:${crypto.randomUUID()}`;
+  const data = await authApiFetch<{
+    result: {
+      confirmedCount: number;
+      skippedCount: number;
+      confirmed: Array<{ reservationId: string; referenceCode: string }>;
+      skipped: Array<{ reservationId: string; reason: string }>;
+      idempotentReplay: boolean;
+    };
+  }>("/reservations/bulk-confirm", token, {
+    method: "POST",
+    headers: { "Idempotency-Key": idempotencyKey },
+    body: JSON.stringify(preview)
+  });
+  return data.result;
 }
 
 export async function confirmReservationNoShowFromApi(token: string, reservationId: string) {
@@ -1792,17 +2086,21 @@ export async function editConversationMessageFromApi(
   return data.message;
 }
 
-function reportQuery(options: ReportRangeOptions = {}) {
+function reportQuery(options: ReportRangeOptions = {}, fresh = false) {
   const params = new URLSearchParams();
   if (options.preset) params.set("preset", options.preset);
   if (options.from) params.set("from", options.from);
   if (options.to) params.set("to", options.to);
   if (options.granularity) params.set("granularity", options.granularity);
+  if (options.collectionChannel) params.set("collectionChannel", options.collectionChannel);
+  if (options.categoryId) params.set("categoryId", options.categoryId);
+  if (options.basis) params.set("basis", options.basis);
+  if (fresh) params.set("fresh", "1");
   return params.size ? `?${params.toString()}` : "";
 }
 
-export async function getAdminReportSummaryFromApi(token: string, options: ReportRangeOptions = {}, signal?: AbortSignal) {
-  const data = await authApiFetch<{ summary: BackendReportSummary }>(`/admin/reports/summary${reportQuery(options)}`, token, { signal });
+export async function getAdminReportSummaryFromApi(token: string, options: ReportRangeOptions = {}, signal?: AbortSignal, fresh = false) {
+  const data = await authApiFetch<{ summary: BackendReportSummary }>(`/admin/reports/summary${reportQuery(options, fresh)}`, token, { signal });
   return data.summary;
 }
 
@@ -1811,13 +2109,13 @@ export async function getAdminWesbotUsageFromApi(token: string, signal?: AbortSi
   return data.usage;
 }
 
-export async function getStaffReportSummaryFromApi(token: string, options: ReportRangeOptions = {}, signal?: AbortSignal) {
-  const data = await authApiFetch<{ summary: BackendReportSummary }>(`/staff/reports/summary${reportQuery(options)}`, token, { signal });
+export async function getStaffReportSummaryFromApi(token: string, options: ReportRangeOptions = {}, signal?: AbortSignal, fresh = false) {
+  const data = await authApiFetch<{ summary: BackendReportSummary }>(`/staff/reports/summary${reportQuery(options, fresh)}`, token, { signal });
   return data.summary;
 }
 
-export async function getStaffDashboardSummaryFromApi(token: string, signal?: AbortSignal) {
-  const data = await authApiFetch<{ dashboard: BackendStaffDashboard }>("/staff/dashboard/summary", token, { signal });
+export async function getStaffDashboardSummaryFromApi(token: string, signal?: AbortSignal, fresh = false) {
+  const data = await authApiFetch<{ dashboard: BackendStaffDashboard }>(`/staff/dashboard/summary${fresh ? "?fresh=1" : ""}`, token, { signal });
   return data.dashboard;
 }
 

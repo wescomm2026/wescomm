@@ -15,7 +15,7 @@ export function PolicyConsentCheckbox({
   context: "account" | "checkout";
 }) {
   return (
-    <div className="flex items-start gap-3 rounded-control border border-primary/20 bg-primary/5 px-3 py-3 text-sm leading-6 text-muted-foreground">
+    <div className={`flex items-start gap-3 rounded-xl border px-4 py-4 text-sm leading-6 text-[#536158] ${context === "account" ? "border-[#dce6dc] bg-white" : "border-primary/20 bg-primary/5"}`}>
       <input
         id={id}
         type="checkbox"
@@ -23,7 +23,7 @@ export function PolicyConsentCheckbox({
         onChange={(event) => onCheckedChange(event.target.checked)}
         disabled={disabled}
         required
-        className="mt-1 size-4 shrink-0 accent-primary"
+        className="mt-0.5 size-5 shrink-0 accent-primary"
       />
       <label htmlFor={id} className="min-w-0 cursor-pointer">
         {context === "account" ? (

@@ -138,8 +138,8 @@ test("WesBot opens as one messenger thread and hands the same chat to staff", as
       await json(route, { unreadCount: 0 });
       return;
     }
-    if (path === "/api/backend/realtime/events") {
-      await route.fulfill({ status: 200, contentType: "text/event-stream", body: "" });
+    if (path === "/api/backend/realtime/updates") {
+      await json(route, { cursor: "0", hasMore: false, events: [] });
       return;
     }
     if (path === "/api/backend/push/public-key") {
@@ -155,6 +155,9 @@ test("WesBot opens as one messenger thread and hands the same chat to staff", as
   await dismissWelcomeGate(page);
 
   await expect(page.getByRole("heading", { name: "Chat with WesBot" })).toBeVisible();
+  await expect(page.locator("aside").getByText("No messages yet", { exact: true })).toBeVisible();
+  await expect(page.getByRole("log")).not.toBeVisible();
+  await page.locator("aside").getByRole("button", { name: "Start a new chat" }).click();
   await expect(page.getByTestId("conversation-header").locator('img[src="/assets/chat-with-wesbot.svg"]')).toBeVisible();
   await expect(page.getByText("Automated assistant · Online", { exact: true })).toBeVisible();
   await expect(page.getByText("Hi! I'm WesBot.", { exact: false })).toBeVisible();
@@ -205,6 +208,9 @@ test("WesBot opens as one messenger thread and hands the same chat to staff", as
     await expect(page.getByRole("log")).toBeVisible();
   }
 
+  await page.goto(`/student/support?conversationId=${conversationId}`);
+  await dismissWelcomeGate(page);
+  await expect(page.getByRole("log").getByText("Available ba ang WESCOMM PE shirt?", { exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
   expect(unhandledApiPaths).toEqual([]);
 });
@@ -323,8 +329,8 @@ test("student chat has truthful archive states and edits existing messages in pl
       await json(route, { unreadCount: 0 });
       return;
     }
-    if (path === "/api/backend/realtime/events") {
-      await route.fulfill({ status: 200, contentType: "text/event-stream", body: "" });
+    if (path === "/api/backend/realtime/updates") {
+      await json(route, { cursor: "0", hasMore: false, events: [] });
       return;
     }
     if (path === "/api/backend/push/public-key") {
@@ -345,18 +351,16 @@ test("student chat has truthful archive states and edits existing messages in pl
   await page.goto("/student/support");
   await dismissWelcomeGate(page);
 
-  if (testInfo.project.name === "mobile-chromium") {
-    await page.getByRole("button", { name: "Open chat history" }).click();
-  }
+  await expect(page.locator("aside").getByText("Available ba ang WESCOMM PE shirt?", { exact: true }).first()).toBeVisible();
+  await expect(page.getByRole("log")).not.toBeVisible();
   await page.getByRole("button", { name: "Archived", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "No archived chats yet" })).toBeVisible();
+  await expect(page.locator("aside").getByText("No archived chats yet", { exact: true })).toBeVisible();
   await expect(page.getByText("Hi! I'm WesBot.", { exact: false })).toHaveCount(0);
   await expect(page.getByLabel("Message WesBot or commissary staff")).toHaveCount(0);
 
-  if (testInfo.project.name === "mobile-chromium") {
-    await page.getByRole("button", { name: "Open chat history" }).click();
-  }
   await page.getByRole("button", { name: "Active", exact: true }).click();
+  await expect(page.getByRole("log")).not.toBeVisible();
+  await page.locator("aside button").filter({ hasText: "Available ba ang WESCOMM PE shirt?" }).click();
   await expect(page.getByRole("log").getByText("Yes. The WESCOMM PE shirt is currently available with 12 units in stock.")).toBeVisible();
 
   const firstOwnBubble = page.getByRole("log").getByText("Available ba ang WESCOMM PE shirt?", { exact: true }).locator("..");
@@ -413,13 +417,15 @@ test("student chat has truthful archive states and edits existing messages in pl
   if (testInfo.project.name === "mobile-chromium") {
     await page.getByRole("button", { name: "Open chat history" }).click();
   }
-  const conversationButton = page.locator('aside button[aria-current="true"]');
+  const conversationButton = page.locator("aside button").filter({ hasText: "Available ba ang WESCOMM PE shirt?" });
   await longPress(conversationButton);
   await page.getByRole("dialog", { name: "Conversation actions" }).getByRole("button", { name: "Archive chat" }).click();
   await expect(page.getByText("Chat archived.")).toBeVisible();
   expect(archiveRequests).toEqual([true]);
 
   await page.getByRole("button", { name: "Archived", exact: true }).click();
+  await expect(page.getByRole("log")).not.toBeVisible();
+  await page.locator("aside button").filter({ hasText: "Available ba ang WESCOMM PE shirt?" }).click();
   await expect(page.getByText("This chat is archived. Restore it before sending another message.")).toBeVisible();
   await expect(page.getByLabel("Message WesBot or commissary staff")).toHaveCount(0);
   await page.getByRole("button", { name: "Open conversation actions" }).click();
@@ -427,7 +433,7 @@ test("student chat has truthful archive states and edits existing messages in pl
   if (testInfo.project.name === "mobile-chromium") {
     await expect(page.locator("aside").getByText("No archived chats yet", { exact: true })).toBeVisible();
   } else {
-    await expect(page.getByRole("heading", { name: "No archived chats yet" })).toBeVisible();
+    await expect(page.locator("aside").getByText("No archived chats yet", { exact: true })).toBeVisible();
   }
   expect(archiveRequests).toEqual([true, false]);
   expect(unhandledApiPaths).toEqual([]);

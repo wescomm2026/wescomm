@@ -41,7 +41,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
   return (
     <html lang="en" suppressHydrationWarning>
-      <body>
+      <body suppressHydrationWarning>
         {/* This first-party bootstrap must execute while HTML is parsed so a
             reload never paints or downloads the already-seen intro. */}
         <script

@@ -31,10 +31,13 @@ const HANDOFF_PATTERNS = [
 ];
 
 const STOP_WORDS = new Set([
-  "a", "about", "ako", "akong", "akin", "ang", "ano", "available", "availability", "ba", "bang", "check",
-  "do", "for", "gusto", "how", "i", "in", "is", "it", "item", "ko", "kong", "lang", "may", "meron",
-  "my", "na", "ng", "nga", "nito", "pa", "paki", "please", "po", "product", "sa", "size", "stock", "the",
-  "this", "to", "ung", "un", "yong", "yung"
+  "a", "about", "ako", "akong", "akin", "an", "and", "ang", "ano", "are", "at", "available", "availability",
+  "ba", "bang", "be", "can", "check", "could", "did", "do", "does", "for", "from", "get", "give", "gusto",
+  "has", "have", "how", "i", "in", "is", "it", "item", "know", "ko", "kong", "lang", "let", "like", "may",
+  "me", "meron", "my", "na", "need", "ng", "nga", "nito", "of", "on", "other", "our", "pa", "paki",
+  "please", "po", "product", "sa", "should", "show", "size", "stock", "tell", "the", "their", "there",
+  "this", "to", "ung", "un", "us", "want", "we", "wesco", "wescomm", "wesleyan", "what", "will", "with",
+  "would", "yong", "you", "your", "yung"
 ]);
 
 export function normalizeWesbotText(value: string) {
@@ -144,8 +147,22 @@ export function createWesbotConcernKey(intent: WesbotIntent, value: string) {
   return `${intent}:${tokens.join("-") || "general"}`;
 }
 
+/**
+ * Progressive escalation: the second unresolved attempt for the same concern
+ * already recommends Staff, and the third (or later) attempt escalates
+ * strongly with a Talk to Staff action.
+ */
 export function shouldRecommendStaff(repeatCount: number) {
-  return repeatCount >= 3;
+  return repeatCount >= 2;
+}
+
+export type WesbotStaffEscalationTier = 0 | 1 | 2;
+
+/** 0 = none, 1 = soft Staff recommendation, 2 = strong Staff recommendation. */
+export function wesbotStaffEscalationTier(repeatCount: number): WesbotStaffEscalationTier {
+  if (repeatCount >= 3) return 2;
+  if (repeatCount >= 2) return 1;
+  return 0;
 }
 
 export function scoreWesbotTextMatch(query: string, candidate: string) {

@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { getReceiptFromApi, getReceiptPageFromApi, type BackendReceipt, type BackendReceiptStatus } from "@/lib/api";
 import { paymentMethodLabel } from "@/lib/payment-method";
+import { collectionChannelLabel } from "@/lib/collection-channel";
 import {
   mergeCursorPage,
   readServerState,
@@ -34,6 +35,8 @@ type Receipt = {
   time: string;
   status: string;
   paymentMethod: string;
+  collectionChannel: string | null;
+  officialReceiptNumber: string | null;
   pickupSchedule: string | null;
   reservationReference: string | null;
   transactionReference: string;
@@ -90,21 +93,32 @@ function formatReceiptDateTime(value: string) {
 
 function mapBackendReceipt(receipt: BackendReceipt): Receipt {
   const issued = formatReceiptDateTime(receipt.issuedAt || receipt.createdAt);
-  const items = receipt.reservation?.items.length
+  const reservationItems = receipt.reservation?.items.length
     ? receipt.reservation.items.map((item) => ({
         name: item.product?.name ?? "Campus Item",
         detail: item.variantSummary || item.product?.description || "Reserved item",
         quantity: item.quantity,
         unitPrice: Number(item.unitPrice)
       }))
-    : [
-        {
-          name: receipt.reservation?.referenceCode ?? "Commissary Purchase",
-          detail: "Completed transaction",
-          quantity: 1,
-          unitPrice: Number(receipt.totalAmount)
-        }
-      ];
+    : null;
+  const walkInItems = receipt.walkInSaleItems?.length
+    ? receipt.walkInSaleItems.map((item) => ({
+        name: item.productName,
+        detail: item.options.length
+          ? item.options.map((option) => `${option.optionName}: ${option.optionValue}`).join(", ")
+          : "Walk-in purchase",
+        quantity: item.quantity,
+        unitPrice: Number(item.unitPrice)
+      }))
+    : null;
+  const items = reservationItems ?? walkInItems ?? [
+    {
+      name: receipt.reservation?.referenceCode ?? "Commissary Purchase",
+      detail: "Completed transaction",
+      quantity: 1,
+      unitPrice: Number(receipt.totalAmount)
+    }
+  ];
   const subtotal = items.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
 
   return {
@@ -116,6 +130,8 @@ function mapBackendReceipt(receipt: BackendReceipt): Receipt {
     time: issued.time,
     status: formatReceiptStatus(receipt.status),
     paymentMethod: paymentMethodLabel(receipt.paymentMethod),
+    collectionChannel: receipt.collectionChannel ? collectionChannelLabel(receipt.collectionChannel) : null,
+    officialReceiptNumber: receipt.officialReceiptNumber ?? null,
     pickupSchedule: receipt.reservation?.pickupStart
       ? formatReceiptDateTime(receipt.reservation.pickupStart).date + (receipt.reservation.pickupEnd
         ? `, ${formatReceiptDateTime(receipt.reservation.pickupStart).time}–${formatReceiptDateTime(receipt.reservation.pickupEnd).time}`
@@ -210,7 +226,7 @@ async function downloadReceiptPng(receipt: Receipt) {
   context.fillRect(paperX, 28, paperWidth, scratch.height - 56);
 
   try {
-    const logo = await loadImage("/assets/wescomm-logo.png");
+    const logo = await loadImage("/assets/wescomm-logo.webp");
     const logoWidth = 190;
     const logoHeight = 68;
     context.drawImage(logo, (width - logoWidth) / 2, y, logoWidth, logoHeight);
@@ -256,7 +272,9 @@ async function downloadReceiptPng(receipt: Receipt) {
     ["Date", receipt.date],
     ["Time", receipt.time],
     ["Student", receipt.student],
-    ["Payment", receipt.paymentMethod],
+    ["Payment method", receipt.paymentMethod],
+    ...(receipt.collectionChannel ? [["Collected by", receipt.collectionChannel]] : []),
+    ...(receipt.officialReceiptNumber ? [["Treasury OR No.", receipt.officialReceiptNumber]] : []),
     ...(receipt.pickupSchedule ? [["Pickup", receipt.pickupSchedule]] : [])
   ];
   details.forEach(([label, value]) => {
@@ -410,11 +428,11 @@ function ReceiptPaper({
       <div className="absolute inset-x-0 top-0 h-2 bg-[radial-gradient(circle_at_8px_-2px,transparent_8px,#fff_9px)] bg-[length:16px_10px]" />
       <div className="text-center">
         <Image
-          src="/assets/wescomm-logo.png"
+          src="/assets/wescomm-logo.webp"
           alt="WESCOMM"
-          width={compact ? 125 : 165}
-          height={65}
-          className="mx-auto h-auto object-contain"
+          width={1589}
+          height={990}
+          className={compact ? "mx-auto h-auto w-[125px] object-contain" : "mx-auto h-auto w-[165px] object-contain"}
         />
         {!compact ? (
           <>
@@ -437,8 +455,20 @@ function ReceiptPaper({
         <dd className="text-right font-semibold">{receipt.time}</dd>
         <dt className="text-[#68746d]">Student</dt>
         <dd className="text-right font-semibold">{receipt.student}</dd>
-        <dt className="text-[#68746d]">Payment</dt>
+        <dt className="text-[#68746d]">Payment method</dt>
         <dd className="text-right font-semibold">{receipt.paymentMethod}</dd>
+        {receipt.collectionChannel ? (
+          <>
+            <dt className="text-[#68746d]">Collected by</dt>
+            <dd className="text-right font-semibold">{receipt.collectionChannel}</dd>
+          </>
+        ) : null}
+        {receipt.officialReceiptNumber ? (
+          <>
+            <dt className="text-[#68746d]">Treasury OR No.</dt>
+            <dd className="break-all text-right font-mono text-xs font-bold">{receipt.officialReceiptNumber}</dd>
+          </>
+        ) : null}
         {receipt.pickupSchedule ? (
           <>
             <dt className="text-[#68746d]">Pickup</dt>

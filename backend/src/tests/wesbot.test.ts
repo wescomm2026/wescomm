@@ -10,20 +10,34 @@ import {
   extractReservationReference,
   requestsHumanSupport,
   scoreWesbotTextMatch,
-  shouldRecommendStaff
+  shouldRecommendStaff,
+  wesbotStaffEscalationTier
 } from "../domain/wesbot.js";
 import { redactWesbotAiContext, redactWesbotAiText } from "../domain/wesbot-ai-privacy.js";
 import {
   classifyWesbotMessage,
-  sanitizeWesbotConversationalReply,
   sanitizeWesbotRecordReference
 } from "../services/wesbot-classifier.service.js";
 import {
+  buildWesbotEscalationReply,
+  composeWesbotPlannedReply,
   isSafeAiRewrite,
+  isSafeWesbotGeneralReply,
   productAnswer,
   productCandidateTerms,
-  restoreWesbotGroundedPlaceholders
+  requiresImmediateStaffRecommendation,
+  restoreWesbotGroundedPlaceholders,
+  restoreWesbotPublicEmail,
+  selectDirectWesbotFaq,
+  validateWesbotPlanSelection,
+  wesbotAnswerSimilarity,
+  wesbotDraftDuplicatesRecentReply
 } from "../services/wesbot.service.js";
+import {
+  rankWesbotFaqs,
+  wesbotFactSourceId,
+  wesbotFaqSourceId
+} from "../services/wesbot-knowledge.service.js";
 
 test("WesBot recognizes common Taglish commissary intents", () => {
   assert.equal(detectWesbotIntent("May stock ba ng WUP polo medium?"), "PRODUCT_INQUIRY");
@@ -76,22 +90,150 @@ test("greetings and FAQ menus use the free deterministic path", async () => {
   }
 });
 
-test("AI conversational suggestions cannot introduce factual WESCOMM claims", () => {
-  assert.equal(sanitizeWesbotConversationalReply({
-    value: "Hi! I can help you check products, reservations, payments, receipts, pickup, or FAQs.",
-    intent: "GENERAL_SUPPORT",
-    needsClarification: false
-  }), "Hi! I can help you check products, reservations, payments, receipts, pickup, or FAQs.");
-  assert.equal(sanitizeWesbotConversationalReply({
-    value: "The commissary opens at 8 and your payment is confirmed.",
-    intent: "GENERAL_SUPPORT",
-    needsClarification: false
-  }), null);
-  assert.equal(sanitizeWesbotConversationalReply({
-    value: "Your order is ready for pickup.",
-    intent: "RESERVATION_STATUS",
-    needsClarification: false
-  }), null);
+test("plan selections cannot cite unknown facts or claim facts without a source", () => {
+  const suppliedFactIds = [wesbotFaqSourceId("faq-1"), wesbotFactSourceId(0)];
+  const base = {
+    usedFactIds: [wesbotFaqSourceId("faq-1")],
+    missingInformation: [] as string[],
+    recommendStaff: false
+  };
+
+  assert.deepEqual(validateWesbotPlanSelection({
+    plan: { ...base, strategy: "DIRECT_ANSWER" },
+    suppliedFactIds
+  }), { ok: true });
+
+  assert.deepEqual(validateWesbotPlanSelection({
+    plan: { ...base, strategy: "DIRECT_ANSWER", usedFactIds: ["faq:unknown"] },
+    suppliedFactIds
+  }), { ok: false, reason: "UNKNOWN_FACT_ID" });
+
+  assert.deepEqual(validateWesbotPlanSelection({
+    plan: { ...base, strategy: "RELATED_GUIDANCE", usedFactIds: [] },
+    suppliedFactIds
+  }), { ok: false, reason: "FACTUAL_CLAIM_WITHOUT_FACTS" });
+
+  assert.deepEqual(validateWesbotPlanSelection({
+    plan: { ...base, strategy: "CLARIFY_ONE_DETAIL", usedFactIds: [], missingInformation: ["reservation reference"] },
+    suppliedFactIds
+  }), { ok: true });
+
+  assert.deepEqual(validateWesbotPlanSelection({
+    plan: { ...base, strategy: "CLARIFY_ONE_DETAIL", usedFactIds: [], missingInformation: [] },
+    suppliedFactIds
+  }), { ok: false, reason: "CLARIFY_REQUIRES_ONE_DETAIL" });
+
+  assert.deepEqual(validateWesbotPlanSelection({
+    plan: { ...base, strategy: "CLARIFY_ONE_DETAIL", usedFactIds: [], missingInformation: ["reservation reference", "receipt code"] },
+    suppliedFactIds
+  }), { ok: false, reason: "CLARIFY_REQUIRES_ONE_DETAIL" });
+
+  assert.deepEqual(validateWesbotPlanSelection({
+    plan: { ...base, strategy: "STAFF_RECOMMENDED", usedFactIds: [], recommendStaff: false },
+    suppliedFactIds
+  }), { ok: false, reason: "STAFF_RECOMMENDATION_MISMATCH" });
+
+  assert.deepEqual(validateWesbotPlanSelection({
+    plan: { ...base, strategy: "STAFF_RECOMMENDED", usedFactIds: [], recommendStaff: true },
+    suppliedFactIds
+  }), { ok: true });
+});
+
+test("the server composes answers verbatim from cited facts, so invented policies cannot pass", () => {
+  const factTextsById = new Map([
+    [wesbotFaqSourceId("faq-refund"), "A paid cancellation is reviewed by Staff before any refund."],
+    [wesbotFactSourceId(0), "WESCOMM is the Wesleyan University - Philippines commissary management system."]
+  ]);
+  const inventedPolicy = "Students may exchange any item without Staff approval.";
+
+  const composed = composeWesbotPlannedReply({
+    plan: {
+      strategy: "DIRECT_ANSWER",
+      usedFactIds: [wesbotFactSourceId(0)],
+      missingInformation: [],
+      recommendStaff: false
+    },
+    factTextsById,
+    languageStyle: "clear English"
+  });
+  assert.equal(composed.answer, "WESCOMM is the Wesleyan University - Philippines commissary management system.");
+  assert.doesNotMatch(composed.answer, new RegExp(inventedPolicy.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+
+  const multiFact = composeWesbotPlannedReply({
+    plan: {
+      strategy: "RELATED_GUIDANCE",
+      usedFactIds: [wesbotFactSourceId(0), wesbotFaqSourceId("faq-refund")],
+      missingInformation: [],
+      recommendStaff: false
+    },
+    factTextsById,
+    languageStyle: "clear English"
+  });
+  assert.equal(
+    multiFact.answer,
+    "WESCOMM is the Wesleyan University - Philippines commissary management system. A paid cancellation is reviewed by Staff before any refund."
+  );
+
+  const clarify = composeWesbotPlannedReply({
+    plan: {
+      strategy: "CLARIFY_ONE_DETAIL",
+      usedFactIds: [],
+      missingInformation: ["reservation reference"],
+      recommendStaff: false
+    },
+    factTextsById,
+    languageStyle: "natural Taglish or Filipino"
+  });
+  assert.match(clarify.answer, /reservation reference/);
+
+  const staff = composeWesbotPlannedReply({
+    plan: {
+      strategy: "STAFF_RECOMMENDED",
+      usedFactIds: [wesbotFaqSourceId("faq-refund")],
+      missingInformation: [],
+      recommendStaff: true
+    },
+    factTextsById,
+    languageStyle: "clear English"
+  });
+  assert.match(staff.answer, /A paid cancellation is reviewed by Staff before any refund/);
+  assert.match(staff.answer, /Talk to Staff/);
+});
+
+test("only high-confidence unambiguous FAQ matches take the direct path", () => {
+  const faq = (id: string, question: string, answer: string) => ({
+    faq: {
+      id,
+      question,
+      answer,
+      category: "GENERAL",
+      source: null,
+      sourceVersion: null,
+      variants: [] as { variant: string }[]
+    },
+    score: 0
+  });
+
+  const contained = [
+    { ...faq("faq-pickup", "When can I pick up my reservation?", "Pickup follows the assigned window."), score: 111 },
+    { ...faq("faq-hours", "What are the operating hours?", "10:00 AM to 4:30 PM."), score: 95 }
+  ];
+  assert.equal(selectDirectWesbotFaq("pick up my reservation", contained)?.faq.id, "faq-pickup");
+
+  const weak = [{ ...faq("faq-reservation", "Reservations", "Reservations hold stock."), score: 18 }];
+  assert.equal(selectDirectWesbotFaq("cancel", weak), null);
+
+  const ambiguousHighScores = [
+    { ...faq("faq-a", "How do I cancel a paid reservation?", "Paid cancellations need Staff review."), score: 111 },
+    { ...faq("faq-b", "Can I get a refund?", "Refunds need Staff review."), score: 95 }
+  ];
+  assert.equal(selectDirectWesbotFaq("cancel paid reservation refund", ambiguousHighScores), null);
+
+  const clearWinner = [
+    { ...faq("faq-a", "How do I cancel a paid reservation?", "Paid cancellations need Staff review."), score: 90 },
+    { ...faq("faq-b", "Can I get a refund?", "Refunds need Staff review."), score: 40 }
+  ];
+  assert.equal(selectDirectWesbotFaq("cancel paid reservation refund", clearWinner)?.faq.id, "faq-a");
 });
 
 test("semantic feature flag off preserves deterministic and legacy behavior without an AI call", async () => {
@@ -172,13 +314,123 @@ test("Gemini-bound WesBot text removes direct identifiers while preserving inten
   ]);
 });
 
-test("equivalent repeated questions share a concern key and recommend staff on the third occurrence", () => {
+test("equivalent repeated questions share a concern key and escalate progressively", () => {
   const first = createWesbotConcernKey("PRODUCT_INQUIRY", "Available ba ang polo medium?");
   const second = createWesbotConcernKey("PRODUCT_INQUIRY", "Polo medium available?");
   assert.equal(first, second);
   assert.equal(shouldRecommendStaff(1), false);
-  assert.equal(shouldRecommendStaff(2), false);
+  assert.equal(shouldRecommendStaff(2), true);
   assert.equal(shouldRecommendStaff(3), true);
+  assert.equal(wesbotStaffEscalationTier(1), 0);
+  assert.equal(wesbotStaffEscalationTier(2), 1);
+  assert.equal(wesbotStaffEscalationTier(3), 2);
+});
+
+test("repeated and paraphrased replies are detected as duplicates before a second AI call", () => {
+  const clarify = "Puwede kong i-check ang payment status ng reservation mo. Pakibigay ang reservation reference.";
+  const clarifyParaphrase = "I-check ko ang payment status ng reservation mo. Kailangan ko ang reservation reference mo.";
+  const statusAnswer = "Your reservation is Pending and no pickup window is assigned yet.";
+  const statusParaphrase = "The reservation status is Pending, with no pickup window assigned.";
+  const unrelated = "A paid cancellation needs Staff review before a refund.";
+
+  assert.equal(wesbotAnswerSimilarity(clarify, clarify), 1);
+  assert.equal(wesbotDraftDuplicatesRecentReply(clarify, [clarifyParaphrase]), true);
+  assert.equal(wesbotDraftDuplicatesRecentReply(statusAnswer, [statusParaphrase]), true);
+  assert.equal(wesbotDraftDuplicatesRecentReply(unrelated, [clarify, statusAnswer]), false);
+  assert.equal(wesbotAnswerSimilarity("I couldn't find a reservation in your account.", "I couldn't find a receipt in your account.") < 0.8, true);
+
+  const singleFaq = "A paid cancellation is reviewed by Staff before any refund.";
+  const extendedFaq = `${singleFaq} Only Staff or Admin can verify or void a receipt.`;
+  assert.equal(wesbotDraftDuplicatesRecentReply(extendedFaq, [singleFaq]), false);
+});
+
+test("strategy and staff recommendation stay consistent across the planner", () => {
+  const service = readFileSync(path.resolve(process.cwd(), "src/services/wesbot.service.ts"), "utf8");
+  assert.doesNotMatch(service, /staffRecommended:\s*false/);
+  assert.match(service, /strategy: "STAFF_RECOMMENDED"/);
+});
+
+test("escalation replies never hand off automatically and recommend Staff", () => {
+  const escalation = buildWesbotEscalationReply("Hindi ko makita payment ko", false);
+  assert.match(escalation, /Talk to Staff/);
+  assert.doesNotMatch(escalation, /queue|handoff|hand over/i);
+  const strong = buildWesbotEscalationReply("Hindi ko makita payment ko", true);
+  assert.match(strong, /strongly recommend/);
+  assert.notEqual(strong, escalation);
+});
+
+test("ranked FAQ knowledge returns ids and scores instead of concatenated text", () => {
+  const faqs = [
+    {
+      id: "faq-cancel-paid",
+      question: "Can I cancel a paid reservation?",
+      answer: "Paid cancellations go to Staff review before any refund.",
+      category: "CANCELLATION",
+      source: null,
+      sourceVersion: null,
+      variants: [{ variant: "Paid order cancellation" }]
+    },
+    {
+      id: "faq-hours",
+      question: "What are WESCOMM operating hours?",
+      answer: "10:00 AM to 4:30 PM, closed on weekends.",
+      category: "GENERAL",
+      source: null,
+      sourceVersion: null,
+      variants: [{ variant: "Operating hours" }]
+    }
+  ];
+  const ranked = rankWesbotFaqs("Pwede ko ba i-cancel ang paid reservation ko?", faqs);
+  assert.ok(ranked.length >= 1);
+  assert.equal(ranked[0].faq.id, "faq-cancel-paid");
+  assert.ok(ranked[0].score > 0);
+  assert.equal(ranked.every((entry) => typeof entry.faq.id === "string" && typeof entry.score === "number"), true);
+  assert.equal(wesbotFaqSourceId(ranked[0].faq.id), "faq:faq-cancel-paid");
+  assert.equal(wesbotFactSourceId(3), "knowledge:3");
+});
+
+test("immediate Staff recommendation covers paid cancellations, missing records, and restrictions", () => {
+  assert.equal(requiresImmediateStaffRecommendation({
+    intent: "CANCELLATION_ELIGIBILITY",
+    sourceReferences: ["account:reservations", "support:staff-review"],
+    missingInformation: [],
+    outcomeRecommendsStaff: true
+  }), true);
+  assert.equal(requiresImmediateStaffRecommendation({
+    intent: "PAYMENT_STATUS",
+    sourceReferences: ["account:reservations", "support:staff-review"],
+    missingInformation: []
+  }), true);
+  assert.equal(requiresImmediateStaffRecommendation({
+    intent: "RESERVATION_STATUS",
+    sourceReferences: ["account:reservations"],
+    missingInformation: ["student restriction"]
+  }), true);
+  assert.equal(requiresImmediateStaffRecommendation({
+    intent: "PRODUCT_INQUIRY",
+    sourceReferences: ["product:1", "inventory:live"],
+    missingInformation: []
+  }), false);
+  assert.equal(requiresImmediateStaffRecommendation({
+    intent: "GENERAL_SUPPORT",
+    sourceReferences: ["support:clarification"],
+    missingInformation: ["reservation reference"]
+  }), false);
+});
+
+test("WesBot never hands off to Staff without an explicit student request", () => {
+  const service = readFileSync(path.resolve(process.cwd(), "src/services/wesbot.service.ts"), "utf8");
+  const handoffAssignments = service.match(/handoffRequested:\s*true/g) ?? [];
+  assert.equal(handoffAssignments.length, 1);
+  assert.match(service, /support:escalation/);
+  assert.match(service, /buildWesbotEscalationReply/);
+});
+
+test("the classifier only routes and never composes the final conversational answer", () => {
+  const classifier = readFileSync(path.resolve(process.cwd(), "src/services/wesbot-classifier.service.ts"), "utf8");
+  assert.doesNotMatch(classifier, /conversationalReply/);
+  assert.match(classifier, /needsClarification/);
+  assert.match(classifier, /missingInformation/);
 });
 
 test("product matching favors relevant database names", () => {
@@ -212,6 +464,8 @@ test("WesBot grounds option inventory by valid SKU combination and handles cloth
     status: "IN_STOCK" as const,
     createdAt: "2026-08-24T00:00:00.000Z",
     inventoryReconciledAt: "2026-08-24T00:00:00.000Z",
+    audienceScope: "ALL_STUDENTS" as const,
+    targetDepartments: [],
     category: { id: "category", name: "Uniforms", slug: "uniforms", iconUrl: null },
     aliases: []
   };
@@ -283,6 +537,8 @@ test("WesBot handles catalog typos and missing products without inventing facts"
     inventorySetupRequired: false,
     createdAt: "2026-08-24T00:00:00.000Z",
     inventoryReconciledAt: "2026-08-24T00:00:00.000Z",
+    audienceScope: "ALL_STUDENTS" as const,
+    targetDepartments: [],
     category: { id: "category", name: "Uniforms", slug: "uniforms", iconUrl: null },
     aliases: [],
     variants: [],
@@ -334,6 +590,23 @@ test("private account references use reversible single-use placeholders for AI w
     restoreWesbotGroundedPlaceholders("No private reference here.", "Check [RESERVATION_REFERENCE]."),
     null
   );
+});
+
+test("general replies restore only the approved public email and reject invented contact values", () => {
+  const facts = "Contact WESCOMM at wescomm2026@gmail.com. Open from 10:00 AM to 4:30 PM.";
+
+  assert.equal(
+    restoreWesbotPublicEmail("Contact [WESCOMM_PUBLIC_EMAIL]."),
+    "Contact wescomm2026@gmail.com."
+  );
+
+  assert.equal(isSafeWesbotGeneralReply("Contact [wescomm_public_email].", facts), false);
+  assert.equal(isSafeWesbotGeneralReply("Contact [EMAIL].", facts), false);
+  assert.equal(isSafeWesbotGeneralReply("Contact [email].", facts), false);
+  assert.equal(isSafeWesbotGeneralReply("Contact support@example.com.", facts), false);
+  assert.equal(isSafeWesbotGeneralReply("Call us at 09171234567.", facts), false);
+
+  assert.equal(isSafeWesbotGeneralReply("Contact wescomm2026@gmail.com.", facts), true);
 });
 
 test("Gemini loads lazily and grounded replies use the bounded generateText path", () => {

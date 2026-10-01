@@ -18,12 +18,14 @@ type DraftValue = {
   id?: string;
   value: string;
   stock: number;
+  stockTarget: number;
   lowStockThreshold: string;
 };
 
 export type ProductOptionsManagerProduct = {
   id: string;
   stock: number;
+  lowStockPercent: number;
   skuInventoryEnabled: boolean;
   variants: StaffProductVariant[];
   skus: Array<{ variantIds: string[] }>;
@@ -62,6 +64,7 @@ function draftsForGroup(group?: OptionGroup): DraftValue[] {
     id: variant.id,
     value: variant.optionValue,
     stock: variant.stock,
+    stockTarget: variant.stockTarget ?? variant.stock,
     lowStockThreshold: String(variant.lowStockThreshold ?? 2)
   }));
 }
@@ -106,7 +109,7 @@ export function ProductOptionsManager({
     setCreatingGroup(true);
     setActiveGroupName("");
     setNewGroupName("");
-    setDrafts([{ key: draftKey(), value: "", stock: 0, lowStockThreshold: "2" }]);
+    setDrafts([{ key: draftKey(), value: "", stock: 0, stockTarget: 0, lowStockThreshold: "2" }]);
     setError("");
   };
 
@@ -119,7 +122,7 @@ export function ProductOptionsManager({
     const cleaned = drafts.map((draft) => ({
       ...draft,
       value: draft.value.trim(),
-      lowStockThreshold: Number(draft.lowStockThreshold)
+      lowStockThreshold: Math.ceil(Math.max(draft.stockTarget, draft.stock, 0) * product.lowStockPercent / 100)
     }));
     if (!cleaned.length) {
       setError("Add at least one option value, or use Remove group if the group is no longer needed.");
@@ -137,10 +140,6 @@ export function ProductOptionsManager({
         return;
       }
       seen.add(key);
-      if (!Number.isInteger(draft.lowStockThreshold) || draft.lowStockThreshold < 0) {
-        setError(`${draft.value}: warning level must be a whole number of 0 or more.`);
-        return;
-      }
     }
 
     const confirmed = await confirm({
@@ -252,12 +251,12 @@ export function ProductOptionsManager({
             {drafts.map((draft, index) => {
               const linked = Boolean(draft.id && linkedVariantIds.has(draft.id));
               return (
-                <div key={draft.key} className="grid grid-cols-[1fr_78px_40px] items-center gap-2 px-3 py-3">
+                <div key={draft.key} className="grid grid-cols-[1fr_90px_40px] items-center gap-2 px-3 py-3">
                   <div>
                     <input value={draft.value} onChange={(event) => setDrafts((current) => current.map((entry) => entry.key === draft.key ? { ...entry, value: event.target.value } : entry))} placeholder={`Value ${index + 1}`} className="h-10 w-full rounded-md border px-3 text-sm outline-none focus:border-primary" />
                     {draft.id ? <p className="mt-1 text-[10px] text-[#7a877f]">Current derived stock: {draft.stock}</p> : <p className="mt-1 text-[10px] text-[#7a877f]">New values start at 0 stock.</p>}
                   </div>
-                  <input type="number" min="0" step="1" inputMode="numeric" value={draft.lowStockThreshold} disabled={product.skuInventoryEnabled} onChange={(event) => setDrafts((current) => current.map((entry) => entry.key === draft.key ? { ...entry, lowStockThreshold: event.target.value } : entry))} title={product.skuInventoryEnabled ? "Low-stock alerts are set per inventory combination." : "Low-stock warning"} className="h-10 rounded-md border px-2 text-center text-sm disabled:bg-[#f2f5f2] disabled:text-[#829087]" />
+                  <div title={`Automatic ${product.lowStockPercent}% low-stock policy`} className="grid h-10 place-items-center rounded-md border bg-[#f2f5f2] px-2 text-center text-xs font-bold text-[#667169]">{product.skuInventoryEnabled ? "Per SKU" : `≤ ${Math.ceil(Math.max(draft.stockTarget, draft.stock, 0) * product.lowStockPercent / 100)}`}</div>
                   <button type="button" disabled={saving || linked || drafts.length === 1} onClick={() => setDrafts((current) => current.filter((entry) => entry.key !== draft.key))} aria-label={`Remove ${draft.value || `value ${index + 1}`}`} title={linked ? "This value is used by an active inventory combination." : undefined} className="grid size-10 place-items-center rounded-md text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-35"><Trash2 className="size-4" /></button>
                 </div>
               );
@@ -265,7 +264,7 @@ export function ProductOptionsManager({
           </div>
 
           <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[#e7ece8] px-3 py-3">
-            <Button type="button" variant="secondary" className="h-9 px-3" onClick={() => setDrafts((current) => [...current, { key: draftKey(), value: "", stock: 0, lowStockThreshold: "2" }])} disabled={saving}><Plus className="size-4" /> Add value</Button>
+            <Button type="button" variant="secondary" className="h-9 px-3" onClick={() => setDrafts((current) => [...current, { key: draftKey(), value: "", stock: 0, stockTarget: 0, lowStockThreshold: "2" }])} disabled={saving}><Plus className="size-4" /> Add value</Button>
             <div className="flex gap-2"><Button type="button" variant="secondary" onClick={onDone} disabled={saving}>Cancel</Button><Button type="button" onClick={() => void save()} disabled={saving}>{saving ? "Saving..." : "Save options"}</Button></div>
           </div>
         </div>

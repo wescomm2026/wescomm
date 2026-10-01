@@ -10,7 +10,9 @@ const sourceFiles = [
   "next.config.mjs",
   "public/manifest.webmanifest",
   "public/offline.html",
-  "public/assets/wescomm-logo.png"
+  "public/assets/wescomm-logo.png",
+  "public/assets/wescomm-logo.webp",
+  "public/assets/wescomm-logo-ui.webp"
 ];
 const buildIdPattern = /const BUILD_ID = "[A-Za-z0-9._-]+";/;
 

@@ -22,6 +22,8 @@ const adminProfile: BackendAuthProfile = {
   email: "release.admin@wesleyan.edu.ph",
   phone: null,
   department: "Commissary",
+  departmentId: null,
+  onboardingCompletedAt: null,
   address: null,
   avatarUrl: null
 };
@@ -109,8 +111,8 @@ async function handleShellRequest(route: Route, profile: BackendAuthProfile) {
     await json(route, { unreadCount: 0 });
     return true;
   }
-  if (path === "/api/backend/realtime/events" && request.method() === "GET") {
-    await route.fulfill({ status: 200, contentType: "text/event-stream", body: "" });
+  if (path === "/api/backend/realtime/updates" && request.method() === "GET") {
+    await json(route, { cursor: "0", hasMore: false, events: [] });
     return true;
   }
   return false;
@@ -206,6 +208,9 @@ test("Admin completes archive to retention, restore, and exact-confirmation purg
   await dismissWelcomeGate(page);
   await page.getByRole("button", { name: "Archived", exact: true }).click();
   await expect(page.getByText(conversation.subject, { exact: true }).first()).toBeVisible();
+  const openConversation = () => page.getByRole("region", { name: "WESCOMM staff messenger" })
+    .getByRole("button", { name: /Retention acceptance evidence/ }).click();
+  await openConversation();
 
   await page.getByRole("button", { name: "Delete", exact: true }).click();
   let confirmation = page.getByRole("alertdialog", { name: "Move this conversation into retention?" });
@@ -214,6 +219,7 @@ test("Admin completes archive to retention, restore, and exact-confirmation purg
   await expect(page.getByText("Conversation moved into 90-day retention.")).toBeVisible();
 
   await page.getByRole("button", { name: "Deleted", exact: true }).click();
+  await openConversation();
   await expect(page.getByText("Retention copy — read only.", { exact: false })).toBeVisible();
   await expect(page.getByLabel("Reply to student")).toBeDisabled();
   await page.getByRole("button", { name: "Restore", exact: true }).click();
@@ -222,10 +228,12 @@ test("Admin completes archive to retention, restore, and exact-confirmation purg
   await expect(page.getByText("Conversation restored to the operations archive.")).toBeVisible();
 
   await page.getByRole("button", { name: "Archived", exact: true }).click();
+  await openConversation();
   await page.getByRole("button", { name: "Delete", exact: true }).click();
   await page.getByRole("alertdialog", { name: "Move this conversation into retention?" })
     .getByRole("button", { name: "Move to Deleted" }).click();
   await page.getByRole("button", { name: "Deleted", exact: true }).click();
+  await openConversation();
   await page.getByRole("button", { name: "Permanently Purge", exact: true }).click();
 
   const purgeDialog = page.getByRole("alertdialog", { name: "Permanently purge this evidence?" });

@@ -18,7 +18,10 @@ const restockSchema = z.object({
     variantId: z.string().uuid(),
     quantity: z.coerce.number().int().nonnegative().max(10_000_000)
   })).max(100).optional(),
-  notes: z.string().trim().max(500).optional()
+  notes: z.string().trim().max(500).optional(),
+  unitCost: z.coerce.number().nonnegative().max(10_000_000).multipleOf(0.01).optional(),
+  receivedAt: z.coerce.date().optional(),
+  supplierNote: z.string().trim().max(500).optional()
 }).superRefine((input, context) => {
   if (input.mode === "add" && input.quantity <= 0) {
     context.addIssue({
@@ -26,6 +29,12 @@ const restockSchema = z.object({
       message: "Quantity must be greater than 0 when adding stock.",
       path: ["quantity"]
     });
+  }
+  if (input.mode === "add" && input.unitCost === undefined) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Unit acquisition cost is required for every restock.", path: ["unitCost"] });
+  }
+  if (input.mode === "add" && !input.receivedAt) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Date received is required for every restock.", path: ["receivedAt"] });
   }
 });
 
@@ -66,6 +75,9 @@ inventoryRoutes.post(
       mode: input.mode,
       variantQuantities: input.variantQuantities,
       notes: input.notes,
+      unitCost: input.unitCost,
+      receivedAt: input.receivedAt,
+      supplierNote: input.supplierNote,
       performedById: request.auth!.id
     });
     await invalidateOperationalReadCaches();

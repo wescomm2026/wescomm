@@ -45,24 +45,29 @@ function EmptyPanel({ children }: { children: ReactNode }) {
 }
 
 export function StaffReportCharts({ summary }: { summary: BackendReportSummary }) {
+  const primaryTrend = summary.reportBasis === "COLLECTION" ? summary.collectionTrend : summary.salesTrend;
+  const primaryTrendLabel = summary.reportBasis === "COLLECTION" ? "Cash Collection Trend" : "Recognized Sales Trend";
   const reservationStatus = summary.reservationStatusDistribution.map((status, index) => ({
     name: status.label,
     value: status.value,
     color: statusColors[index % statusColors.length]
   }));
   const totalReservations = reservationStatus.reduce((total, status) => total + status.value, 0);
+  const topCategories = [...summary.categorySales]
+    .sort((left, right) => right.sales - left.sales || left.category.localeCompare(right.category))
+    .slice(0, 3);
 
   return (
-    <section className="grid gap-5 xl:grid-cols-3">
-      <ChartCard title="Sales Trend" action="Last 7 days">
+    <section id="reservation-status" className="scroll-mt-24 grid gap-5 xl:grid-cols-2 2xl:grid-cols-3">
+      <ChartCard title={primaryTrendLabel} action={summary.range.label}>
         <div className="h-[310px] p-4">
-          {summary.salesTrend.length ? (
+          {primaryTrend.length ? (
             <>
               <div className="mb-3 flex flex-wrap gap-4 text-xs text-[#647068]">
-                <span className="flex items-center gap-2"><span className="h-1 w-5 rounded bg-primary" /> Live sales</span>
+                <span className="flex items-center gap-2"><span className="h-1 w-5 rounded bg-primary" /> {summary.reportBasis === "COLLECTION" ? "Cash received by payment date" : "Completed sales by completion date"}</span>
               </div>
               <ResponsiveContainer width="100%" height="88%">
-                <LineChart data={summary.salesTrend} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
+                <LineChart data={primaryTrend} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
                   <CartesianGrid vertical={false} stroke="#e5ebe6" />
                   <XAxis dataKey="day" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
                   <YAxis tickFormatter={(value) => `PHP ${Math.round(Number(value) / 1000)}K`} tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
@@ -71,15 +76,15 @@ export function StaffReportCharts({ summary }: { summary: BackendReportSummary }
                 </LineChart>
               </ResponsiveContainer>
             </>
-          ) : <EmptyPanel>No sales trend data yet.</EmptyPanel>}
+          ) : <EmptyPanel>No {summary.reportBasis === "COLLECTION" ? "cash collection" : "completed sales"} trend data yet.</EmptyPanel>}
         </div>
       </ChartCard>
 
-      <ChartCard title="Top Categories by Sales" action="Live data">
+      <ChartCard title="Top Categories by Sales" action="Top 3">
         <div className="h-[310px] p-4">
           {summary.categorySales.length ? (
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={summary.categorySales} layout="vertical" margin={{ top: 5, right: 55, left: 8, bottom: 0 }}>
+              <BarChart data={topCategories} layout="vertical" margin={{ top: 5, right: 55, left: 8, bottom: 0 }}>
                 <XAxis type="number" hide />
                 <YAxis type="category" dataKey="category" width={105} tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
                 <Tooltip formatter={(value: number) => formatCurrency(value)} />
@@ -93,10 +98,10 @@ export function StaffReportCharts({ summary }: { summary: BackendReportSummary }
       </ChartCard>
 
       <ChartCard title="Reservation Status Distribution" action="Live data">
-        <div className="grid min-h-[310px] items-center gap-3 p-4 sm:grid-cols-[1fr_1fr] xl:grid-cols-1 2xl:grid-cols-[1fr_1fr]">
+        <div className="flex min-h-[310px] flex-wrap items-center justify-center gap-4 p-4">
           {reservationStatus.length ? (
             <>
-              <div className="relative mx-auto h-52 w-full max-w-52">
+              <div className="relative h-48 min-w-44 flex-1 basis-48 sm:h-52">
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
                     <Pie data={reservationStatus} dataKey="value" nameKey="name" innerRadius={52} outerRadius={82} paddingAngle={1}>
@@ -112,7 +117,7 @@ export function StaffReportCharts({ summary }: { summary: BackendReportSummary }
                   </div>
                 </div>
               </div>
-              <div className="space-y-3">
+              <div className="min-w-36 flex-1 basis-36 space-y-3">
                 {reservationStatus.map((status) => (
                   <div key={status.name} className="grid grid-cols-[auto_1fr_auto] items-center gap-2 text-xs">
                     <span className="size-2.5 rounded-full" style={{ backgroundColor: status.color }} />

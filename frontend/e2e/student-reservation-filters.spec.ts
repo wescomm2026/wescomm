@@ -24,10 +24,12 @@ const mockedReservations = reservationCases.map((reservation, index) => ({
   pickupPolicyVersion: 1,
   pickupSlot: null,
   paymentMethod: "CASH",
+  preferredCollectionChannel: index === 2 ? "TREASURER" : "COMMISSARY",
   totalAmount: index === 0 ? "250.00" : "100.00",
   staffNotes: index === 0 ? "Bring your student ID." : null,
   createdAt: "2026-07-16T01:00:00.000Z",
   updatedAt: "2026-07-16T01:00:00.000Z",
+  confirmationQueue: index === 0 ? { position: 3, ahead: 2, total: 8, calculatedAt: "2026-07-16T01:00:00.000Z" } : null,
   items: [
     {
       id: `item-${index + 1}`,
@@ -130,8 +132,8 @@ test("student reservation status filters work on desktop and mobile", async ({ p
       await json(route, { unreadCount: 0 });
       return;
     }
-    if (path === "/api/backend/realtime/events") {
-      await route.fulfill({ status: 200, contentType: "text/event-stream", body: "" });
+    if (path === "/api/backend/realtime/updates") {
+      await json(route, { cursor: "0", hasMore: false, events: [] });
       return;
     }
     if (path === "/api/backend/push/public-key") {
@@ -175,6 +177,8 @@ test("student reservation status filters work on desktop and mobile", async ({ p
   await expect(pendingCard.getByText("Awaiting staff confirmation", { exact: true })).toBeVisible();
   await expect(pendingCard.getByText("Staff will post the approved pickup date and time here after confirmation.", { exact: true })).toHaveCount(0);
   await expect(pendingCard.getByText("3 items total", { exact: true })).toBeVisible();
+  await expect(pendingCard.getByText("Confirmation queue #3 of 8", { exact: true })).toBeVisible();
+  await expect(pendingCard.getByText(/2 eligible requests are ahead/)).toBeVisible();
   await expect(pendingCard.getByText("PHP 250.00", { exact: true })).toBeVisible();
 
   const pendingTrigger = pendingCard.getByRole("button", { name: "View details for reservation QA-PENDING" });
@@ -185,9 +189,16 @@ test("student reservation status filters work on desktop and mobile", async ({ p
   await expect(pendingDetails.getByText("Bring your student ID.", { exact: true })).toBeVisible();
   await expect(pendingDetails.getByText("Awaiting pickup schedule", { exact: true })).toBeVisible();
   await expect(pendingDetails.getByText("Staff will post the approved pickup date and time here after confirmation.", { exact: true })).toBeVisible();
+  await expect(pendingDetails.getByText("Your item is held while staff reviews the reservation. You selected cash payment at the Commissary.", { exact: true })).toBeVisible();
   await pendingDetails.getByRole("button", { name: "Close reservation details QA-PENDING" }).click();
   await expect(pendingDetails).toHaveCount(0);
   await expect(pendingTrigger).toBeFocused();
+
+  const readyCard = cards.filter({ hasText: "QA-READY" });
+  await readyCard.getByRole("button", { name: "View details for reservation QA-READY" }).click();
+  const readyDetails = page.getByRole("dialog", { name: "Reservation details QA-READY" });
+  await expect(readyDetails.getByText("Pay in cash at the Treasury, keep your official receipt, and present it during pickup. Bring your reference code.", { exact: true })).toBeVisible();
+  await readyDetails.getByRole("button", { name: "Close reservation details QA-READY" }).click();
 
   for (const reservation of reservationCases) {
     const filterButton = filterGroup.getByRole("button", { name: reservation.filter, exact: true });

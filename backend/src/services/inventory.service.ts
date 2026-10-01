@@ -16,6 +16,8 @@ import {
   validateVariantGroupTotals
 } from "../domain/variant-stock.js";
 import { availabilityStatus, isProductOnSale } from "../domain/product-pricing.js";
+import { nextStockAlertPolicy } from "../domain/stock-alert-policy.js";
+import { adjustInventoryBatchesInTransaction, createInventoryBatchInTransaction, requireRestockCost } from "./inventory-cost.service.js";
 
 type RawCategory = {
   id: string;
@@ -63,9 +65,15 @@ export type ProductCreateInput = CategoryInput & {
   status?: ProductStatus;
   saleMode?: ProductSaleMode;
   stock?: number;
+  lowStockPercent?: number;
   lowStockThreshold?: number;
   variants?: ProductVariantInput[];
   notes?: string;
+  initialUnitCost?: number;
+  receivedAt?: Date;
+  supplierNote?: string | null;
+  audienceScope?: "ALL_STUDENTS" | "SPECIFIC_DEPARTMENTS";
+  departmentIds?: string[];
 };
 
 export type ProductUpdateInput = Partial<Omit<ProductCreateInput, "variants" | "saleMode">> & {
@@ -84,9 +92,12 @@ const inventoryRecordSelect = Prisma.validator<Prisma.ProductSelect>()({
   oldPrice: true,
   status: true,
   stock: true,
+  stockTarget: true,
+  lowStockPercent: true,
   lowStockThreshold: true,
   isActive: true,
   saleMode: true,
+  audienceScope: true,
   skuInventoryEnabled: true,
   inventoryReconciledAt: true,
   createdAt: true,
@@ -95,7 +106,7 @@ const inventoryRecordSelect = Prisma.validator<Prisma.ProductSelect>()({
     select: { id: true, name: true, slug: true, iconUrl: true }
   },
   variants: {
-    select: { id: true, optionName: true, optionValue: true, stock: true, lowStockThreshold: true },
+    select: { id: true, optionName: true, optionValue: true, stock: true, stockTarget: true, lowStockPercent: true, lowStockThreshold: true },
     orderBy: [{ optionName: "asc" }, { optionValue: "asc" }]
   },
   skus: {
@@ -104,6 +115,8 @@ const inventoryRecordSelect = Prisma.validator<Prisma.ProductSelect>()({
       id: true,
       code: true,
       stock: true,
+      stockTarget: true,
+      lowStockPercent: true,
       lowStockThreshold: true,
       isActive: true,
       optionValues: {
@@ -114,6 +127,10 @@ const inventoryRecordSelect = Prisma.validator<Prisma.ProductSelect>()({
       }
     },
     orderBy: [{ createdAt: "asc" }, { id: "asc" }]
+  },
+  targetDepartments: {
+    select: { department: { select: { id: true, code: true, displayName: true } } },
+    orderBy: { department: { sortOrder: "asc" } }
   }
 });
 
@@ -155,9 +172,13 @@ function mapInventoryRecord(row: InventoryRecord) {
     status: availabilityStatus(row.stock, row.lowStockThreshold, row.status),
     isOnSale: isProductOnSale(row.price, row.oldPrice),
     stock: row.stock,
+    stockTarget: row.stockTarget,
+    lowStockPercent: row.lowStockPercent,
     lowStockThreshold: row.lowStockThreshold,
     isActive: row.isActive,
     saleMode: row.saleMode,
+    audienceScope: row.audienceScope,
+    targetDepartments: row.targetDepartments.map((target) => target.department),
     skuInventoryEnabled: row.skuInventoryEnabled,
     inventoryReconciledAt: row.inventoryReconciledAt,
     createdAt: row.createdAt,
@@ -168,6 +189,8 @@ function mapInventoryRecord(row: InventoryRecord) {
       id: sku.id,
       code: sku.code,
       stock: sku.stock,
+      stockTarget: sku.stockTarget,
+      lowStockPercent: sku.lowStockPercent,
       lowStockThreshold: sku.lowStockThreshold,
       isActive: sku.isActive,
       variantIds: sku.optionValues.map((link) => link.variantId),
@@ -188,7 +211,7 @@ function slugify(value: string) {
   return slug || "category";
 }
 
-function deriveProductStatus(stock: number, lowStockThreshold: number, currentStatus?: ProductStatus) {
+export function deriveProductStatus(stock: number, lowStockThreshold: number, currentStatus?: ProductStatus) {
   if (stock <= 0) return "OUT_OF_STOCK";
   if (currentStatus === "ON_SALE") return "ON_SALE";
   if (stock <= lowStockThreshold) return "RESTOCK_SOON";
@@ -432,21 +455,56 @@ export async function createProduct(input: ProductCreateInput, performedById: st
   await assertUniqueActiveProductName(input.name);
 
   const stock = input.stock ?? 0;
-  const lowStockThreshold = input.lowStockThreshold ?? 10;
+  if (stock > 0) {
+    if (input.initialUnitCost === undefined || !input.receivedAt) {
+      throw new HttpError(
+        400,
+        "Opening stock needs a unit acquisition cost and date received. You can also create the product at zero stock, then use Add stock.",
+        "OPENING_BATCH_COST_REQUIRED"
+      );
+    }
+    requireRestockCost({ unitCost: input.initialUnitCost, receivedAt: input.receivedAt, supplierNote: input.supplierNote });
+  }
+  const productAlertPolicy = input.lowStockPercent === undefined
+    ? null
+    : nextStockAlertPolicy({
+        previousTarget: 0,
+        resultingStock: stock,
+        lowStockPercent: input.lowStockPercent
+      });
+  const lowStockThreshold = productAlertPolicy?.lowStockThreshold ?? input.lowStockThreshold ?? 10;
   const status = input.status ?? deriveProductStatus(stock, lowStockThreshold);
   const saleMode = input.saleMode ?? "SIMPLE";
+  const audienceScope = input.audienceScope ?? "ALL_STUDENTS";
+  const departmentIds = audienceScope === "SPECIFIC_DEPARTMENTS" ? Array.from(new Set(input.departmentIds ?? [])) : [];
+  if (audienceScope === "SPECIFIC_DEPARTMENTS") {
+    const departmentCount = await prisma.department.count({ where: { id: { in: departmentIds }, isActive: true } });
+    if (!departmentIds.length || departmentCount !== departmentIds.length) {
+      throw new HttpError(400, "Choose at least one active department.", "INVALID_PRODUCT_AUDIENCE");
+    }
+  }
   const canonicalOptionNames = new Map<string, string>();
   const variants = (input.variants ?? []).map((variant, index) => {
     const enteredOptionName = variant.optionName.trim();
     const optionKey = normalizeVariantPart(enteredOptionName);
     const optionName = canonicalOptionNames.get(optionKey) ?? enteredOptionName;
     canonicalOptionNames.set(optionKey, optionName);
+    const variantStock = variant.stock ?? 0;
+    const variantAlertPolicy = input.lowStockPercent === undefined
+      ? null
+      : nextStockAlertPolicy({
+          previousTarget: 0,
+          resultingStock: variantStock,
+          lowStockPercent: input.lowStockPercent
+        });
     return {
       id: `new-${index}`,
       optionName,
       optionValue: variant.optionValue.trim(),
-      stock: variant.stock ?? 0,
-      lowStockThreshold: variant.lowStockThreshold ?? 2
+      stock: variantStock,
+      stockTarget: variantAlertPolicy?.stockTarget ?? variantStock,
+      lowStockPercent: variantAlertPolicy?.lowStockPercent,
+      lowStockThreshold: variantAlertPolicy?.lowStockThreshold ?? variant.lowStockThreshold ?? 2
     };
   });
   if (saleMode !== "OPTIONS" && variants.length > 0) {
@@ -493,15 +551,23 @@ export async function createProduct(input: ProductCreateInput, performedById: st
         oldPrice: input.oldPrice ?? null,
         status,
         stock,
+        stockTarget: productAlertPolicy?.stockTarget ?? stock,
+        ...(productAlertPolicy ? { lowStockPercent: productAlertPolicy.lowStockPercent } : {}),
         lowStockThreshold,
         isActive: true,
         saleMode,
+        audienceScope,
+        ...(departmentIds.length ? {
+          targetDepartments: { create: departmentIds.map((departmentId) => ({ departmentId })) }
+        } : {}),
         ...(variants.length ? {
           variants: {
             create: variants.map((variant) => ({
               optionName: variant.optionName,
               optionValue: variant.optionValue,
               stock: variant.stock,
+              stockTarget: variant.stockTarget,
+              ...(variant.lowStockPercent === undefined ? {} : { lowStockPercent: variant.lowStockPercent }),
               lowStockThreshold: variant.lowStockThreshold
             }))
           }
@@ -509,7 +575,7 @@ export async function createProduct(input: ProductCreateInput, performedById: st
       },
       select: {
         id: true,
-        variants: { select: { id: true, stock: true, optionName: true, optionValue: true, lowStockThreshold: true } }
+        variants: { select: { id: true, stock: true, stockTarget: true, lowStockPercent: true, optionName: true, optionValue: true, lowStockThreshold: true } }
       }
     });
 
@@ -553,6 +619,8 @@ export async function createProduct(input: ProductCreateInput, performedById: st
               productId: product.id,
               code: `SKU-${randomUUID().slice(0, 8).toUpperCase()}`,
               stock: variant.stock,
+              stockTarget: variant.stockTarget,
+              ...(variant.lowStockPercent === undefined ? {} : { lowStockPercent: variant.lowStockPercent }),
               lowStockThreshold: variant.lowStockThreshold,
               isActive: true,
               optionSnapshot: [{
@@ -564,6 +632,18 @@ export async function createProduct(input: ProductCreateInput, performedById: st
             },
             select: { id: true }
           });
+
+          if (variant.stock > 0) {
+            await createInventoryBatchInTransaction(transaction, {
+              productId: product.id,
+              skuId: sku.id,
+              quantity: variant.stock,
+              unitCost: input.initialUnitCost!,
+              receivedAt: input.receivedAt!,
+              supplierNote: input.supplierNote,
+              createdById: performedById
+            });
+          }
 
           await transaction.inventoryMovement.create({
             data: {
@@ -590,6 +670,17 @@ export async function createProduct(input: ProductCreateInput, performedById: st
           select: { id: true }
         });
       }
+    }
+
+    if (stock > 0 && !(saleMode === "OPTIONS" && product.variants.length > 0)) {
+      await createInventoryBatchInTransaction(transaction, {
+        productId: product.id,
+        quantity: stock,
+        unitCost: input.initialUnitCost!,
+        receivedAt: input.receivedAt!,
+        supplierNote: input.supplierNote,
+        createdById: performedById
+      });
     }
     return product;
   }, INVENTORY_WRITE_TRANSACTION_OPTIONS).catch((error) => {
@@ -644,8 +735,11 @@ export async function updateProduct(productId: string, input: ProductUpdateInput
     input.oldPrice !== undefined ||
     input.status !== undefined ||
     input.stock !== undefined ||
+    input.lowStockPercent !== undefined ||
     input.lowStockThreshold !== undefined ||
-    input.isActive !== undefined
+    input.isActive !== undefined ||
+    input.audienceScope !== undefined ||
+    input.departmentIds !== undefined
   );
   if (!hasProductChanges) return initialProduct;
   const changedFields = [
@@ -656,10 +750,12 @@ export async function updateProduct(productId: string, input: ProductUpdateInput
     input.imageStoragePath !== undefined ? "image_storage_path" : null,
     input.price !== undefined ? "price" : null,
     input.oldPrice !== undefined ? "old_price" : null,
-    input.status !== undefined || input.stock !== undefined || input.lowStockThreshold !== undefined ? "status" : null,
+    input.status !== undefined || input.stock !== undefined || input.lowStockPercent !== undefined || input.lowStockThreshold !== undefined ? "status" : null,
     input.stock !== undefined ? "stock" : null,
+    input.lowStockPercent !== undefined ? "low_stock_percent" : null,
     input.lowStockThreshold !== undefined ? "low_stock_threshold" : null,
-    input.isActive !== undefined ? "is_active" : null
+    input.isActive !== undefined ? "is_active" : null,
+    input.audienceScope !== undefined || input.departmentIds !== undefined ? "audience" : null
   ].filter((field): field is string => Boolean(field));
 
   const transactionResult = await prisma
@@ -676,12 +772,26 @@ export async function updateProduct(productId: string, input: ProductUpdateInput
           oldPrice: true,
           status: true,
           stock: true,
+          stockTarget: true,
+          lowStockPercent: true,
           lowStockThreshold: true,
           isActive: true,
-          variants: { select: { id: true }, take: 1 }
+          audienceScope: true,
+          targetDepartments: { select: { departmentId: true } },
+          variants: { select: { id: true } }
         }
       });
       if (!current) throw new HttpError(404, "Product not found.");
+      const nextAudienceScope = input.audienceScope ?? current.audienceScope;
+      const nextDepartmentIds = Array.from(new Set(
+        input.departmentIds ?? current.targetDepartments.map((target) => target.departmentId)
+      ));
+      if (nextAudienceScope === "SPECIFIC_DEPARTMENTS") {
+        const departmentCount = await transaction.department.count({ where: { id: { in: nextDepartmentIds }, isActive: true } });
+        if (!nextDepartmentIds.length || departmentCount !== nextDepartmentIds.length) {
+          throw new HttpError(400, "Choose at least one active department.", "INVALID_PRODUCT_AUDIENCE");
+        }
+      }
       const nextPrice = input.price ?? Number(current.price);
       const nextOldPrice = input.oldPrice === undefined
         ? (current.oldPrice === null ? null : Number(current.oldPrice))
@@ -698,10 +808,18 @@ export async function updateProduct(productId: string, input: ProductUpdateInput
       }
 
       const nextStock = input.stock ?? current.stock;
-      const nextLowStockThreshold = input.lowStockThreshold ?? current.lowStockThreshold;
+      const nextAlertPolicy = input.lowStockPercent === undefined
+        ? null
+        : nextStockAlertPolicy({
+            previousTarget: current.stockTarget,
+            resultingStock: nextStock,
+            previousPercent: current.lowStockPercent,
+            lowStockPercent: input.lowStockPercent
+          });
+      const nextLowStockThreshold = nextAlertPolicy?.lowStockThreshold ?? input.lowStockThreshold ?? current.lowStockThreshold;
       const nextStatus = input.status ??
         (
-          input.stock !== undefined || input.lowStockThreshold !== undefined
+          input.stock !== undefined || input.lowStockPercent !== undefined || input.lowStockThreshold !== undefined
             ? deriveProductStatus(nextStock, nextLowStockThreshold, current.status)
             : current.status
         );
@@ -715,12 +833,55 @@ export async function updateProduct(productId: string, input: ProductUpdateInput
       if (input.imageStoragePath !== undefined) updates.imageStoragePath = input.imageStoragePath;
       if (input.price !== undefined) updates.price = input.price;
       if (input.oldPrice !== undefined) updates.oldPrice = input.oldPrice;
-      if (input.status !== undefined || input.stock !== undefined || input.lowStockThreshold !== undefined) {
+      if (input.status !== undefined || input.stock !== undefined || input.lowStockPercent !== undefined || input.lowStockThreshold !== undefined) {
         updates.status = nextStatus;
       }
       if (input.stock !== undefined) updates.stock = input.stock;
+      if (nextAlertPolicy) {
+        updates.stockTarget = nextAlertPolicy.stockTarget;
+        updates.lowStockPercent = nextAlertPolicy.lowStockPercent;
+        updates.lowStockThreshold = nextAlertPolicy.lowStockThreshold;
+      }
       if (input.lowStockThreshold !== undefined) updates.lowStockThreshold = input.lowStockThreshold;
       if (input.isActive !== undefined) updates.isActive = input.isActive;
+      if (input.audienceScope !== undefined) updates.audienceScope = input.audienceScope;
+
+      if (input.audienceScope !== undefined || input.departmentIds !== undefined) {
+        await transaction.productDepartment.deleteMany({ where: { productId } });
+        if (nextAudienceScope === "SPECIFIC_DEPARTMENTS") {
+          await transaction.productDepartment.createMany({
+            data: nextDepartmentIds.map((departmentId) => ({ productId, departmentId }))
+          });
+        }
+      }
+
+      if (input.lowStockPercent !== undefined) {
+        await transaction.$executeRaw`
+          UPDATE "product_variants"
+          SET
+            "stock_target" = GREATEST("stock_target", "stock"),
+            "low_stock_percent" = ${input.lowStockPercent},
+            "low_stock_threshold" = CASE
+              WHEN GREATEST("stock_target", "stock") = 0 THEN 0
+              ELSE CEIL(GREATEST("stock_target", "stock") * ${input.lowStockPercent} / 100.0)::integer
+            END,
+            "updated_at" = CURRENT_TIMESTAMP
+          WHERE "product_id" = ${productId}::uuid
+        `;
+        await transaction.$executeRaw`
+          UPDATE "product_skus"
+          SET
+            "stock_target" = GREATEST("stock_target", "stock"),
+            "low_stock_percent" = ${input.lowStockPercent},
+            "low_stock_threshold" = CASE
+              WHEN GREATEST("stock_target", "stock") = 0 THEN 0
+              ELSE CEIL(GREATEST("stock_target", "stock") * ${input.lowStockPercent} / 100.0)::integer
+            END,
+            "updated_at" = CURRENT_TIMESTAMP
+          WHERE "product_id" = ${productId}::uuid
+            AND "is_active" = true
+        `;
+      }
 
       const updated = await transaction.product.update({
         where: { id: productId },
@@ -1001,8 +1162,28 @@ export async function restockProduct(input: {
   variantQuantities?: ProductVariantQuantityInput[];
   performedById: string;
   notes?: string;
+  unitCost?: number;
+  sellingPrice?: number;
+  receivedAt?: Date;
+  supplierNote?: string;
+  lowStockPercent?: number;
 }) {
   const mode = input.mode ?? "add";
+  if (mode === "add") {
+    requireRestockCost({
+      unitCost: input.unitCost ?? Number.NaN,
+      receivedAt: input.receivedAt ?? new Date(Number.NaN),
+      supplierNote: input.supplierNote
+    });
+  }
+  if (input.sellingPrice !== undefined && (
+    !Number.isFinite(input.sellingPrice)
+    || input.sellingPrice < 0
+    || input.sellingPrice > 10_000_000
+    || Number(input.sellingPrice.toFixed(2)) !== input.sellingPrice
+  )) {
+    throw new HttpError(400, "Selling price must be from PHP 0.00 to PHP 10,000,000.00 with up to two decimal places.", "INVALID_SELLING_PRICE");
+  }
   if (!Number.isSafeInteger(input.quantity) || input.quantity < 0 || input.quantity > 10_000_000) {
     throw new HttpError(400, "Stock quantity must be a whole number from 0 to 10,000,000.", "INVALID_STOCK_QUANTITY");
   }
@@ -1024,6 +1205,9 @@ export async function restockProduct(input: {
           name: true,
           status: true,
           stock: true,
+          stockTarget: true,
+          lowStockPercent: true,
+          price: true,
           lowStockThreshold: true,
           isActive: true,
           saleMode: true,
@@ -1034,6 +1218,8 @@ export async function restockProduct(input: {
               optionName: true,
               optionValue: true,
               stock: true,
+              stockTarget: true,
+              lowStockPercent: true,
               lowStockThreshold: true
             },
             orderBy: [{ optionName: "asc" }, { optionValue: "asc" }]
@@ -1130,12 +1316,24 @@ export async function restockProduct(input: {
         }))
       );
 
-      const status = deriveProductStatus(newStock, product.lowStockThreshold, product.status);
+      const productAlertPolicy = nextStockAlertPolicy({
+        previousTarget: product.stockTarget,
+        resultingStock: newStock,
+        previousPercent: product.lowStockPercent,
+        lowStockPercent: input.lowStockPercent
+      });
+      const status = deriveProductStatus(newStock, productAlertPolicy.lowStockThreshold, product.status);
+      const previousSellingPrice = Number(product.price);
+      const nextSellingPrice = input.sellingPrice ?? previousSellingPrice;
       const updated = await transaction.product.update({
         where: { id: input.productId },
         data: {
           stock: newStock,
+          stockTarget: productAlertPolicy.stockTarget,
+          lowStockPercent: productAlertPolicy.lowStockPercent,
+          lowStockThreshold: productAlertPolicy.lowStockThreshold,
           status,
+          price: nextSellingPrice,
           updatedAt: new Date()
         },
         select: {
@@ -1143,6 +1341,8 @@ export async function restockProduct(input: {
           name: true,
           status: true,
           stock: true,
+          stockTarget: true,
+          lowStockPercent: true,
           lowStockThreshold: true,
           isActive: true
         }
@@ -1164,27 +1364,59 @@ export async function restockProduct(input: {
           select: { id: true }
         });
         inventoryMovementId = movement.id;
+        if (mode === "add") {
+          await createInventoryBatchInTransaction(transaction, {
+            productId: input.productId,
+            quantity: difference,
+            unitCost: input.unitCost!,
+            receivedAt: input.receivedAt!,
+            supplierNote: input.supplierNote ?? input.notes,
+            createdById: input.performedById
+          });
+        } else {
+          await adjustInventoryBatchesInTransaction(transaction, {
+            productId: input.productId,
+            difference,
+            createdById: input.performedById,
+            note: input.notes
+          });
+        }
       }
 
-      const variantChanges = stockVariants.flatMap((variant) => {
-        const nextStock = nextVariantStocks.get(variant.id);
-        return nextStock === undefined || nextStock === variant.stock
-          ? []
-          : [{ ...variant, nextStock, difference: nextStock - variant.stock }];
+      const variantPolicies = stockVariants.map((variant) => {
+        const nextStock = nextVariantStocks.get(variant.id) ?? variant.stock;
+        return {
+          ...variant,
+          nextStock,
+          ...nextStockAlertPolicy({
+            previousTarget: variant.stockTarget,
+            resultingStock: nextStock,
+            previousPercent: variant.lowStockPercent,
+            lowStockPercent: input.lowStockPercent
+          })
+        };
       });
-      if (variantChanges.length) {
-        const stockRows = variantChanges.map((variant) => Prisma.sql`
-          (${variant.id}::uuid, ${variant.nextStock}::integer)
+      const variantChanges = variantPolicies.flatMap((variant) => variant.nextStock === variant.stock
+        ? []
+        : [{ ...variant, difference: variant.nextStock - variant.stock }]);
+      if (variantPolicies.length) {
+        const stockRows = variantPolicies.map((variant) => Prisma.sql`
+          (${variant.id}::uuid, ${variant.nextStock}::integer, ${variant.stockTarget}::integer, ${variant.lowStockPercent}::integer, ${variant.lowStockThreshold}::integer)
         `);
         await transaction.$executeRaw`
           UPDATE "product_variants" AS pv
           SET
             "stock" = next."stock",
+            "stock_target" = next."stock_target",
+            "low_stock_percent" = next."low_stock_percent",
+            "low_stock_threshold" = next."low_stock_threshold",
             "updated_at" = CURRENT_TIMESTAMP
-          FROM (VALUES ${Prisma.join(stockRows)}) AS next("id", "stock")
+          FROM (VALUES ${Prisma.join(stockRows)}) AS next("id", "stock", "stock_target", "low_stock_percent", "low_stock_threshold")
           WHERE pv."product_id" = ${input.productId}::uuid
             AND pv."id" = next."id"
         `;
+      }
+      if (variantChanges.length) {
         await transaction.inventoryMovement.createMany({
           data: variantChanges.map((variant) => ({
             productId: input.productId,
@@ -1214,7 +1446,7 @@ export async function restockProduct(input: {
         }
       );
 
-      return { product, updated, difference, variantChanges };
+      return { product, updated, difference, variantChanges, previousSellingPrice, nextSellingPrice };
     }, INVENTORY_WRITE_TRANSACTION_OPTIONS)
     .catch((error) => {
       throw mapInventoryTransactionError(error);
@@ -1257,6 +1489,14 @@ export async function restockProduct(input: {
       previousStock: transactionResult.product.stock,
       newStock: updatedProduct.stock,
       difference: transactionResult.difference,
+      stockTarget: updatedProduct.stockTarget,
+      lowStockPercent: updatedProduct.lowStockPercent,
+      lowStockThreshold: updatedProduct.lowStockThreshold,
+      unitCost: mode === "add" ? input.unitCost : null,
+      previousSellingPrice: transactionResult.previousSellingPrice,
+      newSellingPrice: transactionResult.nextSellingPrice,
+      sellingPriceChanged: transactionResult.previousSellingPrice !== transactionResult.nextSellingPrice,
+      receivedAt: mode === "add" ? input.receivedAt?.toISOString() : null,
       variantChanges: transactionResult.variantChanges.map((variant) => ({
         variantId: variant.id,
         optionName: variant.optionName,

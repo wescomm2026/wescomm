@@ -38,6 +38,11 @@
     "receipts:tokens:backfill": "npm run build && node scripts/backfill-receipt-public-tokens.mjs",
     "push:keys": "web-push generate-vapid-keys",
     "security:encrypt-existing": "tsx src/scripts/encrypt-existing-sensitive-data.ts",
+    "data:reset:testing": "tsx src/scripts/reset-testing-data.ts",
+    "staging:verify": "tsx src/scripts/verify-staging-environment.ts",
+    "staging:verify:target": "tsx src/scripts/verify-staging-environment.ts --target-only",
+    "staging:reset": "tsx src/scripts/reset-testing-data.ts",
+    "staging:seed": "tsx src/scripts/seed-staging-data.ts",
     "seed:wup-catalog": "tsx src/scripts/seed-new-uniform-products.ts"
   },
   "dependencies": {

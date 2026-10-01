@@ -15,29 +15,9 @@ import {
   type ReportRangeOptions
 } from "@/lib/api";
 import { markWelcomeContentReady } from "@/lib/welcome-readiness";
+import { EMPTY_REPORT_SUMMARY } from "@/lib/report-summary";
 
-export const emptySummary: BackendReportSummary = {
-  range: { preset: "LAST_30_DAYS", from: null, to: "", granularity: "DAILY", label: "Last 30 Days" },
-  totalSales: 0,
-  onlineGcashRevenue: 0,
-  payAtCommissaryRevenue: 0,
-  paymentMethodBreakdown: { onlineGcash: { amount: 0, receipts: 0 }, payAtCommissary: { amount: 0, receipts: 0 } },
-  totalReservations: 0,
-  pendingReservations: 0,
-  lowStockItems: 0,
-  outOfStockItems: 0,
-  totalProducts: 0,
-  inventoryValue: 0,
-  activeUsers: 0,
-  roleCounts: { students: 0, staff: 0, admins: 0 },
-  receiptsToVerify: 0,
-  totalReceipts: 0,
-  activeConversations: 0,
-  salesTrend: [],
-  categorySales: [],
-  reservationStatusDistribution: [],
-  inventoryInsights: []
-};
+export const emptySummary = EMPTY_REPORT_SUMMARY;
 
 export function mergeUniqueById<T extends { id: string }>(items: T[]) {
   const byId = new Map<string, T>();
@@ -70,9 +50,16 @@ export function formatAuditDate(value: string) {
 }
 
 export function formatAuditAction(value: string) {
+  const acronyms = new Set(["AI", "FAQ", "ID", "OR", "QR", "SKU"]);
   return value
     .split("_")
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .filter(Boolean)
+    .map((part, index) => {
+      const upper = part.toUpperCase();
+      if (acronyms.has(upper)) return upper;
+      const lower = part.toLowerCase();
+      return index === 0 ? lower.charAt(0).toUpperCase() + lower.slice(1) : lower;
+    })
     .join(" ");
 }
 
@@ -87,7 +74,7 @@ export function useAdminSummary(options: ReportRangeOptions = DEFAULT_REPORT_RAN
   const requestSequenceRef = useRef(0);
   const requestAbortRef = useRef<AbortController | null>(null);
 
-  const loadSummary = useCallback(async ({ background = false }: { background?: boolean } = {}) => {
+  const loadSummary = useCallback(async ({ background = false, fresh = false }: { background?: boolean; fresh?: boolean } = {}) => {
     if (!ready) return;
 
     const requestId = ++requestSequenceRef.current;
@@ -111,7 +98,7 @@ export function useAdminSummary(options: ReportRangeOptions = DEFAULT_REPORT_RAN
     }
 
     try {
-      const data = await getAdminReportSummaryFromApi(user.accessToken, options, requestController.signal);
+      const data = await getAdminReportSummaryFromApi(user.accessToken, options, requestController.signal, fresh);
       if (requestId !== requestSequenceRef.current) return;
       setSummary(data);
     } catch (summaryError) {
@@ -154,7 +141,7 @@ export function useAdminSummary(options: ReportRangeOptions = DEFAULT_REPORT_RAN
     };
   }, [loadSummary, user?.accessToken]);
 
-  return { user, ready, openAuth, summary, loading, initialLoadComplete, error, reload: loadSummary };
+  return { user, ready, openAuth, summary, loading, initialLoadComplete, error, reload: () => loadSummary({ fresh: true }) };
 }
 
 export function AdminHeader({

@@ -21,6 +21,7 @@ test("school email login rejects another domain without requesting an OTP", asyn
   const dialog = page.getByRole("dialog");
   const emailInput = dialog.getByRole("textbox");
   await emailInput.fill("student@gmail.com");
+  await dialog.getByRole("checkbox", { name: /I agree to the Terms & Conditions/ }).check();
   await dialog.getByRole("button", { name: "Send verification code" }).click();
 
   await expect(dialog.getByRole("alert")).toHaveText("Please use your official @wesleyan.edu.ph account.");

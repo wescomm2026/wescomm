@@ -3,6 +3,7 @@ import { getCache, invalidateByTag } from "@vercel/functions";
 import { prisma } from "../lib/prisma.js";
 import type { ProductStatus } from "../types/app.js";
 import { availabilityStatus, isProductOnSale } from "../domain/product-pricing.js";
+import { bumpCacheRevision, readCacheRevision } from "./cache-revision.service.js";
 
 export type ProductFilters = {
   query?: string;
@@ -19,7 +20,7 @@ type ProductListOptions = {
 
 const PUBLIC_PRODUCT_CACHE_TTL_MS = 30_000;
 const PUBLIC_PRODUCT_CACHE_TTL_SECONDS = PUBLIC_PRODUCT_CACHE_TTL_MS / 1_000;
-const PUBLIC_PRODUCT_CACHE_KEY = "catalog:v3";
+const PUBLIC_PRODUCT_CACHE_KEY = "catalog:v4";
 
 const publicProductSelect = Prisma.validator<Prisma.ProductSelect>()({
   id: true,
@@ -33,6 +34,7 @@ const publicProductSelect = Prisma.validator<Prisma.ProductSelect>()({
   lowStockThreshold: true,
   createdAt: true,
   saleMode: true,
+  audienceScope: true,
   skuInventoryEnabled: true,
   inventoryReconciledAt: true,
   category: { select: { id: true, name: true, slug: true, iconUrl: true } },
@@ -57,14 +59,19 @@ const publicProductSelect = Prisma.validator<Prisma.ProductSelect>()({
       }
     },
     orderBy: [{ createdAt: "asc" }, { id: "asc" }]
+  },
+  targetDepartments: {
+    select: { department: { select: { id: true, code: true, displayName: true } } },
+    orderBy: { department: { sortOrder: "asc" } }
   }
 });
 
 type PublicProductRecord = Prisma.ProductGetPayload<{ select: typeof publicProductSelect }>;
 type PublicProduct = ReturnType<typeof mapProduct>;
 
-let cachedPublicCatalog: { value: PublicProduct[]; expiresAt: number } | null = null;
-let publicCatalogRequest: Promise<PublicProduct[]> | null = null;
+let cachedPublicCatalog: { value: PublicProduct[]; expiresAt: number; revision: string } | null = null;
+let publicCatalogRequest: { promise: Promise<PublicProduct[]>; revision: string; generation: number } | null = null;
+let publicCatalogGeneration = 0;
 const productRuntimeCache = getCache({ namespace: "wescomm-products" });
 
 function isPublicProductCatalog(value: unknown): value is PublicProduct[] {
@@ -93,6 +100,8 @@ function mapProduct(product: PublicProductRecord) {
     stock: product.stock,
     createdAt: product.createdAt.toISOString(),
     saleMode: product.saleMode,
+    audienceScope: product.audienceScope,
+    targetDepartments: product.targetDepartments.map((target) => target.department),
     skuInventoryEnabled: product.skuInventoryEnabled,
     inventoryReconciledAt: product.inventoryReconciledAt?.toISOString() ?? null,
     inventorySetupRequired: product.saleMode === "OPTIONS" && !product.skuInventoryEnabled,
@@ -182,45 +191,50 @@ async function queryProducts(filters: ProductFilters) {
 
 export async function listProducts(filters: ProductFilters, options: ProductListOptions = {}) {
   if (options.bypassCache || !isDefaultPublicCatalog(filters)) return queryProducts(filters);
+  const revision = await readCacheRevision("products");
+  const generation = publicCatalogGeneration;
+  const revisionKey = `${PUBLIC_PRODUCT_CACHE_KEY}:${revision}`;
 
-  if (cachedPublicCatalog && cachedPublicCatalog.expiresAt > Date.now()) {
+  if (cachedPublicCatalog && cachedPublicCatalog.revision === revision && cachedPublicCatalog.expiresAt > Date.now()) {
     return cachedPublicCatalog.value;
   }
-  if (publicCatalogRequest) return publicCatalogRequest;
+  if (publicCatalogRequest?.revision === revision && publicCatalogRequest.generation === generation) {
+    return publicCatalogRequest.promise;
+  }
 
-  publicCatalogRequest = (async () => {
-    const regionalValue = await productRuntimeCache.get(PUBLIC_PRODUCT_CACHE_KEY).catch(() => null);
+  const promise = (async () => {
+    const regionalValue = await productRuntimeCache.get(revisionKey).catch(() => null);
     if (isPublicProductCatalog(regionalValue)) {
-      cachedPublicCatalog = {
-        value: regionalValue,
-        expiresAt: Date.now() + PUBLIC_PRODUCT_CACHE_TTL_MS
-      };
+      if (generation === publicCatalogGeneration) {
+        cachedPublicCatalog = { value: regionalValue, expiresAt: Date.now() + PUBLIC_PRODUCT_CACHE_TTL_MS, revision };
+      }
       return regionalValue;
     }
 
     const products = await queryProducts(filters);
-    cachedPublicCatalog = {
-      value: products,
-      expiresAt: Date.now() + PUBLIC_PRODUCT_CACHE_TTL_MS
-    };
-    await productRuntimeCache.set(PUBLIC_PRODUCT_CACHE_KEY, products, {
-      ttl: PUBLIC_PRODUCT_CACHE_TTL_SECONDS,
-      tags: ["products"],
-      name: "WESCOMM public catalog"
-    }).catch(() => undefined);
+    if (generation === publicCatalogGeneration && await readCacheRevision("products") === revision) {
+      cachedPublicCatalog = { value: products, expiresAt: Date.now() + PUBLIC_PRODUCT_CACHE_TTL_MS, revision };
+      await productRuntimeCache.set(revisionKey, products, {
+        ttl: PUBLIC_PRODUCT_CACHE_TTL_SECONDS,
+        tags: ["products"],
+        name: "WESCOMM public catalog"
+      }).catch(() => undefined);
+    }
     return products;
   })()
     .finally(() => {
-      publicCatalogRequest = null;
+      if (publicCatalogRequest?.promise === promise) publicCatalogRequest = null;
     });
 
-  return publicCatalogRequest;
+  publicCatalogRequest = { promise, revision, generation };
+  return promise;
 }
 
 export async function invalidatePublicProductCache() {
+  publicCatalogGeneration += 1;
   cachedPublicCatalog = null;
+  await bumpCacheRevision("products");
   await Promise.all([
-    productRuntimeCache.delete(PUBLIC_PRODUCT_CACHE_KEY),
     productRuntimeCache.expireTag("products"),
     invalidateByTag("products")
   ]).catch(() => undefined);

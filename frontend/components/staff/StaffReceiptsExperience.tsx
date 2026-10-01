@@ -209,8 +209,8 @@ export function StaffReceiptsExperience() {
           className="h-11 min-w-[210px] rounded-md border border-[#d7e1d8] bg-white px-3 text-sm font-semibold outline-none focus:border-primary"
         >
           <option value="ALL">All Payments</option>
-          <option value="ONLINE_GCASH">GCash – Online</option>
-          <option value="AT_COMMISSARY">Pay at Commissary</option>
+          <option value="ONLINE_GCASH">Legacy GCash – Online</option>
+          <option value="AT_COMMISSARY">In-person payments</option>
         </select>
         <p className="text-xs text-[#718078]">Combines with the selected receipt status and search.</p>
       </div>

@@ -7,7 +7,7 @@ function source(relativePath: string) {
   return readFileSync(path.resolve(process.cwd(), relativePath), "utf8");
 }
 
-test("secure realtime events stay server-only, targeted, replayable, and idempotent", () => {
+test("secure realtime updates stay server-only, targeted, replayable, idempotent, and bounded", () => {
   const migration = source("prisma/migrations/20260822030000_add_secure_realtime_events/migration.sql");
   const service = source("src/services/realtime-event.service.ts");
   const route = source("src/routes/realtime.routes.ts");
@@ -22,10 +22,15 @@ test("secure realtime events stay server-only, targeted, replayable, and idempot
   assert.match(service, /audienceRole: input\.role/);
   assert.match(service, /id: \{ gt: input\.afterId \}/);
   assert.match(service, /skipDuplicates: true/);
-  assert.match(route, /"\/events",\s*requireAuth/);
-  assert.match(route, /text\/event-stream/);
-  assert.match(route, /Last-Event-ID/);
-  assert.match(client, /new EventSource\([\s\S]*withCredentials: true/);
+  assert.match(route, /"\/events"[\s\S]*status\(204\)\.end\(\)/);
+  assert.match(route, /"\/updates",\s*requireAuth/);
+  assert.match(route, /listRealtimeEvents\([\s\S]*POLL_BATCH_SIZE/);
+  assert.match(route, /Cache-Control", "private, no-store, max-age=0"/);
+  assert.doesNotMatch(route, /text\/event-stream|Last-Event-ID|while\s*\(/);
+  assert.match(client, /getRealtimeUpdatesFromApi/);
+  assert.match(client, /REALTIME_POLL_INTERVAL_MS = 15_000/);
+  assert.match(client, /document\.visibilityState === "hidden"/);
+  assert.doesNotMatch(client, /new EventSource/);
   assert.doesNotMatch(client, /supabase/i);
 });
 
@@ -36,7 +41,7 @@ test("chat typing leaves process-local memory and uses authenticated realtime de
 
   assert.doesNotMatch(messages, /typingState\s*=\s*new Map/);
   assert.match(messages, /topic: REALTIME_TOPICS\.typing/);
-  assert.match(messages, /ttlMs: 15_000/);
+  assert.match(messages, /ttlMs: 45_000/);
   assert.match(studentChat, /useRealtimeRefresh\(\["conversations", "typing"\]/);
   assert.match(staffChat, /useRealtimeRefresh\(\["conversations", "typing"\]/);
   assert.doesNotMatch(studentChat, /setInterval\(refreshThread, 8000\)/);

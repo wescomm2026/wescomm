@@ -2,6 +2,7 @@ import Image from "next/image";
 import { AssetIcon } from "@/components/ui/AssetIcon";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
+import { shopProductCardImage } from "@/lib/shop-assets";
 
 type Product = {
   name: string;
@@ -17,7 +18,7 @@ export function ProductCard({ product }: { product: Product }) {
     <article className="rounded-lg border bg-card p-4 shadow-sm">
       <div className="flex gap-4">
         <div className="relative size-16 shrink-0 rounded-md bg-muted">
-          <Image src={product.image} alt="" fill className="object-contain p-3" />
+          <Image src={shopProductCardImage(product.image)} alt="" fill sizes="64px" className="object-contain p-3" />
         </div>
         <div className="min-w-0 flex-1">
           <h3 className="truncate font-medium">{product.name}</h3>
