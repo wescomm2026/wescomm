@@ -93,27 +93,22 @@ jobs:
 
       - name: Verify the isolated Staging runtime configuration
         run: >-
-          npx --yes vercel@${VERCEL_CLI_VERSION} env run
-          --environment=preview
-          --git-branch=staging
-          --token="$VERCEL_TOKEN"
-          -- npm --prefix backend run staging:verify
+          node .github/scripts/run-with-vercel-env.cjs
+          npm --prefix backend run staging:verify
 
       - name: Verify migration safety
         run: >-
-          npx --yes vercel@${VERCEL_CLI_VERSION} env run
-          --environment=preview
-          --git-branch=staging
-          --token="$VERCEL_TOKEN"
-          -- npm --prefix backend run release:preflight
+          node .github/scripts/run-with-vercel-env.cjs
+          npm --prefix backend run release:preflight
 
       - name: Apply and verify Staging migrations
-        run: >-
-          npx --yes vercel@${VERCEL_CLI_VERSION} env run
-          --environment=preview
-          --git-branch=staging
-          --token="$VERCEL_TOKEN"
-          -- sh -c 'npm --prefix backend run prisma:migrate:deploy && npm --prefix backend run prisma:migrate:verify'
+        shell: bash
+        run: |
+          set -euo pipefail
+          node .github/scripts/run-with-vercel-env.cjs \
+            npm --prefix backend run prisma:migrate:deploy
+          node .github/scripts/run-with-vercel-env.cjs \
+            npm --prefix backend run prisma:migrate:verify
 
       - name: Build the exact selected commit with Staging variables
         run: npx --yes vercel@${VERCEL_CLI_VERSION} build --token="$VERCEL_TOKEN"
