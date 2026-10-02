@@ -28,7 +28,6 @@ jobs:
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
       VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
       STAGING_DOMAIN: ${{ vars.STAGING_DOMAIN }}
-      STAGING_PROTECTION_BYPASS_SECRET: ${{ secrets.STAGING_PROTECTION_BYPASS_SECRET }}
       DEPLOY_CONFIRMATION: ${{ inputs.confirmation }}
 
     steps:
@@ -123,22 +122,21 @@ jobs:
 
       - name: Point the stable Staging domain to the deployment
         run: >-
-          npx --yes vercel@${VERCEL_CLI_VERSION} alias set
+          node .github/scripts/assign-vercel-alias.cjs
           "${{ steps.deploy.outputs.url }}"
           "$STAGING_DOMAIN"
-          --token="$VERCEL_TOKEN"
 
       - name: Wait for Staging readiness
         shell: bash
         run: |
           set -euo pipefail
-          health_url="https://${STAGING_DOMAIN}/api/health/ready"
-          curl_args=(--fail --silent --show-error --max-time 20)
-          if [[ -n "$STAGING_PROTECTION_BYPASS_SECRET" ]]; then
-            curl_args+=(--header "x-vercel-protection-bypass: ${STAGING_PROTECTION_BYPASS_SECRET}")
-          fi
           for attempt in $(seq 1 30); do
-            if curl "${curl_args[@]}" "$health_url" > /tmp/wescomm-staging-health.json; then
+            if npx --yes vercel@${VERCEL_CLI_VERSION} curl \
+              /api/health/ready \
+              --deployment "${{ steps.deploy.outputs.url }}" \
+              -- \
+              --fail --silent --show-error --max-time 20 \
+              > /tmp/wescomm-staging-health.json; then
               node -e '
                 const fs = require("node:fs");
                 const payload = JSON.parse(fs.readFileSync("/tmp/wescomm-staging-health.json", "utf8"));
