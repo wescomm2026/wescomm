@@ -145,6 +145,17 @@ Project setup:
 Variables: add ALL of these in Vercel > Settings > Environment Variables,
 Preview environment, scoped ONLY to the git branch "staging".
 
+IMPORTANT FOR THE DEPLOYMENT WORKFLOW:
+- Store workflow-required values as normal Vercel environment variables. Vercel
+  encrypts these at rest and restricts them to the selected environment/branch.
+- Do NOT enable Vercel's additional "Sensitive" flag for values consumed by
+  `vercel env run` (including DATABASE_URL, DIRECT_URL, Supabase keys,
+  AUTH_DEV_LOGIN_PASSWORD, DATA_ENCRYPTION_KEYS, and VAPID keys). Sensitive
+  values are write-only and cannot be downloaded into the protected GitHub
+  deployment job. Keep their values out of logs and source control.
+- GitHub's VERCEL_TOKEN remains an Environment secret; never store it in Vercel
+  or commit it to the repository.
+
 Environment identity (branch-scoped):
   WESCOMM_ENV=staging
   STAGING_SUPABASE_PROJECT_REF=<staging project ref>
@@ -156,7 +167,7 @@ Database and Supabase (branch-scoped):
   NEXT_PUBLIC_SUPABASE_URL=https://<staging-ref>.supabase.co
   NEXT_PUBLIC_SUPABASE_ANON_KEY=<staging anon key>
   NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=<staging publishable key>
-  SUPABASE_SERVICE_ROLE_KEY=<staging service-role key>   (Sensitive)
+  SUPABASE_SERVICE_ROLE_KEY=<staging service-role key>
 
 Runtime (branch-scoped):
   NODE_ENV=production
@@ -167,7 +178,7 @@ Runtime (branch-scoped):
   TRUST_PROXY_HOPS=1
   NEXT_PUBLIC_E2E_TEST=false
 
-Staging-only development login (branch-scoped, Sensitive password):
+Staging-only development login (branch-scoped, secret value):
   AUTH_ENABLE_DEV_LOGIN=true
   NEXT_PUBLIC_ENABLE_DEV_LOGIN=true
   AUTH_DEV_LOGIN_PASSWORD=<new random 20+ character secret>
