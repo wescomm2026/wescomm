@@ -105,10 +105,9 @@ In the repository: Settings > Environments > New environment
 
   Name:        staging
   Environment secrets:
-    VERCEL_TOKEN                    (Vercel personal/team token with deploy scope)
+    VERCEL_TOKEN                    (project-scoped Vercel token; recommended)
     VERCEL_ORG_ID                   (Vercel organization id)
     VERCEL_PROJECT_ID               (Vercel project id)
-    STAGING_PROTECTION_BYPASS_SECRET (only if Vercel Deployment Protection is on)
   Environment variable:
     STAGING_DOMAIN = staging.wescomm.store
 
@@ -139,8 +138,8 @@ Project setup:
     does not alias the staging branch build to the custom domain. The GitHub
     workflow performs the canonical migrate -> build -> deploy -> alias.
   - Optional: enable Deployment Protection (Vercel Authentication) for the
-    Preview; if enabled, also store STAGING_PROTECTION_BYPASS_SECRET in the
-    GitHub environment and in Vercel.
+    Preview. The release workflow uses `vercel curl` with the scoped token for
+    its readiness check, so no separate bypass secret is required.
 
 Variables: add ALL of these in Vercel > Settings > Environment Variables,
 Preview environment, scoped ONLY to the git branch "staging".
@@ -241,7 +240,8 @@ Target-only check (no frontend vars needed, useful while wiring up):
    g. Applies and verifies Prisma migrations (prisma:migrate:deploy + verify).
    h. Builds with the staging variables, deploys prebuilt, and aliases
       https://staging.wescomm.store.
-   i. Polls https://staging.wescomm.store/api/health/ready for up to 5 minutes.
+    i. Polls /api/health/ready on the exact new deployment for up to 5 minutes
+       using authenticated `vercel curl` (works with Deployment Protection).
 
 ============================================================
 8. SEED FAKE FIXTURES (RESET + SEED WITH FINGERPRINTS)
@@ -333,8 +333,8 @@ protected reset first.
 - Vercel auto-deploys the staging branch before migrations: disable automatic
   deployment for the staging branch (or stop auto-aliasing the custom domain);
   the workflow performs the canonical deploy.
-- Staging site is password-protected but health check fails: set
-  STAGING_PROTECTION_BYPASS_SECRET in the GitHub environment and in Vercel.
+- Staging site is password-protected but health check fails: confirm the
+  project-scoped VERCEL_TOKEN is valid and still has access to the deployment.
 
 ============================================================
 11. NEVER DO ON STAGING
