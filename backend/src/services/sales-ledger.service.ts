@@ -523,7 +523,7 @@ export function salesLedgerPeriodLabel(period: SalesReportPeriod) {
 }
 
 export function salesLedgerChannelLabel(channel: SalesReportChannel) {
-  return ({ ALL: "All", RESERVATION: "Reservation", WALK_IN: "Walk-in" } as const)[channel];
+  return ({ ALL: "All channels", RESERVATION: "Reservations only", WALK_IN: "Walk-in only" } as const)[channel];
 }
 
 export function salesLedgerLocationLabel(location: SalesReportLocation) {

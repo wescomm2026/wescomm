@@ -1,5 +1,6 @@
 import ExcelJS from "exceljs";
 import type { getReportSummary } from "./report.service.js";
+import { EXCEL_DATETIME_FORMAT, manilaExcelDate } from "../utils/excel-dates.js";
 
 type ReportSummary = Awaited<ReturnType<typeof getReportSummary>>;
 
@@ -11,7 +12,7 @@ const MUTED = "FF5F6D66";
 const STRIPE = "FFF3F8F4";
 const PESO = '"₱"#,##0.00';
 const PERCENT = "0.00%";
-const DATE_TIME = "yyyy-mm-dd h:mm";
+const DATE_TIME = EXCEL_DATETIME_FORMAT;
 
 function setPage(worksheet: ExcelJS.Worksheet, headerRow: number, lastRow: number, lastColumn: number) {
   worksheet.pageSetup = {
@@ -152,12 +153,12 @@ function addInventorySheet(workbook: ExcelJS.Workbook, summary: ReportSummary) {
 
 function addReconciliationSheet(workbook: ExcelJS.Workbook, summary: ReportSummary) {
   const worksheet = workbook.addWorksheet("Reconciliation");
-  worksheet.columns = [{ width: 12 }, { width: 38 }, { width: 20 }, { width: 19 }, { width: 16 }, { width: 38 }];
+  worksheet.columns = [{ width: 12 }, { width: 38 }, { width: 20 }, { width: 23 }, { width: 16 }, { width: 38 }];
   title(worksheet, "Reconciliation Exceptions", summary, 6);
   headers(worksheet, 4, ["Priority", "Issue", "Reference", "Event Date/Time", "Amount", "Receipt / Payment ID"]);
   summary.reconciliation.items.forEach((item, index) => {
     const rowNumber = index + 5;
-    worksheet.getRow(rowNumber).values = [item.severity, item.label, item.referenceCode, new Date(item.eventAt), item.amount, item.receiptId ?? item.paymentId ?? "—"];
+    worksheet.getRow(rowNumber).values = [item.severity, item.label, item.referenceCode, manilaExcelDate(item.eventAt), item.amount, item.receiptId ?? item.paymentId ?? "—"];
     bodyRow(worksheet, rowNumber);
     worksheet.getCell(rowNumber, 4).numFmt = DATE_TIME;
     worksheet.getCell(rowNumber, 5).numFmt = PESO;
@@ -181,12 +182,12 @@ function addCashierSheet(workbook: ExcelJS.Workbook, summary: ReportSummary) {
 
 function addTreasurySheet(workbook: ExcelJS.Workbook, summary: ReportSummary) {
   const worksheet = workbook.addWorksheet("Treasury Collections");
-  worksheet.columns = [{ width: 19 }, { width: 22 }, { width: 21 }, { width: 42 }, { width: 18 }];
+  worksheet.columns = [{ width: 23 }, { width: 22 }, { width: 21 }, { width: 42 }, { width: 18 }];
   title(worksheet, "Treasury Collections", summary, 5);
   headers(worksheet, 4, ["Paid Date/Time", "Official Receipt No.", "Order Reference", "Items", "Amount"]);
   summary.treasurerCollections.forEach((item, index) => {
     const rowNumber = index + 5;
-    worksheet.getRow(rowNumber).values = [new Date(item.paidAt), item.officialReceiptNumber ?? "—", item.orderReference, item.items, item.amount];
+    worksheet.getRow(rowNumber).values = [manilaExcelDate(item.paidAt), item.officialReceiptNumber ?? "—", item.orderReference, item.items, item.amount];
     bodyRow(worksheet, rowNumber);
     worksheet.getCell(rowNumber, 1).numFmt = DATE_TIME;
     worksheet.getCell(rowNumber, 5).numFmt = PESO;
