@@ -753,12 +753,12 @@ export function StaffMessagesExperience() {
             <label className="flex h-10 items-center rounded-full border border-border-strong bg-white px-3 focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/15">
               <Search className="mr-2 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
               <span className="sr-only">Search conversations</span>
-              <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search messages" className="min-w-0 flex-1 bg-transparent text-sm outline-none" />
+              <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search messages" className="min-w-0 flex-1 bg-transparent text-sm outline-none focus-visible:outline-none" />
             </label>
             <label className="flex h-9 items-center gap-2 rounded-full border border-border-strong bg-white px-3 text-xs">
               <Filter className="size-3.5 shrink-0 text-primary" aria-hidden="true" />
               <span className="sr-only">Filter conversation status</span>
-              <select value={status} onChange={(event) => setStatus(event.target.value)} className="min-w-0 flex-1 bg-transparent font-bold outline-none">
+              <select value={status} onChange={(event) => setStatus(event.target.value)} className="min-w-0 flex-1 bg-transparent font-bold outline-none focus-visible:outline-none">
                 {["All", "WesBot active", "Waiting for Staff", "Staff active", "Resolved"].map((option) => <option key={option}>{option}</option>)}
               </select>
             </label>

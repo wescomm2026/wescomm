@@ -216,7 +216,7 @@ export function StaffReceiptsExperience() {
             value={paymentChannel}
             onChange={(event) => setPaymentChannel(event.target.value as typeof paymentChannel)}
             aria-label="Filter by payment method"
-            className="h-full min-w-0 flex-1 cursor-pointer bg-transparent font-semibold text-foreground outline-none"
+            className="h-full min-w-0 flex-1 cursor-pointer bg-transparent font-semibold text-foreground outline-none focus-visible:outline-none"
           >
             <option value="ALL">All Payments</option>
             <option value="ONLINE_GCASH">Legacy GCash – Online</option>

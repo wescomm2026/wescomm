@@ -45,6 +45,5 @@ export const adminNav: WorkspaceNavItem[] = [
   { href: "/admin/reports", label: "Reports", iconSrc: "/assets/orders.svg", group: "Insights" },
   { href: "/admin/users", label: "Team Access", iconSrc: "/assets/privacy.svg", group: "Administration", adminOnly: true },
   { href: "/admin/audit-logs", label: "Audit Logs", iconSrc: "/assets/verified.svg", group: "Administration", adminOnly: true },
-  { href: "/admin/wesbot-usage", label: "WesBot Usage", iconSrc: "/assets/chat-with-wesbot.svg", group: "Administration", adminOnly: true },
   { href: "/admin/settings", label: "Settings", iconSrc: "/assets/settings.svg", group: "Administration" }
 ];

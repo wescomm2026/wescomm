@@ -3,7 +3,7 @@
 import { userFacingErrorMessage } from "@/lib/user-facing-error";
 
 import Link from "next/link";
-import { useCallback, useDeferredValue, useEffect, useRef, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { Ban, CalendarClock, CheckCheck, CircleDollarSign, RefreshCw, X } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import { useRealtimeRefresh } from "@/components/realtime/RealtimeProvider";
@@ -41,6 +41,11 @@ import {
   Toolbar,
   Notice
 } from "@/components/staff/StaffOperationsShared";
+
+// Mirrors the backend bulk-confirmation eligibility so staff only select rows the server will accept.
+function isBulkEligible(row: StaffReservationRow) {
+  return row.backendStatus === "PENDING" && row.pickupReviewStatus !== "NEEDS_REVIEW" && (!row.onlineGcash || row.paymentConfirmed);
+}
 
 export function StaffReservationsExperience() {
   const { user } = useStudentAuth();
@@ -195,6 +200,18 @@ export function StaffReservationsExperience() {
   }, [loadReservations]);
 
   const filtered = rows;
+  const pendingRows = useMemo(() => filtered.filter((row) => row.backendStatus === "PENDING"), [filtered]);
+  const eligibleIds = useMemo(() => pendingRows.filter(isBulkEligible).map((row) => row.id), [pendingRows]);
+  // Rows can leave the view (realtime updates, filters, confirmations), so only count selections that are still eligible.
+  const selectedIds = useMemo(() => eligibleIds.filter((id) => selectedPendingIds.has(id)), [eligibleIds, selectedPendingIds]);
+  const allEligibleSelected = eligibleIds.length > 0 && selectedIds.length === eligibleIds.length;
+  const toggleAllEligible = () => setSelectedPendingIds(allEligibleSelected ? new Set() : new Set(eligibleIds));
+  const toggleSelected = (id: string, checked: boolean) => setSelectedPendingIds((current) => {
+    const next = new Set(current);
+    if (checked) next.add(id);
+    else next.delete(id);
+    return next;
+  });
 
   const confirmBulk = async (reservationIds?: string[]) => {
     const session = getStoredStaffSession();
@@ -363,8 +380,8 @@ export function StaffReservationsExperience() {
               <RefreshCw className={loading ? "size-4 animate-spin motion-reduce:animate-none" : "size-4"} aria-hidden="true" />
               Refresh
             </Button>
-            {status === "Pending" ? (
-              <Button onClick={() => void confirmBulk()} disabled={loading || bulkSubmitting}>
+            {status === "All" || status === "Pending" ? (
+              <Button onClick={() => void confirmBulk()} disabled={loading || bulkSubmitting} title="Confirm every eligible pending reservation, oldest first">
                 <CheckCheck className="size-4" />{bulkSubmitting ? "Checking queue..." : "Confirm all eligible"}
               </Button>
             ) : null}
@@ -372,12 +389,44 @@ export function StaffReservationsExperience() {
         )}
       />
       <Toolbar search={search} onSearch={(value) => { setSearch(value); setSelectedPendingIds(new Set()); }} status={status} onStatus={(value) => { setStatus(value); setSelectedPendingIds(new Set()); }} placeholder="Search reference, student, or item" statuses={["All", "Pending", "Confirmed", "Ready for Pick-up", "Completed", "Cancelled", "No-show"]} />
-      {status === "Pending" ? (
-        <section className="flex flex-col gap-3 rounded-xl border border-primary/20 bg-primary/5 p-4 sm:flex-row sm:items-center sm:justify-between" aria-label="Bulk reservation confirmation">
-          <div><p className="text-sm font-extrabold text-foreground">Bulk confirmation</p><p className="mt-1 text-xs leading-5 text-muted-foreground">Only eligible Pending reservations are included. Schedule-review and unconfirmed historical-payment records stay untouched.</p></div>
+      {!loading && pendingRows.length ? (
+        <section
+          aria-label="Bulk reservation confirmation"
+          className={cn(
+            "sticky top-[calc(var(--workspace-header)+0.75rem)] z-20 flex flex-col gap-3 rounded-xl border p-3 shadow-soft transition-colors sm:flex-row sm:items-center sm:justify-between sm:px-4",
+            selectedIds.length ? "border-primary/40 bg-primary/10 backdrop-blur" : "border-primary/20 bg-card"
+          )}
+        >
+          <label className={cn("flex min-w-0 items-center gap-3", eligibleIds.length ? "cursor-pointer" : "cursor-not-allowed opacity-70")}>
+            <input
+              type="checkbox"
+              checked={allEligibleSelected}
+              ref={(element) => { if (element) element.indeterminate = selectedIds.length > 0 && !allEligibleSelected; }}
+              onChange={toggleAllEligible}
+              disabled={!eligibleIds.length || bulkSubmitting}
+              aria-label={`Select all ${eligibleIds.length} eligible pending reservations`}
+              className="size-5 shrink-0 accent-primary"
+            />
+            <span className="min-w-0">
+              <span className="block text-sm font-extrabold text-foreground" aria-live="polite">
+                {selectedIds.length ? `${selectedIds.length} of ${eligibleIds.length} selected` : `${pendingRows.length} pending in view`}
+              </span>
+              <span className="block text-xs leading-5 text-muted-foreground">
+                {eligibleIds.length
+                  ? `${eligibleIds.length} ready to confirm together${pendingRows.length - eligibleIds.length ? ` · ${pendingRows.length - eligibleIds.length} need${pendingRows.length - eligibleIds.length === 1 ? "s" : ""} review or payment first` : ""}`
+                  : "These need a schedule review or payment confirmation before they can be confirmed."}
+              </span>
+            </span>
+          </label>
           <div className="flex flex-wrap gap-2">
-            <Button type="button" variant="secondary" className="h-10" onClick={() => setSelectedPendingIds(new Set(filtered.filter((row) => row.backendStatus === "PENDING" && row.pickupReviewStatus !== "NEEDS_REVIEW" && (!row.onlineGcash || row.paymentConfirmed)).map((row) => row.id)))} disabled={!filtered.length || bulkSubmitting}>Select visible eligible</Button>
-            <Button type="button" className="h-10" onClick={() => void confirmBulk(Array.from(selectedPendingIds))} disabled={!selectedPendingIds.size || bulkSubmitting}>Confirm selected ({selectedPendingIds.size})</Button>
+            {selectedIds.length ? (
+              <Button type="button" variant="ghost" className="h-10" onClick={() => setSelectedPendingIds(new Set())} disabled={bulkSubmitting}>Clear</Button>
+            ) : (
+              <Button type="button" variant="secondary" className="h-10" onClick={() => setSelectedPendingIds(new Set(eligibleIds))} disabled={!eligibleIds.length || bulkSubmitting}>Select visible eligible</Button>
+            )}
+            <Button type="button" className="h-10" onClick={() => void confirmBulk(selectedIds)} disabled={!selectedIds.length || bulkSubmitting} loading={bulkSubmitting && selectedIds.length > 0}>
+              <CheckCheck className="size-4" />Confirm selected ({selectedIds.length})
+            </Button>
           </div>
         </section>
       ) : null}
@@ -394,7 +443,7 @@ export function StaffReservationsExperience() {
           const nextStatus = getNextReservationStatus(row.backendStatus);
           const paymentBlocksProgress = row.onlineGcash && !row.paymentConfirmed;
           const noShowEligible = row.backendStatus === "READY_FOR_PICKUP" && Boolean(row.pickupEnd) && Date.now() >= new Date(row.pickupEnd!).getTime() + 24 * 60 * 60 * 1000;
-          const bulkEligible = row.backendStatus === "PENDING" && row.pickupReviewStatus !== "NEEDS_REVIEW" && (!row.onlineGcash || row.paymentConfirmed);
+          const bulkEligible = isBulkEligible(row);
           const needsReview = row.pickupReviewStatus === "NEEDS_REVIEW";
           return (
             <article key={row.id} className={cn(
@@ -408,11 +457,24 @@ export function StaffReservationsExperience() {
               />
               {needsReview ? <span className="absolute inset-y-0 left-0 w-1 bg-warning" aria-hidden="true" /> : null}
               <header className="flex flex-wrap items-start gap-3 border-b px-4 py-3 sm:px-5">
-                {status === "Pending" ? <input type="checkbox" checked={selectedPendingIds.has(row.id)} disabled={!bulkEligible || bulkSubmitting} onChange={(event) => setSelectedPendingIds((current) => { const next = new Set(current); if (event.target.checked) next.add(row.id); else next.delete(row.id); return next; })} aria-label={`Select ${row.reference} for confirmation`} className="mt-1 size-4 accent-primary" /> : null}
+                {row.backendStatus === "PENDING" ? (
+                  <input
+                    type="checkbox"
+                    checked={bulkEligible && selectedPendingIds.has(row.id)}
+                    disabled={!bulkEligible || bulkSubmitting}
+                    onChange={(event) => toggleSelected(row.id, event.target.checked)}
+                    aria-label={`Select ${row.reference} for confirmation`}
+                    className="mt-1 size-5 shrink-0 accent-primary"
+                  />
+                ) : null}
                 <div className="min-w-0 flex-1">
                   <p className="font-mono text-sm font-extrabold tracking-tight text-foreground sm:text-base">{row.reference}</p>
                   <p className="text-xs text-muted-foreground">{row.student}</p>
-                  {status === "Pending" && !bulkEligible ? <p className="mt-1 text-xs font-semibold text-warning">Bulk confirmation unavailable</p> : null}
+                  {row.backendStatus === "PENDING" && !bulkEligible ? (
+                    <p className="mt-1 text-xs font-semibold text-warning">
+                      Bulk confirmation unavailable · {row.pickupReviewStatus === "NEEDS_REVIEW" ? "schedule needs review" : "waiting for payment confirmation"}
+                    </p>
+                  ) : null}
                 </div>
                 <StatusBadge status={row.status} />
               </header>

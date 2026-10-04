@@ -5,7 +5,7 @@ import { userFacingErrorMessage } from "@/lib/user-facing-error";
 import Image from "next/image";
 import dynamic from "next/dynamic";
 import { useDeferredValue, useEffect, useRef, useState } from "react";
-import { Archive, ArrowLeft, ChevronRight, Edit3, Filter, Plus, RefreshCw, RotateCcw, Trash2, Upload, X } from "lucide-react";
+import { Archive, ArrowLeft, ChevronRight, Edit3, Filter, Package, Plus, RefreshCw, RotateCcw, Trash2, Upload, X } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import { useRealtimeRefresh } from "@/components/realtime/RealtimeProvider";
 import { ActionLoadingOverlay } from "@/components/ui/ActionLoadingOverlay";
@@ -54,7 +54,9 @@ import {
   Toolbar,
   Notice
 } from "@/components/staff/StaffOperationsShared";
+import { FeedbackState } from "@/components/ui/FeedbackState";
 import { InlineAlert } from "@/components/ui/InlineAlert";
+import { SkeletonList } from "@/components/ui/Skeleton";
 
 const ProductOptionsManager = dynamic(
   () => import("@/components/staff/ProductOptionsManager").then((module) => module.ProductOptionsManager),
@@ -831,37 +833,37 @@ export function StaffInventoryExperience() {
           </Button>
         )}
       />
-      <div className="flex w-full flex-col gap-2 rounded-lg border bg-white p-2 shadow-sm sm:w-fit sm:flex-row" role="group" aria-label="Inventory view">
+      <div className="grid w-full grid-cols-2 gap-1 rounded-xl border bg-card p-1 shadow-soft sm:inline-grid sm:w-auto" role="group" aria-label="Inventory view">
         <Button
           type="button"
           variant={visibility === "ACTIVE" ? "primary" : "ghost"}
-          className="justify-center sm:min-w-40"
+          className="h-9 justify-center px-4 sm:min-w-36"
           aria-pressed={visibility === "ACTIVE"}
           onClick={() => changeVisibility("ACTIVE")}
           disabled={loading || submitting}
         >
-          <RefreshCw className="size-4" /> Active items
+          <Package className="size-4" aria-hidden="true" /> Active items
         </Button>
         <Button
           type="button"
           variant={visibility === "ARCHIVED" ? "primary" : "ghost"}
-          className="justify-center sm:min-w-40"
+          className="h-9 justify-center px-4 sm:min-w-36"
           aria-pressed={visibility === "ARCHIVED"}
           onClick={() => changeVisibility("ARCHIVED")}
           disabled={loading || submitting}
         >
-          <Archive className="size-4" /> Archived items
+          <Archive className="size-4" aria-hidden="true" /> Archived items
         </Button>
       </div>
       <Toolbar search={search} onSearch={setSearch} status={status} onStatus={setStatus} placeholder="Search product or category" statuses={stockStatusOptions} />
       {error ? <InlineAlert>{error}</InlineAlert> : null}
-      <section id="inventory-product-list" aria-label={visibility === "ARCHIVED" ? "Archived inventory products" : "Active inventory products"} className="overflow-hidden rounded-lg border bg-white shadow-sm">
-        <div className="hidden grid-cols-12 gap-4 bg-surface-subtle px-4 py-3 text-xs font-bold uppercase tracking-wide text-muted-foreground xl:grid">
+      <section id="inventory-product-list" aria-label={visibility === "ARCHIVED" ? "Archived inventory products" : "Active inventory products"} className="overflow-hidden rounded-xl border bg-card shadow-soft">
+        <div className="hidden grid-cols-12 gap-4 border-b bg-surface-subtle px-4 py-3 text-[11px] font-extrabold uppercase tracking-wide text-muted-foreground xl:grid">
           <span className="col-span-3">Product</span><span>Category</span><span>Total stock</span><span>Selling price</span><span>Low-stock alert</span><span className="col-span-2">Stock breakdown</span><span>Status</span><span className="col-span-2">Actions</span>
         </div>
         <div className="divide-y divide-border">
           {loading ? (
-            <div className="p-6 text-sm font-semibold text-muted-foreground">Loading live inventory...</div>
+            <SkeletonList rows={5} label="Loading live inventory..." />
           ) : filtered.length ? filtered.map((product) => {
             const compactSkus = product.skus.map((sku) => ({
               ...sku,
@@ -869,7 +871,10 @@ export function StaffInventoryExperience() {
               fullLabel: sku.options.length ? sku.options.map((option) => `${option.optionName}: ${option.optionValue}`).join(" / ") : "Standard item"
             }));
             return (
-              <article key={product.id} className="content-visibility-auto relative grid gap-4 px-4 py-4 sm:grid-cols-2 xl:grid-cols-12 xl:items-center">
+              <article key={product.id} className="content-visibility-auto relative grid gap-4 px-4 py-4 transition-colors hover:bg-surface-subtle/60 sm:grid-cols-2 xl:grid-cols-12 xl:items-center">
+                {visibility === "ACTIVE" && (product.status === "Out of Stock" || product.status === "Needs Restock") ? (
+                  <span className={cn("absolute inset-y-0 left-0 w-1", product.status === "Out of Stock" ? "bg-danger" : "bg-warning")} aria-hidden="true" />
+                ) : null}
                 <ActionLoadingOverlay
                   active={archivingProductId === product.id || restoringProductId === product.id}
                   title={restoringProductId === product.id ? "Restoring product" : "Archiving product"}
@@ -884,17 +889,17 @@ export function StaffInventoryExperience() {
                   <div className="min-w-0">
                     <p className="font-extrabold leading-5 text-foreground">{product.name}</p>
                     <div className="mt-1 flex flex-wrap gap-1">
-                      <span className={cn("inline-flex rounded px-2 py-0.5 text-[10px] font-extrabold", product.saleMode === "CLOTH_ONLY" ? "bg-primary/10 text-primary" : product.saleMode === "OPTIONS" ? "bg-blue-50 text-blue-700" : "bg-[#f2f4f2] text-muted-foreground")}>
+                      <span className={cn("inline-flex rounded px-2 py-0.5 text-[10px] font-extrabold", product.saleMode === "CLOTH_ONLY" ? "bg-primary/10 text-primary" : product.saleMode === "OPTIONS" ? "bg-info/10 text-info" : "bg-surface-subtle text-muted-foreground")}>
                         {product.saleMode === "CLOTH_ONLY" ? "Cloth only" : product.saleMode === "OPTIONS" ? "Sizes / options" : "Simple item"}
                       </span>
-                      {visibility === "ARCHIVED" ? <span className="inline-flex rounded bg-slate-100 px-2 py-0.5 text-[10px] font-extrabold text-slate-700">Archived</span> : null}
-                      {product.isOnSale ? <span className="inline-flex rounded bg-rose-50 px-2 py-0.5 text-[10px] font-extrabold text-rose-700">On Sale</span> : null}
+                      {visibility === "ARCHIVED" ? <span className="inline-flex rounded bg-muted px-2 py-0.5 text-[10px] font-extrabold text-muted-foreground">Archived</span> : null}
+                      {product.isOnSale ? <span className="inline-flex rounded bg-danger/10 px-2 py-0.5 text-[10px] font-extrabold text-danger">On Sale</span> : null}
                       {product.saleMode === "OPTIONS" && !product.skuInventoryEnabled ? <span className="inline-flex rounded bg-amber-50 px-2 py-0.5 text-[10px] font-extrabold text-amber-800">Inventory setup needed</span> : null}
                     </div>
                     <p className="mt-1 text-xs text-muted-foreground xl:hidden">{product.category} · Selling price PHP {product.price.toLocaleString("en-PH", { minimumFractionDigits: 2 })}</p>
                     <div className="mt-2 flex flex-wrap gap-1 xl:hidden">
                       {product.saleMode === "OPTIONS" && product.skuInventoryEnabled ? compactSkus.slice(0, 3).map((sku) => (
-                        <span key={sku.id} title={sku.fullLabel} className={cn("rounded px-1.5 py-0.5 text-[10px] font-bold", sku.stock <= sku.lowStockThreshold ? "bg-amber-50 text-amber-800" : "bg-surface-subtle text-muted-foreground")}>
+                        <span key={sku.id} title={sku.fullLabel} className={cn("rounded px-1.5 py-0.5 text-[10px] font-bold", sku.stock <= sku.lowStockThreshold ? "bg-warning/10 text-warning" : "bg-surface-subtle text-muted-foreground")}>
                           {sku.shortLabel} · {sku.stock}
                         </span>
                       )) : product.saleMode === "OPTIONS" ? <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-800">Set up physical combinations</span> : null}
@@ -904,7 +909,10 @@ export function StaffInventoryExperience() {
                 <p className="hidden text-sm text-muted-foreground xl:block">{product.category}</p>
                 <div className="text-sm">
                   <span className="text-muted-foreground xl:hidden">Total stock: </span>
-                  <span className="text-lg font-extrabold text-primary">{product.stock}</span>
+                  <span className={cn(
+                    "text-lg font-extrabold tabular-nums",
+                    product.status === "Out of Stock" ? "text-danger" : product.status === "Needs Restock" ? "text-warning" : "text-primary"
+                  )}>{product.stock}</span>
                   <span className="ml-1 text-xs text-muted-foreground">items</span>
                 </div>
                 <div className="hidden text-sm xl:block"><span className="font-extrabold text-primary">PHP {product.price.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
@@ -917,7 +925,7 @@ export function StaffInventoryExperience() {
                   {product.saleMode === "OPTIONS" && product.skuInventoryEnabled ? (
                     compactSkus.length ? <>
                       {compactSkus.slice(0, 3).map((sku) => (
-                        <span key={sku.id} title={`${sku.fullLabel}: ${sku.stock} pcs`} className={cn("max-w-[190px] truncate rounded-md px-2 py-1 text-[11px] font-bold", sku.stock <= sku.lowStockThreshold ? "bg-amber-50 text-amber-800" : "bg-surface-subtle text-muted-foreground")}>
+                        <span key={sku.id} title={`${sku.fullLabel}: ${sku.stock} pcs`} className={cn("max-w-[190px] truncate rounded-md px-2 py-1 text-[11px] font-bold", sku.stock <= sku.lowStockThreshold ? "bg-warning/10 text-warning" : "bg-surface-subtle text-muted-foreground")}>
                           {sku.shortLabel} · {sku.stock}
                         </span>
                       ))}
@@ -931,17 +939,17 @@ export function StaffInventoryExperience() {
                 <div className="flex flex-wrap gap-2 sm:col-span-2 xl:col-span-2 xl:w-full xl:flex-col">
                   {visibility === "ARCHIVED" ? (
                     <>
-                      <Button className="h-9 flex-1 px-3 xl:w-full" onClick={() => void restoreProduct(product)} disabled={submitting}>
+                      <Button className="h-9 flex-1 px-3 xl:w-full xl:flex-none" onClick={() => void restoreProduct(product)} disabled={submitting}>
                         <RotateCcw className="size-4" /> Restore item
                       </Button>
-                      {user?.role === "ADMIN" ? <Button variant="ghost" className="h-9 flex-1 border border-red-200 px-3 text-red-700 hover:bg-red-50 xl:w-full" onClick={() => void reviewPermanentDelete(product)} disabled={submitting || deletingProductId === product.id}><Trash2 className="size-4" />{deletingProductId === product.id ? "Checking..." : "Delete permanently"}</Button> : null}
+                      {user?.role === "ADMIN" ? <Button variant="ghost" className="h-9 flex-1 border border-danger/30 px-3 text-danger hover:bg-danger/5 xl:w-full" onClick={() => void reviewPermanentDelete(product)} disabled={submitting || deletingProductId === product.id}><Trash2 className="size-4" />{deletingProductId === product.id ? "Checking..." : "Delete permanently"}</Button> : null}
                     </>
                   ) : (<>
-                    <Button className="h-9 flex-1 px-3 xl:w-full" onClick={() => openRestock(product)} disabled={submitting}>
+                    <Button className="h-9 flex-1 px-3 xl:w-full xl:flex-none" onClick={() => openRestock(product)} disabled={submitting}>
                       <Plus className="size-4" />
                       {product.saleMode === "OPTIONS" && !product.skuInventoryEnabled ? "Set up inventory" : "Update stock"}
                     </Button>
-                    <Button variant="secondary" className="h-9 flex-1 px-3 xl:w-full" onClick={() => openEditor(product)} disabled={submitting}>
+                    <Button variant="secondary" className="h-9 flex-1 px-3 xl:w-full xl:flex-none" onClick={() => openEditor(product)} disabled={submitting}>
                       <Edit3 className="size-4" />
                       Manage
                     </Button>
@@ -950,9 +958,17 @@ export function StaffInventoryExperience() {
               </article>
             );
           }) : (
-            <div className="p-6 text-sm font-semibold text-muted-foreground">
-              {visibility === "ARCHIVED" ? "No matching archived products found." : "No matching active products found."}
-            </div>
+            <FeedbackState
+              kind="empty"
+              plain
+              title={visibility === "ARCHIVED" ? "No matching archived products found." : "No matching active products found."}
+              description={search.trim() || status !== "All"
+                ? "Try another search or stock status."
+                : visibility === "ARCHIVED" ? "Archived products will appear here." : "Add your first product to start tracking stock."}
+              action={search.trim() || status !== "All"
+                ? <Button variant="secondary" size="sm" onClick={() => { setSearch(""); setStatus("All"); }}>Clear filters</Button>
+                : visibility === "ACTIVE" ? <Button size="sm" onClick={openAddProduct} disabled={submitting}><Plus className="size-4" /> Add product</Button> : undefined}
+            />
           )}
         </div>
       </section>
@@ -1778,14 +1794,14 @@ export function StaffInventoryExperience() {
                       Unit acquisition cost
                       <div className="flex h-12 items-center rounded-md border bg-white px-3 focus-within:border-primary">
                         <span className="mr-2 text-sm font-bold text-muted-foreground">PHP</span>
-                        <input required type="number" min="0" max="10000000" step="0.01" inputMode="decimal" value={restockUnitCost} onChange={(event) => setRestockUnitCost(event.target.value)} placeholder="0.00" className="min-w-0 flex-1 bg-transparent text-base outline-none" />
+                        <input required type="number" min="0" max="10000000" step="0.01" inputMode="decimal" value={restockUnitCost} onChange={(event) => setRestockUnitCost(event.target.value)} placeholder="0.00" className="min-w-0 flex-1 bg-transparent text-base outline-none focus-visible:outline-none" />
                       </div>
                     </label>
                     <label className="grid gap-1.5 text-sm font-semibold">
                       Selling price
                       <div className="flex h-12 items-center rounded-md border bg-white px-3 focus-within:border-primary">
                         <span className="mr-2 text-sm font-bold text-muted-foreground">PHP</span>
-                        <input required aria-label="Selling price" type="number" min="0" max="10000000" step="0.01" inputMode="decimal" value={restockSellingPrice} onChange={(event) => setRestockSellingPrice(event.target.value)} placeholder="0.00" className="min-w-0 flex-1 bg-transparent text-base outline-none" />
+                        <input required aria-label="Selling price" type="number" min="0" max="10000000" step="0.01" inputMode="decimal" value={restockSellingPrice} onChange={(event) => setRestockSellingPrice(event.target.value)} placeholder="0.00" className="min-w-0 flex-1 bg-transparent text-base outline-none focus-visible:outline-none" />
                       </div>
                       <span className="text-xs font-normal leading-4 text-muted-foreground">Applies to the whole product and future sales.</span>
                     </label>

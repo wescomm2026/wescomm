@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { ArrowRight, Bot, FileBarChart2, History, RefreshCw, UsersRound } from "lucide-react";
+import { ArrowRight, FileBarChart2, History, RefreshCw, UsersRound } from "lucide-react";
 import { AssetIcon } from "@/components/ui/AssetIcon";
 import { Button } from "@/components/ui/button";
 import { InlineAlert } from "@/components/ui/InlineAlert";
@@ -27,7 +27,6 @@ const AdminSummaryCharts = dynamic(
 const adminTools = [
   { href: "/admin/users", label: "Team Access", detail: "Assign student, staff, and admin roles", icon: UsersRound },
   { href: "/admin/audit-logs", label: "Audit Logs", detail: "Review every staff and admin action", icon: History },
-  { href: "/admin/wesbot-usage", label: "WesBot Usage", detail: "AI calls and monthly testing budget", icon: Bot },
   { href: "/admin/reports", label: "Reports", detail: "Sales, reconciliation, and exports", icon: FileBarChart2 }
 ];
 

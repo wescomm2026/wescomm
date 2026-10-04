@@ -1007,61 +1007,6 @@ export type BackendReportReconciliationType =
   | "PAID_NOT_COMPLETED"
   | "POST_CUTOVER_NON_CASH";
 
-export type BackendWesbotUsageSummary = {
-  model: string;
-  aiEnabled: boolean;
-  semanticMode: "off" | "shadow" | "active";
-  budgetEnforced: boolean;
-  budgetUsd: number;
-  estimatedSpendUsd: number;
-  reservedSpendUsd: number;
-  committedSpendUsd: number;
-  remainingUsd: number;
-  budgetPercent: number;
-  budgetHealth: "HEALTHY" | "WATCH" | "CRITICAL" | "PAUSED" | "DISABLED";
-  monthStart: string;
-  monthEnd: string;
-  totalCalls: number;
-  successfulCalls: number;
-  fallbackCalls: number;
-  budgetBlockedCalls: number;
-  rateLimitedCalls: number;
-  timeoutCalls: number;
-  activeReservations: number;
-  inputTokens: number;
-  cachedInputTokens: number;
-  outputTokens: number;
-  reasoningOutputTokens: number;
-  totalTokens: number;
-  averageLatencyMs: number;
-  lastSuccessAt: string | null;
-  lastUpdatedAt: string | null;
-  pricingVersion: string;
-  inputRateUsdPer1MTokens: number;
-  cachedRateUsdPer1MTokens: number;
-  outputRateUsdPer1MTokens: number;
-  operationBreakdown: Array<{
-    operation: string;
-    calls: number;
-    inputTokens: number;
-    outputTokens: number;
-    totalTokens: number;
-    estimatedSpendUsd: number;
-  }>;
-  today: BackendWesbotUsageDay;
-  daily: BackendWesbotUsageDay[];
-};
-
-export type BackendWesbotUsageDay = {
-  day: string;
-  calls: number;
-  successfulCalls: number;
-  fallbackCalls: number;
-  inputTokens: number;
-  outputTokens: number;
-  estimatedSpendUsd: number;
-};
-
 export type ReportRangePreset = "TODAY" | "LAST_7_DAYS" | "LAST_30_DAYS" | "THIS_MONTH" | "LAST_MONTH" | "CUSTOM" | "ALL_TIME";
 export type ReportRangeOptions = {
   preset?: ReportRangePreset;
@@ -2191,11 +2136,6 @@ function reportQuery(options: ReportRangeOptions = {}, fresh = false) {
 export async function getAdminReportSummaryFromApi(token: string, options: ReportRangeOptions = {}, signal?: AbortSignal, fresh = false) {
   const data = await authApiFetch<{ summary: BackendReportSummary }>(`/admin/reports/summary${reportQuery(options, fresh)}`, token, { signal });
   return data.summary;
-}
-
-export async function getAdminWesbotUsageFromApi(token: string, signal?: AbortSignal) {
-  const data = await authApiFetch<{ usage: BackendWesbotUsageSummary }>("/admin/wesbot/usage", token, { signal });
-  return data.usage;
 }
 
 export async function getStaffReportSummaryFromApi(token: string, options: ReportRangeOptions = {}, signal?: AbortSignal, fresh = false) {

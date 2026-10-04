@@ -34,6 +34,7 @@ import { Button } from "@/components/ui/button";
 import { useConfirmationDialog } from "@/components/ui/ConfirmationDialogProvider";
 import { FeedbackState } from "@/components/ui/FeedbackState";
 import { FormControl, formControlClass } from "@/components/ui/FormControl";
+import { InlineAlert } from "@/components/ui/InlineAlert";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Surface } from "@/components/ui/Surface";
 import { useAccessibleDialog } from "@/components/ui/useAccessibleDialog";
@@ -132,20 +133,22 @@ function validateDraft(draft: PickupPolicyPayload) {
   return "";
 }
 
-function SettingsSection({ number, title, description, children }: {
+function SettingsSection({ number, title, description, action, children }: {
   number: number;
   title: string;
   description: string;
+  action?: ReactNode;
   children: ReactNode;
 }) {
   return (
     <Surface className="p-5 sm:p-6">
-      <div className="flex items-start gap-3">
+      <div className="flex flex-wrap items-start gap-3">
         <span className="grid size-9 shrink-0 place-items-center rounded-full bg-primary text-sm font-extrabold text-primary-foreground" aria-hidden="true">{number}</span>
-        <div>
+        <div className="min-w-[12rem] flex-1">
           <h2 className="text-lg font-extrabold text-foreground">{title}</h2>
           <p className="mt-1 text-sm leading-6 text-muted-foreground">{description}</p>
         </div>
+        {action ? <div className="w-full sm:ml-auto sm:w-auto [&>button]:w-full sm:[&>button]:w-auto">{action}</div> : null}
       </div>
       <div className="mt-5">{children}</div>
     </Surface>
@@ -455,23 +458,26 @@ export function StaffPickupScheduleExperience() {
         eyebrow="Commissary operations"
         title="Pickup schedule"
         description="Set when students can collect their reservations. Closure conflicts are previewed first, then safely moved to the next valid schedule when possible."
-        meta={isDirty ? <span className="inline-flex rounded-full bg-warning/10 px-2.5 py-1 text-warning">Draft changes — not yet visible to students</span> : <span>Active Pickup Schedule</span>}
+        meta={isDirty
+          ? <span className="inline-flex items-center gap-1.5 rounded-full bg-warning/10 px-2.5 py-1 text-warning"><span className="size-1.5 rounded-full bg-warning" aria-hidden="true" />Draft changes — not yet visible to students</span>
+          : <span className="inline-flex items-center gap-1.5 rounded-full bg-success/10 px-2.5 py-1 text-success"><span className="size-1.5 rounded-full bg-success" aria-hidden="true" />Live for students</span>}
         action={(
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {user?.role === "ADMIN" ? (
               <Link href="/admin/audit-logs?entityType=pickup_policy">
                 <Button variant="secondary"><History className="size-4" />View change history</Button>
               </Link>
             ) : null}
-            <Button variant="ghost" size="icon" onClick={() => void refreshSchedule()} disabled={submitting || previewingStudentView} aria-label="Refresh pickup schedule" title="Refresh pickup schedule">
-              <RefreshCw className="size-4" />
+            <Button variant="secondary" onClick={() => void refreshSchedule()} disabled={submitting || previewingStudentView} aria-label="Refresh pickup schedule" title="Refresh pickup schedule">
+              <RefreshCw className="size-4" aria-hidden="true" />
+              Refresh
             </Button>
           </div>
         )}
       />
 
-      {notice ? <p className="rounded-surface border border-success/25 bg-success/5 px-4 py-3 text-sm font-semibold text-success" role="status">{notice}</p> : null}
-      {error ? <p className="rounded-surface border border-danger/25 bg-danger/5 px-4 py-3 text-sm font-semibold text-danger" role="alert">{error}</p> : null}
+      {notice ? <InlineAlert tone="success" onDismiss={() => setNotice("")}>{notice}</InlineAlert> : null}
+      {error ? <InlineAlert onDismiss={() => setError("")}>{error}</InlineAlert> : null}
 
       <section className="grid gap-3 md:grid-cols-3" aria-label="Pickup schedule summary">
         <SummaryCard icon={<CalendarClock className="size-5" />} label="Booking window" value={`${draft.minAdvanceDays}–${draft.maxAdvanceDays} ${draft.advanceMode === "CALENDAR_DAYS" ? "calendar" : "open"} days ahead`} detail={draft.advanceMode === "CALENDAR_DAYS" ? "Weekends and closures remain inside the date window but are unavailable for selection." : "Closed weekdays and special closures do not use up this legacy window."} />
@@ -505,7 +511,7 @@ export function StaffPickupScheduleExperience() {
           {WEEKDAYS.map((label, weekday) => {
             const enabled = draft.days.find((day) => day.weekday === weekday)?.enabled === true;
             return (
-              <button key={label} type="button" aria-pressed={enabled} aria-label={`${label}: ${enabled ? "open" : "closed"}`} onClick={() => updateDraft((current) => ({ ...current, days: current.days.map((day) => day.weekday === weekday ? { ...day, enabled: !day.enabled } : day) }))} className={cn("min-h-16 rounded-control border px-2 text-sm font-bold transition", enabled ? "border-primary bg-primary/10 text-primary ring-1 ring-primary" : "border-border bg-muted/40 text-muted-foreground")}>
+              <button key={label} type="button" aria-pressed={enabled} aria-label={`${label}: ${enabled ? "open" : "closed"}`} onClick={() => updateDraft((current) => ({ ...current, days: current.days.map((day) => day.weekday === weekday ? { ...day, enabled: !day.enabled } : day) }))} className={cn("min-h-16 rounded-control border px-2 text-sm font-bold transition-colors", enabled ? "border-primary bg-primary/10 text-primary ring-1 ring-primary" : "border-dashed border-border-strong bg-surface-subtle text-muted-foreground hover:border-primary/50 hover:text-foreground")}>
                 <span className="flex items-center justify-center gap-1.5">{enabled ? <Check className="size-4" /> : <X className="size-4" />}{label.slice(0, 3)}</span>
                 <span className="mt-1 block text-[11px] font-semibold">{enabled ? "Open" : "Closed"}</span>
               </button>
@@ -515,11 +521,18 @@ export function StaffPickupScheduleExperience() {
         <p className="mt-3 text-sm text-muted-foreground">Pickups are currently available on {openDays.length ? openDays.join(", ") : "no weekdays"}.</p>
       </SettingsSection>
 
-      <SettingsSection number={3} title="Pickup time slots" description="Set each collection window, control its reservation limit, or leave it unlimited.">
-        <div className="flex justify-end"><Button variant="secondary" onClick={() => openSlotEditor(null)}><Plus className="size-4" />Add time slot</Button></div>
-        <div className="mt-4 grid gap-2">
+      <SettingsSection
+        number={3}
+        title="Pickup time slots"
+        description="Set each collection window, control its reservation limit, or leave it unlimited."
+        action={<Button variant="secondary" onClick={() => openSlotEditor(null)}><Plus className="size-4" />Add time slot</Button>}
+      >
+        <div className="grid gap-2">
+          {!draft.timeSlots.length ? (
+            <div className="rounded-surface border border-dashed bg-surface-subtle p-5 text-center"><Clock3 className="mx-auto size-7 text-muted-foreground" aria-hidden="true" /><p className="mt-2 font-bold text-foreground">No pickup time slots yet</p><p className="mt-1 text-sm text-muted-foreground">Add at least one active slot so students can choose a pickup time.</p></div>
+          ) : null}
           {draft.timeSlots.map((slot, index) => (
-            <article key={`${slot.startMinute}-${slot.endMinute}-${index}`} onDragOver={(event) => event.preventDefault()} onDrop={() => { if (draggedSlotIndex !== null) moveSlot(draggedSlotIndex, index); setDraggedSlotIndex(null); }} className="flex flex-wrap items-center gap-3 rounded-surface border bg-white p-3">
+            <article key={`${slot.startMinute}-${slot.endMinute}-${index}`} onDragOver={(event) => event.preventDefault()} onDrop={() => { if (draggedSlotIndex !== null) moveSlot(draggedSlotIndex, index); setDraggedSlotIndex(null); }} className={cn("flex flex-wrap items-center gap-3 rounded-surface border bg-card p-3 transition-colors", draggedSlotIndex === index && "border-primary bg-primary/5", !slot.isActive && "bg-surface-subtle")}>
               <span draggable aria-hidden="true" onDragStart={() => setDraggedSlotIndex(index)} onDragEnd={() => setDraggedSlotIndex(null)} className="cursor-grab text-muted-foreground active:cursor-grabbing"><GripVertical className="size-5" /></span>
               <div className="min-w-[180px] flex-1"><p className="font-extrabold text-foreground">{formatTime(slot.startMinute)} – {formatTime(slot.endMinute)}</p><p className="mt-0.5 text-xs text-muted-foreground">{slot.label} · {slot.capacity === null ? "Unlimited reservations" : `Maximum ${slot.capacity} reservation${slot.capacity === 1 ? "" : "s"} per pickup date`}</p></div>
               <button type="button" role="switch" aria-checked={slot.isActive} aria-label={`${slot.label}: ${slot.isActive ? "active" : "inactive"}`} onClick={() => updateDraft((current) => ({ ...current, timeSlots: current.timeSlots.map((item, itemIndex) => itemIndex === index ? { ...item, isActive: !item.isActive } : item) }))} className={cn("inline-flex h-8 items-center gap-2 rounded-full px-3 text-xs font-bold", slot.isActive ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground")}>
@@ -536,11 +549,15 @@ export function StaffPickupScheduleExperience() {
         </div>
       </SettingsSection>
 
-      <SettingsSection number={4} title="Closed dates and holidays" description="Block a specific date without changing the regular weekly schedule.">
-        <div className="flex justify-end"><Button variant="secondary" onClick={() => setClosureEditor({ index: null, date: "", reason: "" })}><Plus className="size-4" />Add closed date</Button></div>
-        <div className="mt-4 grid gap-2 sm:grid-cols-2">
+      <SettingsSection
+        number={4}
+        title="Closed dates and holidays"
+        description="Block a specific date without changing the regular weekly schedule."
+        action={<Button variant="secondary" onClick={() => setClosureEditor({ index: null, date: "", reason: "" })}><Plus className="size-4" />Add closed date</Button>}
+      >
+        <div className="grid gap-2 sm:grid-cols-2">
           {draft.closures.length ? draft.closures.map((closure, index) => (
-            <article key={closure.date} className="flex items-center gap-3 rounded-surface border bg-white px-4 py-3">
+            <article key={closure.date} className="flex items-center gap-3 rounded-surface border bg-card px-4 py-3">
               <CalendarDays className="size-5 shrink-0 text-primary" />
               <div className="min-w-0"><p className="font-extrabold text-foreground">{new Date(`${closure.date}T00:00:00+08:00`).toLocaleDateString("en-PH", { weekday: "short", month: "long", day: "numeric", year: "numeric", timeZone: "Asia/Manila" })}</p><p className="mt-0.5 truncate text-xs text-muted-foreground">{closure.reason}</p></div>
               <Button variant="ghost" size="icon" className="ml-auto" onClick={() => setClosureEditor({ index, ...closure })} aria-label={`Edit closure ${closure.date}`}><Pencil className="size-4" /></Button>
@@ -552,10 +569,16 @@ export function StaffPickupScheduleExperience() {
         </div>
       </SettingsSection>
 
-      {draftError ? <p className="rounded-surface border border-warning/25 bg-warning/5 px-4 py-3 text-sm font-semibold text-warning" role="status">Before saving: {draftError}</p> : null}
+      {draftError ? <InlineAlert tone="warning" title="Before saving">{draftError}</InlineAlert> : null}
 
-      <div className="sticky bottom-3 z-30 flex flex-col gap-3 rounded-feature border bg-white/95 p-3 shadow-overlay backdrop-blur sm:flex-row sm:items-center sm:justify-between">
-        <p className="text-sm font-semibold text-muted-foreground">{isDirty ? "You have unsaved schedule changes." : "The pickup schedule is up to date."}</p>
+      <div className={cn(
+        "sticky bottom-3 z-30 flex flex-col gap-3 rounded-feature border bg-card/95 p-3 shadow-overlay backdrop-blur transition-colors sm:flex-row sm:items-center sm:justify-between",
+        isDirty && "border-warning/40"
+      )}>
+        <p className={cn("flex items-center gap-2 text-sm font-semibold", isDirty ? "text-warning" : "text-muted-foreground")} aria-live="polite">
+          <span className={cn("size-2 shrink-0 rounded-full", isDirty ? "bg-warning" : "bg-success")} aria-hidden="true" />
+          {isDirty ? "You have unsaved schedule changes." : "The pickup schedule is up to date."}
+        </p>
         <div className="flex flex-col gap-2 sm:flex-row">
           <Button variant="ghost" onClick={() => void discardChanges()} disabled={!isDirty || submitting || previewingStudentView}>Discard Changes</Button>
           <Button variant="secondary" onClick={() => void openStudentPreview()} disabled={Boolean(draftError) || submitting} loading={previewingStudentView}><Eye className="size-4" />Preview Student View</Button>
@@ -565,7 +588,7 @@ export function StaffPickupScheduleExperience() {
 
       {slotEditor ? (
         <div className="fixed inset-0 z-[12000] grid place-items-center overflow-y-auto bg-foreground/55 p-4 backdrop-blur-sm" onMouseDown={(event) => { if (event.target === event.currentTarget) setSlotEditor(null); }}>
-          <section ref={slotDialog.dialogRef} {...slotDialog.dialogProps} className="w-full max-w-lg rounded-feature border bg-white shadow-overlay outline-none">
+          <section ref={slotDialog.dialogRef} {...slotDialog.dialogProps} className="w-full max-w-lg rounded-feature border bg-card shadow-overlay outline-none">
             <div className="flex items-start justify-between gap-4 border-b p-5"><div><h2 id={slotDialog.titleId} className="text-xl font-extrabold text-foreground">{slotEditor.index === null ? "Add pickup time slot" : "Edit pickup time slot"}</h2><p className="mt-1 text-sm text-muted-foreground">Set the collection window and optional reservation limit.</p></div><Button variant="ghost" size="icon" onClick={() => setSlotEditor(null)} aria-label="Close time slot editor"><X className="size-5" /></Button></div>
             <div className="grid gap-4 p-5 sm:grid-cols-2">
               <FormControl label="Start time" htmlFor="slot-start" required><input id="slot-start" type="time" value={timeValue(slotEditor.startMinute)} onChange={(event) => setSlotEditor((current) => current ? { ...current, startMinute: timeMinutes(event.target.value) } : current)} className={formControlClass} data-dialog-autofocus /></FormControl>
@@ -582,7 +605,7 @@ export function StaffPickupScheduleExperience() {
 
       {closureEditor ? (
         <div className="fixed inset-0 z-[12000] grid place-items-center overflow-y-auto bg-foreground/55 p-4 backdrop-blur-sm" onMouseDown={(event) => { if (event.target === event.currentTarget) setClosureEditor(null); }}>
-          <section ref={closureDialog.dialogRef} {...closureDialog.dialogProps} className="w-full max-w-lg rounded-feature border bg-white shadow-overlay outline-none">
+          <section ref={closureDialog.dialogRef} {...closureDialog.dialogProps} className="w-full max-w-lg rounded-feature border bg-card shadow-overlay outline-none">
             <div className="flex items-start justify-between gap-4 border-b p-5"><div><h2 id={closureDialog.titleId} className="text-xl font-extrabold text-foreground">{closureEditor.index === null ? "Add closed date" : "Edit closed date"}</h2><p className="mt-1 text-sm text-muted-foreground">Students will not be able to select this date.</p></div><Button variant="ghost" size="icon" onClick={() => setClosureEditor(null)} aria-label="Close closed date editor"><X className="size-5" /></Button></div>
             <div className="grid gap-4 p-5">
               <FormControl label="Date" htmlFor="closure-date" required><input id="closure-date" type="date" value={closureEditor.date} onChange={(event) => setClosureEditor((current) => current ? { ...current, date: event.target.value } : current)} className={formControlClass} data-dialog-autofocus /></FormControl>
@@ -595,7 +618,7 @@ export function StaffPickupScheduleExperience() {
 
       {studentPreviewOpen && previewPolicy ? (
         <div className="fixed inset-0 z-[12000] grid place-items-center overflow-y-auto bg-foreground/55 p-4 backdrop-blur-sm" onMouseDown={(event) => { if (event.target === event.currentTarget) setStudentPreviewOpen(false); }}>
-          <section ref={studentPreviewDialog.dialogRef} {...studentPreviewDialog.dialogProps} className="w-full max-w-4xl rounded-feature border bg-white shadow-overlay outline-none">
+          <section ref={studentPreviewDialog.dialogRef} {...studentPreviewDialog.dialogProps} className="w-full max-w-4xl rounded-feature border bg-card shadow-overlay outline-none">
             <div className="flex items-start justify-between gap-4 border-b p-5"><div><h2 id={studentPreviewDialog.titleId} className="text-xl font-extrabold text-foreground">Preview student availability</h2><p className="mt-1 text-sm text-muted-foreground">This preview uses your unsaved booking window, open days, time slots, and closures.</p></div><Button variant="ghost" size="icon" onClick={() => setStudentPreviewOpen(false)} aria-label="Close student preview"><X className="size-5" /></Button></div>
             <div className="max-h-[75svh] overflow-y-auto p-5"><PickupSchedulePicker selection={studentPreviewSelection} onChange={setStudentPreviewSelection} policyOverride={previewPolicy} title="Choose a pickup date" /></div>
             <div className="flex justify-end border-t bg-surface-subtle p-4"><Button onClick={() => setStudentPreviewOpen(false)}>Done</Button></div>
@@ -605,7 +628,7 @@ export function StaffPickupScheduleExperience() {
 
       {reviewOpen && impactPreview ? (
         <div className="fixed inset-0 z-[12000] grid place-items-center overflow-y-auto bg-foreground/55 p-4 backdrop-blur-sm">
-          <section ref={reviewDialog.dialogRef} {...reviewDialog.dialogProps} role="alertdialog" className="w-full max-w-2xl rounded-feature border bg-white shadow-overlay outline-none">
+          <section ref={reviewDialog.dialogRef} {...reviewDialog.dialogProps} role="alertdialog" className="w-full max-w-2xl rounded-feature border bg-card shadow-overlay outline-none">
             <div className="flex items-start gap-3 border-b p-5"><span className="grid size-11 shrink-0 place-items-center rounded-full bg-warning/10 text-warning"><TriangleAlert className="size-5" /></span><div className="min-w-0 flex-1"><h2 id={reviewDialog.titleId} className="text-xl font-extrabold text-foreground">Activate pickup schedule changes?</h2><p className="mt-1 text-sm leading-6 text-muted-foreground">These are unsaved changes. Review the student schedule and the effect on existing reservations before activation.</p></div><Button variant="ghost" size="icon" onClick={() => setReviewOpen(false)} disabled={submitting} aria-label="Close schedule review"><X className="size-5" /></Button></div>
             <div className="max-h-[65svh] space-y-4 overflow-y-auto p-5">
               <dl className="grid gap-3 rounded-surface border bg-surface-subtle p-4 text-sm sm:grid-cols-2">

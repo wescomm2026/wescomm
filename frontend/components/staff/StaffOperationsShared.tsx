@@ -518,7 +518,7 @@ export function Toolbar({
           value={search}
           onChange={(event) => onSearch(event.target.value)}
           placeholder={placeholder}
-          className="h-full min-w-0 flex-1 bg-transparent px-2.5 text-sm outline-none placeholder:text-muted-foreground [&::-webkit-search-cancel-button]:hidden"
+          className="h-full min-w-0 flex-1 bg-transparent px-2.5 text-sm outline-none focus-visible:outline-none placeholder:text-muted-foreground [&::-webkit-search-cancel-button]:hidden"
         />
         {search ? (
           <button
@@ -537,7 +537,7 @@ export function Toolbar({
           value={status}
           onChange={(event) => onStatus(event.target.value)}
           aria-label={statusLabel}
-          className="h-full min-w-0 flex-1 cursor-pointer bg-transparent pr-1 font-semibold text-foreground outline-none"
+          className="h-full min-w-0 flex-1 cursor-pointer bg-transparent pr-1 font-semibold text-foreground outline-none focus-visible:outline-none"
         >
           <option value="All">All statuses</option>
           {statuses.filter((option) => option !== "All").map((option) => <option key={option} value={option}>{option}</option>)}

@@ -388,7 +388,7 @@ export function AdminAuditLogsExperience({ initialEntityType }: { initialEntityT
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               placeholder="Search action, person, summary, or area"
-              className="h-full min-w-0 flex-1 bg-transparent px-2.5 text-sm outline-none placeholder:text-muted-foreground"
+              className="h-full min-w-0 flex-1 bg-transparent px-2.5 text-sm outline-none focus-visible:outline-none placeholder:text-muted-foreground"
             />
             {search ? (
               <button type="button" onClick={() => setSearch("")} aria-label="Clear search" className="mr-1.5 grid size-8 place-items-center rounded-control text-muted-foreground hover:bg-muted hover:text-foreground">

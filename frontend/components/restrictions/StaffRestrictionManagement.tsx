@@ -329,7 +329,7 @@ export function StaffRestrictionManagement({ role }: { role: "STAFF" | "ADMIN" }
         <div className="border-t border-border p-3 sm:p-4">
           <label className="mb-3 flex h-11 min-w-0 items-center rounded-md border border-border-strong px-3 focus-within:border-primary">
             <Search className="mr-2 size-5 text-muted-foreground" />
-            <input type="search" value={noShowSearch} onChange={(event) => setNoShowSearch(event.target.value)} placeholder="Search reference, student, or item" className="min-w-0 flex-1 bg-transparent text-sm outline-none" />
+            <input type="search" value={noShowSearch} onChange={(event) => setNoShowSearch(event.target.value)} placeholder="Search reference, student, or item" className="min-w-0 flex-1 bg-transparent text-sm outline-none focus-visible:outline-none" />
           </label>
           {loadingNoShows ? (
             <p className="px-2 py-5 text-sm font-semibold text-muted-foreground">Loading eligible no-show reviews...</p>
@@ -362,7 +362,7 @@ export function StaffRestrictionManagement({ role }: { role: "STAFF" | "ADMIN" }
         <div className="grid gap-3 border-b border-[#e6ece6] p-4 sm:grid-cols-[1fr_auto] sm:p-5">
           <label className="flex h-11 min-w-0 items-center rounded-md border border-border-strong px-3 focus-within:border-primary">
             <Search className="mr-2 size-5 text-muted-foreground" />
-            <input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search student name, email, number, or department" className="min-w-0 flex-1 bg-transparent text-sm outline-none" />
+            <input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search student name, email, number, or department" className="min-w-0 flex-1 bg-transparent text-sm outline-none focus-visible:outline-none" />
           </label>
           <select value={status} onChange={(event) => setStatus(event.target.value as typeof status)} className="h-11 rounded-md border border-border-strong bg-white px-3 text-sm font-semibold outline-none focus:border-primary">
             <option value="ACTIONABLE">Needs attention</option><option value="RESTRICTED">Access paused</option><option value="WARNING">Warnings</option><option value="REVIEW">Review cases</option><option value="ALL">All students</option>

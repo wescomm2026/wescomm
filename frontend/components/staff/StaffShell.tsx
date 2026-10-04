@@ -579,7 +579,7 @@ export function StaffShell({
         onChange={(event) => setSearch(event.target.value)}
         placeholder="Search products, reservations, receipts..."
         aria-label="Search the workspace"
-        className="h-full min-w-0 flex-1 bg-transparent px-2.5 text-sm outline-none placeholder:text-muted-foreground"
+        className="h-full min-w-0 flex-1 bg-transparent px-2.5 text-sm outline-none focus-visible:outline-none placeholder:text-muted-foreground"
       />
       {showShortcut && !search ? (
         <kbd className="mr-2 hidden rounded border bg-surface-subtle px-1.5 py-0.5 font-sans text-[11px] font-bold text-muted-foreground xl:inline-block" aria-hidden="true">/</kbd>

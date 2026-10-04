@@ -1357,7 +1357,7 @@ export function StudentSupportExperience() {
                 maxLength={2000}
                 rows={1}
                 placeholder={selectedConversation?.status === "RESOLVED" ? "Send a message to reopen this chat..." : selectedConversation?.mode === "STAFF_ACTIVE" ? "Message commissary staff..." : "Message WesBot..."}
-                className="max-h-32 min-h-11 min-w-0 flex-1 resize-none bg-transparent px-3 py-2 text-base leading-6 text-[#17211b] outline-none placeholder:text-[#8a948e] sm:text-sm"
+                className="max-h-32 min-h-11 min-w-0 flex-1 resize-none bg-transparent px-3 py-2 text-base leading-6 text-[#17211b] outline-none focus-visible:outline-none placeholder:text-[#8a948e] sm:text-sm"
               />
               <Button type="submit" className="size-11 shrink-0 rounded-full p-0" disabled={submitting || botReplyPending || !composer.trim()} aria-label="Send message">
                 <Send className="size-[18px]" />

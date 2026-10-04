@@ -26,7 +26,6 @@ import { uploadsRoutes } from "./uploads.routes.js";
 import { usersRoutes } from "./users.routes.js";
 import { walkInSalesRoutes } from "./walk-in-sales.routes.js";
 import { wishlistRoutes } from "./wishlist.routes.js";
-import { wesbotUsageRoutes } from "./wesbot-usage.routes.js";
 
 export const apiRoutes = Router();
 
@@ -61,4 +60,3 @@ apiRoutes.use("/admin/search", globalSearchRoutes);
 apiRoutes.use("/admin/dashboard", dashboardRoutes);
 apiRoutes.use("/admin/users", usersRoutes);
 apiRoutes.use("/admin/audit-logs", auditLogsRoutes);
-apiRoutes.use("/admin/wesbot", wesbotUsageRoutes);
