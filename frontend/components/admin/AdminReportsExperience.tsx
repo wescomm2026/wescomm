@@ -2,9 +2,10 @@
 
 import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState } from "react";
-import { Download, Link2, RefreshCw } from "lucide-react";
+import { ChevronDown, Download, Link2, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ReportDecisionWorkspace } from "@/components/reports/ReportDecisionWorkspace";
+import { SalesReportPreview } from "@/components/reports/SalesReportPreview";
 import {
   AdminAccessState,
   AdminHeader,
@@ -13,7 +14,7 @@ import {
   useAdminSummary
 } from "@/components/admin/AdminExperienceShared";
 import { manilaDateKey } from "@/lib/manila-date";
-import type { ReportRangeOptions, ReportRangePreset } from "@/lib/api";
+import { downloadManagementReportFromApi, type ReportRangeOptions, type ReportRangePreset } from "@/lib/api";
 import { buildReportShareUrl, readReportLinkFilters } from "@/lib/report-link";
 
 const AdminReportsCharts = dynamic(
@@ -28,6 +29,8 @@ export function AdminReportsExperience() {
   const [collectionChannel, setCollectionChannel] = useState<"ALL" | "COMMISSARY" | "TREASURER">("ALL");
   const [reportBasis, setReportBasis] = useState<"COLLECTION" | "COMPLETION">("COLLECTION");
   const [linkStatus, setLinkStatus] = useState<"IDLE" | "COPIED" | "READY">("IDLE");
+  const [showSalesReport, setShowSalesReport] = useState(false);
+  const [exportingAnalytics, setExportingAnalytics] = useState(false);
   const reportOptions = useMemo<ReportRangeOptions>(() => rangePreset === "CUSTOM" && (!customFrom || !customTo)
     ? { preset: "LAST_30_DAYS", basis: reportBasis, ...(collectionChannel === "ALL" ? {} : { collectionChannel }) }
     : { preset: rangePreset, basis: reportBasis, ...(rangePreset === "CUSTOM" ? { from: customFrom, to: customTo } : {}), ...(collectionChannel === "ALL" ? {} : { collectionChannel }) }, [collectionChannel, customFrom, customTo, rangePreset, reportBasis]);
@@ -55,55 +58,23 @@ export function AdminReportsExperience() {
     }
   };
 
-  const exportCsv = () => {
-    const rows = [
-      ["WESCOMM ADMIN REPORT"],
-      ["Generated at", summary.generatedAt ? new Date(summary.generatedAt).toLocaleString("en-PH", { timeZone: "Asia/Manila" }) : "Not available"],
-      ["Timezone", "Asia/Manila"],
-      ["Report range", summary.range.label],
-      ["Trend focus", summary.reportBasis === "COLLECTION" ? "Cash collections by payment date" : "Recognized sales by completion date"],
-      ["Collection filter", summary.filters.collectionChannel],
-      [],
-      ["Metric", "Value"],
-      ["Total Sales", formatCurrency(summary.totalSales)],
-      ["COGS", formatCurrency(summary.cogs)],
-      ["Gross Profit", formatCurrency(summary.grossProfit)],
-      ["Commissary Collection", formatCurrency(summary.commissaryCollection)],
-      ["Treasury Collection", formatCurrency(summary.treasurerCollection)],
-      ["Cash Revenue", formatCurrency(summary.cashRevenue)],
-      ["Commissary Cash", formatCurrency(summary.commissaryCashRevenue)],
-      ["Treasury Cash", formatCurrency(summary.treasuryCashRevenue)],
-      ["In-person Collections", formatCurrency(summary.inPersonRevenue)],
-      ["Legacy Online Payments", formatCurrency(summary.legacyOnlineRevenue)],
-      ["Legacy In-person Non-cash", formatCurrency(summary.legacyInPersonRevenue)],
-      ["Inventory Value", formatCurrency(summary.inventoryValue)],
-      ["Total Reservations", String(summary.totalReservations)],
-      ["Items to Restock", String(summary.lowStockItems)],
-      ["Active Users", String(summary.activeUsers)],
-      [],
-      ["RECONCILIATION EXCEPTIONS"],
-      ["Priority", "Issue", "Reservation", "Date", "Amount", "Payment ID", "Receipt ID"],
-      ...summary.reconciliation.items.map((item) => [item.severity, item.label, item.referenceCode, new Date(item.eventAt).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" }), formatCurrency(item.amount), item.paymentId ?? "", item.receiptId ?? ""]),
-      [],
-      ["PRODUCTS AND MARGIN"],
-      ["Item", "Category", "Qty Sold", "Sales", "COGS", "Gross Profit", "Margin"],
-      ...summary.itemSales.map((item) => [item.item, item.category, String(item.quantity), formatCurrency(item.sales), formatCurrency(item.cogs), formatCurrency(item.grossProfit), item.marginPercent === null ? "Not available" : `${item.marginPercent}%`]),
-      [],
-      ["INVENTORY ACTIONS"],
-      ["Item", "Category", "Status", "Stock", "Units Sold", "Stock Cover", "Suggested Reorder", "Action"],
-      ...summary.inventoryPlanning.map((item) => [item.item, item.category, item.status, String(item.stock), String(item.unitsSold), item.stockCoverDays === null ? "No demand yet" : `${item.stockCoverDays} days`, String(item.suggestedReorderQuantity), item.recommendation]),
-      [],
-      ["HISTORICAL PAYMENT AUDIT"],
-      ["Legacy Online", formatCurrency(summary.legacyOnlineRevenue), String(summary.paymentMethodBreakdown.legacyOnline.receipts)],
-      ["Legacy In-person Non-cash", formatCurrency(summary.legacyInPersonRevenue), String(summary.paymentMethodBreakdown.legacyInPerson.receipts)]
-    ];
-    const csv = rows.map((row) => row.map((cell) => `"${cell}"`).join(",")).join("\n");
-    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `wescomm-admin-report-${summary.range.preset.toLowerCase()}.csv`;
-    anchor.click();
-    URL.revokeObjectURL(url);
+  const exportAnalyticsExcel = async () => {
+    const sessionToken = user?.accessToken ?? "";
+    if (!sessionToken) return;
+    setExportingAnalytics(true);
+    try {
+      const { blob, fileName } = await downloadManagementReportFromApi(sessionToken, reportOptions, "ADMIN");
+      const url = URL.createObjectURL(blob);
+      const downloadAnchor = document.createElement("a");
+      downloadAnchor.href = url;
+      downloadAnchor.download = fileName;
+      downloadAnchor.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    } catch {
+      // Export failures are non-blocking; the on-screen analytics remain available.
+    } finally {
+      setExportingAnalytics(false);
+    }
   };
 
   return (
@@ -115,11 +86,28 @@ export function AdminReportsExperience() {
         action={
           <div className="flex flex-wrap gap-2">
             <Button variant="secondary" onClick={() => void reload()} disabled={loading}><RefreshCw className="size-4" /> Refresh</Button>
-            <Button variant="secondary" onClick={() => void copyReportLink()}><Link2 className="size-4" /> {linkStatus === "COPIED" ? "Link Copied" : linkStatus === "READY" ? "Link Ready in Address Bar" : "Copy Link"}</Button>
-            <Button onClick={exportCsv}><Download className="size-4" /> Export CSV</Button>
           </div>
         }
       />
+
+      <div className="flex flex-col gap-3 rounded-lg border border-border bg-white p-2 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+        <nav className="flex gap-1" aria-label="Report sections">
+          <button type="button" onClick={() => setShowSalesReport(false)} aria-current={!showSalesReport ? "page" : undefined} className={`rounded-md px-4 py-2.5 text-sm font-bold ${!showSalesReport ? "bg-primary text-white" : "text-muted-foreground hover:bg-[#eef6ee] hover:text-primary"}`}>Overview</button>
+          <button type="button" onClick={() => setShowSalesReport(true)} aria-current={showSalesReport ? "page" : undefined} className={`rounded-md px-4 py-2.5 text-sm font-bold ${showSalesReport ? "bg-primary text-white" : "text-muted-foreground hover:bg-[#eef6ee] hover:text-primary"}`}>Sales register</button>
+        </nav>
+        {!showSalesReport ? (
+          <details className="group relative">
+            <summary className="flex cursor-pointer list-none items-center gap-2 rounded-md border border-border px-4 py-2.5 text-sm font-bold marker:content-none hover:bg-muted/40">More actions <ChevronDown className="size-4 transition-transform group-open:rotate-180" /></summary>
+            <div className="z-20 mt-2 grid gap-1 rounded-md border border-border bg-white p-2 shadow-lg sm:absolute sm:right-0 sm:min-w-64">
+              <button type="button" onClick={() => void copyReportLink()} className="flex items-center gap-2 rounded-md px-3 py-2 text-left text-sm font-semibold hover:bg-[#eef6ee]"><Link2 className="size-4" />{linkStatus === "COPIED" ? "Link copied" : linkStatus === "READY" ? "Link ready in address bar" : "Copy overview link"}</button>
+              <button type="button" onClick={() => void exportAnalyticsExcel()} disabled={exportingAnalytics} className="flex items-center gap-2 rounded-md px-3 py-2 text-left text-sm font-semibold hover:bg-[#eef6ee] disabled:opacity-50"><Download className="size-4" />{exportingAnalytics ? "Preparing analytics..." : "Export analytics Excel"}</button>
+            </div>
+          </details>
+        ) : null}
+      </div>
+
+      {showSalesReport ? <SalesReportPreview role="ADMIN" onClose={() => setShowSalesReport(false)} /> : null}
+      <div className={showSalesReport ? "hidden" : "space-y-5"}>
       {error ? <p className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p> : null}
 
       <section className="grid gap-3 rounded-lg border border-border bg-white p-4 shadow-sm sm:grid-cols-2 xl:grid-cols-5">
@@ -154,6 +142,8 @@ export function AdminReportsExperience() {
       </section>
 
       <AdminReportsCharts summary={summary} />
+
+      </div>
 
     </div>
   );

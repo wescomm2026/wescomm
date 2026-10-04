@@ -267,6 +267,91 @@ function reservationPreviewAction(reservation: StoredReservation) {
   return "View details";
 }
 
+const activeReservationSteps = [
+  "Pending",
+  "Confirmed",
+  "Ready for Pickup",
+  "Completed"
+] as const satisfies readonly ReservationStatus[];
+
+function ReservationProgress({
+  status,
+  compact = false
+}: {
+  status: ReservationStatus;
+  compact?: boolean;
+}) {
+  const currentIndex = activeReservationSteps.findIndex((step) => step === status);
+
+  if (currentIndex < 0) {
+    return (
+      <div
+        data-testid="reservation-progress"
+        aria-label="Reservation progress"
+        className={`rounded-xl border border-[#eadfda] bg-[#fffaf8] ${compact ? "p-3" : "mx-4 mb-4 p-4 sm:mx-5 sm:mb-5"}`}
+      >
+        <p className="text-[10px] font-extrabold uppercase tracking-wide text-[#765e58] sm:text-xs">Reservation progress</p>
+        <div className="mt-2 flex items-start gap-2 text-[#692f24]">
+          <XCircle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+          <div>
+            <p className="text-sm font-extrabold">Progress ended: {status}</p>
+            <p className="mt-0.5 text-xs leading-5 text-[#765e58]">No later fulfillment step will be marked complete.</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const nextStep = activeReservationSteps[currentIndex + 1] ?? null;
+
+  return (
+    <div
+      data-testid="reservation-progress"
+      aria-label="Reservation progress"
+      className={`rounded-xl border border-[#dce6dc] bg-[#f8fbf8] ${compact ? "p-3" : "mx-4 mb-4 p-4 sm:mx-5 sm:mb-5"}`}
+    >
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+        <p className="text-[10px] font-extrabold uppercase tracking-wide text-primary sm:text-xs">Reservation progress</p>
+        <p className="text-xs font-semibold text-[#526158]">
+          Current step: <span className="font-extrabold text-primary">{status}</span>
+        </p>
+      </div>
+      <ol className="mt-3 flex" aria-label={`Current reservation step: ${status}`}>
+        {activeReservationSteps.map((step, index) => {
+          const isComplete = index < currentIndex || status === "Completed";
+          const isCurrent = index === currentIndex;
+          const leftActive = index <= currentIndex;
+          const rightActive = index < currentIndex;
+
+          return (
+            <li key={step} className="min-w-0 flex-1" aria-current={isCurrent ? "step" : undefined}>
+              <div className="flex items-center" aria-hidden="true">
+                <span className={`h-1 min-w-0 flex-1 rounded-full ${index === 0 ? "invisible" : leftActive ? "bg-primary" : "bg-[#d7e0d8]"}`} />
+                <span className={`grid size-7 shrink-0 place-items-center rounded-full border text-[10px] font-extrabold sm:size-8 sm:text-xs ${isCurrent
+                  ? "border-primary bg-primary text-white ring-4 ring-primary/15"
+                  : isComplete
+                    ? "border-primary bg-primary text-white"
+                    : "border-[#cbd7cd] bg-white text-[#77817b]"
+                }`}>
+                  {isComplete ? <CheckCircle2 className="size-4" /> : index + 1}
+                </span>
+                <span className={`h-1 min-w-0 flex-1 rounded-full ${index === activeReservationSteps.length - 1 ? "invisible" : rightActive ? "bg-primary" : "bg-[#d7e0d8]"}`} />
+              </div>
+              <p className={`mt-2 text-center text-[9px] leading-4 sm:text-[11px] ${isCurrent ? "font-extrabold text-primary" : isComplete ? "font-bold text-[#425148]" : "font-semibold text-[#7a857d]"}`}>
+                {step}
+              </p>
+              <span className="sr-only">{isCurrent ? "Current step" : isComplete ? "Completed step" : "Upcoming step"}</span>
+            </li>
+          );
+        })}
+      </ol>
+      <p className="mt-3 text-xs leading-5 text-[#5f6d64]">
+        {nextStep ? <>Next: <strong className="text-[#26322b]">{nextStep}</strong>. Staff must update the reservation before it moves forward.</> : "All reservation steps are complete."}
+      </p>
+    </div>
+  );
+}
+
 function ReservationPreviewCard({
   reservation,
   onOpen
@@ -331,6 +416,10 @@ function ReservationPreviewCard({
               </div>
             ) : null}
           </div>
+        </div>
+
+        <div className="mt-3">
+          <ReservationProgress status={reservation.status} compact />
         </div>
 
         <div className="mt-4 flex items-start gap-3 rounded-xl border border-[#dce6dc] bg-[#edf7ee] px-3 py-3 text-sm sm:px-4">
@@ -585,6 +674,8 @@ function ReservationDetails({
       ) : (
         <p className="p-5 text-sm font-semibold text-[#68746d]">Reservation item details are unavailable.</p>
       )}
+
+      <ReservationProgress status={reservation.status} />
 
       <section className="mx-4 mb-4 mt-4 rounded-xl border border-[#cfe2d1] bg-[#edf7ee] p-4 sm:mx-5 sm:mb-5 sm:mt-5">
         <div className="flex items-start gap-3">

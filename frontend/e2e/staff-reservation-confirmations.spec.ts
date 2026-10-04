@@ -89,7 +89,11 @@ async function mockReservations(page: Page) {
       return;
     }
     if (path === "/api/backend/reservations" && request.method() === "GET") {
-      await json(route, { items: reservations, nextCursor: null });
+      const requestedStatus = new URL(request.url()).searchParams.get("status");
+      await json(route, {
+        items: requestedStatus ? reservations.filter((entry) => entry.status === requestedStatus) : reservations,
+        nextCursor: null
+      });
       return;
     }
     if (path === "/api/backend/reservations/bulk-confirm/preview" && request.method() === "POST") {
@@ -137,6 +141,7 @@ test("staff can preview and confirm all eligible pending reservations", async ({
   await page.goto("/staff/reservations");
   await dismissWelcomeGate(page);
 
+  await page.getByRole("combobox").selectOption("Pending");
   await page.getByRole("button", { name: "Confirm all eligible" }).click();
   const dialog = page.getByRole("alertdialog", { name: "Confirm 1 reservation?" });
   await expect(dialog).toContainText("oldest first");
@@ -162,7 +167,7 @@ for (const viewport of viewports) {
     await page.goto("/staff/reservations");
     await dismissWelcomeGate(page);
     await expect(page.getByRole("heading", { name: "Reservation queue" })).toBeVisible();
-    await page.getByRole("combobox").selectOption("All");
+    await expect(page.getByRole("combobox")).toHaveValue("All");
 
     const confirmRow = page.locator("article").filter({ hasText: "WES-CONFIRM-0304" });
     const confirmButton = confirmRow.getByRole("button", { name: "Confirm", exact: true });
@@ -176,6 +181,8 @@ for (const viewport of viewports) {
 
     await confirmButton.click();
     await transitionDialog.getByRole("button", { name: "Confirm reservation" }).click();
+    await expect(confirmRow).toBeVisible();
+    await expect(confirmRow).toContainText("Confirmed");
     await expect(confirmRow.getByRole("button", { name: "Mark ready" })).toBeVisible();
     expect(requests.statusUpdates).toEqual(["00000000-0000-4000-8000-000000000304:CONFIRMED"]);
 

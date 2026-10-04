@@ -99,10 +99,12 @@ test("student reservation status filters work on desktop and mobile", async ({ p
           id: "qa-student",
           role: "STUDENT",
           studentNumber: "QA-001",
+          departmentId: "81000000-0000-4000-8000-000000000001",
+          onboardingCompletedAt: "2026-07-01T00:00:00.000Z",
           fullName: "QA Student",
           email: "student@wesleyan.edu.ph",
           phone: null,
-          department: null,
+          department: "QA Fixtures",
           address: null,
           avatarUrl: null
         }
@@ -180,6 +182,22 @@ test("student reservation status filters work on desktop and mobile", async ({ p
   await expect(pendingCard.getByText("Confirmation queue #3 of 8", { exact: true })).toBeVisible();
   await expect(pendingCard.getByText(/2 eligible requests are ahead/)).toBeVisible();
   await expect(pendingCard.getByText("PHP 250.00", { exact: true })).toBeVisible();
+  await expect(pendingCard.getByTestId("reservation-progress")).toContainText("Current step: Pending");
+  await expect(pendingCard.getByTestId("reservation-progress")).toContainText("Next: Confirmed");
+
+  const confirmedCard = cards.filter({ hasText: "QA-CONFIRMED" });
+  const confirmedProgress = confirmedCard.getByTestId("reservation-progress");
+  await expect(confirmedProgress).toContainText("Current step: Confirmed");
+  await expect(confirmedProgress).toContainText("Next: Ready for Pickup");
+  await expect(confirmedProgress.locator('[aria-current="step"]')).toContainText("Confirmed");
+
+  const completedProgress = cards.filter({ hasText: "QA-COMPLETED" }).getByTestId("reservation-progress");
+  await expect(completedProgress).toContainText("Current step: Completed");
+  await expect(completedProgress).toContainText("All reservation steps are complete.");
+
+  const cancelledProgress = cards.filter({ hasText: "QA-CANCELLED" }).getByTestId("reservation-progress");
+  await expect(cancelledProgress).toContainText("Progress ended: Cancelled");
+  await expect(cancelledProgress).toContainText("No later fulfillment step will be marked complete.");
 
   const pendingTrigger = pendingCard.getByRole("button", { name: "View details for reservation QA-PENDING" });
   await pendingTrigger.click();
@@ -190,6 +208,7 @@ test("student reservation status filters work on desktop and mobile", async ({ p
   await expect(pendingDetails.getByText("Awaiting pickup schedule", { exact: true })).toBeVisible();
   await expect(pendingDetails.getByText("Staff will post the approved pickup date and time here after confirmation.", { exact: true })).toBeVisible();
   await expect(pendingDetails.getByText("Your item is held while staff reviews the reservation. You selected cash payment at the Commissary.", { exact: true })).toBeVisible();
+  await expect(pendingDetails.getByTestId("reservation-progress")).toContainText("Current step: Pending");
   await pendingDetails.getByRole("button", { name: "Close reservation details QA-PENDING" }).click();
   await expect(pendingDetails).toHaveCount(0);
   await expect(pendingTrigger).toBeFocused();

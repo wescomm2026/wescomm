@@ -206,6 +206,7 @@ export async function getPickupSlotAvailability(input: {
   return {
     pickupDate: input.pickupDate,
     pickupPolicyVersion: policy.version,
+    serverTime: validatedDate.now.toISOString(),
     slots: windows.map(({ slot, pickupStart, pickupEnd }) => {
       const capacity = pickupCapacitySnapshot(slot.capacity, bookedByWindow.get(pickupWindowKey(pickupStart, pickupEnd)) ?? 0);
       const isExpired = pickupStart.getTime() <= validatedDate.now.getTime();

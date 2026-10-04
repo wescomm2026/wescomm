@@ -11,8 +11,8 @@ import { SiteFooterLinks } from "@/components/layout/SiteFooterLinks";
 import { AssetIcon } from "@/components/ui/AssetIcon";
 import { Button } from "@/components/ui/button";
 import { ReportDecisionWorkspace } from "@/components/reports/ReportDecisionWorkspace";
-import { getStaffReportSummaryFromApi, isRequestAbortError, type BackendReportSummary, type ReportRangeOptions, type ReportRangePreset } from "@/lib/api";
-import { exportStyledExcelWorkbook } from "@/lib/excel-export";
+import { SalesReportPreview } from "@/components/reports/SalesReportPreview";
+import { downloadManagementReportFromApi, getStaffReportSummaryFromApi, isRequestAbortError, type BackendReportSummary, type ReportRangeOptions, type ReportRangePreset } from "@/lib/api";
 import { getStoredStaffSession } from "@/lib/staff-api";
 import { manilaDateKey } from "@/lib/manila-date";
 import { EMPTY_REPORT_SUMMARY } from "@/lib/report-summary";
@@ -174,6 +174,7 @@ export function StaffReports() {
   const [collectionChannel, setCollectionChannel] = useState<"ALL" | "COMMISSARY" | "TREASURER">("ALL");
   const [reportBasis, setReportBasis] = useState<"COLLECTION" | "COMPLETION">("COLLECTION");
   const [linkStatus, setLinkStatus] = useState<"IDLE" | "COPIED" | "READY">("IDLE");
+  const [showSalesReport, setShowSalesReport] = useState(false);
   const reportOptions = useMemo<ReportRangeOptions>(() => rangePreset === "CUSTOM" && (!customFrom || !customTo)
     ? { preset: "LAST_30_DAYS", basis: reportBasis, ...(collectionChannel === "ALL" ? {} : { collectionChannel }) }
     : { preset: rangePreset, basis: reportBasis, ...(rangePreset === "CUSTOM" ? { from: customFrom, to: customTo } : {}), ...(collectionChannel === "ALL" ? {} : { collectionChannel }) }, [collectionChannel, customFrom, customTo, rangePreset, reportBasis]);
@@ -212,10 +213,10 @@ export function StaffReports() {
     }
   };
 
-  const recordExport = (format: "PDF" | "Excel") => {
+  const recordExport = (format: "PDF" | "Excel", name = "WESCOMM Live Performance Report") => {
     setExports((current) => [
       {
-        name: "WESCOMM Live Performance Report",
+        name,
         date: formatExportDate(),
         range: reportRange,
         by: reportOwner,
@@ -225,84 +226,26 @@ export function StaffReports() {
     ].slice(0, 8));
   };
 
-  const exportExcel = () => {
-    exportStyledExcelWorkbook({
-      fileName: "wescomm-staff-report.xls",
-      title: "WESCOMM Staff Performance Report",
-      subtitle: "Wesleyan Integrated Commissary Management System",
-      metadata: [
-        ["Date exported", formatExportDate()],
-        ["Server generated at", summary.generatedAt ? new Date(summary.generatedAt).toLocaleString("en-PH", { timeZone: "Asia/Manila" }) : "Not available"],
-        ["Report range", reportRange],
-        ["Timezone", "Asia/Manila"],
-        ["Trend focus", summary.reportBasis === "COLLECTION" ? "Cash collections by payment date" : "Recognized sales by completion date"],
-        ["Collection filter", summary.filters.collectionChannel],
-        ["Cash-only effective date", new Date(summary.cashOnlyPolicy.effectiveAt).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" })],
-        ["Exported by", reportOwner],
-        ["Information source", "Current WESCOMM records"]
-      ],
-      worksheets: [
-        { name: "Summary", sections: [{
-          title: "Summary Metrics",
-          headers: ["Metric", "Value", "Previous Period", "Change", "Definition"],
-          rows: [
-            ["Cash collected", formatCurrency(summary.cashRevenue), formatCurrency(summary.comparison.cashRevenue.previous), summary.comparison.cashRevenue.percentChange === null ? "No baseline" : `${summary.comparison.cashRevenue.percentChange}%`, "Verified CASH payments by paid date"],
-            ["Recognized sales", formatCurrency(summary.totalSales), formatCurrency(summary.comparison.recognizedSales.previous), summary.comparison.recognizedSales.percentChange === null ? "No baseline" : `${summary.comparison.recognizedSales.percentChange}%`, "Completed reservations with verified receipt and paid payment"],
-            ["Gross profit", formatCurrency(summary.grossProfit), formatCurrency(summary.comparison.grossProfit.previous), summary.comparison.grossProfit.percentChange === null ? "No baseline" : `${summary.comparison.grossProfit.percentChange}%`, "Recognized sales minus FIFO cost"],
-            ["Reservations created", formatNumber(summary.totalReservations), formatNumber(summary.comparison.reservations.previous), summary.comparison.reservations.percentChange === null ? "No baseline" : `${summary.comparison.reservations.percentChange}%`, "Reservations created in the selected period"],
-            ["Inventory value", formatCurrency(summary.inventoryValue), "", "", "Remaining quantity times verified acquisition cost"],
-            ["Reconciliation issues", formatNumber(summary.reconciliation.exceptionCount), "", "", `Estimated amount requiring reconciliation: ${formatCurrency(summary.reconciliation.amountAtRisk)}`]
-          ]
-        }] },
-        { name: "Cash Collections", sections: [
-          { title: "Cash by Location", headers: ["Location", "Amount", "Payments"], rows: [
-            ["Commissary", formatCurrency(summary.commissaryCashRevenue), summary.cashCollectionChannelBreakdown.commissary.payments],
-            ["Treasury", formatCurrency(summary.treasuryCashRevenue), summary.cashCollectionChannelBreakdown.treasurer.payments]
-          ] },
-          { title: "Cash Trend", headers: ["Period", "Amount", "Payments"], rows: summary.collectionTrend.map((item) => [item.day, formatCurrency(item.sales), item.receipts]) },
-          { title: "Treasury OR Traceability", headers: ["Paid Date", "OR Number", "Reservation", "Items", "Amount"], rows: summary.treasurerCollections.map((item) => [new Date(item.paidAt).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" }), item.officialReceiptNumber ?? "Missing OR", item.orderReference, item.items, formatCurrency(item.amount)]) }
-        ] },
-        { name: "Walk-in Sales", sections: [
-          { title: "Walk-in Summary", headers: ["Metric", "Value"], rows: [
-            ["Walk-in sales", formatCurrency(summary.walkInSales.amount)],
-            ["Walk-in receipts", formatNumber(summary.walkInSales.receipts)],
-            ["Walk-in COGS", formatCurrency(summary.walkInSales.cogs)],
-            ["Voided walk-in sales", formatNumber(summary.walkInVoids.count)],
-            ["Voided walk-in amount", formatCurrency(summary.walkInVoids.amount)]
-          ] },
-          { title: "Cashier Reconciliation", headers: ["Cashier", "Sales", "Sale Amount", "Voids", "Void Amount"], rows: summary.cashierReconciliation.length ? summary.cashierReconciliation.map((row) => [row.cashierName, formatNumber(row.saleCount), formatCurrency(row.sales), formatNumber(row.voidCount), formatCurrency(row.voids)]) : [["No walk-in sales", "0", "PHP 0.00", "0", "PHP 0.00"]] }
-        ] },
-        { name: "Reconciliation", sections: [{
-          title: "Exceptions",
-          headers: ["Priority", "Issue", "Reservation", "Date", "Amount", "Payment ID", "Receipt ID"],
-          rows: summary.reconciliation.items.length ? summary.reconciliation.items.map((item) => [item.severity, item.label, item.referenceCode, new Date(item.eventAt).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" }), formatCurrency(item.amount), item.paymentId, item.receiptId]) : [["CLEAN", "No reconciliation issue found", "", "", "", "", ""]]
-        }] },
-        { name: "Products and Margin", sections: [{
-          title: "Product Performance",
-          headers: ["Product", "Category", "Units", "Sales", "COGS", "Gross Profit", "Margin"],
-          rows: summary.itemSales.map((item) => [item.item, item.category, item.quantity, formatCurrency(item.sales), formatCurrency(item.cogs), formatCurrency(item.grossProfit), item.marginPercent === null ? "Not available" : `${item.marginPercent}%`])
-        }] },
-        { name: "Inventory Actions", sections: [{
-          title: "Inventory Planning",
-          headers: ["Product", "Category", "Status", "Stock", "Units Sold", "Stock Cover", "Suggested Reorder", "Action"],
-          rows: summary.inventoryPlanning.map((item) => [item.item, item.category, item.status, item.stock, item.unitsSold, item.stockCoverDays === null ? "No demand yet" : `${item.stockCoverDays} days`, item.suggestedReorderQuantity, item.recommendation])
-        }] },
-        { name: "Legacy Payments", sections: [{
-          title: "Historical Audit Only",
-          headers: ["Type", "Amount", "Records", "Operational Status"],
-          rows: [
-            ["Legacy online", formatCurrency(summary.legacyOnlineRevenue), summary.paymentMethodBreakdown.legacyOnline.receipts, "Not available for new payments"],
-            ["Legacy in-person non-cash", formatCurrency(summary.legacyInPersonRevenue), summary.paymentMethodBreakdown.legacyInPerson.receipts, "Not available for new payments"]
-          ]
-        }] }
-      ]
-    });
-    recordExport("Excel");
-  };
+  const [exportingAnalytics, setExportingAnalytics] = useState(false);
 
-  const exportPdf = () => {
-    recordExport("PDF");
-    window.print();
+  const exportAnalyticsExcel = async () => {
+    const sessionToken = user?.role === "STAFF" || user?.role === "ADMIN" ? user.accessToken ?? "" : getStoredStaffSession().token;
+    if (!sessionToken) return;
+    setExportingAnalytics(true);
+    try {
+      const { blob, fileName } = await downloadManagementReportFromApi(sessionToken, reportOptions, "STAFF");
+      const url = URL.createObjectURL(blob);
+      const downloadAnchor = document.createElement("a");
+      downloadAnchor.href = url;
+      downloadAnchor.download = fileName;
+      downloadAnchor.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 0);
+      recordExport("Excel", "WESCOMM Management Analytics");
+    } catch {
+      // Export failures are non-blocking; the on-screen analytics remain available.
+    } finally {
+      setExportingAnalytics(false);
+    }
   };
 
   const downloadRecordedExport = (report: ReportExport) => {
@@ -343,20 +286,28 @@ export function StaffReports() {
             <RefreshCw className="size-4" />
             Refresh
           </Button>
-          <Button variant="secondary" className="h-11" onClick={() => void copyReportLink()}>
-            <Link2 className="size-4" />
-            {linkStatus === "COPIED" ? "Link Copied" : linkStatus === "READY" ? "Link Ready in Address Bar" : "Copy Link"}
-          </Button>
-          <Button variant="secondary" className="h-11" onClick={exportPdf}>
-            <AssetIcon src="/assets/digital-receipts.svg" className="size-6" />
-            Export PDF
-          </Button>
-          <Button variant="secondary" className="h-11" onClick={exportExcel}>
-            <AssetIcon src="/assets/download.svg" className="size-6" />
-            Export Excel
-          </Button>
         </div>
       </header>
+
+      <div className="flex flex-col gap-3 rounded-lg border border-border bg-white p-2 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+        <nav className="flex gap-1" aria-label="Report sections">
+          <button type="button" onClick={() => setShowSalesReport(false)} aria-current={!showSalesReport ? "page" : undefined} className={`rounded-md px-4 py-2.5 text-sm font-bold ${!showSalesReport ? "bg-primary text-white" : "text-muted-foreground hover:bg-[#eef6ee] hover:text-primary"}`}>Overview</button>
+          <button type="button" onClick={() => setShowSalesReport(true)} aria-current={showSalesReport ? "page" : undefined} className={`rounded-md px-4 py-2.5 text-sm font-bold ${showSalesReport ? "bg-primary text-white" : "text-muted-foreground hover:bg-[#eef6ee] hover:text-primary"}`}>Sales register</button>
+        </nav>
+        {!showSalesReport ? (
+          <details className="group relative">
+            <summary className="flex cursor-pointer list-none items-center gap-2 rounded-md border border-border px-4 py-2.5 text-sm font-bold text-foreground marker:content-none hover:bg-muted/40">More actions <ChevronDown className="size-4 transition-transform group-open:rotate-180" /></summary>
+            <div className="z-20 mt-2 grid gap-1 rounded-md border border-border bg-white p-2 shadow-lg sm:absolute sm:right-0 sm:min-w-64">
+              <button type="button" onClick={() => void copyReportLink()} className="flex items-center gap-2 rounded-md px-3 py-2 text-left text-sm font-semibold hover:bg-[#eef6ee]"><Link2 className="size-4" />{linkStatus === "COPIED" ? "Link copied" : linkStatus === "READY" ? "Link ready in address bar" : "Copy overview link"}</button>
+              <button type="button" onClick={() => void exportAnalyticsExcel()} disabled={exportingAnalytics} className="flex items-center gap-2 rounded-md px-3 py-2 text-left text-sm font-semibold hover:bg-[#eef6ee] disabled:opacity-50"><Download className="size-4" />{exportingAnalytics ? "Preparing analytics..." : "Export analytics Excel"}</button>
+            </div>
+          </details>
+        ) : null}
+      </div>
+
+      {showSalesReport ? <SalesReportPreview role="STAFF" onClose={() => setShowSalesReport(false)} /> : null}
+
+      <div className={showSalesReport ? "hidden" : "space-y-5"}>
 
       <section className="grid gap-3 rounded-lg border border-border bg-white p-4 shadow-sm sm:grid-cols-2 xl:grid-cols-5">
         <label className="grid gap-1.5 text-sm font-bold">Report period
@@ -480,12 +431,14 @@ export function StaffReports() {
                 </button>
               </>
             ) : (
-              <div className="p-5 text-sm font-semibold text-muted-foreground">No exported reports yet. Use Export PDF or Export Excel to create one from the live data.</div>
+              <div className="p-5 text-sm font-semibold text-muted-foreground">No analytics exports yet. Open More actions and choose Export analytics Excel.</div>
             )}
           </div>
         </details>
 
       </section>
+
+      </div>
 
       <footer className="flex flex-col items-center gap-4 border-t border-[#e2e8e3] py-6 text-center text-xs text-[#68736c] md:flex-row md:justify-between md:text-left">
         <div className="flex items-center justify-center gap-3 md:justify-start">

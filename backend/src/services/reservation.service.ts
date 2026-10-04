@@ -526,6 +526,9 @@ type ConfirmationQueueRow = {
 
 async function confirmationQueueByReservationId(reservationIds: string[]) {
   if (!reservationIds.length) return new Map<string, { position: number; ahead: number; total: number; calculatedAt: string }>();
+  const reservationIdList = Prisma.join(
+    reservationIds.map((reservationId) => Prisma.sql`${reservationId}::uuid`)
+  );
   const rows = await prisma.$queryRaw<ConfirmationQueueRow[]>(Prisma.sql`
     SELECT target.id AS "reservationId",
       (SELECT COUNT(*)::integer
@@ -554,7 +557,7 @@ async function confirmationQueueByReservationId(reservationIds: string[]) {
           ))
       ) AS total
     FROM reservations target
-    WHERE target.id IN (${Prisma.join(reservationIds)})
+    WHERE target.id IN (${reservationIdList})
       AND target.status = 'PENDING'::reservation_status
       AND target.pickup_review_status <> 'NEEDS_REVIEW'::pickup_review_status
       AND target.pickup_start IS NOT NULL

@@ -230,9 +230,9 @@ export function StaffReceiptsExperience() {
                 <span className="ml-auto"><StatusBadge status={row.status} /></span>
               </div>
               <dl className="mt-5 grid grid-cols-[1fr_auto] gap-y-2 text-sm">
-                <dt className="text-[#68746d]">Student</dt>
+                <dt className="text-[#68746d]">Buyer</dt>
                 <dd className="font-bold">{row.student}</dd>
-                <dt className="text-[#68746d]">Reservation</dt>
+                <dt className="text-[#68746d]">Source</dt>
                 <dd className="font-bold">{row.reference}</dd>
                 <dt className="text-[#68746d]">Items</dt>
                 <dd className="text-right font-bold">{row.items}</dd>

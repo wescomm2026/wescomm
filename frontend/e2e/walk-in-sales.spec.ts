@@ -1,5 +1,5 @@
 import { expect, test, type Route } from "@playwright/test";
-import type { BackendAuthProfile, BackendOperationalStudent } from "../lib/api";
+import type { BackendAuthProfile } from "../lib/api";
 import type { StaffProduct, WalkInReceipt } from "../lib/staff-api";
 import { authorizeMockedWorkspace, dismissWelcomeGate } from "./helpers";
 
@@ -67,20 +67,6 @@ const skuProduct: StaffProduct = {
   ]
 };
 
-const student: BackendOperationalStudent = {
-  id: "00000000-0000-4000-8000-000000000604",
-  fullName: "Juan Dela Cruz",
-  email: "juan.delacruz@wesleyan.edu.ph",
-  studentNumber: "2026-0001",
-  department: "College of Arts",
-  avatarUrl: null,
-  createdAt: "2026-08-01T00:00:00.000Z",
-  reservationCount: 0,
-  receiptCount: 0,
-  offenseCount: 0,
-  activeRestriction: null
-};
-
 function json(route: Route, body: unknown, status = 200) {
   return route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
 }
@@ -126,13 +112,13 @@ test("staff record a SKU walk-in sale with cash, then void it to restore stock",
     if (path === "/api/backend/staff/products" && request.method() === "GET") {
       const query = new URL(request.url()).searchParams.get("query") ?? "";
       return json(route, {
-        products: query && skuProduct.name.toLowerCase().includes(query.toLowerCase()) ? [skuProduct] : [],
-        categories: [],
+        products: !query || skuProduct.name.toLowerCase().includes(query.toLowerCase()) ? [skuProduct] : [],
+        categories: [skuProduct.category],
         nextCursor: null
       });
     }
     if (path === "/api/backend/staff/students" && request.method() === "GET") {
-      return json(route, { items: [student], nextCursor: null });
+      return json(route, { items: [], nextCursor: null });
     }
     if (path === "/api/backend/staff/walk-in-sales" && request.method() === "GET") {
       return json(route, { items: receipt ? [receipt] : [], nextCursor: null });
@@ -146,7 +132,8 @@ test("staff record a SKU walk-in sale with cash, then void it to restore stock",
       receipt = {
         id: "00000000-0000-4000-8000-000000000605",
         receiptCode: "RCT-2026-TEST01",
-        studentId: String(salePayload.studentId),
+        studentId: null,
+        buyerName: String(salePayload.buyerName),
         totalAmount: total.toFixed(2),
         paymentMethod: "CASH",
         status: "VERIFIED",
@@ -155,7 +142,7 @@ test("staff record a SKU walk-in sale with cash, then void it to restore stock",
         voidedAt: null,
         createdAt: "2026-09-28T08:30:00.000Z",
         updatedAt: "2026-09-28T08:30:00.000Z",
-        student: { id: student.id, fullName: student.fullName, email: student.email, studentNumber: student.studentNumber },
+        student: null,
         issuedBy: { id: staffProfile.id, fullName: staffProfile.fullName },
         sale: {
           cashTendered: cashReceived.toFixed(2),
@@ -210,15 +197,25 @@ test("staff record a SKU walk-in sale with cash, then void it to restore stock",
   await dismissWelcomeGate(page);
   await expect(page.getByRole("heading", { name: "Record physical-store purchases" })).toBeVisible();
 
-  await page.getByPlaceholder("Search product to add...").fill("PE Shirt");
-  await page.getByRole("button", { name: /PE Shirt With Variants/ }).click();
+  await expect(page.getByText("PE Shirt With Variants").first()).toBeVisible();
+  await page.getByRole("button", { name: "Add PE Shirt With Variants to sale" }).click();
+
+  const skuPicker = page.getByRole("dialog");
+  await skuPicker.getByLabel("Size").selectOption("M");
+  await skuPicker.getByLabel("Color").selectOption("Red");
+  await expect(skuPicker.getByText("4 pc(s)")).toBeVisible();
+  await skuPicker.getByRole("button", { name: "Add to sale" }).click();
+  await expect(page.getByText("1 line item")).toBeVisible();
 
   const saveButton = page.getByRole("button", { name: "Save sale & deduct stock" });
-  await expect(saveButton).toBeDisabled();
+  await expect(saveButton).toBeEnabled();
+  await saveButton.click();
+  await expect(page.getByText("Enter the walk-in buyer's name before saving.")).toBeVisible();
 
-  await page.getByLabel("Combination").selectOption("sku-m-red");
-  await page.getByPlaceholder("Type to search students").fill("Dela Cruz");
-  await page.getByRole("button", { name: /Juan Dela Cruz/ }).click();
+  await page.getByPlaceholder("Enter buyer name").fill("Maria Walk-in");
+  await expect(page.getByText(/This can be saved as a walk-in buyer/)).toBeVisible();
+  await saveButton.click();
+  await expect(page.getByText("Enter a cash amount that covers the sale total.")).toBeVisible();
   await page.getByLabel(/Cash received/).fill("500.00");
 
   await expect(saveButton).toBeEnabled();
@@ -234,15 +231,20 @@ test("staff record a SKU walk-in sale with cash, then void it to restore stock",
     items: Array<{ productId: string; skuId?: string; variantId?: string; quantity: number }>;
     cashReceived: number;
     clientSaleId: string;
+    buyerName: string;
+    studentId?: string;
   };
   expect(recordedSale.items[0]?.skuId).toBe("sku-m-red");
   expect(recordedSale.items[0]?.variantId).toBeUndefined();
   expect(recordedSale.items[0]?.quantity).toBe(1);
   expect(recordedSale.cashReceived).toBe(500);
+  expect(recordedSale.buyerName).toBe("Maria Walk-in");
+  expect(recordedSale.studentId).toBeUndefined();
   expect(recordedSale.clientSaleId).toMatch(/^[0-9a-f-]{36}$/);
 
   await success.getByRole("button", { name: "Done" }).click();
 
+  await page.getByRole("button", { name: "Sales history", exact: true }).click();
   await expect(page.getByText("RCT-2026-TEST01").first()).toBeVisible();
   await page.getByRole("button", { name: "Void & restore stock" }).click();
 

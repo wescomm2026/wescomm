@@ -145,6 +145,16 @@ const releaseMigrations = [
       /walk_in_sale_cost_allocations" ENABLE ROW LEVEL SECURITY/,
       /REVOKE ALL PRIVILEGES ON TABLE "walk_in_sale_cost_allocations" FROM PUBLIC/
     ]
+  },
+  {
+    directory: "20261004000000_allow_guest_walk_in_buyers",
+    required: [
+      /ALTER COLUMN "student_id" DROP NOT NULL/,
+      /ON DELETE SET NULL ON UPDATE CASCADE/,
+      /receipts_reservation_requires_student_check/,
+      /ADD COLUMN "buyer_name_snapshot" TEXT/,
+      /walk_in_sales_buyer_name_check/
+    ]
   }
 ];
 

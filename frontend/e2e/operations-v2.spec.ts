@@ -482,10 +482,11 @@ test("historical reports request the selected range and render payment-method re
   await page.getByLabel("Report period").selectOption("LAST_MONTH");
 
   await expect.poll(() => presets.includes("LAST_MONTH")).toBe(true);
-  await page.getByRole("button", { name: "Copy Link" }).click();
+  await page.getByText("More actions", { exact: true }).click();
+  await page.getByRole("button", { name: "Copy overview link" }).click();
   await expect(page).toHaveURL(/preset=LAST_MONTH/);
   await expect(page).toHaveURL(/basis=COLLECTION/);
-  await expect(page.getByRole("button", { name: /Link Copied|Link Ready in Address Bar/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Link copied|Link ready in address bar/ })).toBeVisible();
   await expect(page.getByText("PHP 900.00", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("PHP 600.00", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("Range: Last Month. Cash uses the payment date; recognized sales use the completion date.")).toBeVisible();

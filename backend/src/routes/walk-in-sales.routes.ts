@@ -26,7 +26,8 @@ const walkInSaleItemSchema = z.object({
 
 const recordWalkInSaleSchema = z.object({
   items: z.array(walkInSaleItemSchema).min(1).max(50),
-  studentId: z.string().uuid(),
+  buyerName: z.string().trim().min(2).max(120),
+  studentId: z.string().uuid().nullish(),
   receiptCode: z.string().trim().min(5).max(64).regex(/^[A-Za-z0-9-]+$/, "Invalid receipt code.").optional(),
   cashReceived: z.coerce.number().nonnegative().max(10_000_000).multipleOf(0.01),
   clientSaleId: z.string().trim().min(8).max(64).regex(/^[A-Za-z0-9_-]+$/, "Invalid sale key.")
@@ -69,7 +70,8 @@ walkInSalesRoutes.post(
     const input = recordWalkInSaleSchema.parse(request.body);
     const result = await recordWalkInSale({
       items: input.items,
-      studentId: input.studentId,
+      buyerName: input.buyerName,
+      studentId: input.studentId ?? null,
       receiptCode: input.receiptCode ?? null,
       cashReceived: input.cashReceived,
       clientSaleId: input.clientSaleId,

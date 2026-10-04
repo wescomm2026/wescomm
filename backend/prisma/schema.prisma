@@ -871,7 +871,7 @@ model Payment {
 model Receipt {
   id                               String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   receiptCode                      String        @unique @map("receipt_code")
-  studentId                        String        @map("student_id") @db.Uuid
+  studentId                        String?       @map("student_id") @db.Uuid
   reservationId                    String?       @unique @map("reservation_id") @db.Uuid
   totalAmount                      Decimal       @default(0) @map("total_amount") @db.Decimal(12, 2)
   paymentMethod                    PaymentMethod @default(CASH) @map("payment_method")
@@ -887,7 +887,7 @@ model Receipt {
   voidedAt                         DateTime?     @map("voided_at") @db.Timestamptz(6)
   createdAt                        DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt                        DateTime      @default(now()) @map("updated_at") @db.Timestamptz(6)
-  student                          Profile       @relation("StudentReceipts", fields: [studentId], references: [id], onDelete: Cascade)
+  student                          Profile?      @relation("StudentReceipts", fields: [studentId], references: [id], onDelete: SetNull)
   reservation                      Reservation?  @relation(fields: [reservationId], references: [id], onDelete: SetNull)
   issuedBy                         Profile?      @relation("IssuedReceipts", fields: [issuedById], references: [id], onDelete: SetNull)
   walkInSale                       WalkInSale?
@@ -903,7 +903,8 @@ model Receipt {
 model WalkInSale {
   id                  String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   receiptId           String           @unique @map("receipt_id") @db.Uuid
-  studentId           String           @map("student_id") @db.Uuid
+  studentId           String?          @map("student_id") @db.Uuid
+  buyerNameSnapshot   String           @map("buyer_name_snapshot")
   cashierId           String?          @map("cashier_id") @db.Uuid
   cashierNameSnapshot String           @map("cashier_name_snapshot")
   clientSaleId        String           @unique @map("client_sale_id")

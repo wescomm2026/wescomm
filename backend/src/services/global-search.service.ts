@@ -55,7 +55,8 @@ export async function searchStaffWorkspace(rawQuery: string) {
         where: {
           OR: [
             { receiptCode: { contains: query, mode: "insensitive" } },
-            { student: { is: profileMatch } }
+            { student: { is: profileMatch } },
+            { walkInSale: { is: { buyerNameSnapshot: { contains: query, mode: "insensitive" } } } }
           ]
         },
         orderBy: { issuedAt: "desc" },
@@ -64,7 +65,8 @@ export async function searchStaffWorkspace(rawQuery: string) {
           id: true,
           receiptCode: true,
           status: true,
-          student: { select: { fullName: true, email: true } }
+          student: { select: { fullName: true, email: true } },
+          walkInSale: { select: { buyerNameSnapshot: true } }
         }
       }),
       prisma.conversation.findMany({
@@ -100,7 +102,7 @@ export async function searchStaffWorkspace(rawQuery: string) {
       id: receipt.id,
       type: "RECEIPT" as const,
       title: receipt.receiptCode,
-      subtitle: `${receipt.student.fullName || receipt.student.email} · ${receipt.status}`,
+      subtitle: `${receipt.walkInSale?.buyerNameSnapshot || receipt.student?.fullName || receipt.student?.email || "Walk-in buyer"} · ${receipt.status}`,
       section: "receipt-verification" as const
     })),
     ...conversations.map((conversation) => ({
