@@ -1,6 +1,6 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
 import type { BackendAuthProfile, BackendReservation } from "../lib/api";
-import { authorizeMockedWorkspace, dismissWelcomeGate } from "./helpers";
+import { authorizeMockedWorkspace, dismissWelcomeGate, fulfillWorkspaceShellExtras } from "./helpers";
 
 const staffProfile: BackendAuthProfile = {
   id: "00000000-0000-4000-8000-000000000301",
@@ -80,6 +80,7 @@ async function mockReservations(page: Page) {
       await json(route, { notifications: [], nextCursor: null });
       return;
     }
+    if (await fulfillWorkspaceShellExtras(route)) return;
     if (path === "/api/backend/notifications/unread-count" && request.method() === "GET") {
       await json(route, { unreadCount: 0 });
       return;

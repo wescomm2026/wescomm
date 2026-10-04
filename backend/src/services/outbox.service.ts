@@ -8,6 +8,7 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
 import { sendPushToUser } from "./push.service.js";
 import { publishRealtimeEvents, REALTIME_TOPICS } from "./realtime-event.service.js";
+import { filterStaffRecipientsByPreference } from "./staff-settings.service.js";
 import { deleteProductImage } from "./upload.service.js";
 
 export const OUTBOX_EVENT_TYPES = {
@@ -116,6 +117,19 @@ type NotificationDelivery = {
   actionUrl: string;
   dedupeKey: string;
 };
+
+/** Students always receive their own updates; staff/admin copies honor personal alert preferences. */
+async function applyStaffNotificationPreferences(deliveries: NotificationDelivery[]) {
+  const kept = new Set<NotificationDelivery>(deliveries.filter((delivery) => delivery.role === "STUDENT"));
+  const staffByType = new Map<string, NotificationDelivery[]>();
+  deliveries.filter((delivery) => delivery.role !== "STUDENT").forEach((delivery) => {
+    staffByType.set(delivery.type, [...(staffByType.get(delivery.type) ?? []), delivery]);
+  });
+  for (const [type, group] of staffByType) {
+    (await filterStaffRecipientsByPreference(group, type)).forEach((delivery) => kept.add(delivery));
+  }
+  return deliveries.filter((delivery) => kept.has(delivery));
+}
 
 export function outboxRetryDelayMs(attemptCount: number) {
   const exponent = Math.min(Math.max(attemptCount - 1, 0), 16);
@@ -232,7 +246,7 @@ async function processReservationCreated(event: ClaimedOutboxEvent) {
     })))
   ];
 
-  for (const delivery of deliveries) await createNotificationAndPush(delivery);
+  for (const delivery of await applyStaffNotificationPreferences(deliveries)) await createNotificationAndPush(delivery);
 
   await createAuditOnce(event, {
     actorId: payload.studentId,
@@ -395,7 +409,7 @@ async function processReceiptCreated(event: ClaimedOutboxEvent) {
     }))
   ];
 
-  for (const delivery of deliveries) await createNotificationAndPush(delivery);
+  for (const delivery of await applyStaffNotificationPreferences(deliveries)) await createNotificationAndPush(delivery);
 
   await createAuditOnce(event, {
     actorId: payload.actorId,

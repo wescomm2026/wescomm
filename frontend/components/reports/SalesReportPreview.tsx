@@ -184,7 +184,7 @@ export function SalesReportPreview({ role, onClose, onOptionsChange }: SalesRepo
   const summary = report?.summary ?? null;
 
   return (
-    <section className="rounded-lg border border-border bg-white shadow-sm">
+    <section className="rounded-lg border bg-white shadow-sm">
       <div className="border-b border-border px-5 py-4 no-print">
         <div>
           <h2 className="font-extrabold text-foreground">Sales register</h2>
@@ -196,7 +196,7 @@ export function SalesReportPreview({ role, onClose, onOptionsChange }: SalesRepo
             <select
               value={period}
               onChange={(event) => setPeriod(event.target.value as SalesLedgerPeriod)}
-              className="h-11 rounded-md border border-border bg-white px-3 outline-none focus:border-primary"
+              className="h-11 rounded-md border bg-white px-3 outline-none focus:border-primary"
             >
               <option value="DAILY">Daily</option>
               <option value="WEEKLY">Weekly (Mon–Sun)</option>
@@ -210,7 +210,7 @@ export function SalesReportPreview({ role, onClose, onOptionsChange }: SalesRepo
               value={anchor}
               max={manilaDateKey(new Date()) ?? undefined}
               onChange={(event) => setAnchor(event.target.value)}
-              className="h-11 rounded-md border border-border bg-white px-3 outline-none focus:border-primary"
+              className="h-11 rounded-md border bg-white px-3 outline-none focus:border-primary"
             />
           </label>
           <label className="grid gap-1.5 text-sm font-bold">
@@ -218,7 +218,7 @@ export function SalesReportPreview({ role, onClose, onOptionsChange }: SalesRepo
             <select
               value={channel}
               onChange={(event) => setChannel(event.target.value as SalesLedgerChannel)}
-              className="h-11 rounded-md border border-border bg-white px-3 outline-none focus:border-primary"
+              className="h-11 rounded-md border bg-white px-3 outline-none focus:border-primary"
             >
               <option value="ALL">All</option>
               <option value="RESERVATION">Reservation</option>
@@ -230,7 +230,7 @@ export function SalesReportPreview({ role, onClose, onOptionsChange }: SalesRepo
             <select
               value={collectionLocation}
               onChange={(event) => setCollectionLocation(event.target.value as SalesLedgerLocation)}
-              className="h-11 rounded-md border border-border bg-white px-3 outline-none focus:border-primary"
+              className="h-11 rounded-md border bg-white px-3 outline-none focus:border-primary"
             >
               <option value="ALL">All</option>
               <option value="COMMISSARY">Commissary</option>
@@ -255,9 +255,9 @@ export function SalesReportPreview({ role, onClose, onOptionsChange }: SalesRepo
               <p className="mt-1 text-xs font-semibold">You may still print or download this zero-activity report for the official record.</p>
             </div>
           ) : null}
-          <div id="sales-report-print-area" className="rounded-lg border border-border bg-white">
+          <div id="sales-report-print-area" className="rounded-lg border bg-white">
             <header className="border-b border-border px-6 py-5 text-center">
-              <p className="text-2xl font-extrabold tracking-wide text-[#006633]">WESCOMM</p>
+              <p className="text-2xl font-extrabold tracking-wide text-primary">WESCOMM</p>
               <p className="mt-1 text-sm font-extrabold text-foreground">{PERIOD_TITLES[report.range.period]}</p>
               <p className="text-xs text-muted-foreground">Wesleyan University-Philippines — Integrated Commissary Management System</p>
               <p className="mt-2 text-sm font-bold text-foreground">Reporting period: {report.range.label}</p>
@@ -291,7 +291,7 @@ export function SalesReportPreview({ role, onClose, onOptionsChange }: SalesRepo
               </div>
               <div className="bg-white p-3">
                 <p className="text-xs font-bold text-muted-foreground">Total recognized sales</p>
-                <p className="mt-1 text-lg font-extrabold text-[#006633]">{formatPeso(summary.totalRecognizedSales)}</p>
+                <p className="mt-1 text-lg font-extrabold text-primary">{formatPeso(summary.totalRecognizedSales)}</p>
               </div>
               <div className="bg-white p-3">
                 <p className="text-xs font-bold text-muted-foreground">Voids processed</p>
@@ -310,7 +310,7 @@ export function SalesReportPreview({ role, onClose, onOptionsChange }: SalesRepo
                 <div className="mt-3 overflow-x-auto">
                   <table className="w-full min-w-[900px] border-collapse text-left text-xs">
                     <thead>
-                      <tr className="bg-[#006633] text-white">
+                      <tr className="bg-primary text-white">
                         {["#", "Date/Time", "Receipt No.", "Type", "Student/Buyer", "Order Ref.", "Items", "Qty", "Collection Point", "Cashier", "Amount"].map((heading) => (
                           <th key={heading} className="border border-[#b8d7bf] px-2 py-2 font-bold">{heading}</th>
                         ))}
@@ -319,30 +319,30 @@ export function SalesReportPreview({ role, onClose, onOptionsChange }: SalesRepo
                     <tbody className="divide-y divide-border">
                       {report.sales.map((sale) => (
                         <tr key={`${sale.receiptCode}-${sale.sequence}`} className="align-top odd:bg-white even:bg-[#f3f8f4]">
-                          <td className="border border-border px-2 py-2 text-right">{sale.sequence}</td>
-                          <td className="border border-border px-2 py-2 whitespace-nowrap">{formatDateTime(sale.timestamp)}</td>
-                          <td className="border border-border px-2 py-2 font-bold">{sale.receiptCode}</td>
-                          <td className="border border-border px-2 py-2">{sale.type === "WALK_IN" ? "Walk-in" : "Reservation"}</td>
-                          <td className="border border-border px-2 py-2">{sale.studentNumber ? `${sale.studentName} (${sale.studentNumber})` : sale.studentName}</td>
-                          <td className="border border-border px-2 py-2">{sale.orderReference ?? "—"}</td>
-                          <td className="border border-border px-2 py-2 whitespace-pre-wrap">{sale.itemLines.join("\n")}</td>
-                          <td className="border border-border px-2 py-2 text-right">{sale.quantity}</td>
-                          <td className="border border-border px-2 py-2">{sale.collectionPoint === "TREASURER" ? "Treasury" : "Commissary"}</td>
-                          <td className="border border-border px-2 py-2">{sale.cashierName ?? "—"}</td>
-                          <td className="border border-border px-2 py-2 text-right font-bold">{formatPeso(sale.amount)}</td>
+                          <td className="border px-2 py-2 text-right">{sale.sequence}</td>
+                          <td className="border px-2 py-2 whitespace-nowrap">{formatDateTime(sale.timestamp)}</td>
+                          <td className="border px-2 py-2 font-bold">{sale.receiptCode}</td>
+                          <td className="border px-2 py-2">{sale.type === "WALK_IN" ? "Walk-in" : "Reservation"}</td>
+                          <td className="border px-2 py-2">{sale.studentNumber ? `${sale.studentName} (${sale.studentNumber})` : sale.studentName}</td>
+                          <td className="border px-2 py-2">{sale.orderReference ?? "—"}</td>
+                          <td className="border px-2 py-2 whitespace-pre-wrap">{sale.itemLines.join("\n")}</td>
+                          <td className="border px-2 py-2 text-right">{sale.quantity}</td>
+                          <td className="border px-2 py-2">{sale.collectionPoint === "TREASURER" ? "Treasury" : "Commissary"}</td>
+                          <td className="border px-2 py-2">{sale.cashierName ?? "—"}</td>
+                          <td className="border px-2 py-2 text-right font-bold">{formatPeso(sale.amount)}</td>
                         </tr>
                       ))}
                     </tbody>
                     <tfoot>
-                      <tr className="bg-[#eaf5ec] font-extrabold">
-                        <td colSpan={10} className="border border-border px-2 py-2 text-right">Grand Total</td>
-                        <td className="border border-border px-2 py-2 text-right text-[#006633]">{formatPeso(summary.totalRecognizedSales)}</td>
+                      <tr className="bg-muted font-extrabold">
+                        <td colSpan={10} className="border px-2 py-2 text-right">Grand Total</td>
+                        <td className="border px-2 py-2 text-right text-primary">{formatPeso(summary.totalRecognizedSales)}</td>
                       </tr>
                     </tfoot>
                   </table>
                 </div>
               ) : (
-                <p className="mt-3 rounded-md border border-border bg-muted/40 px-4 py-6 text-center text-sm font-semibold text-muted-foreground">No valid sales found for this period.</p>
+                <p className="mt-3 rounded-md border bg-muted/40 px-4 py-6 text-center text-sm font-semibold text-muted-foreground">No valid sales found for this period.</p>
               )}
             </div>
 
@@ -352,7 +352,7 @@ export function SalesReportPreview({ role, onClose, onOptionsChange }: SalesRepo
                 <div className="mt-3 overflow-x-auto">
                   <table className="w-full min-w-[640px] border-collapse text-left text-xs">
                     <thead>
-                      <tr className="bg-[#006633] text-white">
+                      <tr className="bg-primary text-white">
                         {["Item", "Category", "SKU/Option", "Quantity Sold", "Sales", "COGS", "Gross Profit"].map((heading) => (
                           <th key={heading} className="border border-[#b8d7bf] px-2 py-2 font-bold">{heading}</th>
                         ))}
@@ -361,20 +361,20 @@ export function SalesReportPreview({ role, onClose, onOptionsChange }: SalesRepo
                     <tbody className="divide-y divide-border">
                       {report.productSummary.map((row) => (
                         <tr key={`${row.item}-${row.skuOrOption ?? ""}`} className="odd:bg-white even:bg-[#f3f8f4]">
-                          <td className="border border-border px-2 py-2 font-bold">{row.item}</td>
-                          <td className="border border-border px-2 py-2">{row.category ?? "—"}</td>
-                          <td className="border border-border px-2 py-2">{row.skuOrOption ?? "—"}</td>
-                          <td className="border border-border px-2 py-2 text-right">{row.quantity}</td>
-                          <td className="border border-border px-2 py-2 text-right">{formatPeso(row.sales)}</td>
-                          <td className="border border-border px-2 py-2 text-right">{formatPeso(row.cogs)}</td>
-                          <td className="border border-border px-2 py-2 text-right font-bold text-[#006633]">{formatPeso(row.grossProfit)}</td>
+                          <td className="border px-2 py-2 font-bold">{row.item}</td>
+                          <td className="border px-2 py-2">{row.category ?? "—"}</td>
+                          <td className="border px-2 py-2">{row.skuOrOption ?? "—"}</td>
+                          <td className="border px-2 py-2 text-right">{row.quantity}</td>
+                          <td className="border px-2 py-2 text-right">{formatPeso(row.sales)}</td>
+                          <td className="border px-2 py-2 text-right">{formatPeso(row.cogs)}</td>
+                          <td className="border px-2 py-2 text-right font-bold text-primary">{formatPeso(row.grossProfit)}</td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
               ) : (
-                <p className="mt-3 rounded-md border border-border bg-muted/40 px-4 py-4 text-center text-sm font-semibold text-muted-foreground">No products sold in this period.</p>
+                <p className="mt-3 rounded-md border bg-muted/40 px-4 py-4 text-center text-sm font-semibold text-muted-foreground">No products sold in this period.</p>
               )}
             </div>
 
@@ -393,27 +393,27 @@ export function SalesReportPreview({ role, onClose, onOptionsChange }: SalesRepo
                     <tbody className="divide-y divide-border">
                       {report.voids.map((voidRow) => (
                         <tr key={`${voidRow.receiptCode}-${voidRow.voidedAt}`} className="align-top odd:bg-white even:bg-[#f3f8f4]">
-                          <td className="border border-border px-2 py-2 whitespace-nowrap">{formatDateTime(voidRow.voidedAt)}</td>
-                          <td className="border border-border px-2 py-2 font-bold">{voidRow.receiptCode}</td>
-                          <td className="border border-border px-2 py-2">{voidRow.type === "WALK_IN" ? "Walk-in" : "Reservation"}</td>
-                          <td className="border border-border px-2 py-2 text-right font-bold text-red-700">{formatPeso(voidRow.amount)}</td>
-                          <td className="border border-border px-2 py-2">{voidRow.cashierName ?? "—"}</td>
-                          <td className="border border-border px-2 py-2">{voidRow.voidedBy ?? "—"}</td>
-                          <td className="border border-border px-2 py-2">{voidRow.reason ?? "—"}</td>
+                          <td className="border px-2 py-2 whitespace-nowrap">{formatDateTime(voidRow.voidedAt)}</td>
+                          <td className="border px-2 py-2 font-bold">{voidRow.receiptCode}</td>
+                          <td className="border px-2 py-2">{voidRow.type === "WALK_IN" ? "Walk-in" : "Reservation"}</td>
+                          <td className="border px-2 py-2 text-right font-bold text-red-700">{formatPeso(voidRow.amount)}</td>
+                          <td className="border px-2 py-2">{voidRow.cashierName ?? "—"}</td>
+                          <td className="border px-2 py-2">{voidRow.voidedBy ?? "—"}</td>
+                          <td className="border px-2 py-2">{voidRow.reason ?? "—"}</td>
                         </tr>
                       ))}
                     </tbody>
                     <tfoot>
-                      <tr className="bg-[#eaf5ec] font-extrabold">
-                        <td colSpan={3} className="border border-border px-2 py-2 text-right">Total void amount (not part of recognized sales)</td>
-                        <td className="border border-border px-2 py-2 text-right text-red-700">{formatPeso(summary.voidsProcessed.amount)}</td>
-                        <td colSpan={3} className="border border-border px-2 py-2" />
+                      <tr className="bg-muted font-extrabold">
+                        <td colSpan={3} className="border px-2 py-2 text-right">Total void amount (not part of recognized sales)</td>
+                        <td className="border px-2 py-2 text-right text-red-700">{formatPeso(summary.voidsProcessed.amount)}</td>
+                        <td colSpan={3} className="border px-2 py-2" />
                       </tr>
                     </tfoot>
                   </table>
                 </div>
               ) : (
-                <p className="mt-3 rounded-md border border-border bg-muted/40 px-4 py-4 text-center text-sm font-semibold text-muted-foreground">No voids processed in this period.</p>
+                <p className="mt-3 rounded-md border bg-muted/40 px-4 py-4 text-center text-sm font-semibold text-muted-foreground">No voids processed in this period.</p>
               )}
             </div>
 

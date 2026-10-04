@@ -43,15 +43,15 @@ function UsageTrend({ usage }: { usage: BackendWesbotUsageSummary }) {
   const maxCalls = Math.max(1, ...visibleDays.map((day) => day.calls));
 
   return (
-    <section className="rounded-lg border border-[#dce5dd] bg-white p-5 shadow-sm sm:p-6">
+    <section className="rounded-lg border bg-white p-5 shadow-sm sm:p-6">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p className="text-xs font-extrabold uppercase tracking-[0.12em] text-primary">Last 14 days</p>
-          <h2 className="mt-1 text-xl font-extrabold text-[#17211b]">WesBot AI calls</h2>
+          <h2 className="mt-1 text-xl font-extrabold text-foreground">WesBot AI calls</h2>
         </div>
-        <p className="text-xs font-semibold text-[#68746d]">Message review and WESCOMM answer assistance</p>
+        <p className="text-xs font-semibold text-muted-foreground">Message review and WESCOMM answer assistance</p>
       </div>
-      <div className="mt-6 flex h-48 items-end gap-2 border-b border-[#dfe7e0] pb-2" aria-label="WesBot AI calls during the last 14 days">
+      <div className="mt-6 flex h-48 items-end gap-2 border-b border-border pb-2" aria-label="WesBot AI calls during the last 14 days">
         {visibleDays.map((day) => {
           const height = day.calls ? Math.max(8, day.calls / maxCalls * 100) : 2;
           return (
@@ -63,7 +63,7 @@ function UsageTrend({ usage }: { usage: BackendWesbotUsageSummary }) {
                   title={`${day.day}: ${day.calls} AI requests, ${day.fallbackCalls} standard replies`}
                 />
               </div>
-              <span className="hidden text-[10px] font-semibold text-[#748078] sm:block">{day.day.slice(5)}</span>
+              <span className="hidden text-[10px] font-semibold text-muted-foreground sm:block">{day.day.slice(5)}</span>
             </div>
           );
         })}
@@ -97,7 +97,7 @@ export function AdminWesbotUsageExperience() {
 
       {loading && !usage ? (
         <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4" aria-label="Loading WesBot usage">
-          {Array.from({ length: 4 }).map((_, index) => <div key={index} className="h-32 animate-pulse rounded-lg border border-[#dce5dd] bg-white" />)}
+          {Array.from({ length: 4 }).map((_, index) => <div key={index} className="h-32 animate-pulse rounded-lg border bg-white" />)}
         </section>
       ) : usage && health ? (
         <>
@@ -109,12 +109,12 @@ export function AdminWesbotUsageExperience() {
           </section>
 
           <section className="grid gap-5 xl:grid-cols-[1.15fr_0.85fr]">
-            <article className="rounded-lg border border-[#dce5dd] bg-white p-5 shadow-sm sm:p-6">
+            <article className="rounded-lg border bg-white p-5 shadow-sm sm:p-6">
               <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                 <div>
                   <p className="text-xs font-extrabold uppercase tracking-[0.12em] text-primary">Monthly app limit</p>
-                  <h2 className="mt-1 text-2xl font-extrabold text-[#17211b]">{formatUsd(usage.committedSpendUsd)} of {formatUsd(usage.budgetUsd)}</h2>
-                  <p className="mt-2 text-sm leading-6 text-[#68746d]">Includes completed AI usage and requests still processing. The estimate uses Gemini&apos;s reported text usage and the saved pricing reference. Confirm the final amount in Google AI Studio.</p>
+                  <h2 className="mt-1 text-2xl font-extrabold text-foreground">{formatUsd(usage.committedSpendUsd)} of {formatUsd(usage.budgetUsd)}</h2>
+                  <p className="mt-2 text-sm leading-6 text-muted-foreground">Includes completed AI usage and requests still processing. The estimate uses Gemini&apos;s reported text usage and the saved pricing reference. Confirm the final amount in Google AI Studio.</p>
                 </div>
                 <span className={`inline-flex w-fit items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-extrabold ${health.classes}`}>
                   {usage.budgetHealth === "HEALTHY" ? <ShieldCheck className="size-4" /> : <TriangleAlert className="size-4" />}
@@ -124,28 +124,28 @@ export function AdminWesbotUsageExperience() {
               <div className="mt-6 h-3 overflow-hidden rounded-full bg-[#e8eee9]" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.min(100, Math.round(usage.budgetPercent))}>
                 <div className={`h-full rounded-full transition-[width] ${health.bar}`} style={{ width: `${Math.min(100, usage.budgetPercent)}%` }} />
               </div>
-              <div className="mt-3 flex items-center justify-between text-xs font-semibold text-[#68746d]">
+              <div className="mt-3 flex items-center justify-between text-xs font-semibold text-muted-foreground">
                 <span>{Math.min(100, usage.budgetPercent).toFixed(1)}% used</span>
                 <span>{usage.budgetEnforced ? "Automatic stop enabled" : "Alerts only"}</span>
               </div>
-              <p className="mt-5 rounded-md bg-[#f2f7f2] px-4 py-3 text-sm font-semibold leading-6 text-[#425047]">{health.detail}</p>
+              <p className="mt-5 rounded-md bg-surface-subtle px-4 py-3 text-sm font-semibold leading-6 text-foreground">{health.detail}</p>
             </article>
 
-            <article className="rounded-lg border border-[#dce5dd] bg-white p-5 shadow-sm sm:p-6">
+            <article className="rounded-lg border bg-white p-5 shadow-sm sm:p-6">
               <div className="flex items-center gap-3">
-                <span className="grid size-11 place-items-center rounded-lg bg-[#eaf4ea] text-primary"><Bot className="size-6" /></span>
+                <span className="grid size-11 place-items-center rounded-lg bg-muted text-primary"><Bot className="size-6" /></span>
                 <div>
-                  <p className="font-extrabold text-[#17211b]">AI service status</p>
-                  <p className="text-xs font-semibold text-[#68746d]">Gemini model used: {usage.model}</p>
+                  <p className="font-extrabold text-foreground">AI service status</p>
+                  <p className="text-xs font-semibold text-muted-foreground">Gemini model used: {usage.model}</p>
                 </div>
               </div>
               <dl className="mt-5 space-y-4 text-sm">
-                <div className="flex items-center justify-between gap-4"><dt className="flex items-center gap-2 text-[#68746d]"><Activity className="size-4" /> Response mode</dt><dd className="max-w-[55%] text-right font-extrabold text-[#26322b]">{responseModeLabel(usage.semanticMode)}</dd></div>
-                <div className="flex items-center justify-between gap-4"><dt className="flex items-center gap-2 text-[#68746d]"><Clock3 className="size-4" /> Average response time</dt><dd className="font-extrabold text-[#26322b]">{formatNumber(usage.averageLatencyMs)} ms</dd></div>
-                <div className="flex items-center justify-between gap-4"><dt className="flex items-center gap-2 text-[#68746d]"><Zap className="size-4" /> Last success</dt><dd className="max-w-[55%] text-right font-bold text-[#26322b]">{formatDateTime(usage.lastSuccessAt)}</dd></div>
-                <div className="flex items-center justify-between gap-4"><dt className="flex items-center gap-2 text-[#68746d]"><RefreshCw className="size-4" /> Usage updated</dt><dd className="max-w-[55%] text-right font-bold text-[#26322b]">{formatDateTime(usage.lastUpdatedAt)}</dd></div>
-                <div className="flex items-center justify-between gap-4"><dt className="flex items-center gap-2 text-[#68746d]"><Gauge className="size-4" /> Blocked by budget</dt><dd className="font-extrabold text-[#26322b]">{formatNumber(usage.budgetBlockedCalls)}</dd></div>
-                <div className="flex items-center justify-between gap-4"><dt className="flex items-center gap-2 text-[#68746d]"><Clock3 className="size-4" /> Requests processing</dt><dd className="font-extrabold text-[#26322b]">{formatNumber(usage.activeReservations)}</dd></div>
+                <div className="flex items-center justify-between gap-4"><dt className="flex items-center gap-2 text-muted-foreground"><Activity className="size-4" /> Response mode</dt><dd className="max-w-[55%] text-right font-extrabold text-foreground">{responseModeLabel(usage.semanticMode)}</dd></div>
+                <div className="flex items-center justify-between gap-4"><dt className="flex items-center gap-2 text-muted-foreground"><Clock3 className="size-4" /> Average response time</dt><dd className="font-extrabold text-foreground">{formatNumber(usage.averageLatencyMs)} ms</dd></div>
+                <div className="flex items-center justify-between gap-4"><dt className="flex items-center gap-2 text-muted-foreground"><Zap className="size-4" /> Last success</dt><dd className="max-w-[55%] text-right font-bold text-foreground">{formatDateTime(usage.lastSuccessAt)}</dd></div>
+                <div className="flex items-center justify-between gap-4"><dt className="flex items-center gap-2 text-muted-foreground"><RefreshCw className="size-4" /> Usage updated</dt><dd className="max-w-[55%] text-right font-bold text-foreground">{formatDateTime(usage.lastUpdatedAt)}</dd></div>
+                <div className="flex items-center justify-between gap-4"><dt className="flex items-center gap-2 text-muted-foreground"><Gauge className="size-4" /> Blocked by budget</dt><dd className="font-extrabold text-foreground">{formatNumber(usage.budgetBlockedCalls)}</dd></div>
+                <div className="flex items-center justify-between gap-4"><dt className="flex items-center gap-2 text-muted-foreground"><Clock3 className="size-4" /> Requests processing</dt><dd className="font-extrabold text-foreground">{formatNumber(usage.activeReservations)}</dd></div>
               </dl>
             </article>
           </section>
@@ -153,44 +153,44 @@ export function AdminWesbotUsageExperience() {
           <UsageTrend usage={usage} />
 
           <section className="grid gap-5 lg:grid-cols-2">
-            <article className="rounded-lg border border-[#dce5dd] bg-white p-5 shadow-sm">
-              <h2 className="font-extrabold text-[#17211b]">Usage by operation</h2>
+            <article className="rounded-lg border bg-white p-5 shadow-sm">
+              <h2 className="font-extrabold text-foreground">Usage by operation</h2>
               <div className="mt-4 space-y-3 text-sm">
                 {usage.operationBreakdown.length ? usage.operationBreakdown.map((operation) => (
-                  <div key={operation.operation} className="flex items-center justify-between gap-4 rounded-md bg-[#f6f8f6] px-3 py-2.5">
-                    <span className="font-bold text-[#425047]">{operation.operation === "SEMANTIC_ROUTING" ? "Message review" : operation.operation === "GROUNDED_REPLY" ? "WESCOMM answer assistance" : "Other AI assistance"}</span>
-                    <span className="text-right font-extrabold text-[#26322b]">{formatNumber(operation.calls)} calls · {formatUsd(operation.estimatedSpendUsd)}</span>
+                  <div key={operation.operation} className="flex items-center justify-between gap-4 rounded-md bg-surface-subtle px-3 py-2.5">
+                    <span className="font-bold text-foreground">{operation.operation === "SEMANTIC_ROUTING" ? "Message review" : operation.operation === "GROUNDED_REPLY" ? "WESCOMM answer assistance" : "Other AI assistance"}</span>
+                    <span className="text-right font-extrabold text-foreground">{formatNumber(operation.calls)} calls · {formatUsd(operation.estimatedSpendUsd)}</span>
                   </div>
-                )) : <p className="text-[#68746d]">No completed AI calls this month.</p>}
+                )) : <p className="text-muted-foreground">No completed AI calls this month.</p>}
               </div>
             </article>
-            <article className="rounded-lg border border-[#dce5dd] bg-white p-5 shadow-sm">
-              <h2 className="font-extrabold text-[#17211b]">Estimated Gemini pricing</h2>
-              <dl className="mt-4 space-y-3 text-sm text-[#425047]">
+            <article className="rounded-lg border bg-white p-5 shadow-sm">
+              <h2 className="font-extrabold text-foreground">Estimated Gemini pricing</h2>
+              <dl className="mt-4 space-y-3 text-sm text-foreground">
                 <div className="flex justify-between gap-4"><dt>Received text / 1M units</dt><dd className="font-extrabold">{formatUsd(usage.inputRateUsdPer1MTokens)}</dd></div>
                 <div className="flex justify-between gap-4"><dt>Reused text / 1M units</dt><dd className="font-extrabold">{formatUsd(usage.cachedRateUsdPer1MTokens)}</dd></div>
                 <div className="flex justify-between gap-4"><dt>Generated text / 1M units</dt><dd className="font-extrabold">{formatUsd(usage.outputRateUsdPer1MTokens)}</dd></div>
-                <div className="border-t border-[#e2e8e3] pt-3"><dt className="text-xs font-bold uppercase tracking-wide text-[#68746d]">Pricing reference</dt><dd className="mt-1 break-words font-extrabold text-[#26322b]">{usage.pricingVersion}</dd></div>
+                <div className="border-t border-border pt-3"><dt className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Pricing reference</dt><dd className="mt-1 break-words font-extrabold text-foreground">{usage.pricingVersion}</dd></div>
               </dl>
             </article>
           </section>
 
           <section className="grid gap-5 lg:grid-cols-2">
-            <article className="rounded-lg border border-[#dce5dd] bg-white p-5 shadow-sm">
+            <article className="rounded-lg border bg-white p-5 shadow-sm">
               <div className="flex items-start gap-3">
                 <CircleDollarSign className="mt-0.5 size-6 shrink-0 text-primary" />
                 <div>
-                  <h2 className="font-extrabold text-[#17211b]">About the {formatUsd(usage.budgetUsd, 0)} testing cap</h2>
-                  <p className="mt-2 text-sm leading-6 text-[#68746d]">WESCOMM sets aside a small cost estimate before each Gemini request and stops new AI requests before the monthly limit is exceeded. Standard WESCOMM replies and Staff support remain available.</p>
+                  <h2 className="font-extrabold text-foreground">About the {formatUsd(usage.budgetUsd, 0)} testing cap</h2>
+                  <p className="mt-2 text-sm leading-6 text-muted-foreground">WESCOMM sets aside a small cost estimate before each Gemini request and stops new AI requests before the monthly limit is exceeded. Standard WESCOMM replies and Staff support remain available.</p>
                 </div>
               </div>
             </article>
-            <article className="rounded-lg border border-[#dce5dd] bg-white p-5 shadow-sm">
+            <article className="rounded-lg border bg-white p-5 shadow-sm">
               <div className="flex items-start gap-3">
                 <ExternalLink className="mt-0.5 size-6 shrink-0 text-primary" />
                 <div>
-                  <h2 className="font-extrabold text-[#17211b]">Confirm final billing</h2>
-                  <p className="mt-2 text-sm leading-6 text-[#68746d]">Compare this estimate with the selected project in Google AI Studio before changing the cap.</p>
+                  <h2 className="font-extrabold text-foreground">Confirm final billing</h2>
+                  <p className="mt-2 text-sm leading-6 text-muted-foreground">Compare this estimate with the selected project in Google AI Studio before changing the cap.</p>
                   <a href="https://aistudio.google.com/app/usage" target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-2 text-sm font-extrabold text-primary hover:underline">Open Google AI Studio usage <ExternalLink className="size-4" /></a>
                 </div>
               </div>

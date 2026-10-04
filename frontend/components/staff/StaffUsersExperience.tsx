@@ -6,6 +6,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import { Button } from "@/components/ui/button";
+import { FeedbackState } from "@/components/ui/FeedbackState";
+import { InlineAlert } from "@/components/ui/InlineAlert";
+import { MetricCard } from "@/components/ui/MetricCard";
+import { SkeletonList } from "@/components/ui/Skeleton";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { getStaffUsersFromApi, isRequestAbortError, type BackendAdminUser } from "@/lib/api";
 import { PageHeading } from "@/components/staff/StaffOperationsShared";
@@ -72,21 +76,22 @@ export function StaffUsersExperience() {
   }, [loadUsers, user?.accessToken, user?.role]);
 
   if (!ready) {
-    return <div className="rounded-lg border border-[#dce5dd] bg-white p-6 text-sm font-semibold text-[#68746d] shadow-sm">Loading account...</div>;
+    return <SkeletonList rows={4} label="Loading account" className="rounded-xl border bg-card shadow-soft" />;
   }
 
   if (!user) {
     return (
-      <section className="rounded-lg border border-[#dce5dd] bg-white p-6 shadow-sm">
-        <p className="font-extrabold text-[#17211b]">Staff sign in required</p>
-        <p className="mt-2 text-sm text-[#68746d]">Use a staff or admin account to view live account access.</p>
-        <Button className="mt-5" onClick={openAuth}>Sign in</Button>
-      </section>
+      <FeedbackState
+        kind="empty"
+        title="Staff sign in required"
+        description="Use a staff or admin account to view live account access."
+        action={<Button onClick={openAuth}>Sign in</Button>}
+      />
     );
   }
 
   if (user.role !== "STAFF" && user.role !== "ADMIN") {
-    return <div className="rounded-lg border border-red-200 bg-red-50 p-6 text-sm font-semibold text-red-700">This page is restricted to staff and admin accounts.</div>;
+    return <InlineAlert>This page is restricted to staff and admin accounts.</InlineAlert>;
   }
 
   const staffCount = users.filter((row) => row.role === "STAFF").length;
@@ -95,40 +100,50 @@ export function StaffUsersExperience() {
   return (
     <div className="space-y-5">
       <PageHeading
-        eyebrow="Staff accounts"
+        eyebrow="Team access"
         title="User access overview"
-        detail="Review staff and admin accounts with access to WESCOMM."
-        action={<Button variant="secondary" onClick={() => void loadUsers()} disabled={loading}><RefreshCw className="size-4" /> Refresh</Button>}
+        detail="Review staff and admin accounts with access to WESCOMM. Role changes are made by an admin."
+        action={(
+          <Button variant="secondary" onClick={() => void loadUsers()} disabled={loading}>
+            <RefreshCw className={loading ? "size-4 animate-spin motion-reduce:animate-none" : "size-4"} aria-hidden="true" /> Refresh
+          </Button>
+        )}
       />
       <section className="grid gap-4 sm:grid-cols-2">
-        <article className="rounded-lg border border-[#dce5dd] bg-white p-5 shadow-sm">
-          <p className="text-sm font-bold text-[#26322b]">Staff accounts</p>
-          <p className="mt-1 text-3xl font-extrabold text-primary">{staffCount}</p>
-          <p className="mt-1 text-xs text-[#68746d]">Operations users</p>
-        </article>
-        <article className="rounded-lg border border-[#dce5dd] bg-white p-5 shadow-sm">
-          <p className="text-sm font-bold text-[#26322b]">Admin accounts</p>
-          <p className="mt-1 text-3xl font-extrabold text-primary">{adminCount}</p>
-          <p className="mt-1 text-xs text-[#68746d]">Decision makers</p>
-        </article>
+        <MetricCard label="Staff accounts" value={staffCount} detail="Operations users" iconSrc="/assets/settings.svg" />
+        <MetricCard label="Admin accounts" value={adminCount} detail="Decision makers" iconSrc="/assets/privacy.svg" />
       </section>
-      {error ? <p className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p> : null}
-      {loading ? <div className="rounded-lg border border-[#dce5dd] bg-white p-6 text-sm font-semibold text-[#68746d] shadow-sm">Loading live account data...</div> : null}
-      <section className="overflow-hidden rounded-lg border border-[#dce5dd] bg-white shadow-sm">
-        {users.length ? users.map((row) => (
-          <article key={row.id} className="grid gap-3 border-b border-[#edf1ed] p-4 last:border-0 sm:grid-cols-[1fr_1.2fr_auto] sm:items-center">
-            <div>
-              <p className="font-extrabold text-[#17211b]">{row.fullName || row.email}</p>
-              <p className="mt-1 break-all text-xs text-[#68746d]">{row.id}</p>
-            </div>
-            <div>
-              <p className="break-all text-sm font-semibold text-[#26322b]">{row.email}</p>
-              <p className="mt-1 text-xs text-[#68746d]">{row.department || "No department set"}</p>
-            </div>
-            <StatusBadge status={row.role === "ADMIN" ? "Admin" : "Staff"} />
-          </article>
-        )) : (
-          <div className="p-6 text-sm font-semibold text-[#68746d]">No staff or admin accounts are available.</div>
+      {error ? <InlineAlert>{error}</InlineAlert> : null}
+      <section aria-label="Team accounts" className="overflow-hidden rounded-xl border bg-card shadow-soft">
+        <div className="hidden grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_100px] gap-4 border-b bg-surface-subtle px-5 py-3 text-xs font-bold uppercase tracking-wide text-muted-foreground sm:grid">
+          <span>Account</span>
+          <span>Contact</span>
+          <span>Role</span>
+        </div>
+        {loading && !users.length ? (
+          <SkeletonList rows={3} label="Loading live account data" />
+        ) : users.length ? (
+          <div className="divide-y">
+            {users.map((row) => (
+              <article key={row.id} className="grid gap-2 px-4 py-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_100px] sm:items-center sm:gap-4 sm:px-5">
+                <div className="flex min-w-0 items-center gap-3">
+                  <span aria-hidden="true" className={row.role === "ADMIN"
+                    ? "grid size-10 shrink-0 place-items-center rounded-full bg-accent/20 text-xs font-extrabold text-accent-foreground"
+                    : "grid size-10 shrink-0 place-items-center rounded-full bg-primary/10 text-xs font-extrabold text-primary"}>
+                    {(row.fullName || row.email).split(/[\s@._-]+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("")}
+                  </span>
+                  <div className="min-w-0">
+                    <p className="truncate font-extrabold text-foreground">{row.fullName || row.email}</p>
+                    <p className="mt-0.5 truncate text-xs text-muted-foreground">{row.department || "No department set"}</p>
+                  </div>
+                </div>
+                <p className="min-w-0 break-all pl-[52px] text-sm font-semibold text-foreground sm:pl-0">{row.email}</p>
+                <div className="pl-[52px] sm:pl-0"><StatusBadge status={row.role === "ADMIN" ? "Admin" : "Staff"} /></div>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <FeedbackState plain kind="empty" title="No staff or admin accounts are available." />
         )}
       </section>
     </div>

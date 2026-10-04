@@ -4,17 +4,21 @@ import { userFacingErrorMessage } from "@/lib/user-facing-error";
 
 import Link from "next/link";
 import { useCallback, useDeferredValue, useEffect, useRef, useState } from "react";
-import { Ban, CalendarClock, CheckCheck, CircleDollarSign, X } from "lucide-react";
+import { Ban, CalendarClock, CheckCheck, CircleDollarSign, RefreshCw, X } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import { useRealtimeRefresh } from "@/components/realtime/RealtimeProvider";
 import { ActionLoadingOverlay } from "@/components/ui/ActionLoadingOverlay";
 import { Button } from "@/components/ui/button";
 import { useConfirmationDialog } from "@/components/ui/ConfirmationDialogProvider";
+import { FeedbackState } from "@/components/ui/FeedbackState";
+import { InlineAlert } from "@/components/ui/InlineAlert";
+import { SkeletonList } from "@/components/ui/Skeleton";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { PickupSchedulePicker, type PickupSelection } from "@/components/pickup/PickupSchedulePicker";
 import { useAccessibleDialog } from "@/components/ui/useAccessibleDialog";
 import {
   getReservationFromApi,
+  getStaffPickupGuidanceFromApi,
   getReservationPageFromApi,
   confirmReservationsBulkFromApi,
   previewBulkReservationConfirmationFromApi,
@@ -25,6 +29,7 @@ import {
 import { getStoredStaffSession } from "@/lib/staff-api";
 import { manilaDateKey } from "@/lib/manila-date";
 import { COLLECTION_CHANNEL_LABELS, type CollectionChannel } from "@/lib/collection-channel";
+import { cn } from "@/lib/utils";
 import {
   mergeUniqueById,
   StaffReservationRow,
@@ -62,6 +67,24 @@ export function StaffReservationsExperience() {
   const rescheduleDialog = useAccessibleDialog<HTMLElement>(Boolean(rescheduleRow), () => setRescheduleRow(null));
   const completionDialog = useAccessibleDialog<HTMLFormElement>(Boolean(completionRow), () => setCompletionRow(null));
   const deferredSearch = useDeferredValue(search);
+  const [pickupGuidance, setPickupGuidance] = useState("");
+
+  useEffect(() => {
+    const session = getStoredStaffSession();
+    if (!session.token) return;
+    const controller = new AbortController();
+    void getStaffPickupGuidanceFromApi(session.token, controller.signal)
+      .then((guidance) => setPickupGuidance(guidance.text))
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, []);
+
+  const guidanceNote = pickupGuidance ? (
+    <div className="rounded-md border border-info/20 bg-info/5 px-4 py-3 text-xs leading-5 text-foreground">
+      <p className="font-extrabold text-info">Pickup guidance</p>
+      <p className="mt-0.5">{pickupGuidance}</p>
+    </div>
+  ) : null;
   const requestSequenceRef = useRef(0);
   const requestAbortRef = useRef<AbortController | null>(null);
 
@@ -325,17 +348,32 @@ export function StaffReservationsExperience() {
     }
   };
 
+  const filtersActive = Boolean(search.trim()) || status !== "All";
+  const isActiveStatus = (row: StaffReservationRow) => row.backendStatus !== "COMPLETED" && row.backendStatus !== "CANCELLED" && row.backendStatus !== "NO_SHOW";
+
   return (
     <div className="relative space-y-5">
       <PageHeading
         eyebrow="Reservations"
         title="Reservation queue"
         detail="Confirm requests and prepare scheduled pickups from live student checkout data."
-        action={<div className="flex flex-wrap gap-2"><Button variant="secondary" onClick={() => void loadReservations()} disabled={loading || Boolean(submittingId) || bulkSubmitting}>Refresh</Button>{status === "Pending" ? <Button onClick={() => void confirmBulk()} disabled={loading || bulkSubmitting}><CheckCheck className="size-4" />{bulkSubmitting ? "Checking queue..." : "Confirm all eligible"}</Button> : null}</div>}
+        action={(
+          <>
+            <Button variant="secondary" onClick={() => void loadReservations()} disabled={loading || Boolean(submittingId) || bulkSubmitting}>
+              <RefreshCw className={loading ? "size-4 animate-spin motion-reduce:animate-none" : "size-4"} aria-hidden="true" />
+              Refresh
+            </Button>
+            {status === "Pending" ? (
+              <Button onClick={() => void confirmBulk()} disabled={loading || bulkSubmitting}>
+                <CheckCheck className="size-4" />{bulkSubmitting ? "Checking queue..." : "Confirm all eligible"}
+              </Button>
+            ) : null}
+          </>
+        )}
       />
       <Toolbar search={search} onSearch={(value) => { setSearch(value); setSelectedPendingIds(new Set()); }} status={status} onStatus={(value) => { setStatus(value); setSelectedPendingIds(new Set()); }} placeholder="Search reference, student, or item" statuses={["All", "Pending", "Confirmed", "Ready for Pick-up", "Completed", "Cancelled", "No-show"]} />
       {status === "Pending" ? (
-        <section className="flex flex-col gap-3 rounded-lg border border-border bg-white p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between" aria-label="Bulk reservation confirmation">
+        <section className="flex flex-col gap-3 rounded-xl border border-primary/20 bg-primary/5 p-4 sm:flex-row sm:items-center sm:justify-between" aria-label="Bulk reservation confirmation">
           <div><p className="text-sm font-extrabold text-foreground">Bulk confirmation</p><p className="mt-1 text-xs leading-5 text-muted-foreground">Only eligible Pending reservations are included. Schedule-review and unconfirmed historical-payment records stay untouched.</p></div>
           <div className="flex flex-wrap gap-2">
             <Button type="button" variant="secondary" className="h-10" onClick={() => setSelectedPendingIds(new Set(filtered.filter((row) => row.backendStatus === "PENDING" && row.pickupReviewStatus !== "NEEDS_REVIEW" && (!row.onlineGcash || row.paymentConfirmed)).map((row) => row.id)))} disabled={!filtered.length || bulkSubmitting}>Select visible eligible</Button>
@@ -343,76 +381,112 @@ export function StaffReservationsExperience() {
           </div>
         </section>
       ) : null}
-      {error ? <p className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p> : null}
+      {error ? <InlineAlert onDismiss={() => setError("")}>{error}</InlineAlert> : null}
+      {!loading && filtered.length ? (
+        <p className="px-1 text-xs font-semibold text-muted-foreground" aria-live="polite">
+          Showing {filtered.length} reservation{filtered.length === 1 ? "" : "s"}{nextCursor ? " · more available below" : ""}
+        </p>
+      ) : null}
       <div className="grid gap-3">
         {loading ? (
-          <div className="rounded-lg border border-border bg-white p-6 text-sm font-semibold text-muted-foreground shadow-sm">Loading live reservations...</div>
+          <SkeletonList rows={4} label="Loading live reservations..." className="overflow-hidden rounded-xl border bg-card shadow-soft" />
         ) : filtered.length ? filtered.map((row) => {
           const nextStatus = getNextReservationStatus(row.backendStatus);
           const paymentBlocksProgress = row.onlineGcash && !row.paymentConfirmed;
           const noShowEligible = row.backendStatus === "READY_FOR_PICKUP" && Boolean(row.pickupEnd) && Date.now() >= new Date(row.pickupEnd!).getTime() + 24 * 60 * 60 * 1000;
           const bulkEligible = row.backendStatus === "PENDING" && row.pickupReviewStatus !== "NEEDS_REVIEW" && (!row.onlineGcash || row.paymentConfirmed);
+          const needsReview = row.pickupReviewStatus === "NEEDS_REVIEW";
           return (
-            <article key={row.id} className="content-visibility-auto relative grid gap-4 overflow-hidden rounded-lg border border-border bg-white p-4 shadow-sm lg:grid-cols-[1fr_1.2fr_1.2fr_1fr_auto_auto] lg:items-center">
+            <article key={row.id} className={cn(
+              "content-visibility-auto relative overflow-hidden rounded-xl border bg-card shadow-soft",
+              needsReview && "border-warning/40"
+            )}>
               <ActionLoadingOverlay
                 active={submittingId === row.id}
                 title="Updating reservation"
                 detail="We are saving the status and updating the reservation timeline."
               />
-              <div className="flex items-start gap-3">{status === "Pending" ? <input type="checkbox" checked={selectedPendingIds.has(row.id)} disabled={!bulkEligible || bulkSubmitting} onChange={(event) => setSelectedPendingIds((current) => { const next = new Set(current); if (event.target.checked) next.add(row.id); else next.delete(row.id); return next; })} aria-label={`Select ${row.reference} for confirmation`} className="mt-1 size-4 accent-primary" /> : null}<div><p className="font-extrabold">{row.reference}</p><p className="text-xs text-muted-foreground">{row.student}</p>{status === "Pending" && !bulkEligible ? <p className="mt-1 text-xs font-semibold text-amber-800">Bulk confirmation unavailable</p> : null}</div></div>
-              <div><p className="text-sm font-bold">{row.item}</p><p className="mt-1 text-xs leading-5 text-muted-foreground">{row.itemDetails}</p><p className="text-xs text-muted-foreground">Quantity: {row.quantity}</p></div>
-              <div><p className="text-sm"><span className="font-bold text-primary">Pickup:</span> {row.pickup}</p>{row.pickupReviewStatus === "NEEDS_REVIEW" ? <p className="mt-1 text-xs font-bold text-amber-800">Needs review: {row.pickupReviewReason}</p> : null}</div>
-              <div className="text-sm">
-                <p><span className="font-bold text-primary">Payment:</span> {row.payment}</p>
-                {!row.onlineGcash ? <p className="mt-1 text-xs text-muted-foreground">Plans to pay at: <span className="font-bold text-foreground">{COLLECTION_CHANNEL_LABELS[row.preferredCollectionChannel]}</span></p> : null}
-                {row.onlineGcash ? <span className="mt-1 inline-flex"><StatusBadge status={row.paymentStatus} /></span> : null}
-                <span className="mt-1 block font-extrabold text-foreground">PHP {row.total.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              {needsReview ? <span className="absolute inset-y-0 left-0 w-1 bg-warning" aria-hidden="true" /> : null}
+              <header className="flex flex-wrap items-start gap-3 border-b px-4 py-3 sm:px-5">
+                {status === "Pending" ? <input type="checkbox" checked={selectedPendingIds.has(row.id)} disabled={!bulkEligible || bulkSubmitting} onChange={(event) => setSelectedPendingIds((current) => { const next = new Set(current); if (event.target.checked) next.add(row.id); else next.delete(row.id); return next; })} aria-label={`Select ${row.reference} for confirmation`} className="mt-1 size-4 accent-primary" /> : null}
+                <div className="min-w-0 flex-1">
+                  <p className="font-mono text-sm font-extrabold tracking-tight text-foreground sm:text-base">{row.reference}</p>
+                  <p className="text-xs text-muted-foreground">{row.student}</p>
+                  {status === "Pending" && !bulkEligible ? <p className="mt-1 text-xs font-semibold text-warning">Bulk confirmation unavailable</p> : null}
+                </div>
+                <StatusBadge status={row.status} />
+              </header>
+              <div className="grid gap-4 px-4 py-4 sm:grid-cols-3 sm:px-5">
+                <div className="min-w-0">
+                  <p className="text-[11px] font-extrabold uppercase tracking-wide text-muted-foreground">Items</p>
+                  <p className="mt-1 text-sm font-bold text-foreground">{row.item}</p>
+                  <p className="mt-0.5 text-xs leading-5 text-muted-foreground">{row.itemDetails}</p>
+                  <p className="text-xs text-muted-foreground">Quantity: {row.quantity}</p>
+                </div>
+                <div className="min-w-0">
+                  <p className="text-[11px] font-extrabold uppercase tracking-wide text-muted-foreground">Pickup</p>
+                  <p className="mt-1 text-sm text-foreground">{row.pickup}</p>
+                  {needsReview ? <p className="mt-1 rounded-md bg-warning/10 px-2 py-1 text-xs font-bold text-warning">Needs review: {row.pickupReviewReason}</p> : null}
+                </div>
+                <div className="min-w-0 text-sm">
+                  <p className="text-[11px] font-extrabold uppercase tracking-wide text-muted-foreground">Payment</p>
+                  <p className="mt-1 text-foreground">{row.payment}</p>
+                  {!row.onlineGcash ? <p className="mt-0.5 text-xs text-muted-foreground">Plans to pay at: <span className="font-bold text-foreground">{COLLECTION_CHANNEL_LABELS[row.preferredCollectionChannel]}</span></p> : null}
+                  {row.onlineGcash ? <span className="mt-1 inline-flex"><StatusBadge status={row.paymentStatus} /></span> : null}
+                  <span className="mt-1 block text-base font-extrabold tabular-nums text-primary">PHP {row.total.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                </div>
               </div>
-              <StatusBadge status={row.status} />
-              <div className="flex flex-wrap gap-2">
-                {nextStatus ? (
-                  <Button
-                    className="h-10"
-                    disabled={Boolean(submittingId) || bulkSubmitting || paymentBlocksProgress}
-                    title={paymentBlocksProgress ? "Wait for secure PayMongo payment confirmation before processing this reservation." : undefined}
-                    onClick={() => nextStatus === "COMPLETED" ? openCompletion(row) : void updateStatus(row, nextStatus)}
-                  >
-                    {submittingId === row.id
-                      ? "Saving..."
-                      : row.backendStatus === "PENDING"
-                        ? "Confirm"
-                        : row.backendStatus === "CONFIRMED"
-                          ? "Mark ready"
-                          : "Complete"}
-                  </Button>
-                ) : null}
-                {paymentBlocksProgress ? (
-                  <p className="max-w-48 text-xs font-semibold leading-5 text-amber-800">
-                    Await secure payment confirmation. Do not use a screenshot as proof.
-                  </p>
-                ) : null}
-                {noShowEligible ? (
-                  <Link href={user?.role === "ADMIN" ? "/admin/students" : "/staff/students"}>
-                    <Button variant="secondary" className="h-10 border-amber-300 text-amber-800 hover:bg-amber-50">
-                      <Ban className="size-4" /> Review no-show
+              {nextStatus || paymentBlocksProgress || noShowEligible || isActiveStatus(row) ? (
+                <footer className="flex flex-wrap items-center gap-2 border-t bg-surface-subtle px-4 py-3 sm:px-5">
+                  {nextStatus ? (
+                    <Button
+                      className="h-10"
+                      disabled={Boolean(submittingId) || bulkSubmitting || paymentBlocksProgress}
+                      title={paymentBlocksProgress ? "Wait for secure PayMongo payment confirmation before processing this reservation." : undefined}
+                      onClick={() => nextStatus === "COMPLETED" ? openCompletion(row) : void updateStatus(row, nextStatus)}
+                    >
+                      {submittingId === row.id
+                        ? "Saving..."
+                        : row.backendStatus === "PENDING"
+                          ? "Confirm"
+                          : row.backendStatus === "CONFIRMED"
+                            ? "Mark ready"
+                            : "Complete"}
                     </Button>
-                  </Link>
-                ) : null}
-                {row.backendStatus !== "COMPLETED" && row.backendStatus !== "CANCELLED" && row.backendStatus !== "NO_SHOW" ? (
-                  <Button variant="secondary" className="h-10" disabled={Boolean(submittingId)} onClick={() => openReschedule(row)}>
-                    <CalendarClock className="size-4" />{row.pickupReviewStatus === "NEEDS_REVIEW" ? "Review schedule" : "Reschedule"}
-                  </Button>
-                ) : null}
-                {row.backendStatus !== "COMPLETED" && row.backendStatus !== "CANCELLED" && row.backendStatus !== "NO_SHOW" ? (
-                  <Button variant="ghost" className="h-10 text-red-600" disabled={Boolean(submittingId)} onClick={() => void updateStatus(row, "CANCELLED")}>
-                    Cancel
-                  </Button>
-                ) : null}
-              </div>
+                  ) : null}
+                  {paymentBlocksProgress ? (
+                    <p className="max-w-56 text-xs font-semibold leading-5 text-warning">
+                      Await secure payment confirmation. Do not use a screenshot as proof.
+                    </p>
+                  ) : null}
+                  {noShowEligible ? (
+                    <Link href={user?.role === "ADMIN" ? "/admin/students" : "/staff/students"}>
+                      <Button variant="secondary" className="h-10 border-warning/40 text-warning hover:bg-warning/10">
+                        <Ban className="size-4" /> Review no-show
+                      </Button>
+                    </Link>
+                  ) : null}
+                  {isActiveStatus(row) ? (
+                    <Button variant="secondary" className="h-10" disabled={Boolean(submittingId)} onClick={() => openReschedule(row)}>
+                      <CalendarClock className="size-4" />{needsReview ? "Review schedule" : "Reschedule"}
+                    </Button>
+                  ) : null}
+                  {isActiveStatus(row) ? (
+                    <Button variant="ghost" className="h-10 text-danger hover:bg-danger/5 sm:ml-auto" disabled={Boolean(submittingId)} onClick={() => void updateStatus(row, "CANCELLED")}>
+                      Cancel
+                    </Button>
+                  ) : null}
+                </footer>
+              ) : null}
             </article>
           );
         }) : (
-          <div className="rounded-lg border border-border bg-white p-6 text-sm font-semibold text-muted-foreground shadow-sm">No matching reservations found.</div>
+          <FeedbackState
+            kind="empty"
+            title="No matching reservations found"
+            description={filtersActive ? "Try another search or status filter." : "New student reservations will appear here."}
+            action={filtersActive ? <Button variant="secondary" size="sm" onClick={() => { setSearch(""); setStatus("All"); setSelectedPendingIds(new Set()); }}>Clear filters</Button> : undefined}
+          />
         )}
       </div>
       {nextCursor ? (
@@ -420,7 +494,7 @@ export function StaffReservationsExperience() {
           <Button
             type="button"
             variant="secondary"
-            disabled={loadingMore}
+            loading={loadingMore}
             onClick={() => void loadReservations({ cursor: nextCursor })}
           >
             {loadingMore ? "Loading more..." : "Load more reservations"}
@@ -438,7 +512,7 @@ export function StaffReservationsExperience() {
               <button type="button" data-dialog-autofocus aria-label="Close payment dialog" onClick={() => setCompletionRow(null)} disabled={Boolean(submittingId)} className="ml-auto grid size-10 shrink-0 place-items-center rounded-md hover:bg-muted"><X className="size-5" /></button>
             </header>
             <div className="space-y-5 p-5 sm:p-6">
-              <div className="rounded-lg border border-border bg-muted/40 p-4">
+              <div className="rounded-lg border bg-muted/40 p-4">
                 <div className="flex items-center justify-between gap-4"><div><p className="text-sm font-bold text-foreground">{completionRow.student}</p><p className="mt-1 text-xs text-muted-foreground">{completionRow.item} · {completionRow.quantity} item(s)</p></div><div className="text-right"><p className="text-xs font-bold uppercase text-muted-foreground">Amount due</p><p className="text-xl font-extrabold text-primary">PHP {completionRow.total.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p></div></div>
                 <p className="mt-3 border-t pt-3 text-xs text-muted-foreground">Amount is taken from the reservation and cannot be edited here.</p>
               </div>
@@ -449,8 +523,9 @@ export function StaffReservationsExperience() {
                   {(["COMMISSARY", "TREASURER"] as const).map((channel) => <Button key={channel} type="button" aria-pressed={collectionChannel === channel} variant={collectionChannel === channel ? "primary" : "secondary"} className="h-12" onClick={() => { setCollectionChannel(channel); if (channel === "COMMISSARY") setOfficialReceiptNumber(""); }}>{COLLECTION_CHANNEL_LABELS[channel]}</Button>)}
                 </div>
               </fieldset>
-              <label className="grid gap-1.5 text-sm font-bold">Payment method<span className="inline-flex h-12 items-center rounded-md border border-border bg-white px-3 font-normal">Cash</span><span className="text-xs font-normal text-muted-foreground">Cash is the only accepted method. The collection channel is recorded on the student receipt.</span></label>
-              {collectionChannel === "TREASURER" ? <label className="grid gap-1.5 text-sm font-bold">Treasury official receipt number<input required autoFocus type="text" maxLength={100} value={officialReceiptNumber} onChange={(event) => setOfficialReceiptNumber(event.target.value)} placeholder="Example: OR-102938" className="h-12 rounded-md border border-border px-3 font-normal uppercase outline-none focus:border-primary" /><span className="text-xs font-normal text-muted-foreground">Required for payments collected by the school Treasury and kept in the audit trail.</span></label> : null}
+              <label className="grid gap-1.5 text-sm font-bold">Payment method<span className="inline-flex h-12 items-center rounded-md border bg-white px-3 font-normal">Cash</span><span className="text-xs font-normal text-muted-foreground">Cash is the only accepted method. The collection channel is recorded on the student receipt.</span></label>
+              {collectionChannel === "TREASURER" ? <label className="grid gap-1.5 text-sm font-bold">Treasury official receipt number<input required autoFocus type="text" maxLength={100} value={officialReceiptNumber} onChange={(event) => setOfficialReceiptNumber(event.target.value)} placeholder="Example: OR-102938" className="h-12 rounded-md border px-3 font-normal uppercase outline-none focus:border-primary" /><span className="text-xs font-normal text-muted-foreground">Required for payments collected by the school Treasury and kept in the audit trail.</span></label> : null}
+              {guidanceNote}
               <div className="rounded-md bg-primary/10 px-4 py-3 text-xs leading-5 text-foreground">Confirming will verify payment, release the items, consume the oldest inventory batches through FIFO, and post Sales, COGS, and Gross Profit.</div>
               <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end"><Button type="button" variant="secondary" onClick={() => setCompletionRow(null)} disabled={Boolean(submittingId)}>Cancel</Button><Button type="submit" disabled={Boolean(submittingId) || (collectionChannel === "TREASURER" && !officialReceiptNumber.trim())}>{submittingId ? "Saving..." : "Confirm payment & release"}</Button></div>
             </div>
@@ -468,8 +543,9 @@ export function StaffReservationsExperience() {
             </header>
             <div className="max-h-[calc(100svh-190px)] space-y-5 overflow-y-auto p-5 sm:p-6">
               {rescheduleRow.pickupReviewReason ? <p className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900">Review reason: {rescheduleRow.pickupReviewReason}</p> : null}
+              {guidanceNote}
               <PickupSchedulePicker selection={pickupSelection} onChange={setPickupSelection} disabled={Boolean(submittingId)} initialDate={rescheduleRow.reservation.pickupStart ? manilaDateKey(rescheduleRow.reservation.pickupStart) ?? undefined : undefined} title="Choose the new pickup date" />
-              <label className="grid gap-1.5 text-sm font-bold">Reason for rescheduling<textarea required minLength={5} maxLength={500} value={rescheduleReason} onChange={(event) => setRescheduleReason(event.target.value)} className="min-h-24 rounded-md border border-border px-3 py-2 font-normal outline-none focus:border-primary" placeholder="Explain the student-approved or operational reason." /></label>
+              <label className="grid gap-1.5 text-sm font-bold">Reason for rescheduling<textarea required minLength={5} maxLength={500} value={rescheduleReason} onChange={(event) => setRescheduleReason(event.target.value)} className="min-h-24 rounded-md border px-3 py-2 font-normal outline-none focus:border-primary" placeholder="Explain the student-approved or operational reason." /></label>
               <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end"><Button variant="secondary" onClick={() => setRescheduleRow(null)} disabled={Boolean(submittingId)}>Cancel</Button><Button onClick={() => void saveReschedule()} disabled={Boolean(submittingId) || !pickupSelection || rescheduleReason.trim().length < 5}>Save and notify student</Button></div>
             </div>
           </section>

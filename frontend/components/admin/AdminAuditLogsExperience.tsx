@@ -3,10 +3,13 @@
 import { userFacingErrorMessage } from "@/lib/user-facing-error";
 
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
-import { RefreshCw, Search } from "lucide-react";
+import { ChevronRight, RefreshCw, Search, X } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import { useRealtimeRefresh } from "@/components/realtime/RealtimeProvider";
 import { Button } from "@/components/ui/button";
+import { FeedbackState } from "@/components/ui/FeedbackState";
+import { InlineAlert } from "@/components/ui/InlineAlert";
+import { SkeletonList } from "@/components/ui/Skeleton";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import {
   getAdminAuditLogsFromApi,
@@ -15,13 +18,17 @@ import {
 import {
   AdminAccessState,
   AdminHeader,
-  AdminStatCard,
   formatAuditAction,
   formatAuditDate,
   mergeUniqueById
 } from "@/components/admin/AdminExperienceShared";
 
 const AUDIT_FIELD_LABELS: Record<string, string> = {
+  lowStock: "Restock alerts",
+  nextText: "New text",
+  previousText: "Previous text",
+  receipts: "Receipt verification alerts",
+  reservations: "Reservation alerts",
   actionUrl: "Destination",
   activeSlotCount: "Active pickup times",
   amount: "Amount",
@@ -100,6 +107,7 @@ const AUDIT_FIELD_LABELS: Record<string, string> = {
 
 const AUDIT_ENTITY_LABELS: Record<string, string> = {
   account_restriction: "Student access restriction",
+  app_setting: "Team setting",
   auth_session: "Sign-in",
   conversation: "Support conversation",
   faq: "FAQ",
@@ -207,23 +215,41 @@ function AuditActivityDetails({ metadata }: { metadata: Record<string, unknown> 
   if (!details.length) return null;
 
   return (
-    <details className="group mt-3 overflow-hidden rounded-lg border border-[#dfe7e0] bg-[#fbfdfb]">
-      <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 px-3 py-2 text-sm font-bold text-primary marker:content-none">
+    <details className="group mt-3 overflow-hidden rounded-lg border bg-surface-subtle">
+      <summary className="flex min-h-10 cursor-pointer list-none items-center gap-2 px-3 py-2 text-sm font-bold text-primary marker:content-none hover:bg-muted/60">
+        <ChevronRight className="size-4 transition-transform group-open:rotate-90" aria-hidden="true" />
         <span>What changed</span>
         <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs">{details.length}</span>
-        <span className="ml-auto text-xs text-[#68746d] group-open:hidden">Show details</span>
-        <span className="ml-auto hidden text-xs text-[#68746d] group-open:inline">Hide details</span>
+        <span className="ml-auto text-xs font-semibold text-muted-foreground group-open:hidden">Show details</span>
+        <span className="ml-auto hidden text-xs font-semibold text-muted-foreground group-open:inline">Hide details</span>
       </summary>
-      <dl className="grid gap-px border-t border-[#dfe7e0] bg-[#dfe7e0] sm:grid-cols-2">
+      <dl className="grid gap-px border-t bg-border sm:grid-cols-2">
         {details.map((detail, index) => (
-          <div key={`${detail.id}-${index}`} className="min-w-0 bg-white px-3 py-3">
-            <dt className="text-xs font-bold text-[#68746d]">{detail.label}</dt>
-            <dd className="mt-1 break-words text-sm font-semibold text-[#26322b] [overflow-wrap:anywhere]">{detail.value}</dd>
+          <div key={`${detail.id}-${index}`} className="min-w-0 bg-card px-3 py-2.5">
+            <dt className="text-xs font-bold text-muted-foreground">{detail.label}</dt>
+            <dd className="mt-0.5 text-sm font-semibold text-foreground [overflow-wrap:anywhere]">{detail.value}</dd>
           </div>
         ))}
       </dl>
     </details>
   );
+}
+
+function auditDayKey(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Unknown date";
+  return date.toLocaleDateString("en-PH", { weekday: "long", month: "long", day: "numeric", year: "numeric", timeZone: "Asia/Manila" });
+}
+
+function auditTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit", timeZone: "Asia/Manila" });
+}
+
+function mergeOptions(current: string[], next: string[]) {
+  const merged = Array.from(new Set([...current, ...next.filter(Boolean)])).sort();
+  return merged.length === current.length && merged.every((value, index) => value === current[index]) ? current : merged;
 }
 
 export function AdminAuditLogsExperience({ initialEntityType }: { initialEntityType?: string }) {
@@ -316,82 +342,135 @@ export function AdminAuditLogsExperience({ initialEntityType }: { initialEntityT
     };
   }, [loadLogs, user?.accessToken, user?.role]);
 
-  const actionOptions = useMemo(() => Array.from(new Set(logs.map((log) => log.action))).sort(), [logs]);
-  const entityOptions = useMemo(() => Array.from(new Set(logs.map((log) => log.entityType))).sort(), [logs]);
+  const [actionOptions, setActionOptions] = useState<string[]>([]);
+  const [entityOptions, setEntityOptions] = useState<string[]>([]);
+  useEffect(() => {
+    // Remember every option seen so choosing one filter does not hide the others.
+    setActionOptions((current) => mergeOptions(current, [...logs.map((log) => log.action), action === "All" ? "" : action]));
+    setEntityOptions((current) => mergeOptions(current, [...logs.map((log) => log.entityType), entityType === "All" ? "" : entityType]));
+  }, [action, entityType, logs]);
   const filteredLogs = logs;
+  const groupedLogs = useMemo(() => filteredLogs.reduce<Array<{ day: string; items: BackendAuditLog[] }>>((groups, log) => {
+    const day = auditDayKey(log.createdAt);
+    const last = groups.at(-1);
+    if (last?.day === day) last.items.push(log);
+    else groups.push({ day, items: [log] });
+    return groups;
+  }, []), [filteredLogs]);
+  const filtersActive = Boolean(search.trim()) || action !== "All" || entityType !== "All";
+  const clearFilters = () => {
+    setSearch("");
+    setAction("All");
+    setEntityType("All");
+  };
 
   if (!ready || !user || user.role !== "ADMIN") return accessState;
 
   return (
     <div className="space-y-5">
       <AdminHeader
-        eyebrow="Activity history"
+        eyebrow="Audit logs"
         title="Staff and admin actions"
         detail="Review admin and staff actions across products, reservations, receipts, FAQs, users, and support messages."
-        action={<Button variant="secondary" onClick={() => void loadLogs()} disabled={loading}><RefreshCw className="size-4" /> Refresh</Button>}
+        action={(
+          <Button variant="secondary" onClick={() => void loadLogs()} disabled={loading}>
+            <RefreshCw className={loading ? "size-4 animate-spin motion-reduce:animate-none" : "size-4"} aria-hidden="true" /> Refresh
+          </Button>
+        )}
       />
 
-      <section className="grid gap-4 sm:grid-cols-3">
-        <AdminStatCard title="Activities Loaded" value={String(logs.length)} detail="Most recent staff and admin actions" iconSrc="/assets/verified.svg" />
-        <AdminStatCard title="Activity Categories" value={String(actionOptions.length)} detail="Different types of recorded actions" iconSrc="/assets/orders.svg" />
-        <AdminStatCard title="Areas Covered" value={String(entityOptions.length)} detail="Products, users, receipts, and more" iconSrc="/assets/settings.svg" />
-      </section>
-
-      <div className="grid gap-3 rounded-lg border border-[#dce5dd] bg-white p-3 lg:grid-cols-[1fr_auto_auto]">
-        <label className="flex h-11 min-w-0 items-center rounded-md border border-[#d7e1d8] px-3 focus-within:border-primary">
-          <Search className="mr-2 size-5 text-[#68746d]" />
-          <input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search action, person, summary, or area"
-            className="min-w-0 flex-1 bg-transparent text-sm outline-none"
-          />
-        </label>
-        <select value={action} onChange={(event) => setAction(event.target.value)} className="h-11 rounded-md border border-[#d7e1d8] bg-white px-3 text-sm font-semibold outline-none focus:border-primary">
-          <option value="All">All actions</option>
-          {actionOptions.map((option) => <option key={option} value={option}>{formatAuditAction(option)}</option>)}
-        </select>
-        <select value={entityType} onChange={(event) => setEntityType(event.target.value)} className="h-11 rounded-md border border-[#d7e1d8] bg-white px-3 text-sm font-semibold outline-none focus:border-primary">
-          <option value="All">All areas</option>
-          {entityOptions.map((option) => <option key={option} value={option}>{auditEntityLabel(option)}</option>)}
-        </select>
+      <div className="space-y-2 rounded-xl border bg-card p-2 shadow-soft">
+        <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_220px_220px_auto]">
+          <label className="relative flex h-11 min-w-0 items-center rounded-control border border-border-strong bg-white transition focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/15">
+            <span className="sr-only">Search activity</span>
+            <Search className="pointer-events-none ml-3 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+            <input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search action, person, summary, or area"
+              className="h-full min-w-0 flex-1 bg-transparent px-2.5 text-sm outline-none placeholder:text-muted-foreground"
+            />
+            {search ? (
+              <button type="button" onClick={() => setSearch("")} aria-label="Clear search" className="mr-1.5 grid size-8 place-items-center rounded-control text-muted-foreground hover:bg-muted hover:text-foreground">
+                <X className="size-4" aria-hidden="true" />
+              </button>
+            ) : null}
+          </label>
+          <select aria-label="Filter by action" value={action} onChange={(event) => setAction(event.target.value)} className="h-11 cursor-pointer rounded-control border border-border-strong bg-white px-3 text-sm font-semibold outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/15">
+            <option value="All">All actions</option>
+            {actionOptions.map((option) => <option key={option} value={option}>{formatAuditAction(option)}</option>)}
+          </select>
+          <select aria-label="Filter by area" value={entityType} onChange={(event) => setEntityType(event.target.value)} className="h-11 cursor-pointer rounded-control border border-border-strong bg-white px-3 text-sm font-semibold outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/15">
+            <option value="All">All areas</option>
+            {entityOptions.map((option) => <option key={option} value={option}>{auditEntityLabel(option)}</option>)}
+          </select>
+          {filtersActive ? (
+            <Button variant="ghost" className="h-11" onClick={clearFilters}><X className="size-4" /> Clear</Button>
+          ) : null}
+        </div>
+        <p className="px-2 pb-1 text-xs font-semibold text-muted-foreground" aria-live="polite">
+          {loading && !logs.length
+            ? "Loading activity..."
+            : `Showing ${logs.length} ${logs.length === 1 ? "activity" : "activities"}${nextCursor ? " (more available)" : ""} · ${actionOptions.length} action type${actionOptions.length === 1 ? "" : "s"} · ${entityOptions.length} area${entityOptions.length === 1 ? "" : "s"}`}
+        </p>
       </div>
 
       {error ? (
-        <p className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+        <InlineAlert action={<Button size="sm" variant="secondary" onClick={() => void loadLogs()}>Retry</Button>}>
           {error}
-        </p>
+        </InlineAlert>
       ) : null}
-      {loading ? <div className="rounded-lg border border-[#dce5dd] bg-white p-6 text-sm font-semibold text-[#68746d] shadow-sm">Loading audit logs...</div> : null}
 
-      <section className="overflow-hidden rounded-lg border border-[#dce5dd] bg-white shadow-sm">
-        {filteredLogs.length ? filteredLogs.map((log) => (
-          <article key={log.id} className="content-visibility-auto grid gap-3 border-b border-[#edf1ed] p-4 last:border-0 xl:grid-cols-[220px_1fr_180px] xl:items-start">
-            <div>
-              <p className="text-xs font-bold uppercase text-primary">{formatAuditAction(log.action)}</p>
-              <p className="mt-1 text-xs text-[#68746d]">{formatAuditDate(log.createdAt)}</p>
-            </div>
-            <div>
-              <p className="font-extrabold text-[#17211b]">{log.summary}</p>
-              <div className="mt-2 flex flex-wrap gap-2 text-xs text-[#68746d]">
-                <span className="rounded-full bg-[#eef6ee] px-2.5 py-1 font-semibold text-primary">{auditEntityLabel(log.entityType)}</span>
-                {log.entityId ? <span title={log.entityId} className="rounded-full bg-[#f4f7f4] px-2.5 py-1">Reference: {shortRecordReference(log.entityId)}</span> : null}
-              </div>
-              <AuditActivityDetails metadata={log.metadata ?? {}} />
-            </div>
-            <div className="xl:text-right">
-              <p className="text-sm font-bold text-[#17211b]">{log.actor?.fullName || log.actor?.email || "System"}</p>
-              <p className="mt-1 text-xs text-[#68746d]">{log.actor?.email ?? "No actor profile"}</p>
-              {log.actor?.role ? <span className="mt-2 inline-block"><StatusBadge status={log.actor.role === "ADMIN" ? "Admin" : log.actor.role === "STAFF" ? "Staff" : "Student"} /></span> : null}
-            </div>
-          </article>
-        )) : (
-          <div className="p-6 text-sm font-semibold text-[#68746d]">No activity records found.</div>
-        )}
-      </section>
+      {loading && !filteredLogs.length ? (
+        <SkeletonList rows={5} label="Loading audit logs" className="overflow-hidden rounded-xl border bg-card shadow-soft" />
+      ) : filteredLogs.length ? (
+        <div className={loading ? "space-y-5 opacity-60 transition-opacity" : "space-y-5 transition-opacity"}>
+          {groupedLogs.map((group) => (
+            <section key={group.day} aria-label={group.day} className="overflow-hidden rounded-xl border bg-card shadow-soft">
+              <h2 className="border-b bg-surface-subtle px-4 py-2.5 text-xs font-extrabold uppercase tracking-[0.1em] text-muted-foreground sm:px-5">
+                {group.day}
+              </h2>
+              <ol className="divide-y">
+                {group.items.map((log) => (
+                  <li key={log.id}>
+                    <article className="content-visibility-auto grid gap-3 px-4 py-4 sm:px-5 xl:grid-cols-[110px_minmax(0,1fr)_220px] xl:items-start">
+                      <div className="flex flex-wrap items-center gap-x-2 xl:block">
+                        <p className="text-sm font-bold tabular-nums text-foreground">{auditTime(log.createdAt)}</p>
+                        <p className="text-[11px] font-extrabold uppercase tracking-wide text-primary xl:mt-1">{formatAuditAction(log.action)}</p>
+                      </div>
+                      <div className="min-w-0">
+                        <p className="font-bold leading-6 text-foreground">{log.summary}</p>
+                        <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                          <span className="rounded-full bg-primary/10 px-2.5 py-1 font-semibold text-primary">{auditEntityLabel(log.entityType)}</span>
+                          {log.entityId ? <span title={log.entityId} className="rounded-full bg-muted px-2.5 py-1 font-mono text-muted-foreground">Ref {shortRecordReference(log.entityId)}</span> : null}
+                        </div>
+                        <AuditActivityDetails metadata={log.metadata ?? {}} />
+                      </div>
+                      <div className="flex min-w-0 items-center gap-2 xl:flex-col xl:items-end xl:text-right">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-bold text-foreground">{log.actor?.fullName || log.actor?.email || "System"}</p>
+                          <p className="truncate text-xs text-muted-foreground" title={formatAuditDate(log.createdAt)}>{log.actor?.email ?? "No actor profile"}</p>
+                        </div>
+                        {log.actor?.role ? <StatusBadge status={log.actor.role === "ADMIN" ? "Admin" : log.actor.role === "STAFF" ? "Staff" : "Student"} /> : null}
+                      </div>
+                    </article>
+                  </li>
+                ))}
+              </ol>
+            </section>
+          ))}
+        </div>
+      ) : (
+        <FeedbackState
+          kind="empty"
+          title="No activity records found"
+          description={filtersActive ? "No recorded actions match these filters." : "Staff and admin actions will appear here as they happen."}
+          action={filtersActive ? <Button variant="secondary" size="sm" onClick={clearFilters}>Clear filters</Button> : undefined}
+        />
+      )}
       {nextCursor ? (
         <div className="flex justify-center">
-          <Button variant="secondary" disabled={loadingMore} onClick={() => void loadLogs({ cursor: nextCursor })}>
+          <Button variant="secondary" loading={loadingMore} onClick={() => void loadLogs({ cursor: nextCursor })}>
             {loadingMore ? "Loading more..." : "Load more activity"}
           </Button>
         </div>

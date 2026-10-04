@@ -33,6 +33,7 @@ import {
   Toolbar,
   formatStaffReceiptDate
 } from "@/components/staff/StaffOperationsShared";
+import { InlineAlert } from "@/components/ui/InlineAlert";
 
 type CartRow = {
   key: string;
@@ -206,7 +207,7 @@ function ProductSkuPickerModal({
             </label>
           ))}
 
-          <div className="rounded-lg border border-[#dce5dd] bg-[#fbfdfb] p-4 text-sm">
+          <div className="rounded-lg border bg-surface-subtle p-4 text-sm">
             <div className="flex items-center justify-between">
               <span className="text-muted-foreground">Available stock</span>
               <span className="font-extrabold">{matchedSku ? `${availableStock} pc(s)` : "\u2014"}</span>
@@ -302,7 +303,7 @@ function ProductVariantPickerModal({
             </select>
           </label>
 
-          <div className="rounded-lg border border-[#dce5dd] bg-[#fbfdfb] p-4 text-sm">
+          <div className="rounded-lg border bg-surface-subtle p-4 text-sm">
             <div className="flex items-center justify-between">
               <span className="text-muted-foreground">Available stock</span>
               <span className="font-extrabold">{selectedVariant ? `${availableStock} pc(s)` : "\u2014"}</span>
@@ -431,7 +432,7 @@ function SaleSuccessModal({
             <p className="text-sm text-muted-foreground">Stock has been deducted and the receipt is verified.</p>
           </div>
         </div>
-        <div className="mt-5 rounded-lg border border-[#dce5dd] bg-[#fbfdfb] p-4">
+        <div className="mt-5 rounded-lg border bg-surface-subtle p-4">
           <div className="flex items-center justify-between text-sm">
             <span className="text-muted-foreground">Receipt code</span>
             <span className="font-extrabold">{receipt.receiptCode}</span>
@@ -883,7 +884,7 @@ export function StaffWalkInSalesExperience() {
           {cart.length ? `${cart.length} line item${cart.length === 1 ? "" : "s"}` : "Cart is empty"}
         </span>
         {cart.length ? (
-          <button type="button" onClick={() => (confirmClear ? clearCart() : setConfirmClear(true))} onBlur={() => setConfirmClear(false)} className={`ml-auto rounded-md border px-2 py-1 text-xs font-bold ${confirmClear ? "border-red-300 bg-red-50 text-red-700" : "border-[#d7e1d8] text-muted-foreground hover:border-red-300 hover:text-red-700"}`}>
+          <button type="button" onClick={() => (confirmClear ? clearCart() : setConfirmClear(true))} onBlur={() => setConfirmClear(false)} className={`ml-auto rounded-md border px-2 py-1 text-xs font-bold ${confirmClear ? "border-red-300 bg-red-50 text-red-700" : "border-border-strong text-muted-foreground hover:border-red-300 hover:text-red-700"}`}>
             {confirmClear ? "Confirm clear?" : "Clear"}
           </button>
         ) : null}
@@ -902,7 +903,7 @@ export function StaffWalkInSalesExperience() {
             ? row.product.variants.find((variant) => variant.id === row.variantId)?.optionValue
             : null;
         return (
-          <div key={row.key} className="rounded-md border border-[#dce5dd] bg-white p-3">
+          <div key={row.key} className="rounded-md border bg-white p-3">
             <div className="flex items-start gap-2">
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-extrabold">{row.product.name}</p>
@@ -914,7 +915,7 @@ export function StaffWalkInSalesExperience() {
             </div>
             <div className="mt-3 flex items-center gap-2">
               <Button type="button" variant="secondary" size="icon" className="size-8" aria-label={`Decrease ${row.product.name} quantity`} onClick={() => adjustCartRowQuantity(row, -1)}><Minus className="size-3.5" /></Button>
-              <input type="number" min="1" max={stock ?? 10000000} step="1" inputMode="numeric" aria-label={`${row.product.name} quantity`} value={row.quantity} onChange={(event) => updateCartRow(row.key, { quantity: event.target.value })} className="h-8 w-16 rounded-md border border-[#d7e1d8] bg-white px-2 text-center text-sm outline-none focus:border-primary" />
+              <input type="number" min="1" max={stock ?? 10000000} step="1" inputMode="numeric" aria-label={`${row.product.name} quantity`} value={row.quantity} onChange={(event) => updateCartRow(row.key, { quantity: event.target.value })} className="h-8 w-16 rounded-md border border-border-strong bg-white px-2 text-center text-sm outline-none focus:border-primary" />
               <Button type="button" variant="secondary" size="icon" className="size-8" aria-label={`Increase ${row.product.name} quantity`} disabled={stock !== null && Number.parseInt(row.quantity, 10) >= stock} onClick={() => adjustCartRowQuantity(row, 1)}><Plus className="size-3.5" /></Button>
               <span className="ml-auto text-xs text-muted-foreground">{formatPeso(Number(row.product.price))} each</span>
             </div>
@@ -933,16 +934,16 @@ export function StaffWalkInSalesExperience() {
         action={<Button variant="secondary" onClick={() => { void loadHistory(); void loadCatalog(); }} disabled={historyLoading}>Refresh</Button>}
       />
 
-      <nav className="flex w-fit rounded-lg border border-[#dce5dd] bg-white p-1 shadow-sm" aria-label="Walk-in sales sections">
-        <button type="button" onClick={() => setActiveView("SALE")} aria-current={activeView === "SALE" ? "page" : undefined} className={`rounded-md px-4 py-2 text-sm font-bold ${activeView === "SALE" ? "bg-primary text-white" : "text-muted-foreground hover:bg-[#eef6ee] hover:text-primary"}`}>
+      <nav className="flex w-fit rounded-lg border bg-white p-1 shadow-sm" aria-label="Walk-in sales sections">
+        <button type="button" onClick={() => setActiveView("SALE")} aria-current={activeView === "SALE" ? "page" : undefined} className={`rounded-md px-4 py-2 text-sm font-bold ${activeView === "SALE" ? "bg-primary text-white" : "text-muted-foreground hover:bg-muted hover:text-primary"}`}>
           New sale
         </button>
-        <button type="button" onClick={() => setActiveView("HISTORY")} aria-current={activeView === "HISTORY" ? "page" : undefined} className={`rounded-md px-4 py-2 text-sm font-bold ${activeView === "HISTORY" ? "bg-primary text-white" : "text-muted-foreground hover:bg-[#eef6ee] hover:text-primary"}`}>
+        <button type="button" onClick={() => setActiveView("HISTORY")} aria-current={activeView === "HISTORY" ? "page" : undefined} className={`rounded-md px-4 py-2 text-sm font-bold ${activeView === "HISTORY" ? "bg-primary text-white" : "text-muted-foreground hover:bg-muted hover:text-primary"}`}>
           Sales history
         </button>
       </nav>
 
-      {activeView === "SALE" ? <section className="rounded-lg border border-[#dce5dd] bg-white p-5 shadow-sm">
+      {activeView === "SALE" ? <section className="rounded-lg border bg-white p-5 shadow-sm">
         <h2 className="flex items-center gap-2 text-lg font-extrabold text-foreground">
           <Plus className="size-5 text-primary" /> New walk-in sale
         </h2>
@@ -957,8 +958,8 @@ export function StaffWalkInSalesExperience() {
               ) : null}
             </div>
 
-            <label className="flex h-11 items-center rounded-md border border-[#d7e1d8] bg-white px-3 focus-within:border-primary">
-              <Search className="mr-2 size-5 text-[#68746d]" />
+            <label className="flex h-11 items-center rounded-md border border-border-strong bg-white px-3 focus-within:border-primary">
+              <Search className="mr-2 size-5 text-muted-foreground" />
               <input
                 value={catalogSearch}
                 onChange={(event) => setCatalogSearch(event.target.value)}
@@ -973,7 +974,7 @@ export function StaffWalkInSalesExperience() {
                 type="button"
                 onClick={() => setActiveCategoryId("")}
                 aria-pressed={activeCategoryId === ""}
-                className={`rounded-full border px-3 py-1.5 text-xs font-bold ${activeCategoryId === "" ? "border-primary bg-primary text-white" : "border-[#d7e1d8] bg-white text-muted-foreground hover:border-primary"}`}
+                className={`rounded-full border px-3 py-1.5 text-xs font-bold ${activeCategoryId === "" ? "border-primary bg-primary text-white" : "border-border-strong bg-white text-muted-foreground hover:border-primary"}`}
               >
                 All products
               </button>
@@ -983,7 +984,7 @@ export function StaffWalkInSalesExperience() {
                   type="button"
                   onClick={() => setActiveCategoryId(category.id === activeCategoryId ? "" : category.id)}
                   aria-pressed={activeCategoryId === category.id}
-                  className={`rounded-full border px-3 py-1.5 text-xs font-bold ${activeCategoryId === category.id ? "border-primary bg-primary text-white" : "border-[#d7e1d8] bg-white text-muted-foreground hover:border-primary"}`}
+                  className={`rounded-full border px-3 py-1.5 text-xs font-bold ${activeCategoryId === category.id ? "border-primary bg-primary text-white" : "border-border-strong bg-white text-muted-foreground hover:border-primary"}`}
                 >
                   {category.name}
                 </button>
@@ -997,14 +998,14 @@ export function StaffWalkInSalesExperience() {
                   type="button"
                   onClick={() => setStockFilter(filter)}
                   aria-pressed={stockFilter === filter}
-                  className={`rounded-full border px-3 py-1.5 text-xs font-bold ${stockFilter === filter ? "border-primary bg-primary text-white" : "border-[#d7e1d8] bg-white text-muted-foreground hover:border-primary"}`}
+                  className={`rounded-full border px-3 py-1.5 text-xs font-bold ${stockFilter === filter ? "border-primary bg-primary text-white" : "border-border-strong bg-white text-muted-foreground hover:border-primary"}`}
                 >
                   {filter === "ALL" ? "All stock" : filter === "IN_STOCK" ? "In stock" : filter === "LOW_STOCK" ? "Low stock" : "Out of stock"}
                 </button>
               ))}
             </div>
 
-            {catalogError ? <p className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{catalogError}</p> : null}
+            {catalogError ? <InlineAlert>{catalogError}</InlineAlert> : null}
             {stockConflict ? (
               <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm">
                 <p className="font-bold text-amber-900">Stock changed while checking out</p>
@@ -1017,7 +1018,7 @@ export function StaffWalkInSalesExperience() {
             ) : null}
 
             {catalogLoading && !catalog.length ? (
-              <div className="rounded-lg border border-[#dce5dd] bg-[#fbfdfb] p-6 text-sm font-semibold text-muted-foreground">Loading product catalog...</div>
+              <div className="rounded-lg border bg-surface-subtle p-6 text-sm font-semibold text-muted-foreground">Loading product catalog...</div>
             ) : (
               <>
                 {visibleCatalog.length ? (
@@ -1027,8 +1028,8 @@ export function StaffWalkInSalesExperience() {
                     const outOfStock = sellableStock <= 0;
                     const lowStock = !outOfStock && productIsLowStock(product);
                     return (
-                      <article key={product.id} className={`flex gap-3 rounded-lg border p-3 ${outOfStock ? "border-[#e5ebe6] bg-[#f4f6f4]" : "border-[#dce5dd] bg-[#fbfdfb]"}`}>
-                        <div className="grid size-14 shrink-0 place-items-center overflow-hidden rounded-md border border-[#e5ebe6] bg-white">
+                      <article key={product.id} className={`flex gap-3 rounded-lg border p-3 ${outOfStock ? "border-border bg-[#f4f6f4]" : "border-border bg-surface-subtle"}`}>
+                        <div className="grid size-14 shrink-0 place-items-center overflow-hidden rounded-md border bg-white">
                           {product.imageUrl ? (
                             // eslint-disable-next-line @next/next/no-img-element
                             <img src={product.imageUrl} alt="" className="size-full object-cover" />
@@ -1071,7 +1072,7 @@ export function StaffWalkInSalesExperience() {
                   })}
                   </div>
                 ) : (
-                  <div className="rounded-lg border border-[#dce5dd] bg-[#fbfdfb] p-6 text-center text-sm font-semibold text-muted-foreground">
+                  <div className="rounded-lg border bg-surface-subtle p-6 text-center text-sm font-semibold text-muted-foreground">
                     No products match this view.
                     {catalogSearch || activeCategoryId || stockFilter !== "ALL"
                       ? " Clear the search or filters to see the full catalog."
@@ -1094,7 +1095,7 @@ export function StaffWalkInSalesExperience() {
             )}
           </div>
 
-          <aside className="space-y-4 rounded-lg border border-[#dce5dd] bg-[#fbfdfb] p-4 xl:sticky xl:top-4 xl:self-start">
+          <aside className="space-y-4 rounded-lg border bg-surface-subtle p-4 xl:sticky xl:top-4 xl:self-start">
             <div>
               <h3 className="text-base font-extrabold text-foreground">Checkout</h3>
               <p className="mt-1 text-xs text-muted-foreground">Enter any walk-in buyer name. Linking a WESCOMM student account is optional.</p>
@@ -1116,11 +1117,11 @@ export function StaffWalkInSalesExperience() {
                   }}
                   onFocus={() => studentResults.length && setStudentPickerOpen(true)}
                   placeholder="Enter buyer name"
-                  className="h-11 rounded-md border border-[#d7e1d8] bg-white px-3 font-normal outline-none focus:border-primary"
+                  className="h-11 rounded-md border border-border-strong bg-white px-3 font-normal outline-none focus:border-primary"
                 />
               </label>
               {studentPickerOpen && studentResults.length ? (
-                <ul id="walk-in-student-results" role="listbox" className="absolute left-0 right-0 top-full z-30 mt-1 max-h-60 overflow-y-auto rounded-md border border-[#d7e1d8] bg-white shadow-lg">
+                <ul id="walk-in-student-results" role="listbox" className="absolute left-0 right-0 top-full z-30 mt-1 max-h-60 overflow-y-auto rounded-md border border-border-strong bg-white shadow-lg">
                   {studentResults.map((student) => (
                     <li key={student.id}>
                       <button
@@ -1135,7 +1136,7 @@ export function StaffWalkInSalesExperience() {
                           setStudentError("");
                           setSaleError("");
                         }}
-                        className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-[#eef6ee]"
+                        className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-muted"
                       >
                         <span className="min-w-0">
                           <span className="block truncate text-sm font-bold">{student.fullName}</span>
@@ -1171,16 +1172,16 @@ export function StaffWalkInSalesExperience() {
 
             {cartPanel}
 
-            <details className="rounded-md border border-[#dce5dd] bg-white">
+            <details className="rounded-md border bg-white">
               <summary className="cursor-pointer px-3 py-2.5 text-xs font-bold text-muted-foreground">Optional receipt details</summary>
-              <label className="grid gap-1.5 border-t border-[#e5ebe6] p-3 text-xs font-semibold">
+              <label className="grid gap-1.5 border-t border-border p-3 text-xs font-semibold">
                 Manual receipt code
                 <input
                   value={receiptCode}
                   onChange={(event) => setReceiptCode(event.target.value.toUpperCase())}
                   maxLength={64}
                   placeholder="Auto-generated when blank"
-                  className="h-11 rounded-md border border-[#d7e1d8] bg-white px-3 font-normal uppercase outline-none focus:border-primary"
+                  className="h-11 rounded-md border border-border-strong bg-white px-3 font-normal uppercase outline-none focus:border-primary"
                 />
               </label>
             </details>
@@ -1195,21 +1196,21 @@ export function StaffWalkInSalesExperience() {
                 value={cashReceived}
                 onChange={(event) => { setCashReceived(event.target.value); setSaleError(""); }}
                 placeholder="0.00"
-                className="h-11 rounded-md border border-[#d7e1d8] bg-white px-3 font-normal outline-none focus:border-primary"
+                className="h-11 rounded-md border border-border-strong bg-white px-3 font-normal outline-none focus:border-primary"
               />
             </label>
 
             {quickCashAmounts.length ? (
               <div className="flex flex-wrap gap-2" aria-label="Quick cash amounts">
                 {quickCashAmounts.map((amount) => (
-                  <button key={amount} type="button" onClick={() => { setCashReceived(String(amount)); setSaleError(""); }} className="rounded-md border border-[#d7e1d8] bg-white px-3 py-2 text-xs font-bold text-primary hover:border-primary hover:bg-[#eef6ee]">
+                  <button key={amount} type="button" onClick={() => { setCashReceived(String(amount)); setSaleError(""); }} className="rounded-md border border-border-strong bg-white px-3 py-2 text-xs font-bold text-primary hover:border-primary hover:bg-muted">
                     {amount === cartTotal ? "Exact" : formatPeso(amount)}
                   </button>
                 ))}
               </div>
             ) : null}
 
-            <dl className="grid grid-cols-[1fr_auto] gap-y-2 border-t border-[#e5ebe6] pt-3 text-sm">
+            <dl className="grid grid-cols-[1fr_auto] gap-y-2 border-t border-border pt-3 text-sm">
               <dt className="text-muted-foreground">Total</dt>
               <dd className="font-extrabold text-foreground">{formatPeso(cartTotal)}</dd>
               {cashValid && changeDue !== null ? (
@@ -1225,7 +1226,7 @@ export function StaffWalkInSalesExperience() {
 
             {saleError ? <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">{saleError}</p> : null}
 
-            <div className="space-y-2 rounded-md border border-[#dce5dd] bg-white p-3 text-xs font-semibold">
+            <div className="space-y-2 rounded-md border bg-white p-3 text-xs font-semibold">
               <p className={cartValid ? "flex items-center gap-2 text-emerald-700" : "flex items-center gap-2 text-amber-700"}><Check className="size-4" /> Products and stock reviewed</p>
               <p className={buyerNameValid ? "flex items-center gap-2 text-emerald-700" : "flex items-center gap-2 text-amber-700"}><Check className="size-4" /> Buyer name entered</p>
               <p className={cashValid ? "flex items-center gap-2 text-emerald-700" : "flex items-center gap-2 text-amber-700"}><Check className="size-4" /> Cash covers total</p>
@@ -1255,36 +1256,36 @@ export function StaffWalkInSalesExperience() {
           placeholder="Search receipt code, buyer, or item"
           statuses={["Verified", "Voided"]}
         />
-        {historyError ? <p className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{historyError}</p> : null}
+        {historyError ? <InlineAlert>{historyError}</InlineAlert> : null}
         {historyLoading ? (
-          <div className="rounded-lg border border-[#dce5dd] bg-white p-6 text-sm font-semibold text-[#68746d] shadow-sm">Loading walk-in sales...</div>
+          <div className="rounded-lg border bg-white p-6 text-sm font-semibold text-muted-foreground shadow-sm">Loading walk-in sales...</div>
         ) : history.length ? (
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {history.map((receipt) => (
-              <article key={receipt.id} className="rounded-lg border border-[#dce5dd] bg-white p-5 shadow-sm">
+              <article key={receipt.id} className="rounded-lg border bg-white p-5 shadow-sm">
                 <div className="flex items-start gap-3">
                   <div>
                     <p className="font-extrabold">{receipt.receiptCode}</p>
-                    <p className="text-xs text-[#68746d]">{formatStaffReceiptDate(receipt.issuedAt)}</p>
+                    <p className="text-xs text-muted-foreground">{formatStaffReceiptDate(receipt.issuedAt)}</p>
                   </div>
                   <span className="ml-auto"><StatusBadge statusKey={receipt.status} /></span>
                 </div>
                 <dl className="mt-5 grid grid-cols-[1fr_auto] gap-y-2 text-sm">
-                  <dt className="text-[#68746d]">Buyer</dt>
+                  <dt className="text-muted-foreground">Buyer</dt>
                   <dd className="font-bold">{receipt.buyerName}</dd>
-                  <dt className="text-[#68746d]">Items</dt>
+                  <dt className="text-muted-foreground">Items</dt>
                   <dd className="text-right font-bold">
                     {receipt.items.length > 1
                       ? `${receipt.items[0].productName} + ${receipt.items.length - 1} more`
                       : receipt.items[0]?.productName ?? "Walk-in item"}
                   </dd>
-                  <dt className="text-[#68746d]">Payment</dt>
+                  <dt className="text-muted-foreground">Payment</dt>
                   <dd className="font-bold">Cash</dd>
-                  <dt className="text-[#68746d]">Total</dt>
+                  <dt className="text-muted-foreground">Total</dt>
                   <dd className="font-extrabold text-primary">{formatPeso(Number(receipt.totalAmount))}</dd>
                 </dl>
                 {receipt.items.length ? (
-                  <div className="mt-4 rounded-md bg-[#fbfdfb] p-3">
+                  <div className="mt-4 rounded-md bg-surface-subtle p-3">
                     {receipt.items.map((item) => (
                       <div key={item.id} className="flex items-center justify-between gap-2 py-1 text-xs">
                         <span className="min-w-0 truncate font-semibold">
@@ -1316,7 +1317,7 @@ export function StaffWalkInSalesExperience() {
             ))}
           </div>
         ) : (
-          <div className="rounded-lg border border-[#dce5dd] bg-white p-6 text-sm font-semibold text-[#68746d] shadow-sm">
+          <div className="rounded-lg border bg-white p-6 text-sm font-semibold text-muted-foreground shadow-sm">
             No walk-in sales recorded yet.
           </div>
         )}

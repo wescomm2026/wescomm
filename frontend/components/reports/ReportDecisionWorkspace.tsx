@@ -42,7 +42,7 @@ function MetricCard({
   href: string;
 }) {
   return (
-    <article className="flex min-h-48 flex-col rounded-xl border border-border bg-white p-5 shadow-sm">
+    <article className="flex min-h-48 flex-col rounded-xl border bg-white p-5 shadow-sm">
       <p className="text-xs font-extrabold uppercase tracking-wide text-muted-foreground">{title}</p>
       <p className="mt-2 text-2xl font-black text-primary sm:text-3xl">{value}</p>
       <p className="mt-2 text-sm leading-6 text-muted-foreground">{explanation}</p>
@@ -97,7 +97,7 @@ export function ReportDecisionWorkspace({
 
   return (
     <div className="space-y-5">
-      <section className="rounded-xl border border-border bg-gradient-to-br from-primary/5 to-white p-5 shadow-sm" aria-labelledby="report-start-title">
+      <section className="rounded-xl border bg-gradient-to-br from-primary/5 to-white p-5 shadow-sm" aria-labelledby="report-start-title">
         <div className="flex items-start gap-3">
           <span className="grid size-10 shrink-0 place-items-center rounded-full bg-primary/10 text-primary"><CircleHelp className="size-5" aria-hidden="true" /></span>
           <div>
@@ -117,7 +117,7 @@ export function ReportDecisionWorkspace({
             ["Products & margin", "#report-products"],
             ["Inventory actions", "#report-inventory"],
             ["Historical audit", "#report-legacy"]
-          ].map(([label, href]) => <a key={href} href={href} className="rounded-full border border-border bg-white px-3 py-2 text-xs font-extrabold text-primary hover:bg-primary/5">{label}</a>)}
+          ].map(([label, href]) => <a key={href} href={href} className="rounded-full border bg-white px-3 py-2 text-xs font-extrabold text-primary hover:bg-primary/5">{label}</a>)}
         </nav>
       </section>
 
@@ -135,7 +135,7 @@ export function ReportDecisionWorkspace({
         {summary.comparison.label ? <p className="mt-3 text-xs font-semibold text-muted-foreground">Comparison period: {summary.comparison.label}</p> : null}
       </section>
 
-      <section id="report-reconciliation" className="scroll-mt-24 overflow-hidden rounded-xl border border-border bg-white shadow-sm" aria-labelledby="reconciliation-title">
+      <section id="report-reconciliation" className="scroll-mt-24 overflow-hidden rounded-xl border bg-white shadow-sm" aria-labelledby="reconciliation-title">
         <div className={summary.reconciliation.status === "CLEAN" ? "border-b border-emerald-200 bg-emerald-50 p-5" : "border-b border-amber-200 bg-amber-50 p-5"}>
           <div className="flex flex-wrap items-start gap-3">
             {summary.reconciliation.status === "CLEAN" ? <CheckCircle2 className="mt-0.5 size-6 text-emerald-700" aria-hidden="true" /> : <AlertTriangle className="mt-0.5 size-6 text-amber-700" aria-hidden="true" />}
@@ -182,8 +182,8 @@ export function ReportDecisionWorkspace({
         ) : null}
       </section>
 
-      <section id="report-products" className="scroll-mt-24 overflow-hidden rounded-xl border border-border bg-white shadow-sm" aria-labelledby="products-title">
-        <div className="flex flex-col gap-4 border-b border-border p-5 sm:flex-row sm:items-end sm:justify-between"><div><h2 id="products-title" className="text-lg font-black text-foreground">Products and margin</h2><p className="mt-1 text-sm text-muted-foreground">Use gross profit and margin—not sales alone—to see which products contribute most.</p></div><label className="grid gap-1.5 text-xs font-extrabold text-foreground">Find a product or category<input type="search" value={productQuery} onChange={(event) => setProductQuery(event.target.value)} placeholder="Example: uniform" className="h-10 min-w-64 rounded-md border border-border bg-white px-3 text-sm font-medium outline-none focus:border-primary" /></label></div>
+      <section id="report-products" className="scroll-mt-24 overflow-hidden rounded-xl border bg-white shadow-sm" aria-labelledby="products-title">
+        <div className="flex flex-col gap-4 border-b border-border p-5 sm:flex-row sm:items-end sm:justify-between"><div><h2 id="products-title" className="text-lg font-black text-foreground">Products and margin</h2><p className="mt-1 text-sm text-muted-foreground">Use gross profit and margin—not sales alone—to see which products contribute most.</p></div><label className="grid gap-1.5 text-xs font-extrabold text-foreground">Find a product or category<input type="search" value={productQuery} onChange={(event) => setProductQuery(event.target.value)} placeholder="Example: uniform" className="h-10 min-w-64 rounded-md border bg-white px-3 text-sm font-medium outline-none focus:border-primary" /></label></div>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[820px] text-left text-sm">
             <caption className="sr-only">Product sales, costs, profit, and margin</caption>
@@ -197,7 +197,7 @@ export function ReportDecisionWorkspace({
         </div>
       </section>
 
-      <section id="report-inventory" className="scroll-mt-24 overflow-hidden rounded-xl border border-border bg-white shadow-sm" aria-labelledby="inventory-title">
+      <section id="report-inventory" className="scroll-mt-24 overflow-hidden rounded-xl border bg-white shadow-sm" aria-labelledby="inventory-title">
         <div className="border-b border-border p-5"><h2 id="inventory-title" className="text-lg font-black text-foreground">Inventory action list</h2><p className="mt-1 text-sm text-muted-foreground">Items are prioritized by what staff should do next. Stock-cover estimates use demand from the selected period.</p></div>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[900px] text-left text-sm">
@@ -212,7 +212,7 @@ export function ReportDecisionWorkspace({
         </div>
       </section>
 
-      <details id="report-legacy" className="group scroll-mt-24 overflow-hidden rounded-xl border border-border bg-white shadow-sm">
+      <details id="report-legacy" className="group scroll-mt-24 overflow-hidden rounded-xl border bg-white shadow-sm">
         <summary className="flex min-h-16 cursor-pointer list-none items-center gap-3 px-5 marker:content-none"><span className="font-black text-foreground">Historical payment audit</span><span className="text-sm text-muted-foreground">Hidden from normal cash operations</span><span className="ml-auto text-sm font-extrabold text-primary group-open:hidden">Show</span><span className="ml-auto hidden text-sm font-extrabold text-primary group-open:inline">Hide</span></summary>
         <div className="grid gap-3 border-t border-border p-5 sm:grid-cols-2">
           <div className="rounded-lg bg-muted/40 p-4"><p className="text-xs font-extrabold uppercase text-muted-foreground">Legacy online</p><p className="mt-2 text-xl font-black text-foreground">{formatCurrency(summary.legacyOnlineRevenue)}</p><p className="mt-1 text-xs text-muted-foreground">PayMongo records retained for audit, refunds, and late confirmations.</p></div>

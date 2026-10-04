@@ -1,6 +1,6 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
 import type { BackendAuthProfile, BackendConversation } from "../lib/api";
-import { authorizeMockedWorkspace, dismissWelcomeGate } from "./helpers";
+import { authorizeMockedWorkspace, dismissWelcomeGate, fulfillWorkspaceShellExtras } from "./helpers";
 
 const staffId = "00000000-0000-4000-8000-000000000021";
 const otherStaffId = "00000000-0000-4000-8000-000000000022";
@@ -90,6 +90,7 @@ async function mockStaffSupport(page: Page, initialMode: "BOT_ACTIVE" | "STAFF_A
       await json(route, { notifications: [] });
       return;
     }
+    if (await fulfillWorkspaceShellExtras(route)) return;
     if (path === "/api/backend/notifications/unread-count" && request.method() === "GET") {
       await json(route, { unreadCount: 0 });
       return;

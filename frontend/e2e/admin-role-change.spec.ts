@@ -20,6 +20,11 @@ test.describe("admin role-change end-to-end flow", () => {
     const roleSelect = row.locator("select");
     let restoreRequired = false;
 
+    const confirmRoleChange = async () => {
+      const dialog = page.getByRole("alertdialog", { name: /role to (Student|Staff|Admin)\?$/ });
+      await dialog.getByRole("button", { name: "Change role", exact: true }).click();
+    };
+
     const waitForRoleResponse = () => page.waitForResponse((response) => (
       response.request().method() === "PATCH"
       && /\/api\/backend\/admin\/users\/[0-9a-f-]+\/role$/.test(new URL(response.url()).pathname)
@@ -29,12 +34,14 @@ test.describe("admin role-change end-to-end flow", () => {
       if (await roleSelect.inputValue() !== "STUDENT") {
         const recoveryResponse = waitForRoleResponse();
         await roleSelect.selectOption("STUDENT");
+        await confirmRoleChange();
         expect((await recoveryResponse).status(), "The test account must be restored before the flow").toBe(200);
       }
       await expect(roleSelect).toHaveValue("STUDENT");
 
       const promoteResponse = waitForRoleResponse();
       await roleSelect.selectOption("STAFF");
+      await confirmRoleChange();
       expect((await promoteResponse).status(), "STUDENT -> STAFF must succeed").toBe(200);
       restoreRequired = true;
       await expect(roleSelect).toHaveValue("STAFF");
@@ -42,6 +49,7 @@ test.describe("admin role-change end-to-end flow", () => {
 
       const restoreResponse = waitForRoleResponse();
       await roleSelect.selectOption("STUDENT");
+      await confirmRoleChange();
       expect((await restoreResponse).status(), "STAFF -> STUDENT must succeed").toBe(200);
       restoreRequired = false;
       await expect(roleSelect).toHaveValue("STUDENT");
@@ -50,6 +58,7 @@ test.describe("admin role-change end-to-end flow", () => {
       if (restoreRequired && !page.isClosed()) {
         const cleanupResponse = waitForRoleResponse();
         await roleSelect.selectOption("STUDENT").catch(() => undefined);
+        await confirmRoleChange().catch(() => undefined);
         await cleanupResponse.catch(() => undefined);
       }
     }

@@ -13,6 +13,7 @@ import {
   isRequestAbortError,
   type BackendGlobalSearchResult
 } from "@/lib/api";
+import { InlineAlert } from "@/components/ui/InlineAlert";
 
 function resultHref(result: BackendGlobalSearchResult, routeBase: "/staff" | "/admin") {
   const parameter = result.type === "PRODUCT"
@@ -88,27 +89,27 @@ export function GlobalSearchExperience({ routeBase }: { routeBase: "/staff" | "/
     <div className="space-y-5">
       <header>
         <p className="text-sm font-bold uppercase text-primary">Workspace search</p>
-        <h1 className="mt-1 text-3xl font-extrabold text-[#101820]">Results for “{query}”</h1>
-        <p className="mt-2 text-sm text-[#68746d]">Products, reservations, receipts, and student support conversations are searched together.</p>
+        <h1 className="mt-1 text-3xl font-extrabold text-foreground">Results for “{query}”</h1>
+        <p className="mt-2 text-sm text-muted-foreground">Products, reservations, receipts, and student support conversations are searched together.</p>
       </header>
 
-      {error ? <p className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p> : null}
-      {loading ? <p className="rounded-lg border border-[#dce5dd] bg-white p-6 text-sm font-semibold text-[#68746d]">Searching WESCOMM…</p> : null}
-      {!loading && query.length < 2 ? <p className="rounded-lg border border-[#dce5dd] bg-white p-6 text-sm font-semibold text-[#68746d]">Enter at least two characters in the header search.</p> : null}
-      {!loading && query.length >= 2 && !results.length && !error ? <p className="rounded-lg border border-[#dce5dd] bg-white p-6 text-sm font-semibold text-[#68746d]">No matching records were found.</p> : null}
+      {error ? <InlineAlert>{error}</InlineAlert> : null}
+      {loading ? <p className="rounded-lg border bg-white p-6 text-sm font-semibold text-muted-foreground">Searching WESCOMM…</p> : null}
+      {!loading && query.length < 2 ? <p className="rounded-lg border bg-white p-6 text-sm font-semibold text-muted-foreground">Enter at least two characters in the header search.</p> : null}
+      {!loading && query.length >= 2 && !results.length && !error ? <p className="rounded-lg border bg-white p-6 text-sm font-semibold text-muted-foreground">No matching records were found.</p> : null}
 
       {Object.entries(groupedResults).map(([type, rows]) => (
-        <section key={type} className="overflow-hidden rounded-lg border border-[#dce5dd] bg-white shadow-sm">
-          <h2 className="border-b border-[#e7eee8] bg-[#f6faf6] px-4 py-3 text-sm font-extrabold text-[#253129]">{type.replaceAll("_", " ")}</h2>
-          <div className="divide-y divide-[#edf1ed]">
+        <section key={type} className="overflow-hidden rounded-lg border bg-white shadow-sm">
+          <h2 className="border-b border-border bg-surface-subtle px-4 py-3 text-sm font-extrabold text-foreground">{type.replaceAll("_", " ")}</h2>
+          <div className="divide-y divide-border">
             {rows.map((result) => {
               const Icon = resultIcon(result.type);
               return (
-                <Link key={`${result.type}-${result.id}`} href={resultHref(result, routeBase)} className="grid grid-cols-[40px_1fr_auto] items-center gap-3 px-4 py-4 hover:bg-[#f4f8f4]">
-                  <span className="grid size-10 place-items-center rounded-full bg-[#eaf4ea] text-primary"><Icon className="size-5" /></span>
+                <Link key={`${result.type}-${result.id}`} href={resultHref(result, routeBase)} className="grid grid-cols-[40px_1fr_auto] items-center gap-3 px-4 py-4 hover:bg-surface-subtle">
+                  <span className="grid size-10 place-items-center rounded-full bg-muted text-primary"><Icon className="size-5" /></span>
                   <span className="min-w-0">
-                    <span className="block truncate text-sm font-extrabold text-[#253129]">{result.title}</span>
-                    <span className="mt-1 block truncate text-xs text-[#68746d]">{result.subtitle}</span>
+                    <span className="block truncate text-sm font-extrabold text-foreground">{result.title}</span>
+                    <span className="mt-1 block truncate text-xs text-muted-foreground">{result.subtitle}</span>
                   </span>
                   <ArrowRight className="size-4 text-primary" />
                 </Link>

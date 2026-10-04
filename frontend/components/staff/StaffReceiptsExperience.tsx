@@ -3,10 +3,13 @@
 import { userFacingErrorMessage } from "@/lib/user-facing-error";
 
 import { useCallback, useDeferredValue, useEffect, useRef, useState } from "react";
-import { Check, Eye, Trash2 } from "lucide-react";
+import { Check, Eye, RefreshCw, Trash2 } from "lucide-react";
 import { useRealtimeRefresh } from "@/components/realtime/RealtimeProvider";
 import { AssetIcon } from "@/components/ui/AssetIcon";
 import { Button } from "@/components/ui/button";
+import { FeedbackState } from "@/components/ui/FeedbackState";
+import { InlineAlert } from "@/components/ui/InlineAlert";
+import { Skeleton } from "@/components/ui/Skeleton";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import {
   getReceiptPageFromApi,
@@ -192,71 +195,90 @@ export function StaffReceiptsExperience() {
     void voidSelectedReceipt(receiptAction.row);
   };
 
+  const filtersActive = Boolean(search.trim()) || status !== "All" || paymentChannel !== "ALL";
+
   return (
     <div className="relative space-y-5">
       <PageHeading
         eyebrow="Receipt verification"
         title="Verify digital receipts"
         detail="Review completed reservation receipts and record official verification."
-        action={<Button variant="secondary" onClick={() => void loadReceipts()} disabled={loading}>Refresh</Button>}
+        action={(
+          <Button variant="secondary" onClick={() => void loadReceipts()} disabled={loading}>
+            <RefreshCw className={loading ? "size-4 animate-spin motion-reduce:animate-none" : "size-4"} aria-hidden="true" /> Refresh
+          </Button>
+        )}
       />
-      <Toolbar search={search} onSearch={setSearch} status={status} onStatus={setStatus} placeholder="Search receipt, student, reservation, or item" statuses={["Pending", "Verified", "Voided"]} />
-      <div className="flex flex-wrap items-center gap-3 rounded-lg border border-[#dce5dd] bg-white p-3 shadow-sm">
-        <span className="text-sm font-bold text-[#4f5c54]">Payment method</span>
-        <select
-          value={paymentChannel}
-          onChange={(event) => setPaymentChannel(event.target.value as typeof paymentChannel)}
-          className="h-11 min-w-[210px] rounded-md border border-[#d7e1d8] bg-white px-3 text-sm font-semibold outline-none focus:border-primary"
-        >
-          <option value="ALL">All Payments</option>
-          <option value="ONLINE_GCASH">Legacy GCash – Online</option>
-          <option value="AT_COMMISSARY">In-person payments</option>
-        </select>
-        <p className="text-xs text-[#718078]">Combines with the selected receipt status and search.</p>
-      </div>
-      {error ? <p className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p> : null}
+      <Toolbar search={search} onSearch={setSearch} status={status} onStatus={setStatus} placeholder="Search receipt, student, reservation, or item" statuses={["Pending", "Verified", "Voided"]}>
+        <label className="flex h-11 items-center gap-2 rounded-control border border-border-strong bg-white px-3 text-sm transition focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/15">
+          <span className="shrink-0 text-xs font-bold text-muted-foreground">Payment</span>
+          <select
+            value={paymentChannel}
+            onChange={(event) => setPaymentChannel(event.target.value as typeof paymentChannel)}
+            aria-label="Filter by payment method"
+            className="h-full min-w-0 flex-1 cursor-pointer bg-transparent font-semibold text-foreground outline-none"
+          >
+            <option value="ALL">All Payments</option>
+            <option value="ONLINE_GCASH">Legacy GCash – Online</option>
+            <option value="AT_COMMISSARY">In-person payments</option>
+          </select>
+        </label>
+      </Toolbar>
+      {error ? <InlineAlert onDismiss={() => setError("")}>{error}</InlineAlert> : null}
       {loading ? (
-        <div className="rounded-lg border border-[#dce5dd] bg-white p-6 text-sm font-semibold text-[#68746d] shadow-sm">Loading live receipt queue...</div>
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3" role="status" aria-busy="true">
+          <span className="sr-only">Loading live receipt queue...</span>
+          {Array.from({ length: 3 }).map((_, index) => (
+            <div key={index} className="space-y-4 rounded-xl border bg-card p-5 shadow-soft" aria-hidden="true">
+              <div className="flex items-center gap-3"><Skeleton className="size-10 rounded-lg" /><div className="flex-1 space-y-2"><Skeleton className="h-3.5 w-2/3" /><Skeleton className="h-3 w-1/2" /></div></div>
+              <Skeleton className="h-24 w-full" />
+              <Skeleton className="h-10 w-full" />
+            </div>
+          ))}
+        </div>
       ) : filtered.length ? (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {filtered.map((row) => (
-            <article key={row.id} className="content-visibility-auto rounded-lg border border-[#dce5dd] bg-white p-5 shadow-sm">
-              <div className="flex items-start gap-3">
-                <AssetIcon src="/assets/digital-receipts.svg" className="size-11" />
-                <div>
-                  <p className="font-extrabold">{row.code}</p>
-                  <p className="text-xs text-[#68746d]">{row.date}</p>
+            <article key={row.id} className="content-visibility-auto flex flex-col rounded-xl border bg-card shadow-soft">
+              <header className="flex items-start gap-3 border-b px-5 py-4">
+                <AssetIcon src="/assets/digital-receipts.svg" className="size-10" />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate font-mono font-extrabold text-foreground">{row.code}</p>
+                  <p className="text-xs text-muted-foreground">{row.date}</p>
                 </div>
-                <span className="ml-auto"><StatusBadge status={row.status} /></span>
-              </div>
-              <dl className="mt-5 grid grid-cols-[1fr_auto] gap-y-2 text-sm">
-                <dt className="text-[#68746d]">Buyer</dt>
-                <dd className="font-bold">{row.student}</dd>
-                <dt className="text-[#68746d]">Source</dt>
-                <dd className="font-bold">{row.reference}</dd>
-                <dt className="text-[#68746d]">Items</dt>
-                <dd className="text-right font-bold">{row.items}</dd>
-                <dt className="text-[#68746d]">Payment</dt>
-                <dd className="font-bold">{row.payment}</dd>
-                <dt className="text-[#68746d]">Total</dt>
-                <dd className="font-extrabold text-primary">PHP {row.total.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</dd>
+                <StatusBadge status={row.status} />
+              </header>
+              <dl className="grid flex-1 grid-cols-[auto_1fr] gap-x-4 gap-y-2 px-5 py-4 text-sm">
+                <dt className="text-muted-foreground">Buyer</dt>
+                <dd className="min-w-0 truncate text-right font-bold text-foreground">{row.student}</dd>
+                <dt className="text-muted-foreground">Source</dt>
+                <dd className="min-w-0 truncate text-right font-bold text-foreground">{row.reference}</dd>
+                <dt className="text-muted-foreground">Items</dt>
+                <dd className="min-w-0 text-right font-bold text-foreground">{row.items}</dd>
+                <dt className="text-muted-foreground">Payment</dt>
+                <dd className="min-w-0 truncate text-right font-bold text-foreground">{row.payment}</dd>
+                <div className="col-span-2 my-1 border-t" aria-hidden="true" />
+                <dt className="self-center font-bold text-foreground">Total</dt>
+                <dd className="text-right text-lg font-extrabold tabular-nums text-primary">PHP {row.total.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</dd>
               </dl>
-              <div className="mt-5 grid gap-2">
-                <Button variant="secondary" className="w-full" onClick={() => setSelectedReceipt(row)}>
-                  <Eye className="size-4" />
-                  Preview details
-                </Button>
-                {row.backendStatus === "PENDING" ? (
-                  <Button disabled={submittingId === row.id} className="w-full" onClick={() => askVerify(row)}>
-                    <Check className="size-4" />
-                    {submittingId === row.id ? "Verifying..." : "Verify receipt"}
+              <div className="grid gap-2 border-t bg-surface-subtle px-5 py-4">
+                <div className={row.backendStatus === "PENDING" ? "grid grid-cols-2 gap-2" : "grid gap-2"}>
+                  <Button variant="secondary" className="w-full" onClick={() => setSelectedReceipt(row)}>
+                    <Eye className="size-4" />
+                    Preview details
                   </Button>
-                ) : null}
+                  {row.backendStatus === "PENDING" ? (
+                    <Button disabled={submittingId === row.id} className="w-full" onClick={() => askVerify(row)}>
+                      <Check className="size-4" />
+                      {submittingId === row.id ? "Verifying..." : "Verify receipt"}
+                    </Button>
+                  ) : null}
+                </div>
                 {row.backendStatus !== "VOIDED" ? (
                   <Button
                     variant="ghost"
                     disabled={submittingId === row.id}
-                    className="w-full border border-red-200 bg-red-50 text-red-700 hover:bg-red-100"
+                    className="w-full text-danger hover:bg-danger/5"
                     onClick={() => askVoid(row)}
                   >
                     <Trash2 className="size-4" />
@@ -268,16 +290,19 @@ export function StaffReceiptsExperience() {
           ))}
         </div>
       ) : (
-        <div className="rounded-lg border border-[#dce5dd] bg-white p-6 text-sm font-semibold text-[#68746d] shadow-sm">
-          No matching receipts found.
-        </div>
+        <FeedbackState
+          kind="empty"
+          title="No matching receipts found"
+          description={filtersActive ? "Try another search, status, or payment filter." : "Receipts appear here after reservations and walk-in sales are completed."}
+          action={filtersActive ? <Button variant="secondary" size="sm" onClick={() => { setSearch(""); setStatus("All"); setPaymentChannel("ALL"); }}>Clear filters</Button> : undefined}
+        />
       )}
       {nextCursor ? (
         <div className="flex justify-center">
           <Button
             type="button"
             variant="secondary"
-            disabled={loadingMore}
+            loading={loadingMore}
             onClick={() => void loadReceipts({ cursor: nextCursor })}
           >
             {loadingMore ? "Loading more..." : "Load more receipts"}

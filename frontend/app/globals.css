@@ -32,6 +32,15 @@
   --radius-feature: 0.875rem;
   --shadow-surface: 0 1px 3px rgb(14 40 24 / 0.08);
   --shadow-overlay: 0 24px 70px rgb(10 28 18 / 0.22);
+  --info: 205 78% 36%;
+  --workspace-header: 4rem;
+  --workspace-sidebar: 16rem;
+}
+
+@media (min-width: 1024px) {
+  :root {
+    --workspace-header: 4.5rem;
+  }
 }
 
 * {

@@ -2368,6 +2368,47 @@ export async function getStaffUsersFromApi(token: string, signal?: AbortSignal) 
   return data.users;
 }
 
+export type StaffNotificationPreferences = {
+  lowStock: boolean;
+  reservations: boolean;
+  receipts: boolean;
+};
+
+export type StaffPickupGuidance = {
+  text: string;
+  updatedAt: string | null;
+  updatedBy: string | null;
+};
+
+export async function getStaffNotificationPreferencesFromApi(token: string, signal?: AbortSignal) {
+  return authApiFetch<{ preferences: StaffNotificationPreferences; updatedAt: string | null }>(
+    "/staff/settings/notification-preferences",
+    token,
+    { signal }
+  );
+}
+
+export async function updateStaffNotificationPreferencesFromApi(token: string, preferences: StaffNotificationPreferences) {
+  return authApiFetch<{ preferences: StaffNotificationPreferences; updatedAt: string | null }>(
+    "/staff/settings/notification-preferences",
+    token,
+    { method: "PUT", body: JSON.stringify(preferences) }
+  );
+}
+
+export async function getStaffPickupGuidanceFromApi(token: string, signal?: AbortSignal) {
+  const data = await authApiFetch<{ guidance: StaffPickupGuidance }>("/staff/settings/pickup-guidance", token, { signal });
+  return data.guidance;
+}
+
+export async function updateStaffPickupGuidanceFromApi(token: string, text: string) {
+  const data = await authApiFetch<{ guidance: StaffPickupGuidance }>("/staff/settings/pickup-guidance", token, {
+    method: "PUT",
+    body: JSON.stringify({ text })
+  });
+  return data.guidance;
+}
+
 export async function updateAdminUserRoleFromApi(token: string, userId: string, role: BackendAppRole) {
   const data = await authApiFetch<{ user: BackendAdminUser }>(`/admin/users/${userId}/role`, token, {
     method: "PATCH",

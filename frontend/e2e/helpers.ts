@@ -1,4 +1,4 @@
-import { expect, type Page } from "@playwright/test";
+import { expect, type Page, type Route } from "@playwright/test";
 
 export const TEST_PASSWORD = process.env.E2E_TEST_PASSWORD?.trim() ?? "";
 
@@ -79,4 +79,36 @@ export async function revokeQaSession(page: Page) {
       credentials: "include"
     }).catch(() => undefined);
   }).catch(() => undefined);
+}
+
+const EMPTY_STAFF_DASHBOARD_SUMMARY = {
+  dashboard: {
+    products: [],
+    reservations: [],
+    receipts: [],
+    metrics: { totalProducts: 0, itemsToRestock: 0, pendingReservations: 0, activeReservations: 0, receiptsToVerify: 0, openConversations: 0 }
+  }
+};
+
+const DEFAULT_PICKUP_GUIDANCE = {
+  guidance: {
+    text: "Reservations are held until the selected pickup schedule. Unclaimed items are released after one business day.",
+    updatedAt: null,
+    updatedBy: null
+  }
+};
+
+/** Answers the Staff/Admin shell's background requests (nav queue counts, shared pickup guidance). */
+export async function fulfillWorkspaceShellExtras(route: Route) {
+  const request = route.request();
+  if (request.method() !== "GET") return false;
+  const path = new URL(request.url()).pathname;
+  const body = path === "/api/backend/staff/dashboard/summary"
+    ? EMPTY_STAFF_DASHBOARD_SUMMARY
+    : path === "/api/backend/staff/settings/pickup-guidance"
+      ? DEFAULT_PICKUP_GUIDANCE
+      : null;
+  if (!body) return false;
+  await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
+  return true;
 }
