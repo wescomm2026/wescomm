@@ -59,6 +59,7 @@ test("PostgreSQL keeps walk-in creation and void idempotent and preserves exact 
 
     const input = {
       items: [{ productId, quantity: 2 }],
+      buyerName: "Walk-in Integration Student",
       studentId,
       cashReceived: 250,
       clientSaleId,
@@ -107,6 +108,7 @@ test("PostgreSQL keeps walk-in creation and void idempotent and preserves exact 
     await assert.rejects(
       recordWalkInSale({
         items: [{ productId: unverifiedProductId, quantity: 1 }],
+        buyerName: "Walk-in Integration Student",
         studentId,
         cashReceived: 50,
         clientSaleId: unverifiedClientSaleId,

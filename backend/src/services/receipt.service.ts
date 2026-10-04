@@ -56,6 +56,10 @@ type RawPublicReceipt = {
         quantity: number;
       }>
     | null;
+  walk_in_sale:
+    | { buyer_name_snapshot: string }
+    | Array<{ buyer_name_snapshot: string }>
+    | null;
 };
 
 const publicReceiptSelect = `
@@ -74,6 +78,9 @@ const publicReceiptSelect = `
   ),
   walk_in_sale_items:walk_in_sale_items(
     quantity
+  ),
+  walk_in_sale:walk_in_sales(
+    buyer_name_snapshot
   )
 `;
 
@@ -108,6 +115,7 @@ function publicVerificationUrl(encryptedToken: string | null) {
 function mapPublicReceipt(row: RawPublicReceipt) {
   const student = firstRow(row.student);
   const reservation = firstRow(row.reservation);
+  const walkInSale = firstRow(row.walk_in_sale);
   const itemSummary = summarizePublicReceiptItems(reservation?.items ?? row.walk_in_sale_items);
 
   return {
@@ -117,7 +125,7 @@ function mapPublicReceipt(row: RawPublicReceipt) {
     status: row.status,
     issuedAt: row.issued_at,
     student: {
-      displayName: maskPublicPersonName(student?.full_name),
+      displayName: maskPublicPersonName(student?.full_name ?? walkInSale?.buyer_name_snapshot),
       studentNumber: maskPublicStudentNumber(student?.student_number)
     },
     reservation: reservation
@@ -152,6 +160,7 @@ const receiptRecordSelect = Prisma.validator<Prisma.ReceiptSelect>()({
   updatedAt: true,
   student: { select: { id: true, fullName: true, email: true, studentNumber: true } },
   issuedBy: { select: { id: true, fullName: true, email: true, studentNumber: true } },
+  walkInSale: { select: { buyerNameSnapshot: true } },
   walkInSaleItems: {
     select: {
       id: true,
@@ -217,12 +226,15 @@ function mapPrismaReceipt(receipt: ReceiptRecord) {
     voidedAt: receipt.voidedAt?.toISOString() ?? null,
     createdAt: receipt.createdAt.toISOString(),
     updatedAt: receipt.updatedAt.toISOString(),
-    student: {
-      id: receipt.student.id,
-      fullName: receipt.student.fullName,
-      email: receipt.student.email,
-      studentNumber: receipt.student.studentNumber
-    },
+    buyerName: receipt.walkInSale?.buyerNameSnapshot ?? receipt.student?.fullName ?? null,
+    student: receipt.student
+      ? {
+          id: receipt.student.id,
+          fullName: receipt.student.fullName,
+          email: receipt.student.email,
+          studentNumber: receipt.student.studentNumber
+        }
+      : null,
     issuedBy: receipt.issuedBy
       ? {
           id: receipt.issuedBy.id,
@@ -301,6 +313,7 @@ export async function listReceipts(userId: string, role: AppRole, options: Recei
     where.OR = [
       { receiptCode: { contains: query, mode: "insensitive" } },
       { reservation: { is: { referenceCode: { contains: query, mode: "insensitive" } } } },
+      { walkInSale: { is: { buyerNameSnapshot: { contains: query, mode: "insensitive" } } } },
       ...(role === "STUDENT" ? [] : [{
         student: {
           is: {
@@ -356,6 +369,7 @@ export async function verifyReceiptToken(token: string) {
       status: true,
       issuedAt: true,
       student: { select: { fullName: true, studentNumber: true } },
+      walkInSale: { select: { buyerNameSnapshot: true } },
       reservation: {
         select: {
           referenceCode: true,
@@ -375,8 +389,8 @@ export async function verifyReceiptToken(token: string) {
     status: receipt.status,
     issuedAt: receipt.issuedAt.toISOString(),
     student: {
-      displayName: maskPublicPersonName(receipt.student.fullName),
-      studentNumber: maskPublicStudentNumber(receipt.student.studentNumber)
+      displayName: maskPublicPersonName(receipt.student?.fullName ?? receipt.walkInSale?.buyerNameSnapshot),
+      studentNumber: maskPublicStudentNumber(receipt.student?.studentNumber)
     },
     reservation: receipt.reservation
       ? {
@@ -454,7 +468,7 @@ export async function ensureReceiptForCompletedReservationInTransaction(
         entityId: receipt.id,
         payload: {
           actorId: input.issuedById,
-          studentId: receipt.studentId,
+          studentId: input.reservation.studentId,
           receiptCode: receipt.receiptCode,
           reservationId: input.reservation.id,
           referenceCode: input.reservation.referenceCode,
@@ -469,7 +483,7 @@ export async function ensureReceiptForCompletedReservationInTransaction(
       {
         topic: REALTIME_TOPICS.receipts,
         entityId: receipt.id,
-        audienceUserIds: [receipt.studentId],
+        audienceUserIds: [input.reservation.studentId],
         audienceRoles: ["STAFF", "ADMIN"],
         payload: { action: "created", status: receipt.status }
       },
@@ -571,7 +585,7 @@ async function updateReceiptStatusInTransaction(input: {
       {
         topic: REALTIME_TOPICS.receipts,
         entityId: receipt.id,
-        audienceUserIds: [receipt.studentId],
+        ...(receipt.studentId ? { audienceUserIds: [receipt.studentId] } : {}),
         audienceRoles: ["STAFF", "ADMIN"],
         payload: { action: "status-changed", previousStatus: current.status, nextStatus: input.nextStatus }
       },

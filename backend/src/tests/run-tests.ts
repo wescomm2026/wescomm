@@ -109,6 +109,7 @@ await import("./receipt-integrity.test.js");
 await import("./walk-in-sale.test.js");
 await import("./report-range.test.js");
 await import("./report-insights.test.js");
+await import("./sales-ledger.test.js");
 await import("./stock-alert-policy.test.js");
 await import("./reservation-bulk-confirmation.test.js");
 await import("./operations-v2-architecture.test.js");

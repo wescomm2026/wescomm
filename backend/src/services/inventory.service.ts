@@ -421,7 +421,11 @@ export async function listInventory(input: InventoryListOptions = {}) {
         OR: [
           { name: { contains: query, mode: "insensitive" } },
           { description: { contains: query, mode: "insensitive" } },
-          { category: { name: { contains: query, mode: "insensitive" } } }
+          { category: { name: { contains: query, mode: "insensitive" } } },
+          { aliases: { some: { alias: { contains: query, mode: "insensitive" } } } },
+          { variants: { some: { optionValue: { contains: query, mode: "insensitive" } } } },
+          { skus: { some: { code: { contains: query, mode: "insensitive" } } } },
+          { skus: { some: { optionValues: { some: { variant: { optionValue: { contains: query, mode: "insensitive" } } } } } } }
         ]
       } : {})
     },

@@ -7,6 +7,16 @@ function source(relativePath: string) {
   return readFileSync(path.resolve(process.cwd(), relativePath), "utf8");
 }
 
+test("walk-in POS catalog search covers inventory names, aliases, options, and SKU codes", () => {
+  const inventory = source("src/services/inventory.service.ts");
+
+  assert.match(inventory, /name: \{ contains: query, mode: "insensitive" \}/);
+  assert.match(inventory, /aliases: \{ some: \{ alias: \{ contains: query, mode: "insensitive" \} \} \}/);
+  assert.match(inventory, /variants: \{ some: \{ optionValue: \{ contains: query, mode: "insensitive" \} \} \}/);
+  assert.match(inventory, /skus: \{ some: \{ code: \{ contains: query, mode: "insensitive" \} \} \}/);
+  assert.match(inventory, /optionValues: \{ some: \{ variant: \{ optionValue: \{ contains: query, mode: "insensitive" \} \} \} \}/);
+});
+
 test("walk-in sale records require cash received server-side and persist tendered cash", () => {
   const routes = source("src/routes/walk-in-sales.routes.ts");
   const service = source("src/services/walk-in-sale.service.ts");
@@ -32,7 +42,24 @@ test("walk-in sale creation is idempotent per client sale key and cashier", () =
   assert.match(service, /existing\.cashierId !== input\.performedById/);
   assert.match(service, /replayed: true/);
   assert.match(service, /replayExistingSale\(clientSaleId, input\.performedById, requestFingerprint\)/);
-  assert.match(service, /if \(!result\.replayed\) \{\s*await createNotificationBestEffort/);
+  assert.match(service, /if \(!result\.replayed\) \{\s*if \(mappedReceipt\.studentId\) \{\s*await createNotificationBestEffort/);
+});
+
+test("walk-in buyers may use a typed name without a WESCOMM student account", () => {
+  const routes = source("src/routes/walk-in-sales.routes.ts");
+  const service = source("src/services/walk-in-sale.service.ts");
+  const schema = source("prisma/schema.prisma");
+  const migration = source("prisma/migrations/20261004000000_allow_guest_walk_in_buyers/migration.sql");
+
+  assert.match(routes, /buyerName: z\.string\(\)\.trim\(\)\.min\(2\)\.max\(120\)/);
+  assert.match(routes, /studentId: z\.string\(\)\.uuid\(\)\.nullish\(\)/);
+  assert.match(service, /buyerNameSnapshot: buyerName/);
+  assert.match(service, /if \(mappedReceipt\.studentId\)/);
+  assert.match(schema, /studentId\s+String\?\s+@map\("student_id"\)/);
+  assert.match(schema, /buyerNameSnapshot\s+String\s+@map\("buyer_name_snapshot"\)/);
+  assert.match(migration, /ALTER COLUMN "student_id" DROP NOT NULL/);
+  assert.match(migration, /ADD COLUMN "buyer_name_snapshot" TEXT/);
+  assert.match(migration, /receipts_reservation_requires_student_check/);
 });
 
 test("walk-in sale returns the freshly selected receipt with line items, not the pre-item stale object", () => {

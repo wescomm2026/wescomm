@@ -42,6 +42,7 @@ export default defineConfig({
       ...process.env,
       NEXT_PUBLIC_ENABLE_DEV_LOGIN: "true",
       NEXT_PUBLIC_E2E_TEST: "true",
+      NEXT_PUBLIC_REQUIRE_STUDENT_ONBOARDING: "false",
       E2E_WORKSPACE_BYPASS_TOKEN: "playwright-release-contracts",
       NEXT_PUBLIC_API_URL: "/api/backend",
       BACKEND_API_URL: "http://127.0.0.1:1/api",

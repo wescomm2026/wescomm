@@ -48,6 +48,10 @@ import {
 import { cn } from "@/lib/utils";
 import { currentCheckoutPolicyAcceptance } from "@/lib/policy-consent";
 import { isPickupRecoveryError, pickupRecoveryMessage } from "@/lib/pickup-errors";
+import {
+  type ReservationSaveState,
+  waitForReservationSavingFeedback
+} from "@/lib/reservation-save-state";
 
 export type CheckoutProduct = {
   id?: string;
@@ -118,6 +122,7 @@ export function StudentCheckoutModal({
   const [selectedOptions, setSelectedOptions] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [saveState, setSaveState] = useState<ReservationSaveState>("idle");
   const [savedReservation, setSavedReservation] = useState<Pick<BackendReservation, "id" | "referenceCode"> | null>(null);
   const submittingRef = useRef(false);
   const stepHeadingRef = useRef<HTMLHeadingElement | null>(null);
@@ -144,6 +149,7 @@ export function StudentCheckoutModal({
     setSelectedOptions({});
     setError("");
     setSubmitting(false);
+    setSaveState("idle");
     setSavedReservation(null);
     pendingRequestRef.current = null;
   }, [productId]);
@@ -248,13 +254,17 @@ export function StudentCheckoutModal({
 
     submittingRef.current = true;
     setSubmitting(true);
+    setSaveState("saving");
+    const savingStartedAt = Date.now();
     try {
       const reservation = await createReservationFromApi(user.accessToken, payload, requestIdentity.key);
       upsertCursorItem(reservationCacheKey(user.id), reservation, true);
       clearReservationRequestIdentity(user.id, requestIdentity);
       pendingRequestRef.current = null;
       requestProductsRefresh();
+      await waitForReservationSavingFeedback(savingStartedAt);
       setSavedReservation({ id: reservation.id, referenceCode: reservation.referenceCode });
+      setSaveState("saved");
     } catch (reservationError) {
       if (reservationError instanceof Error && "code" in reservationError && reservationError.code === "RESERVATION_ACCESS_SUSPENDED") {
         window.dispatchEvent(new Event("wescomm:restriction-refresh"));
@@ -265,8 +275,12 @@ export function StudentCheckoutModal({
         setPickupSummary(null);
         setPickupRefreshKey((current) => current + 1);
         setError(pickupRecoveryMessage(reservationError));
+        setSaveState("idle");
       } else {
-        setError(userFacingErrorMessage(reservationError, "Unable to submit reservation."));
+        const message = userFacingErrorMessage(reservationError, "Unable to submit reservation.");
+        await waitForReservationSavingFeedback(savingStartedAt);
+        setError(message);
+        setSaveState("failed");
       }
     } finally {
       submittingRef.current = false;
@@ -276,7 +290,7 @@ export function StudentCheckoutModal({
 
   if (!mounted || !product) return null;
 
-  const savingReservation = submitting && !savedReservation;
+  const savingReservation = saveState === "saving";
   const saveHeadingId = `${checkoutDialog.titleId}-save`;
   const viewSavedReservation = () => {
     if (!savedReservation) return;
@@ -286,11 +300,11 @@ export function StudentCheckoutModal({
 
   return createPortal(
     <div className="fixed inset-0 z-[9000] grid place-items-center overflow-y-auto bg-foreground/55 p-0 backdrop-blur-sm sm:p-6" role="presentation" onMouseDown={(event) => { if (!submitting && event.target === event.currentTarget) onClose(); }}>
-      <section ref={checkoutDialog.dialogRef} {...checkoutDialog.dialogProps} aria-labelledby={savingReservation || savedReservation ? saveHeadingId : checkoutDialog.titleId} className="relative flex h-[100svh] w-full flex-col overflow-hidden border bg-white shadow-overlay outline-none sm:h-auto sm:max-h-[calc(100svh-48px)] sm:max-w-5xl sm:rounded-feature">
+      <section ref={checkoutDialog.dialogRef} {...checkoutDialog.dialogProps} aria-labelledby={saveState !== "idle" ? saveHeadingId : checkoutDialog.titleId} className="relative flex h-[100svh] w-full flex-col overflow-hidden border bg-white shadow-overlay outline-none sm:h-auto sm:max-h-[calc(100svh-48px)] sm:max-w-5xl sm:rounded-feature">
         <Button type="button" variant="secondary" size="icon" onClick={onClose} disabled={submitting} aria-label="Close checkout" className="absolute right-4 top-4 z-20 size-11 rounded-xl"><X className="size-6" /></Button>
 
         <>
-          <form className="relative flex min-h-0 flex-1 flex-col" onSubmit={confirmReservation} inert={savingReservation || Boolean(savedReservation)}>
+          <form className="relative flex min-h-0 flex-1 flex-col" onSubmit={confirmReservation} inert={saveState !== "idle"} aria-hidden={saveState !== "idle" || undefined}>
             <header className="shrink-0 border-b px-5 pb-5 pt-6 sm:px-8">
               <p className="text-sm font-extrabold uppercase tracking-wide text-primary">Reserve item</p>
               <h1 ref={stepHeadingRef} id={checkoutDialog.titleId} tabIndex={-1} className="mt-1 pr-12 text-2xl font-extrabold text-foreground outline-none sm:text-3xl" data-dialog-autofocus={savingReservation || savedReservation ? undefined : true}>
@@ -363,10 +377,12 @@ export function StudentCheckoutModal({
           </form>
           <ReservationSaveOverlay
             headingId={saveHeadingId}
-            saving={savingReservation}
+            state={saveState}
             reservation={savedReservation}
+            error={error}
             onView={viewSavedReservation}
             onDone={onClose}
+            onReview={() => setSaveState("idle")}
           />
         </>
       </section>

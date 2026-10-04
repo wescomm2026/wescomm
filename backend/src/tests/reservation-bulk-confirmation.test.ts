@@ -25,6 +25,7 @@ test("filtered bulk previews select from eligible rows so permanent blockers can
 
 test("student queue positions are schedule-scoped, eligibility-aware, and oldest-first", () => {
   const source = readFileSync(path.resolve(process.cwd(), "src/services/reservation.service.ts"), "utf8");
+  assert.match(source, /reservationIds\.map\(\(reservationId\) => Prisma\.sql`\$\{reservationId\}::uuid`\)/);
   assert.match(source, /queued\.pickup_start = target\.pickup_start/);
   assert.match(source, /queued\.pickup_time_slot_id IS NOT DISTINCT FROM target\.pickup_time_slot_id/);
   assert.match(source, /queued\.pickup_review_status <> 'NEEDS_REVIEW'/);

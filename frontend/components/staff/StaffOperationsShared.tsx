@@ -369,17 +369,20 @@ export function formatStaffReceiptDate(value: string) {
 
 export function mapStaffReceipt(row: BackendReceipt): StaffReceiptRow {
   const receiptItems = row.reservation?.items ?? [];
-  const itemNames = receiptItems.map((item) => item.product?.name ?? "Campus Item");
+  const walkInItems = row.walkInSaleItems ?? [];
+  const itemNames = receiptItems.length
+    ? receiptItems.map((item) => item.product?.name ?? "Campus Item")
+    : walkInItems.map((item) => item.productName);
 
   return {
     id: row.id,
     code: row.receiptCode,
-    student: row.student?.fullName || row.student?.email || "Student",
+    student: row.buyerName || row.student?.fullName || row.student?.email || "Walk-in buyer",
     date: formatStaffReceiptDate(row.issuedAt || row.createdAt),
-    reference: row.reservation?.referenceCode ?? "Manual receipt",
+    reference: row.reservation?.referenceCode ?? (walkInItems.length ? "Walk-in sale" : "Manual receipt"),
     payment: formatPaymentMethod(row.paymentMethod),
     items: itemNames.length > 1 ? `${itemNames[0]} + ${itemNames.length - 1} more` : itemNames[0] ?? "Manual transaction",
-    itemCount: receiptItems.reduce((total, item) => total + item.quantity, 0),
+    itemCount: [...receiptItems, ...walkInItems].reduce((total, item) => total + item.quantity, 0),
     total: Number(row.totalAmount),
     status: formatStaffReceiptStatus(row.status),
     backendStatus: row.status,

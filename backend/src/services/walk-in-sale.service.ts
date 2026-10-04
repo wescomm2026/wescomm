@@ -28,7 +28,8 @@ export type WalkInSaleItemInput = {
 
 export type WalkInSaleInput = {
   items: WalkInSaleItemInput[];
-  studentId: string;
+  buyerName: string;
+  studentId?: string | null;
   receiptCode?: string | null;
   cashReceived: number;
   clientSaleId: string;
@@ -70,6 +71,7 @@ const walkInReceiptSelect = Prisma.validator<Prisma.ReceiptSelect>()({
       changeDue: true,
       cashierId: true,
       cashierNameSnapshot: true,
+      buyerNameSnapshot: true,
       clientSaleId: true,
       voidedById: true,
       voidReason: true,
@@ -89,6 +91,7 @@ function roundToCentavos(value: number) {
 }
 
 function mapWalkInReceipt(row: WalkInReceiptRecord) {
+  const buyerName = row.walkInSale?.buyerNameSnapshot ?? row.student?.fullName ?? "Walk-in buyer";
   return {
     id: row.id,
     receiptCode: row.receiptCode,
@@ -101,12 +104,15 @@ function mapWalkInReceipt(row: WalkInReceiptRecord) {
     voidedAt: row.voidedAt?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
-    student: {
-      id: row.student.id,
-      fullName: row.student.fullName,
-      email: row.student.email,
-      studentNumber: row.student.studentNumber
-    },
+    buyerName,
+    student: row.student
+      ? {
+          id: row.student.id,
+          fullName: row.student.fullName,
+          email: row.student.email,
+          studentNumber: row.student.studentNumber
+        }
+      : null,
     issuedBy: row.issuedBy
       ? { id: row.issuedBy.id, fullName: row.issuedBy.fullName }
       : null,
@@ -184,11 +190,16 @@ function saleRequestFingerprint(input: WalkInSaleInput, items: WalkInSaleItemInp
     ? roundToCentavos(input.cashReceived).toFixed(2)
     : String(input.cashReceived);
   return createHash("sha256").update(JSON.stringify({
-    studentId: input.studentId,
+    buyerName: normalizeBuyerName(input.buyerName),
+    studentId: input.studentId ?? null,
     receiptCode: input.receiptCode?.trim().toUpperCase() || null,
     cashReceived,
     items
   })).digest("hex");
+}
+
+function normalizeBuyerName(value: string) {
+  return value.trim().replace(/\s+/g, " ");
 }
 
 async function replayExistingSale(
@@ -216,7 +227,12 @@ async function replayExistingSale(
     select: walkInReceiptSelect
   });
   if (!row) return null;
-  return { receipt: row, replayed: true, productStates: new Map(), studentName: row.student.fullName };
+  return {
+    receipt: row,
+    replayed: true,
+    productStates: new Map(),
+    buyerName: row.walkInSale?.buyerNameSnapshot ?? row.student?.fullName ?? "Walk-in buyer"
+  };
 }
 
 type RecordWalkInSaleProductState = {
@@ -231,10 +247,14 @@ type RecordWalkInSaleResult = {
   receipt: WalkInReceiptRecord;
   replayed: boolean;
   productStates: Map<string, RecordWalkInSaleProductState>;
-  studentName: string;
+  buyerName: string;
 };
 
 export async function recordWalkInSale(input: WalkInSaleInput) {
+  const requestedBuyerName = normalizeBuyerName(input.buyerName);
+  if (requestedBuyerName.length < 2 || requestedBuyerName.length > 120) {
+    throw new HttpError(400, "Enter a buyer name between 2 and 120 characters.", "INVALID_BUYER_NAME");
+  }
   const receiptCode = input.receiptCode?.trim().toUpperCase() || createReceiptCode();
   const items = normalizeSaleItems(input.items);
   const clientSaleId = input.clientSaleId.trim();
@@ -264,15 +284,23 @@ export async function recordWalkInSale(input: WalkInSaleInput) {
             select: walkInReceiptSelect
           });
           if (!replayed) throw new HttpError(409, "The original sale for this key no longer exists.", "DUPLICATE_SALE_KEY");
-          return { receipt: replayed, replayed: true, productStates: new Map(), studentName: replayed.student.fullName };
+          return {
+            receipt: replayed,
+            replayed: true,
+            productStates: new Map(),
+            buyerName: replayed.walkInSale?.buyerNameSnapshot ?? replayed.student?.fullName ?? "Walk-in buyer"
+          };
         }
       }
 
-      const student = await tx.profile.findFirst({
-        where: { id: input.studentId, role: "STUDENT" },
-        select: { id: true, fullName: true }
-      });
-      if (!student) throw new HttpError(404, "Student not found.");
+      const student = input.studentId
+        ? await tx.profile.findFirst({
+            where: { id: input.studentId, role: "STUDENT" },
+            select: { id: true, fullName: true }
+          })
+        : null;
+      if (input.studentId && !student) throw new HttpError(404, "The selected student account was not found.");
+      const buyerName = student?.fullName || requestedBuyerName;
 
       const productIds = Array.from(new Set(items.map((item) => item.productId))).sort();
       for (const productId of productIds) {
@@ -459,7 +487,7 @@ export async function recordWalkInSale(input: WalkInSaleInput) {
       const receipt = await tx.receipt.create({
         data: {
           receiptCode,
-          studentId: input.studentId,
+          studentId: student?.id ?? null,
           totalAmount: new Prisma.Decimal(totalAmount),
           paymentMethod: "CASH",
           status: "VERIFIED",
@@ -480,7 +508,8 @@ export async function recordWalkInSale(input: WalkInSaleInput) {
       const sale = await tx.walkInSale.create({
         data: {
           receiptId: receipt.id,
-          studentId: input.studentId,
+          studentId: student?.id ?? null,
+          buyerNameSnapshot: buyerName,
           cashierId: input.performedById,
           cashierNameSnapshot: cashier?.fullName ?? "Staff",
           clientSaleId,
@@ -569,7 +598,7 @@ export async function recordWalkInSale(input: WalkInSaleInput) {
         {
           topic: REALTIME_TOPICS.receipts,
           entityId: receipt.id,
-          audienceUserIds: [input.studentId],
+          ...(student ? { audienceUserIds: [student.id] } : {}),
           audienceRoles: ["STAFF", "ADMIN"],
           payload: { action: "created", status: "VERIFIED" }
         },
@@ -591,7 +620,7 @@ export async function recordWalkInSale(input: WalkInSaleInput) {
         where: { id: receipt.id },
         select: walkInReceiptSelect
       });
-      return { receipt: fresh!, replayed: false, productStates: updatedProductStates, studentName: student.fullName };
+      return { receipt: fresh!, replayed: false, productStates: updatedProductStates, buyerName };
     }, INVENTORY_WRITE_TRANSACTION_OPTIONS)
     .catch(async (error) => {
       if (isUniqueViolation(error) && clientSaleId) {
@@ -604,23 +633,26 @@ export async function recordWalkInSale(input: WalkInSaleInput) {
   const mappedReceipt = mapWalkInReceipt(result.receipt);
 
   if (!result.replayed) {
-    await createNotificationBestEffort({
-      userId: mappedReceipt.studentId,
-      type: "RECEIPT",
-      title: "Walk-in purchase recorded",
-      message: `Your purchase ${mappedReceipt.receiptCode} totaling PHP ${mappedReceipt.totalAmount} has been recorded.`,
-      actionUrl: "/student/receipts"
-    });
+    if (mappedReceipt.studentId) {
+      await createNotificationBestEffort({
+        userId: mappedReceipt.studentId,
+        type: "RECEIPT",
+        title: "Walk-in purchase recorded",
+        message: `Your purchase ${mappedReceipt.receiptCode} totaling PHP ${mappedReceipt.totalAmount} has been recorded.`,
+        actionUrl: "/student/receipts"
+      });
+    }
 
     await safelyRecordAuditLog({
       actorId: input.performedById,
       action: "WALK_IN_SALE_RECORDED",
       entityType: "receipt",
       entityId: mappedReceipt.id,
-      summary: `Recorded walk-in sale ${mappedReceipt.receiptCode} for ${result.studentName}.`,
+      summary: `Recorded walk-in sale ${mappedReceipt.receiptCode} for ${result.buyerName}.`,
       metadata: {
         receiptCode: mappedReceipt.receiptCode,
-        studentId: input.studentId,
+        buyerName: result.buyerName,
+        studentId: input.studentId ?? null,
         totalAmount: mappedReceipt.totalAmount,
         itemCount: mappedReceipt.items.length,
         cashReceived: input.cashReceived,
@@ -671,6 +703,7 @@ export async function listWalkInSales(options: WalkInSaleListOptions = {}) {
       ...(query ? {
         OR: [
           { receiptCode: { contains: query, mode: "insensitive" } },
+          { walkInSale: { is: { buyerNameSnapshot: { contains: query, mode: "insensitive" } } } },
           { student: { is: { fullName: { contains: query, mode: "insensitive" as const } } } },
           { student: { is: { studentNumber: { contains: query, mode: "insensitive" as const } } } },
           { walkInSaleItems: { some: { productNameSnapshot: { contains: query, mode: "insensitive" } } } }
@@ -877,7 +910,7 @@ export async function voidWalkInSale(input: { receiptId: string; reason: string;
         {
           topic: REALTIME_TOPICS.receipts,
           entityId: receipt.id,
-          audienceUserIds: [receipt.studentId],
+          ...(receipt.studentId ? { audienceUserIds: [receipt.studentId] } : {}),
           audienceRoles: ["STAFF", "ADMIN"],
           payload: { action: "status-changed", previousStatus, nextStatus: "VOIDED" }
         },

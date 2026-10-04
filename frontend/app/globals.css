@@ -229,3 +229,54 @@ html:not([data-wescomm-intro="pending"]) .welcome-gate-overlay {
     background: #fbfbfb;
   }
 }
+
+@media print {
+  body * {
+    visibility: hidden;
+  }
+
+  #sales-report-print-area,
+  #sales-report-print-area * {
+    visibility: visible;
+  }
+
+  #sales-report-print-area {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    margin: 0;
+    border: none !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
+  #sales-report-print-area table {
+    font-size: 9pt;
+    width: 100%;
+  }
+
+  #sales-report-print-area thead {
+    display: table-header-group;
+  }
+
+  #sales-report-print-area tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  #sales-report-print-area th,
+  #sales-report-print-area td {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  @page {
+    size: A4 landscape;
+    margin: 10mm;
+  }
+}

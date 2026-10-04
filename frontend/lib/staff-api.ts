@@ -468,7 +468,8 @@ export type WalkInReceiptItem = {
 export type WalkInReceipt = {
   id: string;
   receiptCode: string;
-  studentId: string;
+  studentId: string | null;
+  buyerName: string;
   totalAmount: string;
   paymentMethod: string;
   status: "PENDING" | "VERIFIED" | "VOIDED";
@@ -482,7 +483,7 @@ export type WalkInReceipt = {
     fullName: string;
     email: string;
     studentNumber: string | null;
-  };
+  } | null;
   issuedBy: { id: string; fullName: string } | null;
   sale: {
     cashTendered: string;
@@ -501,7 +502,8 @@ export async function recordWalkInSale(
   token: string,
   payload: {
     items: WalkInSaleItemPayload[];
-    studentId: string;
+    buyerName: string;
+    studentId?: string;
     receiptCode?: string;
     cashReceived: number;
     clientSaleId: string;

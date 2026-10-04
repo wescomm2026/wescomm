@@ -260,10 +260,10 @@ export function PublicReceiptVerification() {
 
           <dl className="grid sm:grid-cols-2">
             <div className="border-b p-5 sm:border-r sm:p-6">
-              <dt className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Masked student</dt>
+              <dt className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Masked buyer</dt>
               <dd className="mt-2 font-extrabold text-foreground">{receipt.student.displayName}</dd>
               <dd className="mt-1 font-mono text-sm font-semibold text-muted-foreground">
-                {receipt.student.studentNumber ?? "Student number unavailable"}
+                {receipt.student.studentNumber ?? "No linked student number"}
               </dd>
             </div>
             <div className="border-b p-5 sm:p-6">

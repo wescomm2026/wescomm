@@ -46,6 +46,10 @@ import {
 } from "@/lib/reservation-idempotency";
 import { currentCheckoutPolicyAcceptance } from "@/lib/policy-consent";
 import { isPickupRecoveryError, pickupRecoveryMessage } from "@/lib/pickup-errors";
+import {
+  type ReservationSaveState,
+  waitForReservationSavingFeedback
+} from "@/lib/reservation-save-state";
 
 function parsePrice(price: string) {
   return Number(price.replace(/[^0-9.]/g, ""));
@@ -93,6 +97,7 @@ export function StudentCartDrawer() {
   const [notes, setNotes] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [saveState, setSaveState] = useState<ReservationSaveState>("idle");
   const [savedReservation, setSavedReservation] = useState<Pick<BackendReservation, "id" | "referenceCode"> | null>(null);
   const submittingRef = useRef(false);
   const pendingRequestRef = useRef<PendingReservationRequest | null>(null);
@@ -117,6 +122,7 @@ export function StudentCartDrawer() {
       setNotes("");
       setError("");
       setSubmitting(false);
+      setSaveState("idle");
       setSavedReservation(null);
       pendingRequestRef.current = null;
     }
@@ -243,6 +249,8 @@ export function StudentCartDrawer() {
 
     submittingRef.current = true;
     setSubmitting(true);
+    setSaveState("saving");
+    const savingStartedAt = Date.now();
     try {
       const reservation = await createReservationFromApi(user.accessToken, payload, requestIdentity.key);
 
@@ -251,7 +259,9 @@ export function StudentCartDrawer() {
       clearCart();
       pendingRequestRef.current = null;
       requestProductsRefresh();
+      await waitForReservationSavingFeedback(savingStartedAt);
       setSavedReservation({ id: reservation.id, referenceCode: reservation.referenceCode });
+      setSaveState("saved");
     } catch (reservationError) {
       if (reservationError instanceof Error && "code" in reservationError && reservationError.code === "RESERVATION_ACCESS_SUSPENDED") {
         window.dispatchEvent(new Event("wescomm:restriction-refresh"));
@@ -262,8 +272,12 @@ export function StudentCartDrawer() {
         setPickupSummary(null);
         setPickupRefreshKey((current) => current + 1);
         setError(pickupRecoveryMessage(reservationError));
+        setSaveState("idle");
       } else {
-        setError(userFacingErrorMessage(reservationError, "Unable to submit cart reservation."));
+        const message = userFacingErrorMessage(reservationError, "Unable to submit cart reservation.");
+        await waitForReservationSavingFeedback(savingStartedAt);
+        setError(message);
+        setSaveState("failed");
       }
     } finally {
       submittingRef.current = false;
@@ -273,7 +287,7 @@ export function StudentCartDrawer() {
 
   if (!mounted || !open) return null;
 
-  const savingReservation = submitting && !savedReservation;
+  const savingReservation = saveState === "saving";
   const saveHeadingId = `${cartDialog.titleId}-save`;
   const viewSavedReservation = () => {
     if (!savedReservation) return;
@@ -288,7 +302,7 @@ export function StudentCartDrawer() {
       <aside
         ref={cartDialog.dialogRef}
         {...cartDialog.dialogProps}
-        aria-labelledby={savingReservation || savedReservation ? saveHeadingId : cartDialog.titleId}
+        aria-labelledby={saveState !== "idle" ? saveHeadingId : cartDialog.titleId}
         className="relative ml-auto flex h-[100svh] w-full max-w-[520px] flex-col bg-white shadow-[-24px_0_70px_rgba(0,0,0,0.22)]"
       >
         <header className="flex h-20 shrink-0 items-center border-b border-[#e4ebe5] px-5 sm:px-6">
@@ -312,7 +326,7 @@ export function StudentCartDrawer() {
 
         {checkout ? (
           <>
-          <form className="relative flex min-h-0 flex-1 flex-col" onSubmit={confirmCart} inert={savingReservation || Boolean(savedReservation)}>
+          <form className="relative flex min-h-0 flex-1 flex-col" onSubmit={confirmCart} inert={saveState !== "idle"} aria-hidden={saveState !== "idle" || undefined}>
             <div className="shrink-0 border-b px-5 pb-4 sm:px-6"><CartCheckoutSteps step={checkoutStep} /></div>
             <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-5 sm:p-6">
               {checkoutStep === 1 ? (
@@ -371,10 +385,12 @@ export function StudentCartDrawer() {
           </form>
           <ReservationSaveOverlay
             headingId={saveHeadingId}
-            saving={savingReservation}
+            state={saveState}
             reservation={savedReservation}
+            error={error}
             onView={viewSavedReservation}
             onDone={closeCart}
+            onReview={() => setSaveState("idle")}
           />
           </>
         ) : items.length ? (

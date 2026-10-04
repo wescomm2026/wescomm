@@ -42,8 +42,8 @@ export function StaffReservationsExperience() {
   const confirm = useConfirmationDialog();
   const [rows, setRows] = useState<StaffReservationRow[]>([]);
   const [search, setSearch] = useState("");
-  // This is an operations queue: surface the actionable pending work first.
-  const [status, setStatus] = useState("Pending");
+  // Keep the full workflow visible by default so a successful transition does not look like data loss.
+  const [status, setStatus] = useState("All");
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -333,7 +333,7 @@ export function StaffReservationsExperience() {
         detail="Confirm requests and prepare scheduled pickups from live student checkout data."
         action={<div className="flex flex-wrap gap-2"><Button variant="secondary" onClick={() => void loadReservations()} disabled={loading || Boolean(submittingId) || bulkSubmitting}>Refresh</Button>{status === "Pending" ? <Button onClick={() => void confirmBulk()} disabled={loading || bulkSubmitting}><CheckCheck className="size-4" />{bulkSubmitting ? "Checking queue..." : "Confirm all eligible"}</Button> : null}</div>}
       />
-      <Toolbar search={search} onSearch={(value) => { setSearch(value); setSelectedPendingIds(new Set()); }} status={status} onStatus={(value) => { setStatus(value); setSelectedPendingIds(new Set()); }} placeholder="Search reference, student, or item" statuses={["Pending", "Confirmed", "Ready for Pick-up", "Completed", "Cancelled", "No-show"]} />
+      <Toolbar search={search} onSearch={(value) => { setSearch(value); setSelectedPendingIds(new Set()); }} status={status} onStatus={(value) => { setStatus(value); setSelectedPendingIds(new Set()); }} placeholder="Search reference, student, or item" statuses={["All", "Pending", "Confirmed", "Ready for Pick-up", "Completed", "Cancelled", "No-show"]} />
       {status === "Pending" ? (
         <section className="flex flex-col gap-3 rounded-lg border border-border bg-white p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between" aria-label="Bulk reservation confirmation">
           <div><p className="text-sm font-extrabold text-foreground">Bulk confirmation</p><p className="mt-1 text-xs leading-5 text-muted-foreground">Only eligible Pending reservations are included. Schedule-review and unconfirmed historical-payment records stay untouched.</p></div>
