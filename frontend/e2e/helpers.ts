@@ -112,3 +112,38 @@ export async function fulfillWorkspaceShellExtras(route: Route) {
   await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
   return true;
 }
+
+/**
+ * Mocks GET /student/overview for student pages. Counts are derived from the spec's own
+ * fixtures so tab counts and totals stay consistent with the mocked lists.
+ */
+export async function fulfillStudentOverview(
+  route: Route,
+  reservations: Array<{ status: string }> = [],
+  receipts: Array<{ status: string }> = []
+) {
+  if (new URL(route.request().url()).pathname !== "/api/backend/student/overview") return false;
+  const reservationCounts: Record<string, number> = { PENDING: 0, CONFIRMED: 0, READY_FOR_PICKUP: 0, COMPLETED: 0, CANCELLED: 0, NO_SHOW: 0 };
+  for (const reservation of reservations) reservationCounts[reservation.status] = (reservationCounts[reservation.status] ?? 0) + 1;
+  const receiptCounts: Record<string, number> = { PENDING: 0, VERIFIED: 0, VOIDED: 0 };
+  for (const receipt of receipts) receiptCounts[receipt.status] = (receiptCounts[receipt.status] ?? 0) + 1;
+  await route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({
+      overview: {
+        generatedAt: new Date().toISOString(),
+        reservations: {
+          ...reservationCounts,
+          total: reservations.length,
+          active: reservationCounts.PENDING + reservationCounts.CONFIRMED + reservationCounts.READY_FOR_PICKUP
+        },
+        receipts: { ...receiptCounts, total: receipts.length },
+        spentThisMonth: 0,
+        nextPickup: null,
+        pickupGuidance: null
+      }
+    })
+  });
+  return true;
+}

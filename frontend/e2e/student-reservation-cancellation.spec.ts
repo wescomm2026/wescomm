@@ -1,6 +1,6 @@
 import { expect, test, type Route } from "@playwright/test";
 import type { BackendReservation } from "../lib/api";
-import { dismissWelcomeGate } from "./helpers";
+import { dismissWelcomeGate, fulfillStudentOverview } from "./helpers";
 
 const student = {
   id: "91000000-0000-4000-8000-000000000001",
@@ -88,6 +88,7 @@ test("student cancellation follows pending and paid GCash rules", async ({ page 
   await page.route("**/api/backend/**", async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
+    if (await fulfillStudentOverview(route)) return;
 
     if (path === "/api/backend/auth/me") return json(route, { profile: student });
     if (path === "/api/backend/reservations" && request.method() === "GET") {

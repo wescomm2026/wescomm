@@ -2378,3 +2378,28 @@ export async function getAdminAuditLogsFromApi(
     nextCursor: data.nextCursor ?? null
   };
 }
+
+export type StudentOverview = {
+  generatedAt: string;
+  reservations: Record<BackendReservationStatus, number> & { total: number; active: number };
+  receipts: Record<BackendReceiptStatus, number> & { total: number };
+  spentThisMonth: number;
+  nextPickup: {
+    id: string;
+    referenceCode: string;
+    status: BackendReservationStatus;
+    pickupStart: string | null;
+    pickupEnd: string | null;
+    needsScheduleReview: boolean;
+    slotLabel: string | null;
+    totalAmount: number;
+    itemCount: number;
+    items: Array<{ name: string; quantity: number }>;
+  } | null;
+  pickupGuidance: string | null;
+};
+
+export async function getStudentOverviewFromApi(token: string, signal?: AbortSignal) {
+  const data = await authApiFetch<{ overview: StudentOverview }>("/student/overview", token, { signal });
+  return data.overview;
+}

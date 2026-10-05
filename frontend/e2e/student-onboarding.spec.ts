@@ -1,5 +1,5 @@
 import { expect, test, type Route } from "@playwright/test";
-import { dismissWelcomeGate } from "./helpers";
+import { dismissWelcomeGate, fulfillStudentOverview } from "./helpers";
 
 const studentId = "87000000-0000-4000-8000-000000000001";
 const departmentId = "87000000-0000-4000-8000-000000000002";
@@ -28,6 +28,7 @@ test("first-login onboarding requires Department and Student ID and permits opti
   await page.route("**/api/backend/**", async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
+    if (await fulfillStudentOverview(route)) return;
     if (path === "/api/backend/auth/me") return json(route, { profile: incompleteProfile });
     if (path === "/api/backend/auth/departments") return json(route, { departments: [{ id: departmentId, code: "CON", groupName: "College", displayName: "College of Nursing (CON)" }] });
     if (path === "/api/backend/auth/onboarding" && request.method() === "POST") {

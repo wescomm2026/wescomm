@@ -6,6 +6,9 @@ import { useEffect, useRef, useState } from "react";
 import {
   Check,
   ChevronRight,
+  Mail,
+  MapPin,
+  Phone,
   X
 } from "lucide-react";
 import {
@@ -15,13 +18,12 @@ import {
 } from "@/components/auth/StudentAuthProvider";
 import { WebPushSettings } from "@/components/notifications/WebPushSettings";
 import { PwaInstallCard } from "@/components/pwa/PwaInstallCard";
+import { useStudentOverview } from "@/components/student/useStudentOverview";
 import { AssetIcon } from "@/components/ui/AssetIcon";
 import { Button } from "@/components/ui/button";
 import {
   COOKIE_SESSION_TOKEN,
   getDepartmentsFromApi,
-  getReceiptsFromApi,
-  getReservationsFromApi,
   type BackendDepartment,
   type BackendReceipt,
   type BackendReservation
@@ -40,35 +42,6 @@ const emptyDraft: ProfileDraft = {
 
 const STUDENT_NUMBER_PATTERN = /^[A-Z0-9][A-Z0-9._\/-]*$/;
 
-type AccountSummary = {
-  upcoming: number;
-  pending: number;
-  completed: number;
-  cancelled: number;
-  monthlyReceiptTotal: number;
-};
-
-type AccountSummaryState = {
-  ownerId: string;
-  data: AccountSummary;
-  loading: boolean;
-  error: string;
-};
-
-const emptyAccountSummary: AccountSummary = {
-  upcoming: 0,
-  pending: 0,
-  completed: 0,
-  cancelled: 0,
-  monthlyReceiptTotal: 0
-};
-
-const manilaMonthFormatter = new Intl.DateTimeFormat("en-CA", {
-  year: "numeric",
-  month: "2-digit",
-  timeZone: "Asia/Manila"
-});
-
 function profileDraftFromUser(user: StudentUser): ProfileDraft {
   return {
     fullName: user.fullName,
@@ -79,33 +52,13 @@ function profileDraftFromUser(user: StudentUser): ProfileDraft {
   };
 }
 
-function manilaMonthKey(value: Date) {
-  if (Number.isNaN(value.getTime())) return null;
-  return manilaMonthFormatter.format(value);
-}
-
-function summarizeAccount(reservations: BackendReservation[], receipts: BackendReceipt[]): AccountSummary {
-  const currentMonth = manilaMonthKey(new Date());
-  return {
-    upcoming: reservations.filter((row) => row.status === "CONFIRMED" || row.status === "READY_FOR_PICKUP").length,
-    pending: reservations.filter((row) => row.status === "PENDING").length,
-    completed: reservations.filter((row) => row.status === "COMPLETED").length,
-    cancelled: reservations.filter((row) => row.status === "CANCELLED" || row.status === "NO_SHOW").length,
-    monthlyReceiptTotal: receipts.reduce((total, receipt) => {
-      const receiptMonth = manilaMonthKey(new Date(receipt.issuedAt));
-      if (!receiptMonth || receipt.status === "VOIDED" || receiptMonth !== currentMonth) return total;
-      const amount = Number(receipt.totalAmount);
-      return total + (Number.isFinite(amount) ? amount : 0);
-    }, 0)
-  };
-}
-
 function formatPeso(value: number) {
   return `PHP ${value.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 function InformationRow({
   iconSrc,
+  icon,
   label,
   value,
   editing,
@@ -113,7 +66,8 @@ function InformationRow({
   maxLength,
   onChange
 }: {
-  iconSrc: string;
+  iconSrc?: string;
+  icon?: React.ReactNode;
   label: string;
   value: string;
   editing?: boolean;
@@ -124,7 +78,7 @@ function InformationRow({
   return (
     <div className="grid min-w-0 gap-2 border-b border-[#e7ece8] py-4 last:border-b-0 sm:grid-cols-[190px_minmax(0,1fr)] sm:items-start">
       <div className="flex min-w-0 items-center gap-3">
-        <AssetIcon src={iconSrc} className="size-7 shrink-0" />
+        {icon ? <span className="grid size-7 shrink-0 place-items-center text-primary">{icon}</span> : iconSrc ? <AssetIcon src={iconSrc} className="size-7 shrink-0" /> : null}
         <span className="min-w-0 break-words text-sm font-bold text-[#253029]">{label}</span>
       </div>
       {editing && onChange ? (
@@ -146,7 +100,9 @@ function InformationRow({
           />
         )
       ) : (
-        <p className="min-w-0 break-words pl-8 text-sm leading-6 text-[#4a554e] [overflow-wrap:anywhere] sm:pl-0">{value}</p>
+        <p className={value.trim() ? "min-w-0 break-words pl-10 text-sm leading-6 text-foreground [overflow-wrap:anywhere] sm:pl-0" : "pl-10 text-sm italic leading-6 text-muted-foreground sm:pl-0"}>
+          {value.trim() || (onChange ? "Not added yet. Use Edit Profile to add it." : "Not provided")}
+        </p>
       )}
     </div>
   );
@@ -241,22 +197,17 @@ export function StudentProfileExperience() {
   const [departmentsOwnerId, setDepartmentsOwnerId] = useState("");
   const [departmentsLoading, setDepartmentsLoading] = useState(false);
   const [departmentsError, setDepartmentsError] = useState("");
-  const [accountSummaryState, setAccountSummaryState] = useState<AccountSummaryState>({
-    ownerId: "",
-    data: emptyAccountSummary,
-    loading: false,
-    error: ""
-  });
-  const summaryRequestRef = useRef(0);
   const profileOwnerRef = useRef("");
   const activeDraft = user && draftOwnerId === user.id ? draft : user ? profileDraftFromUser(user) : emptyDraft;
-  const accountSummary = user && accountSummaryState.ownerId === user.id
-    ? accountSummaryState.data
-    : emptyAccountSummary;
-  const summaryLoading = Boolean(user) && (
-    accountSummaryState.ownerId !== user?.id || accountSummaryState.loading
-  );
-  const summaryError = accountSummaryState.ownerId === user?.id ? accountSummaryState.error : "";
+  const { overview, loading: overviewLoading, error: summaryError } = useStudentOverview();
+  const summaryLoading = Boolean(user) && overviewLoading && !overview;
+  const accountSummary = {
+    upcoming: overview ? overview.reservations.CONFIRMED + overview.reservations.READY_FOR_PICKUP : 0,
+    pending: overview?.reservations.PENDING ?? 0,
+    completed: overview?.reservations.COMPLETED ?? 0,
+    cancelled: overview ? overview.reservations.CANCELLED + overview.reservations.NO_SHOW : 0,
+    monthlyReceiptTotal: overview?.spentThisMonth ?? 0
+  };
 
   useEffect(() => {
     const nextOwnerId = user?.id ?? "";
@@ -306,57 +257,6 @@ export function StudentProfileExperience() {
       active = false;
     };
   }, [editing, user?.accessToken, user?.id, user?.role]);
-
-  useEffect(() => {
-    const ownerId = user?.id ?? "";
-    const accessToken = user?.accessToken;
-
-    if (!ownerId || !accessToken) {
-      summaryRequestRef.current += 1;
-      setAccountSummaryState({ ownerId: "", data: emptyAccountSummary, loading: false, error: "" });
-      return undefined;
-    }
-
-    setAccountSummaryState({ ownerId, data: emptyAccountSummary, loading: true, error: "" });
-    const loadSummary = async () => {
-      const requestSequence = ++summaryRequestRef.current;
-      try {
-        const [reservations, receipts] = await Promise.all([
-          getReservationsFromApi(accessToken),
-          getReceiptsFromApi(accessToken)
-        ]);
-        if (requestSequence !== summaryRequestRef.current) return;
-        setAccountSummaryState({
-          ownerId,
-          data: summarizeAccount(reservations, receipts),
-          loading: false,
-          error: ""
-        });
-      } catch (error) {
-        if (requestSequence !== summaryRequestRef.current) return;
-        setAccountSummaryState((current) => ({
-          ownerId,
-          data: current.ownerId === ownerId ? current.data : emptyAccountSummary,
-          loading: false,
-          error: userFacingErrorMessage(error, "Unable to load your account summary.")
-        }));
-      }
-    };
-    const refreshWhenVisible = () => {
-      if (document.visibilityState === "visible") void loadSummary();
-    };
-    const timer = window.setInterval(refreshWhenVisible, 5 * 60_000);
-    window.addEventListener("focus", refreshWhenVisible);
-    document.addEventListener("visibilitychange", refreshWhenVisible);
-    void loadSummary();
-
-    return () => {
-      summaryRequestRef.current += 1;
-      window.clearInterval(timer);
-      window.removeEventListener("focus", refreshWhenVisible);
-      document.removeEventListener("visibilitychange", refreshWhenVisible);
-    };
-  }, [user?.accessToken, user?.id]);
 
   const updateDraft = (key: keyof ProfileDraft) => (value: string) => {
     if (!user) return;
@@ -498,7 +398,7 @@ export function StudentProfileExperience() {
             <h2 className="min-w-0 break-words text-xl font-extrabold text-[#17211b]">Account Information</h2>
           </div>
           <InformationRow iconSrc="/assets/my-profile.svg" label="Full Name" value={activeDraft.fullName} editing={editing} maxLength={120} onChange={updateDraft("fullName")} />
-          <InformationRow iconSrc="/assets/contact-us.svg" label="Phone Number" value={activeDraft.phone} editing={editing} maxLength={32} onChange={updateDraft("phone")} />
+          <InformationRow icon={<Phone className="size-5" aria-hidden="true" />} label="Phone Number" value={activeDraft.phone} editing={editing} maxLength={32} onChange={updateDraft("phone")} />
           <InformationRow iconSrc="/assets/id-accessories.svg" label="Student Number" value={activeDraft.studentNumber} editing={editing} maxLength={40} onChange={(value) => updateDraft("studentNumber")(value.toUpperCase())} />
           <DepartmentInformationRow
             departmentId={activeDraft.departmentId}
@@ -509,29 +409,29 @@ export function StudentProfileExperience() {
             error={departmentsError}
             onChange={updateDraft("departmentId")}
           />
-          <InformationRow iconSrc="/assets/messages.svg" label="Email Address" value={user.email} />
-          <InformationRow iconSrc="/assets/contact-us.svg" label="Address" value={activeDraft.address} editing={editing} multiline maxLength={500} onChange={updateDraft("address")} />
+          <InformationRow icon={<Mail className="size-5" aria-hidden="true" />} label="Email Address" value={user.email} />
+          <InformationRow icon={<MapPin className="size-5" aria-hidden="true" />} label="Address" value={activeDraft.address} editing={editing} multiline maxLength={500} onChange={updateDraft("address")} />
         </section>
 
         <div className="grid min-w-0 content-start gap-5">
           <SummaryLink href="/student/reservations" iconSrc="/assets/my-reservations.svg" title="My Reservations Summary">
             <div className="grid grid-cols-1 gap-3 text-sm min-[380px]:grid-cols-2">
-              <span className="flex min-w-0 items-center justify-between gap-2">Upcoming <strong className="shrink-0 rounded-md bg-[#fff0ce] px-2.5 py-1 text-[#b86d00]">{summaryLoading || summaryError ? "—" : accountSummary.upcoming}</strong></span>
-              <span className="flex min-w-0 items-center justify-between gap-2">Pending <strong className="shrink-0 rounded-md bg-[#fff0ce] px-2.5 py-1 text-[#b86d00]">{summaryLoading || summaryError ? "—" : accountSummary.pending}</strong></span>
-              <span className="flex min-w-0 items-center justify-between gap-2">Completed <strong className="shrink-0 rounded-md bg-[#e4f3e5] px-2.5 py-1 text-primary">{summaryLoading || summaryError ? "—" : accountSummary.completed}</strong></span>
-              <span className="flex min-w-0 items-center justify-between gap-2">Cancelled <strong className="shrink-0 rounded-md bg-[#edf0ee] px-2.5 py-1">{summaryLoading || summaryError ? "—" : accountSummary.cancelled}</strong></span>
+              <span className="flex min-w-0 items-center justify-between gap-2">Upcoming <strong className="shrink-0 rounded-md bg-warning/10 px-2.5 py-1 text-warning">{summaryLoading || summaryError ? "—" : accountSummary.upcoming}</strong></span>
+              <span className="flex min-w-0 items-center justify-between gap-2">Pending <strong className="shrink-0 rounded-md bg-warning/10 px-2.5 py-1 text-warning">{summaryLoading || summaryError ? "—" : accountSummary.pending}</strong></span>
+              <span className="flex min-w-0 items-center justify-between gap-2">Completed <strong className="shrink-0 rounded-md bg-primary/10 px-2.5 py-1 text-primary">{summaryLoading || summaryError ? "—" : accountSummary.completed}</strong></span>
+              <span className="flex min-w-0 items-center justify-between gap-2">Cancelled <strong className="shrink-0 rounded-md bg-muted px-2.5 py-1 text-muted-foreground">{summaryLoading || summaryError ? "—" : accountSummary.cancelled}</strong></span>
             </div>
           </SummaryLink>
 
           <SummaryLink href="/student/receipts" iconSrc="/assets/digital-receipts.svg" title="Digital Receipts Summary">
             <div className="flex min-w-0 flex-col items-start gap-2 min-[400px]:flex-row min-[400px]:items-end min-[400px]:justify-between">
-              <span className="text-sm text-[#667169]">This month</span>
+              <span className="text-sm text-muted-foreground">Spent this month</span>
               <strong className="max-w-full break-all text-xl text-primary sm:text-2xl">{summaryLoading || summaryError ? "—" : formatPeso(accountSummary.monthlyReceiptTotal)}</strong>
             </div>
           </SummaryLink>
 
           {summaryError ? (
-            <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-semibold leading-5 text-amber-800" role="status">
+            <p className="rounded-lg border border-warning/30 bg-warning/10 px-4 py-3 text-xs font-semibold leading-5 text-warning" role="status">
               Live account totals are temporarily unavailable. Refresh when the connection is stable.
             </p>
           ) : null}
