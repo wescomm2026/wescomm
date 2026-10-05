@@ -78,9 +78,10 @@ function successfulReservation() {
   };
 }
 
-test("an open pickup picker expires a selected slot when its start time passes", async ({ page }, testInfo) => {
+test("an in-progress pickup window stays bookable until its booking cutoff, then closes", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop-chromium", "The slot-boundary refresh needs one deterministic clock run.");
-  await page.clock.install({ time: new Date("2026-08-03T01:59:58.000Z") });
+  // 11:29:58 AM Manila: the 10:00 AM - 12:00 PM window started, and booking closes at 11:30 AM.
+  await page.clock.install({ time: new Date("2026-08-03T03:29:58.000Z") });
   let slotAvailabilityCalls = 0;
 
   await page.route("**/api/backend/**", async (route) => {
@@ -116,7 +117,7 @@ test("an open pickup picker expires a selected slot when its start time passes",
         availability: {
           pickupDate: "2026-08-03",
           pickupPolicyVersion: 7,
-          serverTime: expired ? "2026-08-03T02:00:00.250Z" : "2026-08-03T01:59:58.000Z",
+          serverTime: expired ? "2026-08-03T03:30:00.250Z" : "2026-08-03T03:29:58.000Z",
           slots: [{
             slotId: pickupSlotId,
             capacity: 2,
@@ -124,6 +125,9 @@ test("an open pickup picker expires a selected slot when its start time passes",
             remaining: 2,
             isFull: false,
             isExpired: expired,
+            inProgress: !expired,
+            hasEnded: false,
+            bookingClosesAt: "2026-08-03T03:30:00.000Z",
             isUnavailable: expired,
             unavailableReason: expired ? "PICKUP_SLOT_EXPIRED" : null
           }]
@@ -138,7 +142,7 @@ test("an open pickup picker expires a selected slot when its start time passes",
   await page.getByRole("button", { name: "Reserve Now" }).first().click();
   const checkout = page.getByRole("dialog", { name: "Item and pickup details" });
   await checkout.getByRole("button", { name: "2026-08-03, available" }).click();
-  const availableSlot = checkout.getByRole("button", { name: "Morning pickup, 2 spots left" });
+  const availableSlot = checkout.getByRole("button", { name: "Morning pickup, Happening now · book by 11:30 AM · 2 spots left" });
   await expect(availableSlot).toBeEnabled();
   await expect(availableSlot).toHaveAttribute("aria-pressed", "true");
   await expect(checkout.getByRole("button", { name: "Next: Payment" })).toBeEnabled();
@@ -146,7 +150,7 @@ test("an open pickup picker expires a selected slot when its start time passes",
   await page.clock.fastForward(2_500);
 
   await expect.poll(() => slotAvailabilityCalls).toBeGreaterThan(1);
-  await expect(checkout.getByRole("button", { name: "Morning pickup, Time passed" })).toBeDisabled();
+  await expect(checkout.getByRole("button", { name: "Morning pickup, Booking closed" })).toBeDisabled();
   await expect(checkout.getByRole("button", { name: "Next: Payment" })).toBeDisabled();
 });
 
