@@ -109,6 +109,23 @@ export function pickupInstant(dateKey: string, minute: number) {
   return new Date(Date.UTC(year, month - 1, day, hour - 8, minuteOfHour));
 }
 
+// A pickup window stays bookable after it starts, until this many minutes before it ends,
+// so staff can still confirm the request and the student has time to arrive.
+export const PICKUP_BOOKING_CUTOFF_MINUTES = 30;
+
+/** When students can no longer book a window: 30 minutes before it ends, never before it starts. */
+export function pickupBookingClosesAt(pickupStart: Date, pickupEnd: Date) {
+  return new Date(Math.max(pickupStart.getTime(), pickupEnd.getTime() - PICKUP_BOOKING_CUTOFF_MINUTES * 60_000));
+}
+
+export function pickupBookingClosed(pickupStart: Date, pickupEnd: Date, now: Date) {
+  return pickupBookingClosesAt(pickupStart, pickupEnd).getTime() <= now.getTime();
+}
+
+function manilaClockLabel(value: Date) {
+  return value.toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit", timeZone: "Asia/Manila" });
+}
+
 export function validatePickupDate(input: {
   policy: PickupPolicySnapshot;
   policyVersion: number;
@@ -165,10 +182,12 @@ export function validatePickupSelection(input: {
 
   const pickupStart = pickupInstant(input.pickupDate, slot.startMinute);
   const pickupEnd = pickupInstant(input.pickupDate, slot.endMinute);
-  if (pickupStart.getTime() <= now.getTime()) {
+  if (pickupBookingClosed(pickupStart, pickupEnd, now)) {
     throw new HttpError(
       409,
-      "The selected pickup time has already started. Choose a later time.",
+      pickupEnd.getTime() <= now.getTime()
+        ? "The selected pickup time has already ended. Choose a later time."
+        : `Booking for this pickup time closed at ${manilaClockLabel(pickupBookingClosesAt(pickupStart, pickupEnd))}. Choose a later time.`,
       "PICKUP_SLOT_EXPIRED"
     );
   }

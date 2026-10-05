@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { HttpError } from "../utils/http-error.js";
 import {
+  pickupBookingClosesAt,
   pickupInstant,
   resolvePickupBookingWindow,
   scheduleReviewReason,
@@ -265,4 +266,39 @@ test("public pickup availability excludes staff metadata and inactive windows", 
   assert.equal(serialized.maxDate, "2026-09-03");
   assert.deepEqual(serialized.timeSlots.map((slot) => slot.id), ["active"]);
   assert.equal(serialized.timeSlots[0].capacity, 20);
+});
+
+test("a pickup window stays bookable after it starts until 30 minutes before it ends", () => {
+  const sameDayPolicy: PickupPolicySnapshot = {
+    ...policy,
+    minAdvanceDays: 0,
+    maxAdvanceDays: 0,
+    days: policy.days.map((day) => ({ ...day, enabled: true })),
+    closures: [],
+    timeSlots: [
+      { id: "late-morning", label: "10:00 AM - 12:00 PM", startMinute: 600, endMinute: 720, isActive: true },
+      { id: "short", label: "1:00 PM - 1:20 PM", startMinute: 780, endMinute: 800, isActive: true }
+    ]
+  };
+  const select = (slotId: string, now: string) => () => validatePickupSelection({
+    policy: sameDayPolicy,
+    policyVersion: 4,
+    pickupDate: "2026-08-31",
+    slotId,
+    now: new Date(now)
+  });
+
+  // 10:13 AM Manila: the 10:00 AM - 12:00 PM window has started but is still open.
+  assert.doesNotThrow(select("late-morning", "2026-08-31T02:13:00.000Z"));
+  // 11:29 AM is the last minute before the cutoff; 11:30 AM closes it.
+  assert.doesNotThrow(select("late-morning", "2026-08-31T03:29:00.000Z"));
+  assert.equal(errorCode(select("late-morning", "2026-08-31T03:30:00.000Z")), "PICKUP_SLOT_EXPIRED");
+  // Windows shorter than the cutoff close when they start, never before.
+  assert.doesNotThrow(select("short", "2026-08-31T04:59:00.000Z"));
+  assert.equal(errorCode(select("short", "2026-08-31T05:00:00.000Z")), "PICKUP_SLOT_EXPIRED");
+
+  assert.equal(
+    pickupBookingClosesAt(new Date("2026-08-31T02:00:00.000Z"), new Date("2026-08-31T04:00:00.000Z")).toISOString(),
+    "2026-08-31T03:30:00.000Z"
+  );
 });
