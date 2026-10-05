@@ -43,6 +43,7 @@ import {
   PageHeading,
   Notice
 } from "@/components/staff/StaffOperationsShared";
+import { InlineAlert } from "@/components/ui/InlineAlert";
 
 function clearConversationDeepLink() {
   const url = new URL(window.location.href);
@@ -713,22 +714,22 @@ export function StaffMessagesExperience() {
         />
       </div>
       <h1 className="sr-only lg:hidden">Message center</h1>
-      {error ? <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p> : null}
+      {error ? <InlineAlert>{error}</InlineAlert> : null}
       <section
         aria-label="WESCOMM staff messenger"
-        className="grid h-[calc(100dvh-7.375rem)] min-h-0 grid-cols-[minmax(0,1fr)] overflow-hidden rounded-2xl border border-[#dce5dd] bg-white shadow-[0_16px_48px_rgba(16,24,32,0.08)] lg:h-[calc(100dvh-15.5rem)] lg:grid-cols-[320px_minmax(0,1fr)]"
+        className="grid h-[calc(100dvh-var(--workspace-header)-3.75rem)] min-h-0 sm:h-[calc(100dvh-var(--workspace-header)-4.25rem)] grid-cols-[minmax(0,1fr)] overflow-hidden rounded-2xl border bg-white shadow-[0_16px_48px_rgba(16,24,32,0.08)] lg:h-[calc(100dvh-var(--workspace-header)-10.25rem)] lg:grid-cols-[320px_minmax(0,1fr)]"
       >
         <aside className={cn(
-          "h-full min-h-0 min-w-0 flex-col border-[#e5ebe6] bg-[#fbfcfb] lg:flex lg:border-r",
+          "h-full min-h-0 min-w-0 flex-col border-border bg-background lg:flex lg:border-r",
           threadOpen ? "hidden" : "flex"
         )}>
-          <div className="flex min-h-[68px] items-center gap-3 border-b border-[#edf1ed] px-4 py-3">
-            <span className="grid size-10 shrink-0 place-items-center rounded-full bg-[#eaf6eb] text-primary" aria-hidden="true">
+          <div className="flex min-h-[68px] items-center gap-3 border-b border-border px-4 py-3">
+            <span className="grid size-10 shrink-0 place-items-center rounded-full bg-muted text-primary" aria-hidden="true">
               <AssetIcon src="/assets/messages.svg" className="size-6" />
             </span>
             <div className="min-w-0">
-              <p className="font-extrabold text-[#17211b]">Messages</p>
-              <p className="text-xs text-[#68746d]">{filtered.length} conversation{filtered.length === 1 ? "" : "s"}</p>
+              <p className="font-extrabold text-foreground">Messages</p>
+              <p className="text-xs text-muted-foreground">{filtered.length} conversation{filtered.length === 1 ? "" : "s"}</p>
             </div>
             <button
               type="button"
@@ -736,28 +737,28 @@ export function StaffMessagesExperience() {
               disabled={loading || submitting}
               aria-label="Refresh conversations"
               title="Refresh"
-              className="ml-auto grid size-10 shrink-0 place-items-center rounded-full text-[#5d6962] transition hover:bg-[#edf4ee] hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
+              className="ml-auto grid size-10 shrink-0 place-items-center rounded-full text-muted-foreground transition hover:bg-[#edf4ee] hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
             >
               <RefreshCw className={cn("size-[18px]", loading && "motion-safe:animate-spin")} aria-hidden="true" />
             </button>
           </div>
 
-          <div className={cn("grid gap-1 border-b border-[#edf1ed] p-2", isAdmin ? "grid-cols-3" : "grid-cols-2")} aria-label="Conversation view">
-            <button type="button" onClick={() => changeConversationView("ACTIVE")} aria-pressed={conversationView === "ACTIVE"} className={cn("rounded-lg px-3 py-2 text-xs font-extrabold", conversationView === "ACTIVE" ? "bg-primary text-white" : "text-[#68746d] hover:bg-[#eef4ef]")}>Active</button>
-            <button type="button" onClick={() => changeConversationView("ARCHIVED")} aria-pressed={conversationView === "ARCHIVED"} className={cn("rounded-lg px-3 py-2 text-xs font-extrabold", conversationView === "ARCHIVED" ? "bg-primary text-white" : "text-[#68746d] hover:bg-[#eef4ef]")}>Archived</button>
-            {isAdmin ? <button type="button" onClick={() => changeConversationView("DELETED")} aria-pressed={conversationView === "DELETED"} className={cn("rounded-lg px-3 py-2 text-xs font-extrabold", conversationView === "DELETED" ? "bg-red-700 text-white" : "text-[#68746d] hover:bg-red-50 hover:text-red-700")}>Deleted</button> : null}
+          <div className={cn("grid gap-1 border-b border-border p-2", isAdmin ? "grid-cols-3" : "grid-cols-2")} aria-label="Conversation view">
+            <button type="button" onClick={() => changeConversationView("ACTIVE")} aria-pressed={conversationView === "ACTIVE"} className={cn("rounded-lg px-3 py-2 text-xs font-extrabold", conversationView === "ACTIVE" ? "bg-primary text-white" : "text-muted-foreground hover:bg-surface-subtle")}>Active</button>
+            <button type="button" onClick={() => changeConversationView("ARCHIVED")} aria-pressed={conversationView === "ARCHIVED"} className={cn("rounded-lg px-3 py-2 text-xs font-extrabold", conversationView === "ARCHIVED" ? "bg-primary text-white" : "text-muted-foreground hover:bg-surface-subtle")}>Archived</button>
+            {isAdmin ? <button type="button" onClick={() => changeConversationView("DELETED")} aria-pressed={conversationView === "DELETED"} className={cn("rounded-lg px-3 py-2 text-xs font-extrabold", conversationView === "DELETED" ? "bg-red-700 text-white" : "text-muted-foreground hover:bg-red-50 hover:text-red-700")}>Deleted</button> : null}
           </div>
 
-          <div className="space-y-2 border-b border-[#edf1ed] p-3">
-            <label className="flex h-10 items-center rounded-full border border-[#d7e1d8] bg-white px-3 focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/15">
-              <Search className="mr-2 size-4 shrink-0 text-[#68746d]" aria-hidden="true" />
+          <div className="space-y-2 border-b border-border p-3">
+            <label className="flex h-10 items-center rounded-full border border-border-strong bg-white px-3 focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/15">
+              <Search className="mr-2 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
               <span className="sr-only">Search conversations</span>
-              <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search messages" className="min-w-0 flex-1 bg-transparent text-sm outline-none" />
+              <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search messages" className="min-w-0 flex-1 bg-transparent text-sm outline-none focus-visible:outline-none" />
             </label>
-            <label className="flex h-9 items-center gap-2 rounded-full border border-[#d7e1d8] bg-white px-3 text-xs">
+            <label className="flex h-9 items-center gap-2 rounded-full border border-border-strong bg-white px-3 text-xs">
               <Filter className="size-3.5 shrink-0 text-primary" aria-hidden="true" />
               <span className="sr-only">Filter conversation status</span>
-              <select value={status} onChange={(event) => setStatus(event.target.value)} className="min-w-0 flex-1 bg-transparent font-bold outline-none">
+              <select value={status} onChange={(event) => setStatus(event.target.value)} className="min-w-0 flex-1 bg-transparent font-bold outline-none focus-visible:outline-none">
                 {["All", "WesBot active", "Waiting for Staff", "Staff active", "Resolved"].map((option) => <option key={option}>{option}</option>)}
               </select>
             </label>
@@ -768,7 +769,7 @@ export function StaffMessagesExperience() {
             <div className="grid min-h-48 place-items-center px-5 text-center">
               <div>
                 <LoaderCircle className="mx-auto size-6 motion-safe:animate-spin text-primary" aria-hidden="true" />
-                <p className="mt-3 text-sm font-semibold text-[#68746d]">Loading conversations...</p>
+                <p className="mt-3 text-sm font-semibold text-muted-foreground">Loading conversations...</p>
               </div>
             </div>
           ) : filtered.length ? filtered.map((conversation) => (
@@ -780,18 +781,18 @@ export function StaffMessagesExperience() {
               aria-current={selected?.id === conversation.id ? "true" : undefined}
               className={cn(
                 "mb-1 flex w-full items-start gap-3 rounded-xl p-3 text-left transition hover:bg-[#f0f6f1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary disabled:cursor-wait disabled:opacity-70",
-                selected?.id === conversation.id && "bg-[#e8f3e9]"
+                selected?.id === conversation.id && "bg-muted"
               )}
             >
               <StaffConversationAvatar kind="STUDENT" name={conversation.student?.fullName || conversation.student?.email || "Student"} />
               <span className="min-w-0 flex-1">
                 <span className="flex items-start gap-2">
-                  <span className="min-w-0 flex-1 truncate text-sm font-extrabold text-[#17211b]">{conversation.student?.fullName || conversation.student?.email || "Student"}</span>
-                  <span className="shrink-0 text-[10px] font-semibold text-[#879089]">{formatConversationTime(conversation.deletedAt || conversation.updatedAt)}</span>
+                  <span className="min-w-0 flex-1 truncate text-sm font-extrabold text-foreground">{conversation.student?.fullName || conversation.student?.email || "Student"}</span>
+                  <span className="shrink-0 text-[10px] font-semibold text-muted-foreground">{formatConversationTime(conversation.deletedAt || conversation.updatedAt)}</span>
                 </span>
-                <span className="mt-0.5 block truncate text-xs font-semibold text-[#3f4a44]">{conversation.subject}</span>
-                <span className="mt-1 block truncate text-xs text-[#68746d]">{conversationPreview(conversation)}</span>
-                <span className="mt-1.5 flex items-center gap-1.5 text-[10px] font-bold text-[#68746d]">
+                <span className="mt-0.5 block truncate text-xs font-semibold text-foreground">{conversation.subject}</span>
+                <span className="mt-1 block truncate text-xs text-muted-foreground">{conversationPreview(conversation)}</span>
+                <span className="mt-1.5 flex items-center gap-1.5 text-[10px] font-bold text-muted-foreground">
                   <span className={cn(
                     "size-1.5 rounded-full",
                     conversation.mode === "BOT_ACTIVE" ? "bg-emerald-500" : conversation.mode === "WAITING_FOR_STAFF" ? "bg-amber-500" : conversation.mode === "STAFF_ACTIVE" ? "bg-sky-500" : "bg-slate-400"
@@ -807,9 +808,9 @@ export function StaffMessagesExperience() {
           )) : (
             <div className="grid h-full min-h-56 place-items-center px-6 text-center">
               <div>
-                <span className="mx-auto grid size-14 place-items-center rounded-full bg-[#eaf6eb] text-primary"><Search className="size-6" /></span>
-                <p className="mt-3 font-extrabold text-[#17211b]">No matching messages</p>
-                <p className="mt-1 text-sm leading-5 text-[#68746d]">Try another student name, topic, or status.</p>
+                <span className="mx-auto grid size-14 place-items-center rounded-full bg-muted text-primary"><Search className="size-6" /></span>
+                <p className="mt-3 font-extrabold text-foreground">No matching messages</p>
+                <p className="mt-1 text-sm leading-5 text-muted-foreground">Try another student name, topic, or status.</p>
               </div>
             </div>
           )}
@@ -820,20 +821,20 @@ export function StaffMessagesExperience() {
             data-testid="staff-conversation-thread"
             className={cn("h-full min-h-0 min-w-0 flex-col lg:flex", threadOpen ? "flex" : "hidden")}
           >
-            <header className="flex min-h-[68px] shrink-0 items-center gap-2 border-b border-[#e5ebe6] bg-white px-3 py-2.5 sm:gap-3 sm:px-5" aria-busy={Boolean(activeAction)}>
+            <header className="flex min-h-[68px] shrink-0 items-center gap-2 border-b border-border bg-white px-3 py-2.5 sm:gap-3 sm:px-5" aria-busy={Boolean(activeAction)}>
               <button
                 type="button"
                 onClick={closeConversation}
                 disabled={submitting}
-                className="grid size-10 shrink-0 place-items-center rounded-full text-primary transition hover:bg-[#eef6ee] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-wait disabled:opacity-50 lg:hidden"
+                className="grid size-10 shrink-0 place-items-center rounded-full text-primary transition hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-wait disabled:opacity-50 lg:hidden"
                 aria-label="Back to message inbox"
               >
                 <ArrowLeft className="size-5" aria-hidden="true" />
               </button>
               <StaffConversationAvatar kind="STUDENT" name={selected.student?.fullName || selected.student?.email || "Student"} />
               <div className="min-w-0 flex-1">
-                <h2 className="truncate text-[15px] font-extrabold text-[#17211b] sm:text-base">{selected.student?.fullName || selected.student?.email || "Student"}</h2>
-                <p className="truncate text-[11px] font-semibold text-[#68746d] sm:text-xs">{selected.subject}</p>
+                <h2 className="truncate text-[15px] font-extrabold text-foreground sm:text-base">{selected.student?.fullName || selected.student?.email || "Student"}</h2>
+                <p className="truncate text-[11px] font-semibold text-muted-foreground sm:text-xs">{selected.subject}</p>
               </div>
               <span className="hidden shrink-0 md:inline-flex">
                 {deletedView ? <span className="rounded-full bg-red-100 px-2.5 py-1 text-xs font-extrabold text-red-800">Deleted</span> : <StatusBadge status={formatConversationStatus(selected)} />}
@@ -845,7 +846,7 @@ export function StaffMessagesExperience() {
                   disabled={submitting}
                   aria-label={conversationView === "ACTIVE" ? "Archive conversation" : "Restore conversation"}
                   title={conversationView === "ACTIVE" ? "Archive" : "Restore"}
-                  className="grid size-10 shrink-0 place-items-center rounded-full text-[#5d6962] transition hover:bg-[#f0f5f1] hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
+                  className="grid size-10 shrink-0 place-items-center rounded-full text-muted-foreground transition hover:bg-surface-subtle hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
                 >
                   {conversationView === "ACTIVE" ? <Archive className="size-[18px]" /> : <ArchiveRestore className="size-[18px]" />}
                 </button>
@@ -856,14 +857,14 @@ export function StaffMessagesExperience() {
                 disabled={submitting}
                 aria-label="Refresh conversations"
                 title="Refresh"
-                className="grid size-10 shrink-0 place-items-center rounded-full text-[#5d6962] transition hover:bg-[#f0f5f1] hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
+                className="grid size-10 shrink-0 place-items-center rounded-full text-muted-foreground transition hover:bg-surface-subtle hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
               >
                 <RefreshCw className="size-[18px]" aria-hidden="true" />
               </button>
             </header>
             {pendingActionLabel ? <p className="sr-only" role="status" aria-live="polite">{pendingActionLabel}</p> : null}
 
-            <div className="flex min-h-[52px] shrink-0 flex-wrap items-center gap-2 border-b border-[#e5ebe6] bg-[#fbfcfb] px-3 py-2 sm:px-5">
+            <div className="flex min-h-[52px] shrink-0 flex-wrap items-center gap-2 border-b border-border bg-background px-3 py-2 sm:px-5">
               <span className="shrink-0 md:hidden">
                 {deletedView ? <span className="rounded-full bg-red-100 px-2.5 py-1 text-xs font-extrabold text-red-800">Deleted</span> : <StatusBadge status={formatConversationStatus(selected)} />}
               </span>
@@ -894,7 +895,7 @@ export function StaffMessagesExperience() {
                   ) : null}
                   <Button
                     variant={selected.status === "RESOLVED" ? "secondary" : "ghost"}
-                    className="min-h-10 shrink-0 rounded-full border border-[#d7e1d8] px-3"
+                    className="min-h-10 shrink-0 rounded-full border border-border-strong px-3"
                     disabled={submitting || (selected.status !== "RESOLVED" && !ownsConversation)}
                     aria-busy={activeAction === "resolve" || activeAction === "reopen"}
                     onClick={() => void updateStatus(selected, selected.status === "RESOLVED" ? "OPEN" : "RESOLVED")}
@@ -946,12 +947,12 @@ export function StaffMessagesExperience() {
               </div>
             ) : null}
             {!deletedView && selected.mode === "BOT_ACTIVE" ? (
-              <div className="flex items-start gap-2 border-b border-[#cfe0d0] bg-[#f3f9f3] px-3 py-3 text-sm text-[#445149] sm:px-5">
+              <div className="flex items-start gap-2 border-b border-[#cfe0d0] bg-muted px-3 py-3 text-sm text-foreground sm:px-5">
                 <Bot className="mt-0.5 size-5 shrink-0 text-primary" />
-                <p><span className="font-extrabold text-[#17211b]">Handled by: WesBot.</span> Staff can take over now; the bot is paused as soon as ownership changes.</p>
+                <p><span className="font-extrabold text-foreground">Handled by: WesBot.</span> Staff can take over now; the bot is paused as soon as ownership changes.</p>
               </div>
             ) : null}
-            <div ref={messagesLogRef} onScroll={handleMessageScroll} role="log" aria-live="polite" aria-relevant="additions" className="min-h-0 min-w-0 flex-1 space-y-3 overflow-x-hidden overflow-y-auto overscroll-contain bg-[#f4f7f4] px-3 py-4 scroll-smooth sm:px-5 sm:py-5">
+            <div ref={messagesLogRef} onScroll={handleMessageScroll} role="log" aria-live="polite" aria-relevant="additions" className="min-h-0 min-w-0 flex-1 space-y-3 overflow-x-hidden overflow-y-auto overscroll-contain bg-surface-subtle px-3 py-4 scroll-smooth sm:px-5 sm:py-5">
               {selected.messages.map((message, index, messages) => {
                 const mine = message.senderType === "STAFF" && message.senderId === user?.id;
                 const day = formatConversationDay(message.createdAt);
@@ -966,9 +967,9 @@ export function StaffMessagesExperience() {
                 if (message.senderType === "SYSTEM") {
                   return (
                     <div key={message.id}>
-                      {showDay ? <p className="mb-3 text-center text-[11px] font-bold text-[#879089]">{day}</p> : null}
+                      {showDay ? <p className="mb-3 text-center text-[11px] font-bold text-muted-foreground">{day}</p> : null}
                       <div className="flex justify-center py-1">
-                        <p className="max-w-[92%] rounded-full bg-[#e3e9e4] px-3 py-1.5 text-center text-[11px] font-semibold leading-4 text-[#667169]">{message.message}</p>
+                        <p className="max-w-[92%] rounded-full bg-[#e3e9e4] px-3 py-1.5 text-center text-[11px] font-semibold leading-4 text-muted-foreground">{message.message}</p>
                       </div>
                     </div>
                   );
@@ -984,26 +985,26 @@ export function StaffMessagesExperience() {
                 const senderKind = botMessage ? "BOT" : staffMessage ? "STAFF" : "STUDENT";
                 return (
                   <div key={message.id}>
-                    {showDay ? <p className="mb-3 text-center text-[11px] font-bold text-[#879089]">{day}</p> : null}
+                    {showDay ? <p className="mb-3 text-center text-[11px] font-bold text-muted-foreground">{day}</p> : null}
                     <div className={cn("flex items-end gap-2", mine ? "justify-end" : "justify-start")}>
                       {!mine ? <StaffConversationAvatar kind={senderKind} name={senderName} size="sm" /> : null}
                       <div className={cn("flex min-w-0 max-w-[82%] flex-col sm:max-w-[72%]", mine ? "items-end" : "items-start")}>
-                      {!mine ? <p className={cn("mb-1 px-1 text-[11px] font-bold", botMessage ? "text-primary" : staffMessage ? "text-sky-800" : "text-[#526058]")}>{senderName}</p> : null}
+                      {!mine ? <p className={cn("mb-1 px-1 text-[11px] font-bold", botMessage ? "text-primary" : staffMessage ? "text-sky-800" : "text-muted-foreground")}>{senderName}</p> : null}
                       <div className={cn(
                         "rounded-[20px] px-4 py-2.5 text-sm shadow-sm",
                         mine
                           ? "rounded-br-md bg-primary text-white"
                           : botMessage
-                            ? "rounded-bl-md bg-white text-[#17211b] ring-1 ring-[#dfe8e0]"
+                            ? "rounded-bl-md bg-white text-foreground ring-1 ring-[#dfe8e0]"
                             : staffMessage
-                              ? "rounded-bl-md bg-white text-[#17211b] ring-1 ring-sky-200"
-                              : "rounded-bl-md bg-white text-[#17211b] ring-1 ring-[#dce5dd]"
+                              ? "rounded-bl-md bg-white text-foreground ring-1 ring-sky-200"
+                              : "rounded-bl-md bg-white text-foreground ring-1 ring-border"
                       )}>
                         {editingMessageId === message.id ? (
-                          <textarea value={editDraft} onChange={(event) => setEditDraft(event.target.value)} maxLength={2000} rows={3} className="min-w-[220px] resize-y rounded-lg border border-white/50 bg-white/95 p-2 text-[#17211b] outline-none focus:ring-2 focus:ring-white" aria-label="Edit message" />
+                          <textarea value={editDraft} onChange={(event) => setEditDraft(event.target.value)} maxLength={2000} rows={3} className="min-w-[220px] resize-y rounded-lg border border-white/50 bg-white/95 p-2 text-foreground outline-none focus:ring-2 focus:ring-white" aria-label="Edit message" />
                         ) : <p className="whitespace-pre-wrap break-words leading-6 [overflow-wrap:anywhere]">{message.message}</p>}
                       </div>
-                      {message.editedAt ? <span className="px-1 text-[10px] font-semibold text-[#7b867f]">Edited</span> : null}
+                      {message.editedAt ? <span className="px-1 text-[10px] font-semibold text-muted-foreground">Edited</span> : null}
                       {editingMessageId === message.id ? (
                         <div className="mt-1 flex gap-1">
                           <button type="button" disabled={savingEdit || !editDraft.trim()} onClick={() => void saveMessageEdit(selected, message)} className="grid size-8 place-items-center rounded-full bg-primary text-white disabled:opacity-50" aria-label="Save edited message"><Check className="size-4" /></button>
@@ -1012,7 +1013,7 @@ export function StaffMessagesExperience() {
                       ) : canEdit ? (
                         <button type="button" onClick={() => { setEditingMessageId(message.id); setEditDraft(message.message); }} className="mt-1 inline-flex min-h-8 items-center gap-1 rounded-full px-2 text-[11px] font-bold text-primary hover:bg-primary/10" aria-label="Edit your latest reply"><Pencil className="size-3" />Edit</button>
                       ) : null}
-                      <p className="mt-1 px-1 text-[10px] font-semibold text-[#7b867f]">{mine ? "You" : senderName} · {formatConversationTime(message.createdAt)}</p>
+                      <p className="mt-1 px-1 text-[10px] font-semibold text-muted-foreground">{mine ? "You" : senderName} · {formatConversationTime(message.createdAt)}</p>
                     </div>
                     </div>
                   </div>
@@ -1024,26 +1025,26 @@ export function StaffMessagesExperience() {
                     <div className="rounded-[20px] rounded-br-md bg-primary px-4 py-2.5 text-sm text-white opacity-80 shadow-sm">
                       <p className="whitespace-pre-wrap break-words leading-6 [overflow-wrap:anywhere]">{pendingReply}</p>
                     </div>
-                    <p className="mt-1 px-1 text-[10px] font-semibold text-[#718078]">Sending...</p>
+                    <p className="mt-1 px-1 text-[10px] font-semibold text-muted-foreground">Sending...</p>
                   </div>
                 </div>
               ) : null}
               {selected.typingUsers?.length ? (
                 <div className="flex items-end gap-2">
                   <StaffConversationAvatar kind="STUDENT" name={selected.typingUsers[0].fullName || selected.typingUsers[0].email || "Student"} size="sm" />
-                  <div className="rounded-[20px] rounded-bl-md bg-white px-4 py-2.5 text-xs font-semibold text-[#68746d] shadow-sm ring-1 ring-[#dce5dd]">
+                  <div className="rounded-[20px] rounded-bl-md bg-white px-4 py-2.5 text-xs font-semibold text-muted-foreground shadow-sm ring-1 ring-border">
                     {selected.typingUsers[0].fullName || selected.typingUsers[0].email || "Student"} is typing<span className="animate-pulse">...</span>
                   </div>
                 </div>
               ) : null}
             </div>
-            <div className="shrink-0 border-t border-[#e5ebe6] bg-white px-3 pt-2.5 pb-[calc(.625rem+env(safe-area-inset-bottom))] sm:px-4 sm:py-3">
+            <div className="shrink-0 border-t border-border bg-white px-3 pt-2.5 pb-[calc(.625rem+env(safe-area-inset-bottom))] sm:px-4 sm:py-3">
               <p id="staff-composer-status" role="status" className={cn(
                 "mb-2 rounded-xl px-3 py-2 text-xs font-bold ring-1 ring-inset",
                 canReply ? "bg-emerald-50 text-emerald-900 ring-emerald-200" : "bg-slate-50 text-slate-700 ring-slate-200"
               )}>{composerStatus}</p>
             <form
-              className="flex min-w-0 items-end gap-1.5 rounded-[24px] border border-[#d7e1d8] bg-[#f6f8f6] p-1.5 transition focus-within:border-primary focus-within:bg-white focus-within:ring-2 focus-within:ring-primary/15"
+              className="flex min-w-0 items-end gap-1.5 rounded-[24px] border border-border-strong bg-surface-subtle p-1.5 transition focus-within:border-primary focus-within:bg-white focus-within:ring-2 focus-within:ring-primary/15"
               aria-busy={activeAction === "send"}
               onSubmit={(event) => {
                 event.preventDefault();
@@ -1087,7 +1088,7 @@ export function StaffMessagesExperience() {
                 }
                 disabled={!canReply || submitting}
                 aria-describedby="staff-composer-status"
-                className="max-h-32 min-h-11 min-w-0 flex-1 resize-none bg-transparent px-3 py-2 text-base leading-6 text-[#17211b] outline-none placeholder:text-[#8a948e] disabled:cursor-not-allowed disabled:text-[#69746e] sm:text-sm"
+                className="max-h-32 min-h-11 min-w-0 flex-1 resize-none bg-transparent px-3 py-2 text-base leading-6 text-foreground outline-none placeholder:text-[#8a948e] disabled:cursor-not-allowed disabled:text-muted-foreground sm:text-sm"
               />
               <Button
                 type="submit"
@@ -1099,22 +1100,22 @@ export function StaffMessagesExperience() {
                 {activeAction === "send" ? <LoaderCircle className="size-[18px] motion-safe:animate-spin" aria-hidden="true" /> : <Send className="size-[18px]" aria-hidden="true" />}
               </Button>
             </form>
-              <p className="mt-2 hidden px-1 text-[11px] text-[#88918b] sm:block">Press Enter to send, Shift+Enter for a new line.</p>
+              <p className="mt-2 hidden px-1 text-[11px] text-muted-foreground sm:block">Press Enter to send, Shift+Enter for a new line.</p>
             </div>
           </div>
         ) : (
-          <div className="hidden h-full place-items-center bg-[#f4f7f4] p-6 text-center lg:grid">
+          <div className="hidden h-full place-items-center bg-surface-subtle p-6 text-center lg:grid">
             <div>
-              <span className="mx-auto grid size-16 place-items-center rounded-full bg-white shadow-sm ring-1 ring-[#dce5dd]"><AssetIcon src="/assets/messages.svg" className="size-9" /></span>
-              <p className="mt-3 font-extrabold text-[#17211b]">No conversation selected</p>
-              <p className="mt-1 text-sm text-[#68746d]">Choose a student message from the inbox.</p>
+              <span className="mx-auto grid size-16 place-items-center rounded-full bg-white shadow-sm ring-1 ring-border"><AssetIcon src="/assets/messages.svg" className="size-9" /></span>
+              <p className="mt-3 font-extrabold text-foreground">No conversation selected</p>
+              <p className="mt-1 text-sm text-muted-foreground">Choose a student message from the inbox.</p>
             </div>
           </div>
         )}
       </section>
       {purgeDialog ? (
         <div
-          className="fixed inset-0 z-[13000] grid place-items-center overflow-y-auto bg-[#101820]/60 p-4 backdrop-blur-[2px]"
+          className="fixed inset-0 z-[13000] grid place-items-center overflow-y-auto bg-foreground/60 p-4 backdrop-blur-[2px]"
           onMouseDown={(event) => {
             if (event.currentTarget === event.target) closePurgeDialog();
           }}
@@ -1131,13 +1132,13 @@ export function StaffMessagesExperience() {
                 <ShieldAlert className="size-5" />
               </span>
               <div className="min-w-0 flex-1">
-                <h2 id={purgeDialogA11y.titleId} className="text-lg font-extrabold leading-6 text-[#17211b]">Permanently purge this evidence?</h2>
-                <div id={purgeDescriptionId} className="mt-2 space-y-3 text-sm leading-6 text-[#59655d]">
+                <h2 id={purgeDialogA11y.titleId} className="text-lg font-extrabold leading-6 text-foreground">Permanently purge this evidence?</h2>
+                <div id={purgeDescriptionId} className="mt-2 space-y-3 text-sm leading-6 text-muted-foreground">
                   <p>This cannot be undone. The conversation, {purgeDialog.preview.messageCount} message{purgeDialog.preview.messageCount === 1 ? "" : "s"}, and {purgeDialog.preview.revisionCount} edit revision{purgeDialog.preview.revisionCount === 1 ? "" : "s"} will be removed.</p>
                   <p>A minimal audit tombstone will remain, without the subject, student identity, or message content.</p>
                   <p>Type <code className="select-all rounded bg-red-50 px-1.5 py-1 font-mono font-extrabold text-red-800">{purgeDialog.preview.confirmationPhrase}</code> exactly to continue.</p>
                 </div>
-                <label className="mt-4 block text-xs font-extrabold uppercase tracking-[0.12em] text-[#59655d]" htmlFor="permanent-purge-phrase">Confirmation phrase</label>
+                <label className="mt-4 block text-xs font-extrabold uppercase tracking-[0.12em] text-muted-foreground" htmlFor="permanent-purge-phrase">Confirmation phrase</label>
                 <input
                   id="permanent-purge-phrase"
                   data-dialog-autofocus
@@ -1146,7 +1147,7 @@ export function StaffMessagesExperience() {
                   value={purgePhrase}
                   onChange={(event) => setPurgePhrase(event.target.value)}
                   disabled={pendingAction?.type === "purge"}
-                  className="mt-2 h-11 w-full rounded-lg border border-red-200 bg-white px-3 font-mono text-sm font-bold text-[#17211b] outline-none focus:border-red-600 focus:ring-2 focus:ring-red-200 disabled:opacity-60"
+                  className="mt-2 h-11 w-full rounded-lg border border-red-200 bg-white px-3 font-mono text-sm font-bold text-foreground outline-none focus:border-red-600 focus:ring-2 focus:ring-red-200 disabled:opacity-60"
                 />
               </div>
             </div>

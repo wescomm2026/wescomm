@@ -192,6 +192,12 @@ export type BackendReservation = {
   payment?: BackendPaymentSummary | null;
   createdAt: string;
   updatedAt: string;
+  confirmationQueue?: {
+    position: number;
+    ahead: number;
+    total: number;
+    calculatedAt: string;
+  } | null;
   student?: BackendProfileSummary | null;
   items: Array<{
     id: string;
@@ -224,7 +230,6 @@ export type BackendReservation = {
 };
 
 export type CreateReservationPayload = {
-  paymentMethod: BackendPaymentMethod;
   preferredCollectionChannel: CollectionChannel;
   pickupDate: string;
   pickupSlotId: string;
@@ -244,7 +249,8 @@ export type CreateReservationPayload = {
 export type BackendReceipt = {
   id: string;
   receiptCode: string;
-  studentId: string;
+  studentId: string | null;
+  buyerName?: string | null;
   reservationId: string | null;
   totalAmount: string | number;
   paymentMethod: BackendPaymentMethod;
@@ -288,6 +294,14 @@ export type BackendReceipt = {
       } | null;
     }>;
   } | null;
+  walkInSaleItems?: Array<{
+    id: string;
+    productName: string;
+    options: Array<{ optionName: string; optionValue: string }>;
+    quantity: number;
+    unitPrice: string | number;
+    subtotal: string | number;
+  }>;
 };
 
 export type BackendCursorPage<T> = {
@@ -319,6 +333,7 @@ export type BackendPickupTimeSlot = {
 export type BackendPickupSlotAvailability = {
   pickupDate: string;
   pickupPolicyVersion: number;
+  serverTime?: string;
   slots: Array<{
     slotId: string;
     capacity: number | null;
@@ -801,12 +816,23 @@ export type BackendAdminUser = {
 };
 
 export type BackendReportSummary = {
+  generatedAt: string;
   range: {
     preset: ReportRangePreset;
     from: string | null;
     to: string;
     granularity: "DAILY" | "MONTHLY";
     label: string;
+  };
+  filters: {
+    collectionChannel: "ALL" | "COMMISSARY" | "TREASURER";
+    categoryId: string | null;
+    basis: "COLLECTION" | "COMPLETION";
+  };
+  reportBasis: "COLLECTION" | "COMPLETION";
+  cashOnlyPolicy: {
+    effectiveAt: string;
+    enabled: boolean;
   };
   totalSales: number;
   cogs: number;
@@ -825,18 +851,28 @@ export type BackendReportSummary = {
   treasurerCollections: Array<{
     paymentId: string;
     paidAt: string;
-    officialReceiptNumber: string;
+    officialReceiptNumber: string | null;
     orderReference: string;
     items: string;
     amount: number;
   }>;
   uncostedQuantity: number;
   unverifiedInventoryQuantity: number;
-  onlineGcashRevenue: number;
-  payAtCommissaryRevenue: number;
+  cashRevenue: number;
+  commissaryCashRevenue: number;
+  treasuryCashRevenue: number;
+  inPersonRevenue: number;
+  legacyOnlineRevenue: number;
+  legacyInPersonRevenue: number;
   paymentMethodBreakdown: {
-    onlineGcash: { amount: number; receipts: number };
-    payAtCommissary: { amount: number; receipts: number };
+    cash: { amount: number; receipts: number };
+    inPerson: { amount: number; receipts: number };
+    legacyOnline: { amount: number; receipts: number };
+    legacyInPerson: { amount: number; receipts: number };
+  };
+  cashCollectionChannelBreakdown: {
+    commissary: { amount: number; payments: number };
+    treasurer: { amount: number; payments: number };
   };
   totalReservations: number;
   pendingReservations: number;
@@ -853,7 +889,56 @@ export type BackendReportSummary = {
   receiptsToVerify: number;
   totalReceipts: number;
   activeConversations: number;
+  walkInSales: {
+    amount: number;
+    receipts: number;
+    cogs: number;
+  };
+  walkInVoids: {
+    count: number;
+    amount: number;
+  };
+  cashierReconciliation: Array<{
+    cashierId: string | null;
+    cashierName: string;
+    saleCount: number;
+    sales: number;
+    voidCount: number;
+    voids: number;
+  }>;
+  comparison: {
+    available: boolean;
+    label: string | null;
+    cashRevenue: BackendReportComparisonMetric;
+    recognizedSales: BackendReportComparisonMetric;
+    grossProfit: BackendReportComparisonMetric;
+    reservations: BackendReportComparisonMetric;
+  };
+  reconciliation: {
+    status: "CLEAN" | "NEEDS_REVIEW";
+    exceptionCount: number;
+    amountAtRisk: number;
+    truncated: boolean;
+    counts: Partial<Record<BackendReportReconciliationType, number>>;
+    items: Array<{
+      type: BackendReportReconciliationType;
+      label: string;
+      severity: "HIGH" | "MEDIUM";
+      reservationId: string;
+      referenceCode: string;
+      paymentId: string | null;
+      receiptId: string | null;
+      eventAt: string;
+      amount: number;
+    }>;
+  };
   salesTrend: Array<{
+    key: string;
+    day: string;
+    sales: number;
+    receipts: number;
+  }>;
+  collectionTrend: Array<{
     key: string;
     day: string;
     sales: number;
@@ -867,6 +952,23 @@ export type BackendReportSummary = {
     cogs: number;
     grossProfit: number;
   }>;
+  inventoryPlanning: Array<{
+    productId: string;
+    item: string;
+    category: string;
+    stock: number;
+    lowStockThreshold: number;
+    unitsSold: number;
+    sales: number;
+    cogs: number;
+    grossProfit: number;
+    marginPercent: number | null;
+    stockCoverDays: number | null;
+    suggestedReorderQuantity: number;
+    status: "OUT_OF_STOCK" | "REORDER" | "NO_SALES" | "SLOW_MOVING" | "HEALTHY";
+    recommendation: string;
+    lastSoldAt: string | null;
+  }>;
   itemSales: Array<{
     productId: string;
     item: string;
@@ -875,6 +977,7 @@ export type BackendReportSummary = {
     sales: number;
     cogs: number;
     grossProfit: number;
+    marginPercent: number | null;
   }>;
   reservationStatusDistribution: Array<{
     status: string;
@@ -889,60 +992,20 @@ export type BackendReportSummary = {
   }>;
 };
 
-export type BackendWesbotUsageSummary = {
-  model: string;
-  aiEnabled: boolean;
-  semanticMode: "off" | "shadow" | "active";
-  budgetEnforced: boolean;
-  budgetUsd: number;
-  estimatedSpendUsd: number;
-  reservedSpendUsd: number;
-  committedSpendUsd: number;
-  remainingUsd: number;
-  budgetPercent: number;
-  budgetHealth: "HEALTHY" | "WATCH" | "CRITICAL" | "PAUSED" | "DISABLED";
-  monthStart: string;
-  monthEnd: string;
-  totalCalls: number;
-  successfulCalls: number;
-  fallbackCalls: number;
-  budgetBlockedCalls: number;
-  rateLimitedCalls: number;
-  timeoutCalls: number;
-  activeReservations: number;
-  inputTokens: number;
-  cachedInputTokens: number;
-  outputTokens: number;
-  reasoningOutputTokens: number;
-  totalTokens: number;
-  averageLatencyMs: number;
-  lastSuccessAt: string | null;
-  lastUpdatedAt: string | null;
-  pricingVersion: string;
-  inputRateUsdPer1MTokens: number;
-  cachedRateUsdPer1MTokens: number;
-  outputRateUsdPer1MTokens: number;
-  operationBreakdown: Array<{
-    operation: string;
-    calls: number;
-    inputTokens: number;
-    outputTokens: number;
-    totalTokens: number;
-    estimatedSpendUsd: number;
-  }>;
-  today: BackendWesbotUsageDay;
-  daily: BackendWesbotUsageDay[];
+export type BackendReportComparisonMetric = {
+  current: number;
+  previous: number;
+  difference: number;
+  percentChange: number | null;
 };
 
-export type BackendWesbotUsageDay = {
-  day: string;
-  calls: number;
-  successfulCalls: number;
-  fallbackCalls: number;
-  inputTokens: number;
-  outputTokens: number;
-  estimatedSpendUsd: number;
-};
+export type BackendReportReconciliationType =
+  | "MISSING_TREASURY_OR"
+  | "PAYMENT_RECEIPT_MISMATCH"
+  | "COMPLETED_WITHOUT_PAID_PAYMENT"
+  | "COMPLETED_WITHOUT_VERIFIED_RECEIPT"
+  | "PAID_NOT_COMPLETED"
+  | "POST_CUTOVER_NON_CASH";
 
 export type ReportRangePreset = "TODAY" | "LAST_7_DAYS" | "LAST_30_DAYS" | "THIS_MONTH" | "LAST_MONTH" | "CUSTOM" | "ALL_TIME";
 export type ReportRangeOptions = {
@@ -952,6 +1015,94 @@ export type ReportRangeOptions = {
   granularity?: "AUTO" | "DAILY" | "MONTHLY";
   collectionChannel?: "COMMISSARY" | "TREASURER";
   categoryId?: string;
+  basis?: "COLLECTION" | "COMPLETION";
+};
+
+export type SalesLedgerPeriod = "DAILY" | "WEEKLY" | "MONTHLY";
+export type SalesLedgerChannel = "ALL" | "RESERVATION" | "WALK_IN";
+export type SalesLedgerLocation = "ALL" | "COMMISSARY" | "TREASURER";
+
+export type SalesLedgerOptions = {
+  period: SalesLedgerPeriod;
+  anchor: string;
+  channel: SalesLedgerChannel;
+  collectionLocation: SalesLedgerLocation;
+  snapshotAt?: string;
+};
+
+export type BackendSalesLedgerItem = {
+  productId: string;
+  productName: string;
+  skuCode: string | null;
+  variant: string | null;
+  category: string | null;
+  quantity: number;
+  unitPrice: number;
+  subtotal: number;
+  cogs: number;
+};
+
+export type BackendSalesLedgerSale = {
+  sequence: number;
+  timestamp: string;
+  receiptCode: string;
+  type: "RESERVATION" | "WALK_IN";
+  studentName: string;
+  studentNumber: string | null;
+  orderReference: string | null;
+  items: BackendSalesLedgerItem[];
+  itemLines: string[];
+  quantity: number;
+  collectionPoint: "COMMISSARY" | "TREASURER";
+  cashierName: string | null;
+  amount: number;
+};
+
+export type BackendSalesLedgerVoid = {
+  voidedAt: string;
+  originalSaleAt: string | null;
+  receiptCode: string;
+  type: "RESERVATION" | "WALK_IN";
+  amount: number;
+  cashierName: string | null;
+  voidedBy: string | null;
+  reason: string | null;
+};
+
+export type BackendSalesLedgerProductSummary = {
+  item: string;
+  category: string | null;
+  skuOrOption: string | null;
+  quantity: number;
+  sales: number;
+  cogs: number;
+  grossProfit: number;
+};
+
+export type BackendSalesLedger = {
+  generatedAt: string;
+  generatedBy: string | null;
+  range: {
+    period: SalesLedgerPeriod;
+    anchor: string;
+    fromKey: string;
+    toKey: string;
+    fromInclusive: string;
+    toExclusive: string;
+    label: string;
+  };
+  filters: { channel: SalesLedgerChannel; collectionLocation: SalesLedgerLocation };
+  summary: {
+    validSalesTransactions: number;
+    totalUnitsSold: number;
+    reservationSales: { count: number; amount: number };
+    walkInSales: { count: number; amount: number };
+    totalRecognizedSales: number;
+    voidsProcessed: { count: number; amount: number };
+  };
+  sales: BackendSalesLedgerSale[];
+  voids: BackendSalesLedgerVoid[];
+  productSummary: BackendSalesLedgerProductSummary[];
 };
 
 export type BackendDashboardProduct = {
@@ -1475,6 +1626,64 @@ export async function updateReservationStatusFromApi(
   return data;
 }
 
+export type BackendBulkConfirmationPreview = {
+  scope: "SELECTED" | "FILTERED";
+  eligibleCount: number;
+  totalEligible: number;
+  skippedCount: number;
+  truncated: boolean;
+  eligible: Array<{
+    reservationId: string;
+    referenceCode: string;
+    studentName: string;
+    eligible: true;
+    reason: null;
+    reasonLabel: null;
+  }>;
+  skipped: Array<{
+    reservationId: string;
+    referenceCode: string;
+    studentName: string;
+    eligible: false;
+    reason: "NOT_PENDING" | "SCHEDULE_REVIEW_REQUIRED" | "ONLINE_PAYMENT_NOT_PAID";
+    reasonLabel: string;
+  }>;
+  reservationIds: string[];
+  previewToken: string;
+};
+
+export async function previewBulkReservationConfirmationFromApi(
+  token: string,
+  input: { reservationIds?: string[]; query?: string }
+) {
+  const data = await authApiFetch<{ preview: BackendBulkConfirmationPreview }>("/reservations/bulk-confirm/preview", token, {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+  return data.preview;
+}
+
+export async function confirmReservationsBulkFromApi(
+  token: string,
+  preview: Pick<BackendBulkConfirmationPreview, "reservationIds" | "previewToken">
+) {
+  const idempotencyKey = `reservation-bulk-confirm:${crypto.randomUUID()}`;
+  const data = await authApiFetch<{
+    result: {
+      confirmedCount: number;
+      skippedCount: number;
+      confirmed: Array<{ reservationId: string; referenceCode: string }>;
+      skipped: Array<{ reservationId: string; reason: string }>;
+      idempotentReplay: boolean;
+    };
+  }>("/reservations/bulk-confirm", token, {
+    method: "POST",
+    headers: { "Idempotency-Key": idempotencyKey },
+    body: JSON.stringify(preview)
+  });
+  return data.result;
+}
+
 export async function confirmReservationNoShowFromApi(token: string, reservationId: string) {
   return authApiFetch<{
     reservation: BackendReservation;
@@ -1919,6 +2128,7 @@ function reportQuery(options: ReportRangeOptions = {}, fresh = false) {
   if (options.granularity) params.set("granularity", options.granularity);
   if (options.collectionChannel) params.set("collectionChannel", options.collectionChannel);
   if (options.categoryId) params.set("categoryId", options.categoryId);
+  if (options.basis) params.set("basis", options.basis);
   if (fresh) params.set("fresh", "1");
   return params.size ? `?${params.toString()}` : "";
 }
@@ -1928,14 +2138,124 @@ export async function getAdminReportSummaryFromApi(token: string, options: Repor
   return data.summary;
 }
 
-export async function getAdminWesbotUsageFromApi(token: string, signal?: AbortSignal) {
-  const data = await authApiFetch<{ usage: BackendWesbotUsageSummary }>("/admin/wesbot/usage", token, { signal });
-  return data.usage;
-}
-
 export async function getStaffReportSummaryFromApi(token: string, options: ReportRangeOptions = {}, signal?: AbortSignal, fresh = false) {
   const data = await authApiFetch<{ summary: BackendReportSummary }>(`/staff/reports/summary${reportQuery(options, fresh)}`, token, { signal });
   return data.summary;
+}
+
+export async function downloadManagementReportFromApi(
+  token: string,
+  options: ReportRangeOptions,
+  role: "STAFF" | "ADMIN"
+) {
+  const response = await onlineFetch(
+    `${API_BASE_URL}${role === "ADMIN" ? "/admin" : "/staff"}/reports/summary/download${reportQuery(options)}`,
+    {
+      credentials: "include",
+      headers: {
+        ...(token && token !== COOKIE_SESSION_TOKEN ? { Authorization: `Bearer ${token}` } : {})
+      }
+    }
+  );
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null);
+    if (response.status === 401 && typeof window !== "undefined") window.dispatchEvent(new Event(AUTH_UNAUTHORIZED_EVENT));
+    throw new BackendApiError(response.status, payload?.error ?? "", payload?.code, payload?.details, payload?.requestId);
+  }
+  const blob = await response.blob();
+  const disposition = response.headers.get("Content-Disposition") ?? "";
+  const encodedMatch = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+  const plainMatch = disposition.match(/filename="?([^";]+)"?/i);
+  const fileName = encodedMatch
+    ? decodeURIComponent(encodedMatch[1])
+    : plainMatch?.[1] ?? "wescomm-management-analytics.xlsx";
+  return { blob, fileName };
+}
+
+export function salesLedgerQuery(options: SalesLedgerOptions) {
+  const params = new URLSearchParams();
+  params.set("period", options.period);
+  if (options.anchor) params.set("anchor", options.anchor);
+  if (options.channel !== "ALL") params.set("channel", options.channel);
+  if (options.collectionLocation !== "ALL") params.set("collectionLocation", options.collectionLocation);
+  if (options.snapshotAt) params.set("snapshotAt", options.snapshotAt);
+  return `?${params.toString()}`;
+}
+
+function salesLedgerRouteBase(role: "STAFF" | "ADMIN") {
+  return role === "ADMIN" ? "/admin" : "/staff";
+}
+
+export async function getSalesLedgerFromApi(
+  token: string,
+  options: SalesLedgerOptions,
+  role: "STAFF" | "ADMIN",
+  signal?: AbortSignal
+) {
+  return authApiFetch<BackendSalesLedger>(
+    `${salesLedgerRouteBase(role)}/reports/sales-ledger${salesLedgerQuery(options)}`,
+    token,
+    { signal }
+  );
+}
+
+export async function recordSalesLedgerPrintAuditFromApi(
+  token: string,
+  options: SalesLedgerOptions,
+  role: "STAFF" | "ADMIN"
+) {
+  await authApiFetch<null>(
+    `${salesLedgerRouteBase(role)}/reports/sales-ledger/audit`,
+    token,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        action: "PRINTED",
+        period: options.period,
+        anchor: options.anchor,
+        channel: options.channel,
+        collectionLocation: options.collectionLocation,
+        snapshotAt: options.snapshotAt
+      })
+    }
+  );
+}
+
+export async function downloadSalesLedgerFromApi(
+  token: string,
+  options: SalesLedgerOptions,
+  role: "STAFF" | "ADMIN"
+) {
+  const response = await onlineFetch(
+    `${API_BASE_URL}${salesLedgerRouteBase(role)}/reports/sales-ledger/download${salesLedgerQuery(options)}`,
+    {
+      credentials: "include",
+      headers: {
+        ...(token && token !== COOKIE_SESSION_TOKEN ? { Authorization: `Bearer ${token}` } : {})
+      }
+    }
+  );
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null);
+    if (response.status === 401 && typeof window !== "undefined") {
+      window.dispatchEvent(new Event(AUTH_UNAUTHORIZED_EVENT));
+    }
+    throw new BackendApiError(
+      response.status,
+      payload?.error ?? "",
+      payload?.code,
+      payload?.details,
+      payload?.requestId ?? response.headers.get("X-Request-Id") ?? undefined
+    );
+  }
+  const blob = await response.blob();
+  const disposition = response.headers.get("Content-Disposition") ?? "";
+  const encodedMatch = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+  const plainMatch = disposition.match(/filename="?([^";]+)"?/i);
+  const fileName = encodedMatch
+    ? decodeURIComponent(encodedMatch[1])
+    : plainMatch?.[1] ?? `wescomm-sales-report-${options.period.toLowerCase()}-${options.anchor}.xlsx`;
+  return { blob, fileName };
 }
 
 export async function getStaffDashboardSummaryFromApi(token: string, signal?: AbortSignal, fresh = false) {
@@ -1988,6 +2308,47 @@ export async function getStaffUsersFromApi(token: string, signal?: AbortSignal) 
   return data.users;
 }
 
+export type StaffNotificationPreferences = {
+  lowStock: boolean;
+  reservations: boolean;
+  receipts: boolean;
+};
+
+export type StaffPickupGuidance = {
+  text: string;
+  updatedAt: string | null;
+  updatedBy: string | null;
+};
+
+export async function getStaffNotificationPreferencesFromApi(token: string, signal?: AbortSignal) {
+  return authApiFetch<{ preferences: StaffNotificationPreferences; updatedAt: string | null }>(
+    "/staff/settings/notification-preferences",
+    token,
+    { signal }
+  );
+}
+
+export async function updateStaffNotificationPreferencesFromApi(token: string, preferences: StaffNotificationPreferences) {
+  return authApiFetch<{ preferences: StaffNotificationPreferences; updatedAt: string | null }>(
+    "/staff/settings/notification-preferences",
+    token,
+    { method: "PUT", body: JSON.stringify(preferences) }
+  );
+}
+
+export async function getStaffPickupGuidanceFromApi(token: string, signal?: AbortSignal) {
+  const data = await authApiFetch<{ guidance: StaffPickupGuidance }>("/staff/settings/pickup-guidance", token, { signal });
+  return data.guidance;
+}
+
+export async function updateStaffPickupGuidanceFromApi(token: string, text: string) {
+  const data = await authApiFetch<{ guidance: StaffPickupGuidance }>("/staff/settings/pickup-guidance", token, {
+    method: "PUT",
+    body: JSON.stringify({ text })
+  });
+  return data.guidance;
+}
+
 export async function updateAdminUserRoleFromApi(token: string, userId: string, role: BackendAppRole) {
   const data = await authApiFetch<{ user: BackendAdminUser }>(`/admin/users/${userId}/role`, token, {
     method: "PATCH",
@@ -2016,4 +2377,29 @@ export async function getAdminAuditLogsFromApi(
     items: Array.isArray(data.items) ? data.items : data.auditLogs ?? [],
     nextCursor: data.nextCursor ?? null
   };
+}
+
+export type StudentOverview = {
+  generatedAt: string;
+  reservations: Record<BackendReservationStatus, number> & { total: number; active: number };
+  receipts: Record<BackendReceiptStatus, number> & { total: number };
+  spentThisMonth: number;
+  nextPickup: {
+    id: string;
+    referenceCode: string;
+    status: BackendReservationStatus;
+    pickupStart: string | null;
+    pickupEnd: string | null;
+    needsScheduleReview: boolean;
+    slotLabel: string | null;
+    totalAmount: number;
+    itemCount: number;
+    items: Array<{ name: string; quantity: number }>;
+  } | null;
+  pickupGuidance: string | null;
+};
+
+export async function getStudentOverviewFromApi(token: string, signal?: AbortSignal) {
+  const data = await authApiFetch<{ overview: StudentOverview }>("/student/overview", token, { signal });
+  return data.overview;
 }

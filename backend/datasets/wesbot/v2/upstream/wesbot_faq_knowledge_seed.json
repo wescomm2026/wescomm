@@ -102,7 +102,7 @@
       "Nagbayad na online, pwede cancel?",
       "Cancel paid PayMongo GCash"
     ],
-    "answer": "Do not self-cancel a reservation with a successful Online GCash payment. Authorized Staff or an Administrator must review the cancellation and any required refund handling.",
+    "answer": "For historical reservations with a successful Online GCash payment, do not self-cancel. Authorized Staff or an Administrator must review the cancellation and any required refund handling.",
     "category": "PAYMENT",
     "is_published": true,
     "source": "wesbot.service.ts cancellationAnswer"
@@ -114,7 +114,7 @@
       "Can WesBot verify GCash?",
       "Payment status saan galing?"
     ],
-    "answer": "WesBot checks the payment record linked to your reservation. It reports only the recorded payment status and, when available, the verified paid time.",
+    "answer": "WesBot checks the payment record linked to your reservation. It reports only the recorded payment status and, when available, the verified paid time. Historical online GCash payments stay visible on older records.",
     "category": "PAYMENT",
     "is_published": true,
     "source": "wesbot.service.ts paymentAnswer"
@@ -126,10 +126,23 @@
       "Cash sa commissary ba?",
       "May online payment ba pag pay at commissary?"
     ],
-    "answer": "For a reservation set to Pay at Commissary, WesBot reports that no online payment is recorded for that reservation.",
+    "answer": "New reservations are cash-only. When you choose Pay at Commissary, you pay in cash when you claim your order. No online payment is recorded for these reservations.",
     "category": "PAYMENT",
     "is_published": true,
     "source": "wesbot.service.ts paymentAnswer"
+  },
+  {
+    "question": "Can I pay with GCash or e-wallet?",
+    "variants": [
+      "Pwede GCash?",
+      "May online payment ba?",
+      "PayMongo available?",
+      "Pwede e-wallet?"
+    ],
+    "answer": "WESCOMM accepts cash only for new reservations. You can choose to pay at the Commissary or at the Treasury. GCash, e-wallet, and online payments are not accepted for new reservations.",
+    "category": "PAYMENT",
+    "is_published": true,
+    "source": "domain/wesbot-knowledge.ts cash-only policy"
   },
   {
     "question": "What payment statuses can appear for Online GCash?",
@@ -138,7 +151,7 @@
       "GCash status meanings",
       "PayMongo payment states"
     ],
-    "answer": "The current system can record these online payment states: Initializing, Awaiting Payment, Paid, Expired, Cancelled, Staff Refund Review Required, Partially Refunded, and Refunded.",
+    "answer": "Historical online GCash payments can show these states: Initializing, Awaiting Payment, Paid, Expired, Cancelled, Staff Refund Review Required, Partially Refunded, and Refunded.",
     "category": "PAYMENT",
     "is_published": true,
     "source": "OnlinePaymentStatus enum and paymentStatusLabel"

@@ -24,9 +24,9 @@ function formatCurrency(value: number) {
 
 function ChartPanel({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section className="overflow-hidden rounded-lg border border-[#dce5dd] bg-white shadow-sm">
-      <div className="flex min-h-14 items-center border-b border-[#e5ebe6] px-4">
-        <h2 className="font-extrabold text-[#17211b]">{title}</h2>
+    <section className="overflow-hidden rounded-xl border bg-card shadow-soft">
+      <div className="flex min-h-14 items-center border-b px-4 sm:px-5">
+        <h2 className="font-extrabold text-foreground">{title}</h2>
       </div>
       {children}
     </section>
@@ -34,13 +34,15 @@ function ChartPanel({ title, children }: { title: string; children: React.ReactN
 }
 
 export function AdminSummaryCharts({ summary, embedded = false }: { summary: BackendReportSummary; embedded?: boolean }) {
+  const primaryTrend = summary.reportBasis === "COLLECTION" ? summary.collectionTrend : summary.salesTrend;
+  const primaryTrendLabel = summary.reportBasis === "COLLECTION" ? "Cash Collection Trend" : "Recognized Sales Trend";
   const totalStatus = summary.reservationStatusDistribution.reduce((total, item) => total + item.value, 0);
   const panels = (
     <>
-      <ChartPanel title="Sales Trend">
+      <ChartPanel title={primaryTrendLabel}>
         <div className="h-[310px] p-4">
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={summary.salesTrend} margin={{ top: 10, right: 10, left: -12, bottom: 0 }}>
+            <LineChart data={primaryTrend} margin={{ top: 10, right: 10, left: -12, bottom: 0 }}>
               <CartesianGrid vertical={false} stroke="#e5ebe6" />
               <XAxis dataKey="day" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
               <YAxis tickFormatter={(value) => `PHP ${Math.round(Number(value) / 1000)}K`} tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
@@ -65,7 +67,7 @@ export function AdminSummaryCharts({ summary, embedded = false }: { summary: Bac
             <div className="pointer-events-none absolute inset-0 grid place-items-center text-center">
               <div>
                 <p className="text-2xl font-extrabold text-primary">{totalStatus}</p>
-                <p className="text-xs text-[#69746e]">Total</p>
+                <p className="text-xs text-muted-foreground">Total</p>
               </div>
             </div>
           </div>
@@ -73,7 +75,7 @@ export function AdminSummaryCharts({ summary, embedded = false }: { summary: Bac
             {summary.reservationStatusDistribution.map((item, index) => (
               <div key={item.status} className="grid grid-cols-[auto_1fr_auto] items-center gap-2 text-xs">
                 <span className="size-2.5 rounded-full" style={{ backgroundColor: statusColors[index % statusColors.length] }} />
-                <span className="text-[#536058]">{item.label}</span>
+                <span className="text-muted-foreground">{item.label}</span>
                 <span className="font-bold">{item.value}</span>
               </div>
             ))}
@@ -92,7 +94,7 @@ export function AdminReportsCharts({ summary }: { summary: BackendReportSummary 
     .slice(0, 3);
 
   return (
-    <section className="grid gap-5 xl:grid-cols-2 2xl:grid-cols-3">
+    <section id="reservation-status" className="scroll-mt-24 grid gap-5 xl:grid-cols-2 2xl:grid-cols-3">
       <ChartPanel title="Top Categories by Sales">
         <div className="h-[330px] p-4">
           <ResponsiveContainer width="100%" height="100%">

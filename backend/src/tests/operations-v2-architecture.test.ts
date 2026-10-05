@@ -62,6 +62,7 @@ test("release migration preflight covers FIFO and collection-preference migratio
 
   assert.match(verifier, /20260924000000_add_fifo_costing_and_collection_channels/);
   assert.match(verifier, /20260924010000_add_reservation_collection_preference/);
+  assert.match(verifier, /20260928000000_add_bulk_confirmation_queue_and_stock_alert_policy/);
   assert.match(verifier, /release migration is not registered/);
   assert.match(verifier, /requiresExplicitTransaction: false/);
   assert.match(verifier, /preserve its Prisma checksum/);
@@ -75,6 +76,6 @@ test("restocking can atomically update the product-wide selling price without ch
 
   assert.match(routes, /sellingPrice: acquisitionCostSchema\.optional\(\)/);
   assert.match(inventory, /price: nextSellingPrice/);
-  assert.match(skuInventory, /data: \{ stock: totalStock, status, price: nextSellingPrice/);
+  assert.match(skuInventory, /transaction\.product\.update\(\{[\s\S]{0,700}stock: totalStock,[\s\S]{0,700}price: nextSellingPrice/);
   assert.match(reservations, /unitPrice:/);
 });

@@ -1,5 +1,5 @@
 import { expect, test, type Route } from "@playwright/test";
-import { dismissWelcomeGate } from "./helpers";
+import { dismissWelcomeGate, fulfillStudentOverview } from "./helpers";
 
 function json(route: Route, body: unknown, status = 200) {
   return route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
@@ -10,6 +10,7 @@ test("visitor receipt navigation and search display only masked details", async 
 
   await page.route("**/api/backend/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
+    if (await fulfillStudentOverview(route)) return;
 
     if (path === "/api/backend/auth/me") {
       return json(route, { error: "Authentication required." }, 401);
@@ -71,6 +72,7 @@ test("visitor receipt navigation and search display only masked details", async 
 test("unknown receipt codes use a neutral not-found result", async ({ page }) => {
   await page.route("**/api/backend/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
+    if (await fulfillStudentOverview(route)) return;
     if (path.startsWith("/api/backend/receipts/verify/")) {
       return json(route, { error: "Receipt not found." }, 404);
     }
@@ -92,6 +94,7 @@ test("opaque QR fragment is removed before masked token verification", async ({ 
   await page.route("**/api/backend/**", async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
+    if (await fulfillStudentOverview(route)) return;
 
     if (path === "/api/backend/auth/me") {
       return json(route, { error: "Authentication required." }, 401);
@@ -123,7 +126,7 @@ test("opaque QR fragment is removed before masked token verification", async ({ 
   await dismissWelcomeGate(page);
 
   await expect(page.getByRole("heading", { name: "RCT-2026-QR" })).toBeVisible();
-  await expect(page.getByText("GCash – Online", { exact: true })).toBeVisible();
+  await expect(page.getByText("Legacy GCash – Online", { exact: true })).toBeVisible();
   await expect(page.getByText("M*** S.", { exact: true })).toBeVisible();
   expect(submittedToken).toBe(token);
   expect(hashSeenAtRequest).toBe("");

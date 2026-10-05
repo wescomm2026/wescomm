@@ -73,6 +73,18 @@ vercel env run -e production -- npm --prefix backend run release:production:veri
 Use one Vercel project with the `Services` preset. The root `vercel.json` builds
 `frontend` as Next.js and `backend` as Express, then serves both from one domain.
 
+The permanent `staging` branch uses its own Supabase project and branch-scoped
+Vercel Preview variables. Its automatic Git deployment is disabled so the
+protected `Deploy protected WESCOMM staging` workflow can apply and verify
+migrations before deploying the exact tested commit. Staging data maintenance
+is dry-run-first and fingerprint-confirmed:
+
+```powershell
+npm --prefix backend run staging:verify
+npm --prefix backend run staging:reset
+npm --prefix backend run staging:seed
+```
+
 - [GitHub and Vercel deployment guide](txt_files/WESCOMM_GITHUB_VERCEL_DEPLOYMENT.txt)
 - [Backend database migration guide](backend/README.md#database-migrations)
 - [QA staging runbook](txt_files/WESCOMM_QA_STAGING_RUNBOOK.txt)

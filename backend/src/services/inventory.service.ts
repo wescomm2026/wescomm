@@ -16,6 +16,7 @@ import {
   validateVariantGroupTotals
 } from "../domain/variant-stock.js";
 import { availabilityStatus, isProductOnSale } from "../domain/product-pricing.js";
+import { nextStockAlertPolicy } from "../domain/stock-alert-policy.js";
 import { adjustInventoryBatchesInTransaction, createInventoryBatchInTransaction, requireRestockCost } from "./inventory-cost.service.js";
 
 type RawCategory = {
@@ -64,6 +65,7 @@ export type ProductCreateInput = CategoryInput & {
   status?: ProductStatus;
   saleMode?: ProductSaleMode;
   stock?: number;
+  lowStockPercent?: number;
   lowStockThreshold?: number;
   variants?: ProductVariantInput[];
   notes?: string;
@@ -90,6 +92,8 @@ const inventoryRecordSelect = Prisma.validator<Prisma.ProductSelect>()({
   oldPrice: true,
   status: true,
   stock: true,
+  stockTarget: true,
+  lowStockPercent: true,
   lowStockThreshold: true,
   isActive: true,
   saleMode: true,
@@ -102,7 +106,7 @@ const inventoryRecordSelect = Prisma.validator<Prisma.ProductSelect>()({
     select: { id: true, name: true, slug: true, iconUrl: true }
   },
   variants: {
-    select: { id: true, optionName: true, optionValue: true, stock: true, lowStockThreshold: true },
+    select: { id: true, optionName: true, optionValue: true, stock: true, stockTarget: true, lowStockPercent: true, lowStockThreshold: true },
     orderBy: [{ optionName: "asc" }, { optionValue: "asc" }]
   },
   skus: {
@@ -111,6 +115,8 @@ const inventoryRecordSelect = Prisma.validator<Prisma.ProductSelect>()({
       id: true,
       code: true,
       stock: true,
+      stockTarget: true,
+      lowStockPercent: true,
       lowStockThreshold: true,
       isActive: true,
       optionValues: {
@@ -166,6 +172,8 @@ function mapInventoryRecord(row: InventoryRecord) {
     status: availabilityStatus(row.stock, row.lowStockThreshold, row.status),
     isOnSale: isProductOnSale(row.price, row.oldPrice),
     stock: row.stock,
+    stockTarget: row.stockTarget,
+    lowStockPercent: row.lowStockPercent,
     lowStockThreshold: row.lowStockThreshold,
     isActive: row.isActive,
     saleMode: row.saleMode,
@@ -181,6 +189,8 @@ function mapInventoryRecord(row: InventoryRecord) {
       id: sku.id,
       code: sku.code,
       stock: sku.stock,
+      stockTarget: sku.stockTarget,
+      lowStockPercent: sku.lowStockPercent,
       lowStockThreshold: sku.lowStockThreshold,
       isActive: sku.isActive,
       variantIds: sku.optionValues.map((link) => link.variantId),
@@ -201,7 +211,7 @@ function slugify(value: string) {
   return slug || "category";
 }
 
-function deriveProductStatus(stock: number, lowStockThreshold: number, currentStatus?: ProductStatus) {
+export function deriveProductStatus(stock: number, lowStockThreshold: number, currentStatus?: ProductStatus) {
   if (stock <= 0) return "OUT_OF_STOCK";
   if (currentStatus === "ON_SALE") return "ON_SALE";
   if (stock <= lowStockThreshold) return "RESTOCK_SOON";
@@ -411,7 +421,11 @@ export async function listInventory(input: InventoryListOptions = {}) {
         OR: [
           { name: { contains: query, mode: "insensitive" } },
           { description: { contains: query, mode: "insensitive" } },
-          { category: { name: { contains: query, mode: "insensitive" } } }
+          { category: { name: { contains: query, mode: "insensitive" } } },
+          { aliases: { some: { alias: { contains: query, mode: "insensitive" } } } },
+          { variants: { some: { optionValue: { contains: query, mode: "insensitive" } } } },
+          { skus: { some: { code: { contains: query, mode: "insensitive" } } } },
+          { skus: { some: { optionValues: { some: { variant: { optionValue: { contains: query, mode: "insensitive" } } } } } } }
         ]
       } : {})
     },
@@ -455,7 +469,14 @@ export async function createProduct(input: ProductCreateInput, performedById: st
     }
     requireRestockCost({ unitCost: input.initialUnitCost, receivedAt: input.receivedAt, supplierNote: input.supplierNote });
   }
-  const lowStockThreshold = input.lowStockThreshold ?? 10;
+  const productAlertPolicy = input.lowStockPercent === undefined
+    ? null
+    : nextStockAlertPolicy({
+        previousTarget: 0,
+        resultingStock: stock,
+        lowStockPercent: input.lowStockPercent
+      });
+  const lowStockThreshold = productAlertPolicy?.lowStockThreshold ?? input.lowStockThreshold ?? 10;
   const status = input.status ?? deriveProductStatus(stock, lowStockThreshold);
   const saleMode = input.saleMode ?? "SIMPLE";
   const audienceScope = input.audienceScope ?? "ALL_STUDENTS";
@@ -472,12 +493,22 @@ export async function createProduct(input: ProductCreateInput, performedById: st
     const optionKey = normalizeVariantPart(enteredOptionName);
     const optionName = canonicalOptionNames.get(optionKey) ?? enteredOptionName;
     canonicalOptionNames.set(optionKey, optionName);
+    const variantStock = variant.stock ?? 0;
+    const variantAlertPolicy = input.lowStockPercent === undefined
+      ? null
+      : nextStockAlertPolicy({
+          previousTarget: 0,
+          resultingStock: variantStock,
+          lowStockPercent: input.lowStockPercent
+        });
     return {
       id: `new-${index}`,
       optionName,
       optionValue: variant.optionValue.trim(),
-      stock: variant.stock ?? 0,
-      lowStockThreshold: variant.lowStockThreshold ?? 2
+      stock: variantStock,
+      stockTarget: variantAlertPolicy?.stockTarget ?? variantStock,
+      lowStockPercent: variantAlertPolicy?.lowStockPercent,
+      lowStockThreshold: variantAlertPolicy?.lowStockThreshold ?? variant.lowStockThreshold ?? 2
     };
   });
   if (saleMode !== "OPTIONS" && variants.length > 0) {
@@ -524,6 +555,8 @@ export async function createProduct(input: ProductCreateInput, performedById: st
         oldPrice: input.oldPrice ?? null,
         status,
         stock,
+        stockTarget: productAlertPolicy?.stockTarget ?? stock,
+        ...(productAlertPolicy ? { lowStockPercent: productAlertPolicy.lowStockPercent } : {}),
         lowStockThreshold,
         isActive: true,
         saleMode,
@@ -537,6 +570,8 @@ export async function createProduct(input: ProductCreateInput, performedById: st
               optionName: variant.optionName,
               optionValue: variant.optionValue,
               stock: variant.stock,
+              stockTarget: variant.stockTarget,
+              ...(variant.lowStockPercent === undefined ? {} : { lowStockPercent: variant.lowStockPercent }),
               lowStockThreshold: variant.lowStockThreshold
             }))
           }
@@ -544,7 +579,7 @@ export async function createProduct(input: ProductCreateInput, performedById: st
       },
       select: {
         id: true,
-        variants: { select: { id: true, stock: true, optionName: true, optionValue: true, lowStockThreshold: true } }
+        variants: { select: { id: true, stock: true, stockTarget: true, lowStockPercent: true, optionName: true, optionValue: true, lowStockThreshold: true } }
       }
     });
 
@@ -588,6 +623,8 @@ export async function createProduct(input: ProductCreateInput, performedById: st
               productId: product.id,
               code: `SKU-${randomUUID().slice(0, 8).toUpperCase()}`,
               stock: variant.stock,
+              stockTarget: variant.stockTarget,
+              ...(variant.lowStockPercent === undefined ? {} : { lowStockPercent: variant.lowStockPercent }),
               lowStockThreshold: variant.lowStockThreshold,
               isActive: true,
               optionSnapshot: [{
@@ -702,6 +739,7 @@ export async function updateProduct(productId: string, input: ProductUpdateInput
     input.oldPrice !== undefined ||
     input.status !== undefined ||
     input.stock !== undefined ||
+    input.lowStockPercent !== undefined ||
     input.lowStockThreshold !== undefined ||
     input.isActive !== undefined ||
     input.audienceScope !== undefined ||
@@ -716,8 +754,9 @@ export async function updateProduct(productId: string, input: ProductUpdateInput
     input.imageStoragePath !== undefined ? "image_storage_path" : null,
     input.price !== undefined ? "price" : null,
     input.oldPrice !== undefined ? "old_price" : null,
-    input.status !== undefined || input.stock !== undefined || input.lowStockThreshold !== undefined ? "status" : null,
+    input.status !== undefined || input.stock !== undefined || input.lowStockPercent !== undefined || input.lowStockThreshold !== undefined ? "status" : null,
     input.stock !== undefined ? "stock" : null,
+    input.lowStockPercent !== undefined ? "low_stock_percent" : null,
     input.lowStockThreshold !== undefined ? "low_stock_threshold" : null,
     input.isActive !== undefined ? "is_active" : null,
     input.audienceScope !== undefined || input.departmentIds !== undefined ? "audience" : null
@@ -737,11 +776,13 @@ export async function updateProduct(productId: string, input: ProductUpdateInput
           oldPrice: true,
           status: true,
           stock: true,
+          stockTarget: true,
+          lowStockPercent: true,
           lowStockThreshold: true,
           isActive: true,
           audienceScope: true,
           targetDepartments: { select: { departmentId: true } },
-          variants: { select: { id: true }, take: 1 }
+          variants: { select: { id: true } }
         }
       });
       if (!current) throw new HttpError(404, "Product not found.");
@@ -771,10 +812,18 @@ export async function updateProduct(productId: string, input: ProductUpdateInput
       }
 
       const nextStock = input.stock ?? current.stock;
-      const nextLowStockThreshold = input.lowStockThreshold ?? current.lowStockThreshold;
+      const nextAlertPolicy = input.lowStockPercent === undefined
+        ? null
+        : nextStockAlertPolicy({
+            previousTarget: current.stockTarget,
+            resultingStock: nextStock,
+            previousPercent: current.lowStockPercent,
+            lowStockPercent: input.lowStockPercent
+          });
+      const nextLowStockThreshold = nextAlertPolicy?.lowStockThreshold ?? input.lowStockThreshold ?? current.lowStockThreshold;
       const nextStatus = input.status ??
         (
-          input.stock !== undefined || input.lowStockThreshold !== undefined
+          input.stock !== undefined || input.lowStockPercent !== undefined || input.lowStockThreshold !== undefined
             ? deriveProductStatus(nextStock, nextLowStockThreshold, current.status)
             : current.status
         );
@@ -788,10 +837,15 @@ export async function updateProduct(productId: string, input: ProductUpdateInput
       if (input.imageStoragePath !== undefined) updates.imageStoragePath = input.imageStoragePath;
       if (input.price !== undefined) updates.price = input.price;
       if (input.oldPrice !== undefined) updates.oldPrice = input.oldPrice;
-      if (input.status !== undefined || input.stock !== undefined || input.lowStockThreshold !== undefined) {
+      if (input.status !== undefined || input.stock !== undefined || input.lowStockPercent !== undefined || input.lowStockThreshold !== undefined) {
         updates.status = nextStatus;
       }
       if (input.stock !== undefined) updates.stock = input.stock;
+      if (nextAlertPolicy) {
+        updates.stockTarget = nextAlertPolicy.stockTarget;
+        updates.lowStockPercent = nextAlertPolicy.lowStockPercent;
+        updates.lowStockThreshold = nextAlertPolicy.lowStockThreshold;
+      }
       if (input.lowStockThreshold !== undefined) updates.lowStockThreshold = input.lowStockThreshold;
       if (input.isActive !== undefined) updates.isActive = input.isActive;
       if (input.audienceScope !== undefined) updates.audienceScope = input.audienceScope;
@@ -803,6 +857,34 @@ export async function updateProduct(productId: string, input: ProductUpdateInput
             data: nextDepartmentIds.map((departmentId) => ({ productId, departmentId }))
           });
         }
+      }
+
+      if (input.lowStockPercent !== undefined) {
+        await transaction.$executeRaw`
+          UPDATE "product_variants"
+          SET
+            "stock_target" = GREATEST("stock_target", "stock"),
+            "low_stock_percent" = ${input.lowStockPercent},
+            "low_stock_threshold" = CASE
+              WHEN GREATEST("stock_target", "stock") = 0 THEN 0
+              ELSE CEIL(GREATEST("stock_target", "stock") * ${input.lowStockPercent} / 100.0)::integer
+            END,
+            "updated_at" = CURRENT_TIMESTAMP
+          WHERE "product_id" = ${productId}::uuid
+        `;
+        await transaction.$executeRaw`
+          UPDATE "product_skus"
+          SET
+            "stock_target" = GREATEST("stock_target", "stock"),
+            "low_stock_percent" = ${input.lowStockPercent},
+            "low_stock_threshold" = CASE
+              WHEN GREATEST("stock_target", "stock") = 0 THEN 0
+              ELSE CEIL(GREATEST("stock_target", "stock") * ${input.lowStockPercent} / 100.0)::integer
+            END,
+            "updated_at" = CURRENT_TIMESTAMP
+          WHERE "product_id" = ${productId}::uuid
+            AND "is_active" = true
+        `;
       }
 
       const updated = await transaction.product.update({
@@ -1088,6 +1170,7 @@ export async function restockProduct(input: {
   sellingPrice?: number;
   receivedAt?: Date;
   supplierNote?: string;
+  lowStockPercent?: number;
 }) {
   const mode = input.mode ?? "add";
   if (mode === "add") {
@@ -1126,6 +1209,8 @@ export async function restockProduct(input: {
           name: true,
           status: true,
           stock: true,
+          stockTarget: true,
+          lowStockPercent: true,
           price: true,
           lowStockThreshold: true,
           isActive: true,
@@ -1137,6 +1222,8 @@ export async function restockProduct(input: {
               optionName: true,
               optionValue: true,
               stock: true,
+              stockTarget: true,
+              lowStockPercent: true,
               lowStockThreshold: true
             },
             orderBy: [{ optionName: "asc" }, { optionValue: "asc" }]
@@ -1233,13 +1320,22 @@ export async function restockProduct(input: {
         }))
       );
 
-      const status = deriveProductStatus(newStock, product.lowStockThreshold, product.status);
+      const productAlertPolicy = nextStockAlertPolicy({
+        previousTarget: product.stockTarget,
+        resultingStock: newStock,
+        previousPercent: product.lowStockPercent,
+        lowStockPercent: input.lowStockPercent
+      });
+      const status = deriveProductStatus(newStock, productAlertPolicy.lowStockThreshold, product.status);
       const previousSellingPrice = Number(product.price);
       const nextSellingPrice = input.sellingPrice ?? previousSellingPrice;
       const updated = await transaction.product.update({
         where: { id: input.productId },
         data: {
           stock: newStock,
+          stockTarget: productAlertPolicy.stockTarget,
+          lowStockPercent: productAlertPolicy.lowStockPercent,
+          lowStockThreshold: productAlertPolicy.lowStockThreshold,
           status,
           price: nextSellingPrice,
           updatedAt: new Date()
@@ -1249,6 +1345,8 @@ export async function restockProduct(input: {
           name: true,
           status: true,
           stock: true,
+          stockTarget: true,
+          lowStockPercent: true,
           lowStockThreshold: true,
           isActive: true
         }
@@ -1289,25 +1387,40 @@ export async function restockProduct(input: {
         }
       }
 
-      const variantChanges = stockVariants.flatMap((variant) => {
-        const nextStock = nextVariantStocks.get(variant.id);
-        return nextStock === undefined || nextStock === variant.stock
-          ? []
-          : [{ ...variant, nextStock, difference: nextStock - variant.stock }];
+      const variantPolicies = stockVariants.map((variant) => {
+        const nextStock = nextVariantStocks.get(variant.id) ?? variant.stock;
+        return {
+          ...variant,
+          nextStock,
+          ...nextStockAlertPolicy({
+            previousTarget: variant.stockTarget,
+            resultingStock: nextStock,
+            previousPercent: variant.lowStockPercent,
+            lowStockPercent: input.lowStockPercent
+          })
+        };
       });
-      if (variantChanges.length) {
-        const stockRows = variantChanges.map((variant) => Prisma.sql`
-          (${variant.id}::uuid, ${variant.nextStock}::integer)
+      const variantChanges = variantPolicies.flatMap((variant) => variant.nextStock === variant.stock
+        ? []
+        : [{ ...variant, difference: variant.nextStock - variant.stock }]);
+      if (variantPolicies.length) {
+        const stockRows = variantPolicies.map((variant) => Prisma.sql`
+          (${variant.id}::uuid, ${variant.nextStock}::integer, ${variant.stockTarget}::integer, ${variant.lowStockPercent}::integer, ${variant.lowStockThreshold}::integer)
         `);
         await transaction.$executeRaw`
           UPDATE "product_variants" AS pv
           SET
             "stock" = next."stock",
+            "stock_target" = next."stock_target",
+            "low_stock_percent" = next."low_stock_percent",
+            "low_stock_threshold" = next."low_stock_threshold",
             "updated_at" = CURRENT_TIMESTAMP
-          FROM (VALUES ${Prisma.join(stockRows)}) AS next("id", "stock")
+          FROM (VALUES ${Prisma.join(stockRows)}) AS next("id", "stock", "stock_target", "low_stock_percent", "low_stock_threshold")
           WHERE pv."product_id" = ${input.productId}::uuid
             AND pv."id" = next."id"
         `;
+      }
+      if (variantChanges.length) {
         await transaction.inventoryMovement.createMany({
           data: variantChanges.map((variant) => ({
             productId: input.productId,
@@ -1380,6 +1493,9 @@ export async function restockProduct(input: {
       previousStock: transactionResult.product.stock,
       newStock: updatedProduct.stock,
       difference: transactionResult.difference,
+      stockTarget: updatedProduct.stockTarget,
+      lowStockPercent: updatedProduct.lowStockPercent,
+      lowStockThreshold: updatedProduct.lowStockThreshold,
       unitCost: mode === "add" ? input.unitCost : null,
       previousSellingPrice: transactionResult.previousSellingPrice,
       newSellingPrice: transactionResult.nextSellingPrice,

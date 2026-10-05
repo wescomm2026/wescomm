@@ -76,11 +76,11 @@ function commonApiResponse(route: Route) {
   return null;
 }
 
-test("cart checkout sends only server-owned GCash identifiers before trusted redirect", async ({ page }) => {
+test("cart checkout is cash-only, collects a payment location, and never requests online payment", async ({ page }) => {
   let reservationBody: Record<string, unknown> | null = null;
-  let paymentBody: Record<string, unknown> | null = null;
   let reservationKey = "";
-  let paymentKey = "";
+  let paymentOptionsRequested = false;
+  let onlineCheckoutRequested = false;
 
   await page.route("**/api/backend/**", async (route) => {
     const request = route.request();
@@ -92,8 +92,8 @@ test("cart checkout sends only server-owned GCash identifiers before trusted red
       return json(route, {
         products: [{
           id: productId,
-          name: "GCash QA Notebook",
-          description: "Online payment test item",
+          name: "Cash QA Notebook",
+          description: "Cash-only payment test item",
           imageUrl: null,
           price: "125.00",
           oldPrice: null,
@@ -105,7 +105,8 @@ test("cart checkout sends only server-owned GCash identifiers before trusted red
       });
     }
     if (path === "/api/backend/payments/options") {
-      return json(route, { paymongoGcash: { enabled: true, livemode: false } });
+      paymentOptionsRequested = true;
+      return json(route, { cashOnly: true, collectionChannels: ["COMMISSARY", "TREASURER"], paymongoGcash: { enabled: false, historicalOnly: true, livemode: false } });
     }
     if (path === "/api/backend/reservations" && request.method() === "POST") {
       reservationBody = request.postDataJSON();
@@ -114,11 +115,12 @@ test("cart checkout sends only server-owned GCash identifiers before trusted red
         reservation: {
           id: reservationId,
           studentId: student.id,
-          referenceCode: "RSV-GCASH-QA",
+          referenceCode: "RSV-CASH-QA",
           status: "PENDING",
           pickupStart: "2026-08-03T02:00:00.000Z",
           pickupEnd: "2026-08-03T04:00:00.000Z",
-          paymentMethod: "PAYMONGO_GCASH",
+          paymentMethod: "PAY_AT_COMMISSARY",
+          preferredCollectionChannel: "TREASURER",
           totalAmount: "125.00",
           staffNotes: null,
           createdAt: "2026-08-01T12:00:00.000Z",
@@ -129,30 +131,12 @@ test("cart checkout sends only server-owned GCash identifiers before trusted red
       }, 201);
     }
     if (path === "/api/backend/payments/gcash/checkout" && request.method() === "POST") {
-      paymentBody = request.postDataJSON();
-      paymentKey = request.headers()["idempotency-key"] ?? "";
-      return json(route, {
-        payment: {
-          id: paymentId,
-          reservationId,
-          status: "AWAITING_PAYMENT",
-          amountMinor: 12500,
-          currency: "PHP",
-          livemode: false,
-          canResume: true,
-          canRetry: false
-        },
-        checkoutUrl: `https://checkout.paymongo.com/test/${paymentId}`
-      });
+      onlineCheckoutRequested = true;
+      return json(route, { error: "ONLINE_PAYMENTS_DISCONTINUED" }, 410);
     }
 
     return json(route, { error: `Unexpected mocked request: ${request.method()} ${path}` }, 500);
   });
-  await page.route("https://checkout.paymongo.com/**", (route) => route.fulfill({
-    status: 200,
-    contentType: "text/html",
-    body: "<title>PayMongo test checkout</title>"
-  }));
 
   await page.goto("/student/shop");
   await dismissWelcomeGate(page);
@@ -167,27 +151,29 @@ test("cart checkout sends only server-owned GCash identifiers before trusted red
   expect(reservationBody).toBeNull();
 
   checkout = page.getByRole("dialog", { name: "Payment & Review" });
-  await expect(checkout.getByText("Test mode", { exact: true })).toBeVisible();
-  await expect(checkout.getByText("No real money will be charged.", { exact: true })).toBeVisible();
-  await checkout.getByRole("radio", { name: /Pay Online via GCash/ }).check();
+  await expect(checkout.getByText("Cash", { exact: true })).toBeVisible();
+  await expect(checkout.getByText("Cash is the only accepted payment method for new reservations.", { exact: true })).toBeVisible();
+  await expect(checkout.getByText(/Pay Online via GCash/)).toHaveCount(0);
+  await checkout.getByRole("radio", { name: /Treasury/ }).check();
   await checkout.getByRole("checkbox", { name: /I agree to the Terms & Conditions/ }).check();
-  await checkout.getByRole("button", { name: "Continue to GCash" }).click();
-  await page.waitForURL(`https://checkout.paymongo.com/test/${paymentId}`);
+  await checkout.getByRole("button", { name: "Confirm Reservation" }).click();
+  const savedDialog = page.getByRole("dialog", { name: "Reservation Saved" });
+  await expect(savedDialog.getByRole("heading", { name: "Reservation Saved" })).toBeVisible();
 
   expect(reservationBody).toMatchObject({
-    paymentMethod: "PAYMONGO_GCASH",
+    preferredCollectionChannel: "TREASURER",
     pickupDate: "2026-08-03",
     pickupSlotId,
     pickupPolicyVersion: 7,
     policyAcceptance: { accepted: true, version: "2026-09-02" }
   });
+  expect(reservationBody).not.toHaveProperty("paymentMethod");
   expect(reservationBody).not.toHaveProperty("amount");
   expect(reservationBody).not.toHaveProperty("status");
-  expect(paymentBody).toEqual({ reservationId });
-  expect(paymentBody).not.toHaveProperty("amountMinor");
   expect(reservationKey).not.toBe("");
-  expect(paymentKey).not.toBe("");
-  expect(paymentKey).not.toBe(reservationKey);
+  expect(paymentOptionsRequested).toBe(false);
+  expect(onlineCheckoutRequested).toBe(false);
+  expect(page.url()).not.toContain("paymongo");
 });
 
 test("payment return ignores URL claims and renders only the backend status", async ({ page }) => {
@@ -207,7 +193,7 @@ test("payment return ignores URL claims and renders only the backend status", as
           amountMinor: 12500,
           currency: "PHP",
           livemode: false,
-          canResume: status === "AWAITING_PAYMENT",
+          canResume: false,
           canRetry: false,
           providerReference: status === "PAID" ? "pay_test_confirmed" : null
         }
@@ -218,7 +204,7 @@ test("payment return ignores URL claims and renders only the backend status", as
 
   await page.goto(`/student/payments/${paymentId}?status=paid&cancelled=false`);
   await dismissWelcomeGate(page);
-  await expect(page.getByRole("heading", { name: "Complete your GCash payment" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Historical online payment" })).toBeVisible();
   await expect(page.getByText("Paid", { exact: true })).toHaveCount(0);
 
   status = "PAID";

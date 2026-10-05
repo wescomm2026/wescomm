@@ -84,6 +84,29 @@ function firstAvailableDate(policy: BackendPickupPolicy) {
   return "";
 }
 
+function pickupSlotStartMs(pickupDate: string, startMinute: number) {
+  const hour = String(Math.floor(startMinute / 60)).padStart(2, "0");
+  const minute = String(startMinute % 60).padStart(2, "0");
+  return Date.parse(`${pickupDate}T${hour}:${minute}:00+08:00`);
+}
+
+function nextSlotBoundaryDelayMs(
+  policy: BackendPickupPolicy,
+  pickupDate: string,
+  serverTime: string | undefined,
+  localNow = Date.now()
+) {
+  const parsedServerTime = serverTime ? Date.parse(serverTime) : Number.NaN;
+  const serverNow = Number.isFinite(parsedServerTime) ? parsedServerTime : localNow;
+  const nextStart = policy.timeSlots
+    .filter((slot) => slot.isActive)
+    .map((slot) => pickupSlotStartMs(pickupDate, slot.startMinute))
+    .filter((start) => Number.isFinite(start) && start > serverNow)
+    .sort((left, right) => left - right)[0];
+  if (nextStart === undefined) return null;
+  return Math.max(0, nextStart - serverNow) + 250;
+}
+
 export function PickupSchedulePicker({
   selection,
   onChange,
@@ -112,6 +135,7 @@ export function PickupSchedulePicker({
   const [error, setError] = useState("");
   const [slotAvailability, setSlotAvailability] = useState<BackendPickupSlotAvailability | null>(null);
   const [realtimeRefreshKey, setRealtimeRefreshKey] = useState(0);
+  const [slotBoundaryRefreshAt, setSlotBoundaryRefreshAt] = useState<number | null>(null);
   const [slotLoading, setSlotLoading] = useState(false);
   const [slotError, setSlotError] = useState("");
 
@@ -120,9 +144,21 @@ export function PickupSchedulePicker({
   });
 
   useEffect(() => {
+    if (slotBoundaryRefreshAt === null) return;
+    const delay = Math.max(0, slotBoundaryRefreshAt - Date.now());
+    const timer = window.setTimeout(() => {
+      setSlotBoundaryRefreshAt(null);
+      setSlotAvailability(null);
+      setRealtimeRefreshKey((current) => current + 1);
+    }, Math.min(delay, 2_147_000_000));
+    return () => window.clearTimeout(timer);
+  }, [slotBoundaryRefreshAt]);
+
+  useEffect(() => {
     let active = true;
     setLoading(true);
     setError("");
+    setSlotBoundaryRefreshAt(null);
     setSlotAvailability(null);
     setSlotError("");
     const policyRequest = policyOverride
@@ -162,6 +198,7 @@ export function PickupSchedulePicker({
 
   useEffect(() => {
     if (!policy || !selectedDate) {
+      setSlotBoundaryRefreshAt(null);
       setSlotAvailability(null);
       setSlotLoading(false);
       setSlotError("");
@@ -175,6 +212,7 @@ export function PickupSchedulePicker({
       ? Promise.resolve<BackendPickupSlotAvailability>({
           pickupDate: selectedDate,
           pickupPolicyVersion: policy.version,
+          serverTime: new Date().toISOString(),
           slots: policy.timeSlots.filter((slot) => slot.isActive).map((slot) => ({
             slotId: slot.id,
             capacity: slot.capacity ?? null,
@@ -192,6 +230,8 @@ export function PickupSchedulePicker({
       .then((availability) => {
         if (!active) return;
         setSlotAvailability(availability);
+        const boundaryDelay = nextSlotBoundaryDelayMs(policy, selectedDate, availability.serverTime);
+        setSlotBoundaryRefreshAt(boundaryDelay === null ? null : Date.now() + boundaryDelay);
         const availabilityBySlot = new Map(availability.slots.map((slot) => [slot.slotId, slot]));
         const selectableSlots = policy.timeSlots.filter((slot) => {
           const slotAvailability = availabilityBySlot.get(slot.id);
@@ -220,6 +260,7 @@ export function PickupSchedulePicker({
       })
       .catch((loadError) => {
         if (!active) return;
+        setSlotBoundaryRefreshAt(null);
         setSlotAvailability(null);
         setSlotError(userFacingErrorMessage(loadError, "Unable to load pickup time availability."));
         onChange(null);
@@ -285,6 +326,7 @@ export function PickupSchedulePicker({
                 aria-pressed={selected}
                 onClick={() => {
                   setSelectedDate(cell.key);
+                  setSlotBoundaryRefreshAt(null);
                   setSlotAvailability(null);
                   setSlotError("");
                   onChange(null);

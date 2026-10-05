@@ -1,6 +1,6 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
 import type { BackendReceipt } from "../lib/api";
-import { dismissWelcomeGate } from "./helpers";
+import { dismissWelcomeGate, fulfillStudentOverview } from "./helpers";
 
 const FIRST_RECEIPT_CODE = "RCT-2026-FIRST";
 const SECOND_RECEIPT_CODE = "RCT-2026-SECOND";
@@ -123,6 +123,7 @@ async function mockReceiptApis(page: Page) {
 
   await page.route("**/api/backend/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
+    if (await fulfillStudentOverview(route, [], receipts)) return;
 
     if (path === "/api/backend/auth/me") {
       await json(route, { profile: studentProfile });

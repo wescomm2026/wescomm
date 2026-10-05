@@ -8,6 +8,7 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
 import { sendPushToUser } from "./push.service.js";
 import { publishRealtimeEvents, REALTIME_TOPICS } from "./realtime-event.service.js";
+import { filterStaffRecipientsByPreference } from "./staff-settings.service.js";
 import { deleteProductImage } from "./upload.service.js";
 
 export const OUTBOX_EVENT_TYPES = {
@@ -17,7 +18,8 @@ export const OUTBOX_EVENT_TYPES = {
   receiptCreated: "RECEIPT_CREATED",
   receiptStatusChanged: "RECEIPT_STATUS_CHANGED",
   restrictionExpired: "RESTRICTION_EXPIRED",
-  productImageDelete: "PRODUCT_IMAGE_DELETE"
+  productImageDelete: "PRODUCT_IMAGE_DELETE",
+  onlinePaymentConvertedToCash: "ONLINE_PAYMENT_CONVERTED_TO_CASH"
 } as const;
 
 const reservationCreatedPayloadSchema = z.object({
@@ -70,6 +72,13 @@ const productImageDeletePayloadSchema = z.object({
   path: z.string().min(1).max(300)
 });
 
+const onlinePaymentConvertedToCashPayloadSchema = z.object({
+  studentId: z.string().uuid(),
+  reservationId: z.string().uuid(),
+  referenceCode: z.string().min(1).max(80),
+  previousPaymentMethod: z.string().min(1).max(80)
+});
+
 const receiptStatusChangedPayloadSchema = z.object({
   actorId: z.string().uuid(),
   studentId: z.string().uuid(),
@@ -108,6 +117,19 @@ type NotificationDelivery = {
   actionUrl: string;
   dedupeKey: string;
 };
+
+/** Students always receive their own updates; staff/admin copies honor personal alert preferences. */
+async function applyStaffNotificationPreferences(deliveries: NotificationDelivery[]) {
+  const kept = new Set<NotificationDelivery>(deliveries.filter((delivery) => delivery.role === "STUDENT"));
+  const staffByType = new Map<string, NotificationDelivery[]>();
+  deliveries.filter((delivery) => delivery.role !== "STUDENT").forEach((delivery) => {
+    staffByType.set(delivery.type, [...(staffByType.get(delivery.type) ?? []), delivery]);
+  });
+  for (const [type, group] of staffByType) {
+    (await filterStaffRecipientsByPreference(group, type)).forEach((delivery) => kept.add(delivery));
+  }
+  return deliveries.filter((delivery) => kept.has(delivery));
+}
 
 export function outboxRetryDelayMs(attemptCount: number) {
   const exponent = Math.min(Math.max(attemptCount - 1, 0), 16);
@@ -224,7 +246,7 @@ async function processReservationCreated(event: ClaimedOutboxEvent) {
     })))
   ];
 
-  for (const delivery of deliveries) await createNotificationAndPush(delivery);
+  for (const delivery of await applyStaffNotificationPreferences(deliveries)) await createNotificationAndPush(delivery);
 
   await createAuditOnce(event, {
     actorId: payload.studentId,
@@ -387,7 +409,7 @@ async function processReceiptCreated(event: ClaimedOutboxEvent) {
     }))
   ];
 
-  for (const delivery of deliveries) await createNotificationAndPush(delivery);
+  for (const delivery of await applyStaffNotificationPreferences(deliveries)) await createNotificationAndPush(delivery);
 
   await createAuditOnce(event, {
     actorId: payload.actorId,
@@ -401,6 +423,34 @@ async function processReceiptCreated(event: ClaimedOutboxEvent) {
       totalAmount: payload.totalAmount,
       outboxEventId: event.id
     }
+  });
+}
+
+async function processOnlinePaymentConvertedToCash(event: ClaimedOutboxEvent) {
+  const payload = onlinePaymentConvertedToCashPayloadSchema.parse(event.payload);
+
+  await createAuditOnce(event, {
+    actorId: null,
+    action: "ONLINE_PAYMENT_CONVERTED_TO_CASH",
+    entityType: "online_payment",
+    summary: `Converted open online payment to cash for reservation ${payload.referenceCode}.`,
+    metadata: {
+      reservationId: payload.reservationId,
+      referenceCode: payload.referenceCode,
+      previousPaymentMethod: payload.previousPaymentMethod,
+      newPaymentMethod: "PAY_AT_COMMISSARY",
+      collectionChannel: "COMMISSARY"
+    }
+  });
+
+  await createNotificationAndPush({
+    userId: payload.studentId,
+    role: "STUDENT",
+    type: "PAYMENT",
+    title: "Payment changed to cash",
+    message: `Reservation ${payload.referenceCode} can no longer be paid online. Please pay in cash at the Commissary.`,
+    actionUrl: "/student/reservations",
+    dedupeKey: `${event.id}:payment-converted-to-cash`
   });
 }
 
@@ -431,6 +481,10 @@ async function processEvent(event: ClaimedOutboxEvent) {
   }
   if (event.type === OUTBOX_EVENT_TYPES.productImageDelete) {
     await processProductImageDelete(event);
+    return;
+  }
+  if (event.type === OUTBOX_EVENT_TYPES.onlinePaymentConvertedToCash) {
+    await processOnlinePaymentConvertedToCash(event);
     return;
   }
   throw new Error(`Unsupported outbox event type: ${event.type}`);

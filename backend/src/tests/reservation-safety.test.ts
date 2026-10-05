@@ -73,7 +73,6 @@ test("invalid consecutive offense counts are rejected", () => {
 
 test("equivalent checkout payloads have the same hash even when item order changes", () => {
   const first = hashReservationRequest({
-    paymentMethod: "PAY_AT_COMMISSARY",
     preferredCollectionChannel: "COMMISSARY",
     pickupDate: "2026-07-12",
     pickupSlotId: "33333333-3333-4333-8333-333333333333",
@@ -85,7 +84,6 @@ test("equivalent checkout payloads have the same hash even when item order chang
     ]
   });
   const reordered = hashReservationRequest({
-    paymentMethod: "PAY_AT_COMMISSARY",
     preferredCollectionChannel: "COMMISSARY",
     pickupDate: "2026-07-12",
     pickupSlotId: "33333333-3333-4333-8333-333333333333",
@@ -103,7 +101,6 @@ test("equivalent checkout payloads have the same hash even when item order chang
 
 test("changing quantity, pickup schedule, or item details changes the request hash", () => {
   const base = {
-    paymentMethod: "PAY_AT_COMMISSARY",
     preferredCollectionChannel: "COMMISSARY",
     pickupDate: "2026-07-12",
     pickupSlotId: "33333333-3333-4333-8333-333333333333",

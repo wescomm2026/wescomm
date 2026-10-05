@@ -5,7 +5,7 @@ import { userFacingErrorMessage } from "@/lib/user-facing-error";
 import Image from "next/image";
 import dynamic from "next/dynamic";
 import { useDeferredValue, useEffect, useRef, useState } from "react";
-import { Archive, ArrowLeft, ChevronRight, Edit3, Filter, Plus, RefreshCw, RotateCcw, Trash2, Upload, X } from "lucide-react";
+import { Archive, ArrowLeft, ChevronRight, Edit3, Filter, Package, Plus, RefreshCw, RotateCcw, Trash2, Upload, X } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import { useRealtimeRefresh } from "@/components/realtime/RealtimeProvider";
 import { ActionLoadingOverlay } from "@/components/ui/ActionLoadingOverlay";
@@ -54,6 +54,9 @@ import {
   Toolbar,
   Notice
 } from "@/components/staff/StaffOperationsShared";
+import { FeedbackState } from "@/components/ui/FeedbackState";
+import { InlineAlert } from "@/components/ui/InlineAlert";
+import { SkeletonList } from "@/components/ui/Skeleton";
 
 const ProductOptionsManager = dynamic(
   () => import("@/components/staff/ProductOptionsManager").then((module) => module.ProductOptionsManager),
@@ -103,6 +106,7 @@ export function StaffInventoryExperience() {
   const [restockSellingPrice, setRestockSellingPrice] = useState("");
   const [restockReceivedAt, setRestockReceivedAt] = useState(() => new Date().toISOString().slice(0, 10));
   const [restockSupplierNote, setRestockSupplierNote] = useState("");
+  const [restockLowStockPercent, setRestockLowStockPercent] = useState(25);
   const [batchResult, setBatchResult] = useState<StaffInventoryBatchResult | null>(null);
   const [openingCostDrafts, setOpeningCostDrafts] = useState<Record<string, string>>({});
   const [restockVariantQuantities, setRestockVariantQuantities] = useState<Record<string, string>>({});
@@ -114,6 +118,9 @@ export function StaffInventoryExperience() {
   const [addAudienceDepartmentIds, setAddAudienceDepartmentIds] = useState<string[]>([]);
   const [editAudienceScope, setEditAudienceScope] = useState<"ALL_STUDENTS" | "SPECIFIC_DEPARTMENTS">("ALL_STUDENTS");
   const [addSizeVariants, setAddSizeVariants] = useState<SizeVariantDraft[]>(defaultSizeVariantDrafts);
+  const [addSimpleStock, setAddSimpleStock] = useState(0);
+  const [addLowStockPercent, setAddLowStockPercent] = useState(25);
+  const [editLowStockPercent, setEditLowStockPercent] = useState(25);
   const [editImageFile, setEditImageFile] = useState<File | null>(null);
   const [editImagePreview, setEditImagePreview] = useState("");
   const [editSizeVariants, setEditSizeVariants] = useState<SizeVariantDraft[]>([]);
@@ -249,6 +256,18 @@ export function StaffInventoryExperience() {
     (total, variant) => total + Math.max(0, Number(variant.stock) || 0),
     0
   );
+  const addOpeningStock = addHasSizeVariants ? addSizeStockTotal : addSimpleStock;
+  const addLowStockThreshold = addOpeningStock === 0 ? 0 : Math.ceil(addOpeningStock * addLowStockPercent / 100);
+  const editLowStockThreshold = editingProduct
+    ? (editingProduct.stockTarget === 0 ? 0 : Math.ceil(editingProduct.stockTarget * editLowStockPercent / 100))
+    : 0;
+  const automaticEditVariantThreshold = (variantId: string | undefined, stock: string) => {
+    const persisted = variantId
+      ? editingProduct?.variants.find((variant) => variant.id === variantId)
+      : undefined;
+    const target = Math.max(persisted?.stockTarget ?? 0, Number(stock) || 0);
+    return target === 0 ? 0 : Math.ceil(target * (editingProduct?.lowStockPercent ?? 25) / 100);
+  };
   const editingVariantStructureUnlocked = Boolean(
     editingProduct
     && (
@@ -276,6 +295,8 @@ export function StaffInventoryExperience() {
     setAddAudienceScope("ALL_STUDENTS");
     setAddAudienceDepartmentIds([]);
     setAddSizeVariants(defaultSizeVariantDrafts());
+    setAddSimpleStock(0);
+    setAddLowStockPercent(25);
     setAdding(true);
   };
 
@@ -287,6 +308,8 @@ export function StaffInventoryExperience() {
     setAddAudienceScope("ALL_STUDENTS");
     setAddAudienceDepartmentIds([]);
     setAddSizeVariants(defaultSizeVariantDrafts());
+    setAddSimpleStock(0);
+    setAddLowStockPercent(25);
     setAdding(false);
   };
 
@@ -300,6 +323,8 @@ export function StaffInventoryExperience() {
       ? (isUniformClothOnly({ name: template.name, category: template.categoryName }) ? "CLOTH_ONLY" : "OPTIONS")
       : "SIMPLE";
     setAddSaleMode(template ? suggestedMode : "SIMPLE");
+    setAddSimpleStock(template?.stock ?? 0);
+    setAddLowStockPercent(25);
     setAddImagePreview(template?.imageUrl ?? "");
   };
 
@@ -309,6 +334,7 @@ export function StaffInventoryExperience() {
     setEditImageFile(null);
     setEditImagePreview(product.imageUrl);
     setEditAudienceScope(product.audienceScope);
+    setEditLowStockPercent(product.lowStockPercent);
     const sizeOptionName = preferredSizeOptionName(product.variants);
     setEditSizeOptionName(sizeOptionName);
     setEditSizeVariants(sortSizeVariants(product.variants.filter(
@@ -347,11 +373,14 @@ export function StaffInventoryExperience() {
     try {
       const variants = editSizeVariants.map((variant) => {
         const optionValue = variant.value.trim();
-        const lowStockThreshold = Number(variant.lowStockThreshold);
         if (!optionValue) throw new Error("Every size must have a name.");
-        if (!Number.isInteger(lowStockThreshold) || lowStockThreshold < 0) {
-          throw new Error(`${optionValue} low-stock alert must be a whole number of zero or more.`);
-        }
+        const currentVariant = variant.id
+          ? editingProduct.variants.find((entry) => entry.id === variant.id)
+          : undefined;
+        const stockTarget = Math.max(currentVariant?.stockTarget ?? 0, currentVariant?.stock ?? 0);
+        const lowStockThreshold = stockTarget === 0
+          ? 0
+          : Math.ceil(stockTarget * editingProduct.lowStockPercent / 100);
         return {
           ...(variant.id ? { id: variant.id } : {}),
           optionValue,
@@ -430,6 +459,7 @@ export function StaffInventoryExperience() {
     setRestockSellingPrice(product.price.toFixed(2));
     setRestockReceivedAt(new Date().toISOString().slice(0, 10));
     setRestockSupplierNote("");
+    setRestockLowStockPercent(product.lowStockPercent);
     setBatchResult(null);
     setOpeningCostDrafts({});
     void getStaffInventoryBatches(token, product.id).then((result) => {
@@ -559,6 +589,7 @@ export function StaffInventoryExperience() {
           }))
         } : {}),
         notes: restockMode === "add" ? "Stock added from staff inventory page." : "Exact stock set from staff inventory page.",
+        lowStockPercent: restockLowStockPercent,
         ...(restockMode === "add" ? {
           unitCost,
           sellingPrice,
@@ -711,6 +742,10 @@ export function StaffInventoryExperience() {
       ? restockingProduct.stock + restockEnteredQuantity
       : restockEnteredQuantity
     : 0;
+  const resultingStockTarget = restockingProduct
+    ? Math.max(restockingProduct.stockTarget, resultingStock)
+    : 0;
+  const resultingLowStockThreshold = Math.ceil(resultingStockTarget * restockLowStockPercent / 100);
   const enteredRestockUnitCost = restockUnitCost.trim() ? Number(restockUnitCost) : null;
   const enteredRestockSellingPrice = restockSellingPrice.trim() ? Number(restockSellingPrice) : null;
   const estimatedUnitGrossProfit = enteredRestockSellingPrice !== null && Number.isFinite(enteredRestockSellingPrice) && enteredRestockUnitCost !== null && Number.isFinite(enteredRestockUnitCost)
@@ -770,8 +805,8 @@ export function StaffInventoryExperience() {
     return (
       <div className="space-y-5">
         <PageHeading eyebrow="Inventory" title="Staff sign in required" detail="Use the main WESCOMM login once to access staff inventory tools." />
-        <section className="rounded-lg border border-border bg-white p-5 shadow-sm">
-          <p className="max-w-xl text-sm leading-6 text-[#5f6d64]">
+        <section className="rounded-lg border bg-white p-5 shadow-sm">
+          <p className="max-w-xl text-sm leading-6 text-muted-foreground">
             Your staff session is missing or expired. Sign in again with your Wesleyan account, then staff inventory will open automatically.
           </p>
           {error ? <p className="mt-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">{error}</p> : null}
@@ -798,37 +833,37 @@ export function StaffInventoryExperience() {
           </Button>
         )}
       />
-      <div className="flex w-full flex-col gap-2 rounded-lg border border-border bg-white p-2 shadow-sm sm:w-fit sm:flex-row" role="group" aria-label="Inventory view">
+      <div className="grid w-full grid-cols-2 gap-1 rounded-xl border bg-card p-1 shadow-soft sm:inline-grid sm:w-auto" role="group" aria-label="Inventory view">
         <Button
           type="button"
           variant={visibility === "ACTIVE" ? "primary" : "ghost"}
-          className="justify-center sm:min-w-40"
+          className="h-9 justify-center px-4 sm:min-w-36"
           aria-pressed={visibility === "ACTIVE"}
           onClick={() => changeVisibility("ACTIVE")}
           disabled={loading || submitting}
         >
-          <RefreshCw className="size-4" /> Active items
+          <Package className="size-4" aria-hidden="true" /> Active items
         </Button>
         <Button
           type="button"
           variant={visibility === "ARCHIVED" ? "primary" : "ghost"}
-          className="justify-center sm:min-w-40"
+          className="h-9 justify-center px-4 sm:min-w-36"
           aria-pressed={visibility === "ARCHIVED"}
           onClick={() => changeVisibility("ARCHIVED")}
           disabled={loading || submitting}
         >
-          <Archive className="size-4" /> Archived items
+          <Archive className="size-4" aria-hidden="true" /> Archived items
         </Button>
       </div>
       <Toolbar search={search} onSearch={setSearch} status={status} onStatus={setStatus} placeholder="Search product or category" statuses={stockStatusOptions} />
-      {error ? <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p> : null}
-      <section id="inventory-product-list" aria-label={visibility === "ARCHIVED" ? "Archived inventory products" : "Active inventory products"} className="overflow-hidden rounded-lg border border-border bg-white shadow-sm">
-        <div className="hidden grid-cols-12 gap-4 bg-[#f6f9f6] px-4 py-3 text-xs font-bold uppercase tracking-wide text-muted-foreground xl:grid">
+      {error ? <InlineAlert>{error}</InlineAlert> : null}
+      <section id="inventory-product-list" aria-label={visibility === "ARCHIVED" ? "Archived inventory products" : "Active inventory products"} className="overflow-hidden rounded-xl border bg-card shadow-soft">
+        <div className="hidden grid-cols-12 gap-4 border-b bg-surface-subtle px-4 py-3 text-[11px] font-extrabold uppercase tracking-wide text-muted-foreground xl:grid">
           <span className="col-span-3">Product</span><span>Category</span><span>Total stock</span><span>Selling price</span><span>Low-stock alert</span><span className="col-span-2">Stock breakdown</span><span>Status</span><span className="col-span-2">Actions</span>
         </div>
-        <div className="divide-y divide-[#e7ece8]">
+        <div className="divide-y divide-border">
           {loading ? (
-            <div className="p-6 text-sm font-semibold text-muted-foreground">Loading live inventory...</div>
+            <SkeletonList rows={5} label="Loading live inventory..." />
           ) : filtered.length ? filtered.map((product) => {
             const compactSkus = product.skus.map((sku) => ({
               ...sku,
@@ -836,7 +871,10 @@ export function StaffInventoryExperience() {
               fullLabel: sku.options.length ? sku.options.map((option) => `${option.optionName}: ${option.optionValue}`).join(" / ") : "Standard item"
             }));
             return (
-              <article key={product.id} className="content-visibility-auto relative grid gap-4 px-4 py-4 sm:grid-cols-2 xl:grid-cols-12 xl:items-center">
+              <article key={product.id} className="content-visibility-auto relative grid gap-4 px-4 py-4 transition-colors hover:bg-surface-subtle/60 sm:grid-cols-2 xl:grid-cols-12 xl:items-center">
+                {visibility === "ACTIVE" && (product.status === "Out of Stock" || product.status === "Needs Restock") ? (
+                  <span className={cn("absolute inset-y-0 left-0 w-1", product.status === "Out of Stock" ? "bg-danger" : "bg-warning")} aria-hidden="true" />
+                ) : null}
                 <ActionLoadingOverlay
                   active={archivingProductId === product.id || restoringProductId === product.id}
                   title={restoringProductId === product.id ? "Restoring product" : "Archiving product"}
@@ -845,23 +883,23 @@ export function StaffInventoryExperience() {
                     : "We are removing this item from the student shop."}
                 />
                 <div className="flex min-w-0 items-center gap-3 sm:col-span-2 xl:col-span-3">
-                  <div className="relative grid size-16 shrink-0 place-items-center overflow-hidden rounded-lg border border-border bg-[#f8fbf8]">
+                  <div className="relative grid size-16 shrink-0 place-items-center overflow-hidden rounded-lg border bg-surface-subtle">
                     <Image src={shopProductCardImage(product.imageUrl)} alt={product.name} fill sizes="64px" unoptimized className="object-contain p-1" />
                   </div>
                   <div className="min-w-0">
                     <p className="font-extrabold leading-5 text-foreground">{product.name}</p>
                     <div className="mt-1 flex flex-wrap gap-1">
-                      <span className={cn("inline-flex rounded px-2 py-0.5 text-[10px] font-extrabold", product.saleMode === "CLOTH_ONLY" ? "bg-primary/10 text-primary" : product.saleMode === "OPTIONS" ? "bg-blue-50 text-blue-700" : "bg-[#f2f4f2] text-[#667169]")}>
+                      <span className={cn("inline-flex rounded px-2 py-0.5 text-[10px] font-extrabold", product.saleMode === "CLOTH_ONLY" ? "bg-primary/10 text-primary" : product.saleMode === "OPTIONS" ? "bg-info/10 text-info" : "bg-surface-subtle text-muted-foreground")}>
                         {product.saleMode === "CLOTH_ONLY" ? "Cloth only" : product.saleMode === "OPTIONS" ? "Sizes / options" : "Simple item"}
                       </span>
-                      {visibility === "ARCHIVED" ? <span className="inline-flex rounded bg-slate-100 px-2 py-0.5 text-[10px] font-extrabold text-slate-700">Archived</span> : null}
-                      {product.isOnSale ? <span className="inline-flex rounded bg-rose-50 px-2 py-0.5 text-[10px] font-extrabold text-rose-700">On Sale</span> : null}
+                      {visibility === "ARCHIVED" ? <span className="inline-flex rounded bg-muted px-2 py-0.5 text-[10px] font-extrabold text-muted-foreground">Archived</span> : null}
+                      {product.isOnSale ? <span className="inline-flex rounded bg-danger/10 px-2 py-0.5 text-[10px] font-extrabold text-danger">On Sale</span> : null}
                       {product.saleMode === "OPTIONS" && !product.skuInventoryEnabled ? <span className="inline-flex rounded bg-amber-50 px-2 py-0.5 text-[10px] font-extrabold text-amber-800">Inventory setup needed</span> : null}
                     </div>
                     <p className="mt-1 text-xs text-muted-foreground xl:hidden">{product.category} · Selling price PHP {product.price.toLocaleString("en-PH", { minimumFractionDigits: 2 })}</p>
                     <div className="mt-2 flex flex-wrap gap-1 xl:hidden">
                       {product.saleMode === "OPTIONS" && product.skuInventoryEnabled ? compactSkus.slice(0, 3).map((sku) => (
-                        <span key={sku.id} title={sku.fullLabel} className={cn("rounded px-1.5 py-0.5 text-[10px] font-bold", sku.stock <= sku.lowStockThreshold ? "bg-amber-50 text-amber-800" : "bg-[#f2f7f2] text-muted-foreground")}>
+                        <span key={sku.id} title={sku.fullLabel} className={cn("rounded px-1.5 py-0.5 text-[10px] font-bold", sku.stock <= sku.lowStockThreshold ? "bg-warning/10 text-warning" : "bg-surface-subtle text-muted-foreground")}>
                           {sku.shortLabel} · {sku.stock}
                         </span>
                       )) : product.saleMode === "OPTIONS" ? <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-800">Set up physical combinations</span> : null}
@@ -871,44 +909,47 @@ export function StaffInventoryExperience() {
                 <p className="hidden text-sm text-muted-foreground xl:block">{product.category}</p>
                 <div className="text-sm">
                   <span className="text-muted-foreground xl:hidden">Total stock: </span>
-                  <span className="text-lg font-extrabold text-primary">{product.stock}</span>
+                  <span className={cn(
+                    "text-lg font-extrabold tabular-nums",
+                    product.status === "Out of Stock" ? "text-danger" : product.status === "Needs Restock" ? "text-warning" : "text-primary"
+                  )}>{product.stock}</span>
                   <span className="ml-1 text-xs text-muted-foreground">items</span>
                 </div>
                 <div className="hidden text-sm xl:block"><span className="font-extrabold text-primary">PHP {product.price.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
                 <div className="text-sm">
                   <span className="text-muted-foreground xl:hidden">Low-stock alert: </span>
-                  <span className="font-bold">{product.minimum}</span>
-                  <span className="ml-1 text-xs text-muted-foreground">items</span>
+                  <span className="font-bold">{product.lowStockPercent}%</span>
+                  <span className="ml-1 text-xs text-muted-foreground">(≤ {product.minimum} items)</span>
                 </div>
                 <div className="hidden flex-wrap gap-1 xl:col-span-2 xl:flex">
                   {product.saleMode === "OPTIONS" && product.skuInventoryEnabled ? (
                     compactSkus.length ? <>
                       {compactSkus.slice(0, 3).map((sku) => (
-                        <span key={sku.id} title={`${sku.fullLabel}: ${sku.stock} pcs`} className={cn("max-w-[190px] truncate rounded-md px-2 py-1 text-[11px] font-bold", sku.stock <= sku.lowStockThreshold ? "bg-amber-50 text-amber-800" : "bg-[#f2f7f2] text-muted-foreground")}>
+                        <span key={sku.id} title={`${sku.fullLabel}: ${sku.stock} pcs`} className={cn("max-w-[190px] truncate rounded-md px-2 py-1 text-[11px] font-bold", sku.stock <= sku.lowStockThreshold ? "bg-warning/10 text-warning" : "bg-surface-subtle text-muted-foreground")}>
                           {sku.shortLabel} · {sku.stock}
                         </span>
                       ))}
                       {compactSkus.length > 3 ? <span className="px-1 py-1 text-[11px] font-bold text-muted-foreground">+{compactSkus.length - 3} combinations</span> : null}
-                    </> : <span className="text-xs text-[#8a958e]">No combinations</span>
+                    </> : <span className="text-xs text-muted-foreground">No combinations</span>
                   ) : product.saleMode === "OPTIONS" ? (
                     <span className="rounded-md bg-amber-50 px-2 py-1 text-[11px] font-bold text-amber-800">Physical setup required</span>
-                  ) : product.saleMode === "CLOTH_ONLY" ? <span className="text-xs font-semibold text-primary">Cloth quantity only</span> : <span className="text-xs text-[#8a958e]">Single stock count</span>}
+                  ) : product.saleMode === "CLOTH_ONLY" ? <span className="text-xs font-semibold text-primary">Cloth quantity only</span> : <span className="text-xs text-muted-foreground">Single stock count</span>}
                 </div>
                 <div className="flex flex-wrap gap-1"><StatusBadge status={product.status} />{product.isOnSale ? <StatusBadge status="On Sale" /> : null}</div>
                 <div className="flex flex-wrap gap-2 sm:col-span-2 xl:col-span-2 xl:w-full xl:flex-col">
                   {visibility === "ARCHIVED" ? (
                     <>
-                      <Button className="h-9 flex-1 px-3 xl:w-full" onClick={() => void restoreProduct(product)} disabled={submitting}>
+                      <Button className="h-9 flex-1 px-3 xl:w-full xl:flex-none" onClick={() => void restoreProduct(product)} disabled={submitting}>
                         <RotateCcw className="size-4" /> Restore item
                       </Button>
-                      {user?.role === "ADMIN" ? <Button variant="ghost" className="h-9 flex-1 border border-red-200 px-3 text-red-700 hover:bg-red-50 xl:w-full" onClick={() => void reviewPermanentDelete(product)} disabled={submitting || deletingProductId === product.id}><Trash2 className="size-4" />{deletingProductId === product.id ? "Checking..." : "Delete permanently"}</Button> : null}
+                      {user?.role === "ADMIN" ? <Button variant="ghost" className="h-9 flex-1 border border-danger/30 px-3 text-danger hover:bg-danger/5 xl:w-full" onClick={() => void reviewPermanentDelete(product)} disabled={submitting || deletingProductId === product.id}><Trash2 className="size-4" />{deletingProductId === product.id ? "Checking..." : "Delete permanently"}</Button> : null}
                     </>
                   ) : (<>
-                    <Button className="h-9 flex-1 px-3 xl:w-full" onClick={() => openRestock(product)} disabled={submitting}>
+                    <Button className="h-9 flex-1 px-3 xl:w-full xl:flex-none" onClick={() => openRestock(product)} disabled={submitting}>
                       <Plus className="size-4" />
                       {product.saleMode === "OPTIONS" && !product.skuInventoryEnabled ? "Set up inventory" : "Update stock"}
                     </Button>
-                    <Button variant="secondary" className="h-9 flex-1 px-3 xl:w-full" onClick={() => openEditor(product)} disabled={submitting}>
+                    <Button variant="secondary" className="h-9 flex-1 px-3 xl:w-full xl:flex-none" onClick={() => openEditor(product)} disabled={submitting}>
                       <Edit3 className="size-4" />
                       Manage
                     </Button>
@@ -917,9 +958,17 @@ export function StaffInventoryExperience() {
               </article>
             );
           }) : (
-            <div className="p-6 text-sm font-semibold text-muted-foreground">
-              {visibility === "ARCHIVED" ? "No matching archived products found." : "No matching active products found."}
-            </div>
+            <FeedbackState
+              kind="empty"
+              plain
+              title={visibility === "ARCHIVED" ? "No matching archived products found." : "No matching active products found."}
+              description={search.trim() || status !== "All"
+                ? "Try another search or stock status."
+                : visibility === "ARCHIVED" ? "Archived products will appear here." : "Add your first product to start tracking stock."}
+              action={search.trim() || status !== "All"
+                ? <Button variant="secondary" size="sm" onClick={() => { setSearch(""); setStatus("All"); }}>Clear filters</Button>
+                : visibility === "ACTIVE" ? <Button size="sm" onClick={openAddProduct} disabled={submitting}><Plus className="size-4" /> Add product</Button> : undefined}
+            />
           )}
         </div>
       </section>
@@ -942,8 +991,8 @@ export function StaffInventoryExperience() {
         </div>
       ) : null}
       {adding ? (
-        <div className="fixed inset-0 z-[10000] grid place-items-center bg-[#101820]/50 p-4">
-          <form ref={addDialog.dialogRef} {...addDialog.dialogProps} key={selectedTemplateId || "blank-product-form"} className="relative my-auto max-h-[calc(100vh-2rem)] w-full max-w-xl overflow-y-auto rounded-lg bg-white p-5 shadow-2xl" onSubmit={async (event) => {
+        <div className="fixed inset-0 z-[10000] grid place-items-center bg-foreground/55 p-0 backdrop-blur-[1px] sm:p-4">
+          <form ref={addDialog.dialogRef} {...addDialog.dialogProps} key={selectedTemplateId || "blank-product-form"} className="relative my-auto max-h-[100dvh] w-full max-w-2xl overflow-x-hidden overflow-y-auto bg-surface-subtle shadow-2xl sm:max-h-[calc(100vh-2rem)] sm:rounded-xl" onSubmit={async (event) => {
             event.preventDefault();
             const form = new FormData(event.currentTarget);
             setSubmitting(true);
@@ -962,15 +1011,11 @@ export function StaffInventoryExperience() {
                 ? addSizeVariants.map((variant) => {
                     const optionValue = variant.value.trim();
                     const stock = Number(variant.stock);
-                    const lowStockThreshold = Number(variant.lowStockThreshold);
                     if (!optionValue) throw new Error("Every size must have a name.");
                     if (!Number.isInteger(stock) || stock < 0) {
                       throw new Error(`${optionValue} stock must be a whole number of zero or more.`);
                     }
-                    if (!Number.isInteger(lowStockThreshold) || lowStockThreshold < 0) {
-                      throw new Error(`${optionValue} low-stock alert must be a whole number of zero or more.`);
-                    }
-                    return { optionName: "Size", optionValue, stock, lowStockThreshold };
+                    return { optionName: "Size", optionValue, stock };
                   })
                 : [];
 
@@ -1009,7 +1054,7 @@ export function StaffInventoryExperience() {
                 audienceScope: addAudienceScope,
                 departmentIds: addAudienceScope === "SPECIFIC_DEPARTMENTS" ? addAudienceDepartmentIds : [],
                 stock: openingStock,
-                lowStockThreshold: Number(form.get("minimum")),
+                lowStockPercent: addLowStockPercent,
                 ...(openingStock > 0 ? {
                   initialUnitCost: Number(initialUnitCostValue),
                   receivedAt: receivedAtValue,
@@ -1022,7 +1067,9 @@ export function StaffInventoryExperience() {
               // this as one request prevents a half-created product if the
               // browser loses connection after the first save.
               const finalProduct = createdProduct;
-              setProducts((current) => [...current, mapStaffProduct(finalProduct)].sort((left, right) => left.name.localeCompare(right.name)));
+              if (!finalProduct.id) throw new Error("The saved product response is missing its record ID. Refresh the inventory before trying again.");
+              const mappedProduct = mapStaffProduct(finalProduct);
+              setProducts((current) => mergeUniqueById([...current, mappedProduct]).sort((left, right) => left.name.localeCompare(right.name)));
               closeAddProduct();
               setNotice(`${finalProduct.name} added.`);
             } catch (createError) {
@@ -1032,20 +1079,21 @@ export function StaffInventoryExperience() {
             }
           }}>
             <ActionLoadingOverlay
+              key="add-product-loading-overlay"
               active={submitting}
               title="Saving new product"
               detail="We are saving the product and uploading its image if needed."
             />
-            <div className="flex items-start gap-3"><div><h2 id={addDialog.titleId} className="text-xl font-extrabold">Add product</h2><p className="mt-1 text-sm text-muted-foreground">Enter the basic product details and starting stock.</p></div><button type="button" data-dialog-autofocus onClick={closeAddProduct} disabled={submitting} aria-label="Close product form" className="ml-auto grid size-9 place-items-center rounded-md hover:bg-[#eef3ee] disabled:opacity-50"><X /></button></div>
-            <div className="mt-5 grid gap-5">
-              <section className="grid gap-3 rounded-lg border border-border bg-[#fbfdfb] p-4">
+            <div key="add-product-heading" className="sticky top-0 z-20 flex items-start gap-3 border-b border-border bg-white/95 px-5 py-4 backdrop-blur"><div><p className="text-[11px] font-bold uppercase tracking-[0.16em] text-primary">Inventory setup</p><h2 id={addDialog.titleId} className="mt-1 text-xl font-extrabold">Add inventory item</h2><p className="mt-1 text-sm text-muted-foreground">Set the product details, stock policy, and opening cost.</p></div><button type="button" data-dialog-autofocus onClick={closeAddProduct} disabled={submitting} aria-label="Close product form" className="ml-auto grid size-9 shrink-0 place-items-center rounded-md hover:bg-muted disabled:opacity-50"><X /></button></div>
+            <div key="add-product-fields" className="grid min-w-0 gap-4 p-4 pb-5 sm:p-5">
+              <section key="add-product-details" className="grid min-w-0 gap-3 overflow-hidden rounded-xl border bg-white p-4 shadow-sm">
                 <div>
-                  <h3 className="font-extrabold text-foreground">Product details</h3>
+                  <div className="flex items-center gap-2"><span className="grid size-6 place-items-center rounded-full bg-primary text-xs font-extrabold text-white">1</span><h3 className="font-extrabold text-foreground">Product details</h3></div>
                   <p className="mt-1 text-xs leading-5 text-muted-foreground">Choose a template to fill common WUP details automatically, or leave it blank for a new item.</p>
                 </div>
-                <label className="grid gap-1.5 text-sm font-semibold">
+                <label className="grid min-w-0 gap-1.5 text-sm font-semibold">
                   Start from a WUP template <span className="font-normal text-muted-foreground">(optional)</span>
-                  <select value={selectedTemplateId} onChange={(event) => selectAddTemplate(event.target.value)} className="h-11 rounded-md border px-3 font-normal outline-none focus:border-primary">
+                  <select value={selectedTemplateId} onChange={(event) => selectAddTemplate(event.target.value)} className="h-11 w-full min-w-0 rounded-md border px-3 font-normal outline-none focus:border-primary">
                     <option value="">No template — enter details manually</option>
                     <optgroup label="Shop-ready items">
                       {assetTemplates.map((template) => (
@@ -1061,35 +1109,50 @@ export function StaffInventoryExperience() {
                 </label>
                 <label className="grid gap-1.5 text-sm font-semibold">
                   Product name
-                  <input name="name" required defaultValue={selectedTemplate?.name ?? ""} placeholder="Example: Senior High Men's Polo" className="h-11 rounded-md border px-3 font-normal" />
+                  <input name="name" required defaultValue={selectedTemplate?.name ?? ""} placeholder="Example: Senior High Men's Polo" className="h-11 w-full min-w-0 rounded-md border px-3 font-normal" />
                 </label>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <label className="grid gap-1.5 text-sm font-semibold">
                     Category
-                    <input name="category" required list="staff-category-options" defaultValue={selectedTemplate?.categoryName ?? ""} placeholder="Example: Uniforms" className="h-11 rounded-md border px-3 font-normal" />
+                    <input name="category" required list="staff-category-options" defaultValue={selectedTemplate?.categoryName ?? ""} placeholder="Example: Uniforms" className="h-11 w-full min-w-0 rounded-md border px-3 font-normal" />
                   </label>
                   <label className="grid gap-1.5 text-sm font-semibold">
-                    Price
-                    <input name="price" required type="number" min="0" step="0.01" defaultValue={selectedTemplate?.price ?? ""} placeholder="0.00" className="h-11 rounded-md border px-3 font-normal" />
+                    Selling price
+                    <input name="price" required type="number" min="0" step="0.01" defaultValue={selectedTemplate?.price ?? ""} placeholder="0.00" className="h-11 w-full min-w-0 rounded-md border px-3 font-normal" />
+                  </label>
+                </div>
+                <div className="grid gap-3 rounded-lg border border-primary/25 bg-primary/5 p-3 sm:grid-cols-2">
+                  <div className="sm:col-span-2">
+                    <p className="text-sm font-extrabold text-primary">Opening-stock cost</p>
+                    <p className="mt-1 text-xs leading-5 text-muted-foreground">Required only when starting stock is above zero. This creates the first FIFO batch; it is not saved as a permanent product cost.</p>
+                  </div>
+                  <label className="grid gap-1.5 text-sm font-semibold">Unit acquisition cost
+                    <input name="initialUnitCost" type="number" min="0" step="0.01" placeholder="0.00" className="h-11 w-full min-w-0 rounded-md border bg-white px-3 font-normal" />
+                  </label>
+                  <label className="grid gap-1.5 text-sm font-semibold">Date received
+                    <input name="receivedAt" type="date" defaultValue={new Date().toISOString().slice(0, 10)} className="h-11 w-full min-w-0 rounded-md border bg-white px-3 font-normal" />
+                  </label>
+                  <label className="grid gap-1.5 text-sm font-semibold sm:col-span-2">Supplier / reference <span className="font-normal text-muted-foreground">(optional)</span>
+                    <input name="supplierNote" maxLength={500} placeholder="Example: Supplier invoice SI-1024" className="h-11 w-full min-w-0 rounded-md border bg-white px-3 font-normal" />
                   </label>
                 </div>
                 <label className="grid gap-1.5 text-sm font-semibold">
                   Short description <span className="font-normal text-muted-foreground">(optional)</span>
-                  <input name="description" defaultValue={selectedTemplateDescription} placeholder="Short description shown with the product" className="h-11 rounded-md border px-3 font-normal" />
+                  <input name="description" defaultValue={selectedTemplateDescription} placeholder="Short description shown with the product" className="h-11 w-full min-w-0 rounded-md border px-3 font-normal" />
                 </label>
               </section>
 
-              <section className="grid gap-3 rounded-lg border border-border bg-[#fbfdfb] p-4">
+              <section key="add-product-image" className="grid min-w-0 gap-3 overflow-hidden rounded-xl border bg-white p-4 shadow-sm">
                 <div>
-                  <h3 className="font-extrabold text-foreground">Product image</h3>
+                  <div className="flex items-center gap-2"><span className="grid size-6 place-items-center rounded-full bg-primary text-xs font-extrabold text-white">2</span><h3 className="font-extrabold text-foreground">Product image</h3></div>
                   <p className="mt-1 text-xs leading-5 text-muted-foreground">Upload an image if the selected template does not already have one.</p>
                 </div>
                 <div className="flex items-center gap-3">
-                  <div className="grid size-20 shrink-0 place-items-center overflow-hidden rounded-md border border-border bg-white">
+                  <div className="grid size-20 shrink-0 place-items-center overflow-hidden rounded-md border bg-white">
                     {addImagePreview ? <Image src={shopProductCardImage(addImagePreview)} alt="Product preview" width={80} height={80} unoptimized className="size-full object-contain" /> : <Upload className="size-7 text-primary" />}
                   </div>
                   <div className="min-w-0 flex-1">
-                    <label className="inline-flex h-10 cursor-pointer items-center gap-2 rounded-md border border-[#b9cbbb] bg-white px-3 text-sm font-bold text-primary hover:bg-primary/10">
+                    <label className="inline-flex h-10 cursor-pointer items-center gap-2 rounded-md border border-border-strong bg-white px-3 text-sm font-bold text-primary hover:bg-primary/10">
                       <Upload className="size-4" />
                       Choose image
                       <input type="file" accept="image/png,image/jpeg,image/webp" className="sr-only" onChange={(event) => chooseAddImage(event.target.files)} />
@@ -1103,16 +1166,16 @@ export function StaffInventoryExperience() {
                 </details>
               </section>
 
-              <section className="grid gap-3 rounded-lg border border-border bg-[#fbfdfb] p-4">
-                <div><h3 className="font-extrabold text-foreground">Who is this item for?</h3><p className="mt-1 text-xs leading-5 text-muted-foreground">This changes Featured ranking only. Every student can still find the product through search.</p></div>
+              <section key="add-product-audience" className="grid min-w-0 gap-3 overflow-hidden rounded-xl border bg-white p-4 shadow-sm">
+                <div><div className="flex items-center gap-2"><span className="grid size-6 place-items-center rounded-full bg-primary text-xs font-extrabold text-white">3</span><h3 className="font-extrabold text-foreground">Featured audience</h3></div><p className="mt-1 text-xs leading-5 text-muted-foreground">Choose who should see this item first. Every student can still find it through search.</p></div>
                 <label className="flex gap-3 rounded-md border bg-white p-3"><input type="radio" checked={addAudienceScope === "ALL_STUDENTS"} onChange={() => { setAddAudienceScope("ALL_STUDENTS"); setAddAudienceDepartmentIds([]); }} /><span className="text-sm font-bold">All Students</span></label>
                 <label className="flex gap-3 rounded-md border bg-white p-3"><input type="radio" checked={addAudienceScope === "SPECIFIC_DEPARTMENTS"} onChange={() => setAddAudienceScope("SPECIFIC_DEPARTMENTS")} /><span className="text-sm font-bold">Specific Department(s)</span></label>
                 {addAudienceScope === "SPECIFIC_DEPARTMENTS" ? <div className="grid gap-2 sm:grid-cols-2">{departments.map((department) => <label key={department.id} className="flex items-center gap-2 rounded-md border bg-white px-3 py-2 text-sm"><input type="checkbox" checked={addAudienceDepartmentIds.includes(department.id)} onChange={(event) => setAddAudienceDepartmentIds((current) => event.target.checked ? [...current, department.id] : current.filter((id) => id !== department.id))} />{department.code}</label>)}</div> : null}
               </section>
 
-              <section className="grid gap-4 rounded-lg border border-border bg-[#fbfdfb] p-4">
+              <section key="add-product-inventory" className="grid min-w-0 gap-4 overflow-hidden rounded-xl border bg-white p-4 shadow-sm">
                 <div>
-                  <h3 className="font-extrabold text-foreground">Stock setup</h3>
+                  <div className="flex items-center gap-2"><span className="grid size-6 place-items-center rounded-full bg-primary text-xs font-extrabold text-white">4</span><h3 className="font-extrabold text-foreground">Stock setup</h3></div>
                   <p className="mt-1 text-xs leading-5 text-muted-foreground">Choose how staff will track this product. Uniforms normally use sizes.</p>
                 </div>
                 <div className="grid gap-2">
@@ -1132,14 +1195,14 @@ export function StaffInventoryExperience() {
                 </div>
 
                 {addSaleMode === "CLOTH_ONLY" ? (
-                  <div className="rounded-md border border-[#bdd8c0] bg-[#f3faf4] px-3 py-2 text-xs leading-5 text-[#4e6255]">
+                  <div className="rounded-md border border-[#bdd8c0] bg-[#f3faf4] px-3 py-2 text-xs leading-5 text-foreground">
                     <span className="font-extrabold text-primary">Student view:</span> Uniform cloth only. Students reserve by quantity only; Size, Waist, and Length are not shown.
                   </div>
                 ) : null}
 
                 {addHasSizeVariants ? (
                   <div className="space-y-2">
-                    <div className="grid grid-cols-[1fr_110px_36px] gap-2 px-1 text-[11px] font-bold uppercase tracking-wide text-[#718078]">
+                    <div className="grid grid-cols-[1fr_110px_36px] gap-2 px-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
                       <span>Size</span><span>Starting stock</span><span />
                     </div>
                     {addSizeVariants.map((variant, index) => (
@@ -1182,57 +1245,51 @@ export function StaffInventoryExperience() {
                       </Button>
                       <p className="text-sm"><span className="text-muted-foreground">Total stock: </span><span className="font-extrabold text-primary">{addSizeStockTotal} pcs</span></p>
                     </div>
-                    <p className="text-xs leading-5 text-muted-foreground">Each size gets a default low-stock warning at 2 pcs. You can change that later from Manage.</p>
+                    <p className="text-xs leading-5 text-muted-foreground">The selected percentage below is applied automatically to every size.</p>
                   </div>
                 ) : (
                   <label className="grid gap-1.5 text-sm font-semibold">
                     Starting stock
-                    <input name="stock" required type="number" min="0" step="1" defaultValue={selectedTemplate?.stock ?? 0} placeholder="0" className="h-11 rounded-md border px-3 font-normal" />
+                    <input name="stock" required type="number" min="0" step="1" value={addSimpleStock} onChange={(event) => setAddSimpleStock(Number(event.target.value))} placeholder="0" className="h-11 w-full min-w-0 rounded-md border px-3 font-normal" />
                   </label>
                 )}
 
-                <label className="grid gap-1.5 text-sm font-semibold">
-                  Warn staff when total stock reaches
-                  <input name="minimum" required type="number" min="0" step="1" defaultValue={selectedTemplate?.lowStockThreshold ?? 10} className="h-11 rounded-md border px-3 font-normal" />
-                  <span className="text-xs font-normal leading-5 text-muted-foreground">Example: enter 10 to show a restock warning when 10 or fewer items remain.</span>
-                </label>
-
-                <div className="grid gap-3 rounded-md border border-primary/25 bg-primary/5 p-3 sm:grid-cols-2">
-                  <div className="sm:col-span-2">
-                    <p className="text-sm font-extrabold text-primary">Opening-stock cost</p>
-                    <p className="mt-1 text-xs leading-5 text-muted-foreground">Required only when starting stock is above zero. This creates the first FIFO batch; it is not saved as a permanent product cost.</p>
-                  </div>
-                  <label className="grid gap-1.5 text-sm font-semibold">Unit acquisition cost
-                    <input name="initialUnitCost" type="number" min="0" step="0.01" placeholder="0.00" className="h-11 rounded-md border bg-white px-3 font-normal" />
+                <div className="grid gap-3 rounded-md border bg-white p-3 sm:grid-cols-[220px_1fr] sm:items-end">
+                  <label className="grid gap-1.5 text-sm font-semibold">
+                    Low-stock warning
+                    <select aria-label="Low-stock warning" value={addLowStockPercent} onChange={(event) => setAddLowStockPercent(Number(event.target.value))} className="h-11 w-full min-w-0 rounded-md border bg-white px-3 font-normal outline-none focus:border-primary">
+                      <option value={10}>10% — very low</option>
+                      <option value={20}>20% — low</option>
+                      <option value={25}>25% — recommended</option>
+                      <option value={30}>30% — early warning</option>
+                      <option value={40}>40% — extra early</option>
+                      <option value={50}>50% — half stock</option>
+                    </select>
                   </label>
-                  <label className="grid gap-1.5 text-sm font-semibold">Date received
-                    <input name="receivedAt" type="date" defaultValue={new Date().toISOString().slice(0, 10)} className="h-11 rounded-md border bg-white px-3 font-normal" />
-                  </label>
-                  <label className="grid gap-1.5 text-sm font-semibold sm:col-span-2">Supplier / reference <span className="font-normal text-muted-foreground">(optional)</span>
-                    <input name="supplierNote" maxLength={500} placeholder="Example: Supplier invoice SI-1024" className="h-11 rounded-md border bg-white px-3 font-normal" />
-                  </label>
+                  <p className="text-xs leading-5 text-muted-foreground">Based on {addOpeningStock} starting item{addOpeningStock === 1 ? "" : "s"}, staff will be warned at <strong className="text-foreground">{addLowStockThreshold} or fewer</strong>. This is calculated automatically for every size.</p>
                 </div>
+
               </section>
 
-              <details className="rounded-lg border border-border bg-white px-4 py-3 text-sm">
+              <details key="add-product-pricing" className="rounded-xl border bg-white px-4 py-3 text-sm shadow-sm">
                 <summary className="cursor-pointer font-semibold text-muted-foreground">Optional pricing</summary>
                 <label className="mt-3 grid gap-1.5 text-sm font-semibold">
                   Old price <span className="font-normal text-muted-foreground">(only for sale/discount display)</span>
-                  <input name="oldPrice" type="number" min="0" step="0.01" placeholder="Leave blank if not on sale" className="h-11 rounded-md border px-3 font-normal" />
+                  <input name="oldPrice" type="number" min="0" step="0.01" placeholder="Leave blank if not on sale" className="h-11 w-full min-w-0 rounded-md border px-3 font-normal" />
                 </label>
               </details>
 
-              <datalist id="staff-category-options">{categoryOptions.map((category) => <option key={category} value={category} />)}</datalist>
-              <div className="flex justify-end gap-2">
-                <Button type="button" variant="secondary" onClick={closeAddProduct} disabled={submitting}>Cancel</Button>
-                <Button type="submit" disabled={submitting}>{submitting ? "Saving..." : "Add product"}</Button>
+              <datalist key="add-product-category-options" id="staff-category-options">{categoryOptions.map((category) => <option key={category} value={category} />)}</datalist>
+              <div key="add-product-actions" className="sticky bottom-0 z-20 -mx-4 -mb-5 flex justify-end gap-2 border-t border-border bg-white/95 px-4 py-3 backdrop-blur sm:-mx-5 sm:px-5">
+                <Button type="button" variant="secondary" className="min-w-24" onClick={closeAddProduct} disabled={submitting}>Cancel</Button>
+                <Button type="submit" className="min-w-32" disabled={submitting}>{submitting ? "Saving..." : "Save product"}</Button>
               </div>
             </div>
           </form>
         </div>
       ) : null}
       {editingProduct ? (
-        <div className="fixed inset-0 z-[10000] bg-[#101820]/45" role="presentation">
+        <div className="fixed inset-0 z-[10000] bg-foreground/45" role="presentation">
           <button
             type="button"
             aria-label="Close product manager"
@@ -1246,7 +1303,7 @@ export function StaffInventoryExperience() {
               title={savingVariants ? "Saving size settings" : "Saving product changes"}
               detail="We are updating this item and syncing the student shop."
             />
-            <header className="shrink-0 border-b border-[#e1e8e2] p-5">
+            <header className="shrink-0 border-b border-border p-5">
               <div className="flex items-start gap-3">
                 {manageSection !== "menu" ? (
                   <button
@@ -1254,7 +1311,7 @@ export function StaffInventoryExperience() {
                     onClick={() => { setError(""); setManageSection("menu"); }}
                     disabled={submitting || savingVariants}
                     aria-label="Back to manage product"
-                    className="grid size-9 shrink-0 place-items-center rounded-md border border-border text-primary hover:bg-primary/10 disabled:opacity-50"
+                    className="grid size-9 shrink-0 place-items-center rounded-md border text-primary hover:bg-primary/10 disabled:opacity-50"
                   >
                     <ArrowLeft className="size-4" />
                   </button>
@@ -1276,10 +1333,10 @@ export function StaffInventoryExperience() {
                                ? "Choose which departments see this item first in Featured sorting."
                              : manageSection === "options"
                               ? "Manage Size, Waist, Length, Color, and other option labels without mixing them with stock counts."
-                              : "Manage size labels and low-stock warning levels."}
+                              : "Manage size labels; alert levels follow the product percentage automatically."}
                   </p>
                 </div>
-                <button type="button" data-dialog-autofocus onClick={closeEditor} disabled={submitting || savingVariants} aria-label="Close product manager" className="grid size-9 shrink-0 place-items-center rounded-md hover:bg-[#eef3ee] disabled:opacity-50"><X /></button>
+                <button type="button" data-dialog-autofocus onClick={closeEditor} disabled={submitting || savingVariants} aria-label="Close product manager" className="grid size-9 shrink-0 place-items-center rounded-md hover:bg-muted disabled:opacity-50"><X /></button>
               </div>
             </header>
 
@@ -1290,8 +1347,8 @@ export function StaffInventoryExperience() {
 
               {manageSection === "menu" ? (
                 <div className="space-y-4">
-                  <section className="flex items-center gap-4 rounded-lg border border-border bg-[#f8fbf8] p-4">
-                    <div className="relative grid size-24 shrink-0 place-items-center overflow-hidden rounded-lg border border-border bg-white">
+                  <section className="flex items-center gap-4 rounded-lg border bg-surface-subtle p-4">
+                    <div className="relative grid size-24 shrink-0 place-items-center overflow-hidden rounded-lg border bg-white">
                       <Image src={shopProductCardImage(editingProduct.imageUrl)} alt={editingProduct.name} fill sizes="96px" unoptimized className="object-contain p-2" />
                     </div>
                     <div className="min-w-0">
@@ -1304,37 +1361,37 @@ export function StaffInventoryExperience() {
                     </div>
                   </section>
 
-                  <div className="overflow-hidden rounded-lg border border-border bg-white">
-                    <button type="button" onClick={() => { setError(""); setManageSection("details"); }} className="flex w-full items-center gap-3 border-b border-[#e7ece8] px-4 py-4 text-left hover:bg-[#f8fbf8]">
+                  <div className="overflow-hidden rounded-lg border bg-white">
+                    <button type="button" onClick={() => { setError(""); setManageSection("details"); }} className="flex w-full items-center gap-3 border-b border-border px-4 py-4 text-left hover:bg-surface-subtle">
                       <span className="grid size-9 shrink-0 place-items-center rounded-md bg-primary/10 text-primary"><Edit3 className="size-4" /></span>
                       <span className="min-w-0 flex-1"><span className="block text-sm font-extrabold text-foreground">Edit details</span><span className="mt-0.5 block text-xs text-muted-foreground">Name, category, description, price, and total-stock warning.</span></span>
-                      <ChevronRight className="size-4 text-[#829087]" />
+                      <ChevronRight className="size-4 text-muted-foreground" />
                     </button>
-                    <button type="button" onClick={() => { setError(""); setEditImageFile(null); setEditImagePreview(editingProduct.imageUrl); setManageSection("image"); }} className="flex w-full items-center gap-3 border-b border-[#e7ece8] px-4 py-4 text-left hover:bg-[#f8fbf8]">
+                    <button type="button" onClick={() => { setError(""); setEditImageFile(null); setEditImagePreview(editingProduct.imageUrl); setManageSection("image"); }} className="flex w-full items-center gap-3 border-b border-border px-4 py-4 text-left hover:bg-surface-subtle">
                       <span className="grid size-9 shrink-0 place-items-center rounded-md bg-primary/10 text-primary"><Upload className="size-4" /></span>
                       <span className="min-w-0 flex-1"><span className="block text-sm font-extrabold text-foreground">Manage image</span><span className="mt-0.5 block text-xs text-muted-foreground">Preview, upload, or replace the product image.</span></span>
-                      <ChevronRight className="size-4 text-[#829087]" />
+                      <ChevronRight className="size-4 text-muted-foreground" />
                     </button>
-                    <button type="button" onClick={() => { setError(""); setManageSection("selling"); }} className="flex w-full items-center gap-3 border-b border-[#e7ece8] px-4 py-4 text-left hover:bg-[#f8fbf8]">
+                    <button type="button" onClick={() => { setError(""); setManageSection("selling"); }} className="flex w-full items-center gap-3 border-b border-border px-4 py-4 text-left hover:bg-surface-subtle">
                       <span className="grid size-9 shrink-0 place-items-center rounded-md bg-primary/10 text-primary"><Filter className="size-4" /></span>
                       <span className="min-w-0 flex-1"><span className="block text-sm font-extrabold text-foreground">Selling setup</span><span className="mt-0.5 block text-xs text-muted-foreground">{editingProduct.saleMode === "CLOTH_ONLY" ? "Cloth only — quantity only" : editingProduct.saleMode === "OPTIONS" ? "Students choose sizes/options" : "Simple item — one stock count"}</span></span>
-                      <ChevronRight className="size-4 text-[#829087]" />
+                      <ChevronRight className="size-4 text-muted-foreground" />
                     </button>
-                    <button type="button" onClick={() => { setError(""); setEditAudienceScope(editingProduct.audienceScope); setManageSection("audience"); }} className="flex w-full items-center gap-3 border-b border-[#e7ece8] px-4 py-4 text-left hover:bg-[#f8fbf8]">
+                    <button type="button" onClick={() => { setError(""); setEditAudienceScope(editingProduct.audienceScope); setManageSection("audience"); }} className="flex w-full items-center gap-3 border-b border-border px-4 py-4 text-left hover:bg-surface-subtle">
                       <span className="grid size-9 shrink-0 place-items-center rounded-md bg-primary/10 text-primary"><Filter className="size-4" /></span>
                       <span className="min-w-0 flex-1"><span className="block text-sm font-extrabold text-foreground">Product audience</span><span className="mt-0.5 block text-xs text-muted-foreground">{editingProduct.audienceScope === "ALL_STUDENTS" ? "All Students" : editingProduct.targetDepartments.map((department) => department.code).join(", ")}</span></span>
-                      <ChevronRight className="size-4 text-[#829087]" />
+                      <ChevronRight className="size-4 text-muted-foreground" />
                     </button>
                     {editingProduct.saleMode === "OPTIONS" ? <>
-                    <button type="button" onClick={(event) => { setError(""); skuInventoryReturnFocusRef.current = event.currentTarget; setSkuInventoryProduct(editingProduct); }} className="flex w-full items-center gap-3 border-b border-[#e7ece8] px-4 py-4 text-left hover:bg-[#f8fbf8]">
+                    <button type="button" onClick={(event) => { setError(""); skuInventoryReturnFocusRef.current = event.currentTarget; setSkuInventoryProduct(editingProduct); }} className="flex w-full items-center gap-3 border-b border-border px-4 py-4 text-left hover:bg-surface-subtle">
                       <span className="grid size-9 shrink-0 place-items-center rounded-md bg-primary/10 text-primary"><RefreshCw className="size-4" /></span>
                       <span className="min-w-0 flex-1"><span className="block text-sm font-extrabold text-foreground">Inventory combinations</span><span className="mt-0.5 block text-xs text-muted-foreground">{editingProduct.skuInventoryEnabled ? `${editingProduct.skus.length} physical combinations configured` : "Setup required before reliable size/waist/length stock tracking"}.</span></span>
-                      <ChevronRight className="size-4 text-[#829087]" />
+                      <ChevronRight className="size-4 text-muted-foreground" />
                     </button>
-                    <button type="button" onClick={() => { setError(""); setManageSection("options"); }} className="flex w-full items-center gap-3 px-4 py-4 text-left hover:bg-[#f8fbf8]">
+                    <button type="button" onClick={() => { setError(""); setManageSection("options"); }} className="flex w-full items-center gap-3 px-4 py-4 text-left hover:bg-surface-subtle">
                       <span className="grid size-9 shrink-0 place-items-center rounded-md bg-primary/10 text-primary"><Filter className="size-4" /></span>
                       <span className="min-w-0 flex-1"><span className="block text-sm font-extrabold text-foreground">Product options</span><span className="mt-0.5 block text-xs text-muted-foreground">Manage Size, Waist, Length, Color, Clip Type, and other option labels. Stock remains under Inventory combinations.</span></span>
-                      <ChevronRight className="size-4 text-[#829087]" />
+                      <ChevronRight className="size-4 text-muted-foreground" />
                     </button>
                     </> : null}
                   </div>
@@ -1371,7 +1428,7 @@ export function StaffInventoryExperience() {
                     setSubmitting(false);
                   }
                 }}>
-                  <div className="rounded-lg border border-border bg-[#f8fbf8] p-4">
+                  <div className="rounded-lg border bg-surface-subtle p-4">
                     <p className="text-sm font-extrabold text-foreground">Choose what students are actually buying</p>
                     <p className="mt-1 text-xs leading-5 text-muted-foreground">This controls whether students see size/options. Existing stock is never guessed or redistributed automatically.</p>
                   </div>
@@ -1380,7 +1437,7 @@ export function StaffInventoryExperience() {
                     { value: "CLOTH_ONLY", title: "Cloth only", detail: "Uniform tela/material only. The image is a reference preview and students reserve by quantity only." },
                     { value: "OPTIONS", title: "With sizes/options", detail: "Ready-made items. Students choose Size, Waist, Length, Color, Clip Type, or other configured options." }
                   ].map((mode) => (
-                    <label key={mode.value} className="flex cursor-pointer gap-3 rounded-lg border border-border bg-white p-4 has-[:checked]:border-primary has-[:checked]:bg-[#eef7ef]">
+                    <label key={mode.value} className="flex cursor-pointer gap-3 rounded-lg border bg-white p-4 has-[:checked]:border-primary has-[:checked]:bg-[#eef7ef]">
                       <input type="radio" name="saleMode" value={mode.value} defaultChecked={editingProduct.saleMode === mode.value} className="mt-1" />
                       <span><span className="block text-sm font-extrabold text-foreground">{mode.title}</span><span className="mt-1 block text-xs leading-5 text-muted-foreground">{mode.detail}</span></span>
                     </label>
@@ -1388,7 +1445,7 @@ export function StaffInventoryExperience() {
                   <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900">
                     Switching to <b>With sizes/options</b> pauses student ordering until physical combinations are configured. Switching away from options is blocked while active reservations or unsettled payments exist.
                   </div>
-                  <div className="flex justify-end gap-2 border-t border-[#e1e8e2] pt-4"><Button type="button" variant="secondary" onClick={() => setManageSection("menu")} disabled={submitting}>Cancel</Button><Button type="submit" disabled={submitting}>{submitting ? "Saving..." : "Save selling setup"}</Button></div>
+                  <div className="flex justify-end gap-2 border-t border-border pt-4"><Button type="button" variant="secondary" onClick={() => setManageSection("menu")} disabled={submitting}>Cancel</Button><Button type="submit" disabled={submitting}>{submitting ? "Saving..." : "Save selling setup"}</Button></div>
                 </form>
               ) : null}
 
@@ -1423,7 +1480,7 @@ export function StaffInventoryExperience() {
                   <label className="flex gap-3 rounded-md border bg-white p-4"><input type="radio" name="audienceScope" checked={editAudienceScope === "ALL_STUDENTS"} onChange={() => setEditAudienceScope("ALL_STUDENTS")} /><span><span className="block text-sm font-extrabold">All Students</span><span className="text-xs text-muted-foreground">General merchandise and campus-wide items.</span></span></label>
                   <label className="flex gap-3 rounded-md border bg-white p-4"><input type="radio" name="audienceScope" checked={editAudienceScope === "SPECIFIC_DEPARTMENTS"} onChange={() => setEditAudienceScope("SPECIFIC_DEPARTMENTS")} /><span><span className="block text-sm font-extrabold">Specific Department(s)</span><span className="text-xs text-muted-foreground">Prioritize this item for one or more departments.</span></span></label>
                   {editAudienceScope === "SPECIFIC_DEPARTMENTS" ? <div className="grid gap-2 sm:grid-cols-2">{departments.map((department) => <label key={department.id} className="flex items-center gap-2 rounded-md border bg-white px-3 py-2 text-sm"><input type="checkbox" name="departmentIds" value={department.id} defaultChecked={editingProduct.targetDepartments.some((target) => target.id === department.id)} />{department.code}</label>)}</div> : null}
-                  <div className="flex justify-end gap-2 border-t border-[#e1e8e2] pt-4"><Button type="button" variant="secondary" onClick={() => setManageSection("menu")} disabled={submitting}>Cancel</Button><Button type="submit" disabled={submitting}>{submitting ? "Saving..." : "Save audience"}</Button></div>
+                  <div className="flex justify-end gap-2 border-t border-border pt-4"><Button type="button" variant="secondary" onClick={() => setManageSection("menu")} disabled={submitting}>Cancel</Button><Button type="submit" disabled={submitting}>{submitting ? "Saving..." : "Save audience"}</Button></div>
                 </form>
               ) : null}
 
@@ -1440,7 +1497,7 @@ export function StaffInventoryExperience() {
                       description: String(form.get("description") ?? "").trim() || null,
                       price: Number(form.get("price")),
                       oldPrice: String(form.get("oldPrice") ?? "").trim() ? Number(form.get("oldPrice")) : null,
-                      lowStockThreshold: Number(form.get("minimum")),
+                      lowStockPercent: editLowStockPercent,
                       notes: "Product details updated from staff inventory page."
                     });
                     const mappedProduct = mapStaffProduct(updatedProduct);
@@ -1454,11 +1511,11 @@ export function StaffInventoryExperience() {
                     setSubmitting(false);
                   }
                 }}>
-                  <div className="flex items-center gap-3 rounded-lg border border-border bg-[#f8fbf8] p-3">
-                    <div className="relative size-16 shrink-0 overflow-hidden rounded-md border border-border bg-white"><Image src={shopProductCardImage(editingProduct.imageUrl)} alt={editingProduct.name} fill sizes="64px" unoptimized className="object-contain p-1" /></div>
+                  <div className="flex items-center gap-3 rounded-lg border bg-surface-subtle p-3">
+                    <div className="relative size-16 shrink-0 overflow-hidden rounded-md border bg-white"><Image src={shopProductCardImage(editingProduct.imageUrl)} alt={editingProduct.name} fill sizes="64px" unoptimized className="object-contain p-1" /></div>
                     <div><p className="text-sm font-bold text-foreground">Current stock: {editingProduct.stock} items</p><p className="mt-1 text-xs text-muted-foreground">Use Update stock from the inventory list to change quantities.</p></div>
                   </div>
-                  <section className="rounded-lg border border-border bg-muted/40 p-4">
+                  <section className="rounded-lg border bg-muted/40 p-4">
                     <div className="grid gap-3">
                       <div><p className="text-xs font-bold uppercase text-muted-foreground">Selling price</p><p className="mt-1 text-lg font-extrabold text-primary">PHP {editingProduct.price.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p></div>
                       <div><p className="text-xs font-bold uppercase text-muted-foreground">Latest batch cost</p><p className="mt-1 text-lg font-extrabold">{batchResult?.summary.latestCost === null || !batchResult ? "Loading / not set" : `PHP ${batchResult.summary.latestCost.toFixed(2)}`}</p></div>
@@ -1475,9 +1532,12 @@ export function StaffInventoryExperience() {
                     <label className="grid min-w-0 gap-1.5 text-sm font-semibold"><span>Selling price</span><input name="price" required type="number" min="0" step="0.01" defaultValue={editingProduct.price} className="h-11 w-full min-w-0 rounded-md border px-3 font-normal outline-none focus:border-primary" /></label>
                     <label className="grid min-w-0 gap-1.5 text-sm font-semibold"><span>Old price <span className="text-xs font-normal text-muted-foreground">(optional)</span></span><input name="oldPrice" type="number" min="0" step="0.01" defaultValue={editingProduct.oldPrice ?? ""} className="h-11 w-full min-w-0 rounded-md border px-3 font-normal outline-none focus:border-primary" /></label>
                   </div>
-                  <label className="grid gap-1.5 text-sm font-semibold">Low-stock alert<input name="minimum" required type="number" min="0" step="1" defaultValue={editingProduct.minimum} className="h-11 rounded-md border px-3 font-normal outline-none focus:border-primary" /><span className="text-xs font-normal text-muted-foreground">WESCOMM warns staff when total stock reaches this number or lower.</span></label>
+                  <div className="grid gap-3 rounded-md border bg-surface-subtle p-3">
+                    <label className="grid gap-1.5 text-sm font-semibold">Low-stock warning<select aria-label="Low-stock warning" value={editLowStockPercent} onChange={(event) => setEditLowStockPercent(Number(event.target.value))} className="h-11 rounded-md border bg-white px-3 font-normal outline-none focus:border-primary"><option value={10}>10% — very low</option><option value={20}>20% — low</option><option value={25}>25% — recommended</option><option value={30}>30% — early warning</option><option value={40}>40% — extra early</option><option value={50}>50% — half stock</option></select></label>
+                    <p className="text-xs leading-5 text-muted-foreground">Using the stable stock target of {editingProduct.stockTarget}, WESCOMM will warn at <strong className="text-foreground">{editLowStockThreshold} items or fewer</strong>. The same percentage is applied automatically to sizes and inventory combinations.</p>
+                  </div>
                   <datalist id="staff-edit-category-options">{categoryOptions.map((category) => <option key={category} value={category} />)}</datalist>
-                  <div className="sticky bottom-0 -mx-5 -mb-5 flex justify-end gap-2 border-t border-[#e1e8e2] bg-white px-5 py-4"><Button type="button" variant="secondary" onClick={() => setManageSection("menu")} disabled={submitting}>Cancel</Button><Button type="submit" disabled={submitting}>{submitting ? "Saving..." : "Save details"}</Button></div>
+                  <div className="sticky bottom-0 -mx-5 -mb-5 flex justify-end gap-2 border-t border-border bg-white px-5 py-4"><Button type="button" variant="secondary" onClick={() => setManageSection("menu")} disabled={submitting}>Cancel</Button><Button type="submit" disabled={submitting}>{submitting ? "Saving..." : "Save details"}</Button></div>
                 </form>
               ) : null}
 
@@ -1509,23 +1569,23 @@ export function StaffInventoryExperience() {
                     setSubmitting(false);
                   }
                 }}>
-                  <div className="grid place-items-center rounded-xl border border-border bg-[#f8fbf8] p-5">
-                    <div className="relative size-52 overflow-hidden rounded-xl border border-border bg-white shadow-sm">
+                  <div className="grid place-items-center rounded-xl border bg-surface-subtle p-5">
+                    <div className="relative size-52 overflow-hidden rounded-xl border bg-white shadow-sm">
                       {editImagePreview ? <Image src={optimizeShopProductImage(editImagePreview)} alt={`${editingProduct.name} preview`} fill sizes="208px" unoptimized className="object-contain p-3" /> : <div className="grid size-full place-items-center"><Upload className="size-9 text-primary" /></div>}
                     </div>
                     <p className="mt-3 text-sm font-bold text-foreground">{editingProduct.name}</p>
                     <p className="mt-1 text-xs text-muted-foreground">Preview before saving</p>
                   </div>
-                  <label className="flex h-11 cursor-pointer items-center justify-center gap-2 rounded-md border border-[#b9cbbb] bg-white px-3 text-sm font-bold text-primary hover:bg-primary/10">
+                  <label className="flex h-11 cursor-pointer items-center justify-center gap-2 rounded-md border border-border-strong bg-white px-3 text-sm font-bold text-primary hover:bg-primary/10">
                     <Upload className="size-4" /> Choose new image
                     <input type="file" accept="image/png,image/jpeg,image/webp" className="sr-only" onChange={(event) => chooseEditImage(event.target.files)} />
                   </label>
-                  <details className="rounded-lg border border-border bg-white px-4 py-3 text-sm">
+                  <details className="rounded-lg border bg-white px-4 py-3 text-sm">
                     <summary className="cursor-pointer font-semibold text-muted-foreground">Use an image URL instead</summary>
                     <input name="imageUrl" defaultValue={editingProduct.imageUrl} onChange={(event) => { if (!editImageFile) setEditImagePreview(event.target.value); }} placeholder="https://..." className="mt-3 h-11 w-full rounded-md border px-3 font-normal outline-none focus:border-primary" />
                   </details>
                   <p className="text-xs leading-5 text-muted-foreground">PNG, JPG, or WEBP up to 2 MB. The preview shown above is what staff will see before saving.</p>
-                  <div className="flex justify-end gap-2 border-t border-[#e1e8e2] pt-4"><Button type="button" variant="secondary" onClick={() => { setEditImageFile(null); setEditImagePreview(editingProduct.imageUrl); setManageSection("menu"); }} disabled={submitting}>Cancel</Button><Button type="submit" disabled={submitting}>{submitting ? "Saving..." : "Save image"}</Button></div>
+                  <div className="flex justify-end gap-2 border-t border-border pt-4"><Button type="button" variant="secondary" onClick={() => { setEditImageFile(null); setEditImagePreview(editingProduct.imageUrl); setManageSection("menu"); }} disabled={submitting}>Cancel</Button><Button type="submit" disabled={submitting}>{submitting ? "Saving..." : "Save image"}</Button></div>
                 </form>
               ) : null}
 
@@ -1535,6 +1595,7 @@ export function StaffInventoryExperience() {
                   product={{
                     id: editingProduct.id,
                     stock: editingProduct.stock,
+                    lowStockPercent: editingProduct.lowStockPercent,
                     skuInventoryEnabled: editingProduct.skuInventoryEnabled,
                     variants: editingProduct.variants.map((variant) => ({ ...variant })),
                     skus: editingProduct.skus.map((sku) => ({ variantIds: [...sku.variantIds] }))
@@ -1551,29 +1612,29 @@ export function StaffInventoryExperience() {
 
               {manageSection === "sizes" ? (
                 <div className="space-y-4">
-                  <div className="flex items-center gap-3 rounded-lg border border-border bg-[#f8fbf8] p-3">
-                    <div className="relative size-14 shrink-0 overflow-hidden rounded-md border border-border bg-white"><Image src={shopProductCardImage(editingProduct.imageUrl)} alt={editingProduct.name} fill sizes="56px" unoptimized className="object-contain p-1" /></div>
+                  <div className="flex items-center gap-3 rounded-lg border bg-surface-subtle p-3">
+                    <div className="relative size-14 shrink-0 overflow-hidden rounded-md border bg-white"><Image src={shopProductCardImage(editingProduct.imageUrl)} alt={editingProduct.name} fill sizes="56px" unoptimized className="object-contain p-1" /></div>
                     <div><p className="text-sm font-bold text-foreground">{editSizeVariants.length ? `${editSizeVariants.length} sizes configured` : "No sizes configured"}</p><p className="mt-1 text-xs text-muted-foreground">Stock quantities are changed from Update stock.</p></div>
                   </div>
                   <div className="flex items-center justify-between gap-3">
-                    <p className="text-xs leading-5 text-muted-foreground">{editingProduct.skuInventoryEnabled ? "Add or rename size labels here. Stock and low-stock alerts are managed under Inventory combinations." : "Set the size label and when staff should receive a low-stock warning."}</p>
+                    <p className="text-xs leading-5 text-muted-foreground">Add or rename size labels here. Low-stock levels use the product’s automatic {editingProduct.lowStockPercent}% policy.</p>
                     <Button type="button" variant="secondary" className="h-9 shrink-0 px-3" disabled={!editingVariantStructureUnlocked || savingVariants || submitting} onClick={() => setEditSizeVariants((current) => [...current, { key: variantDraftKey("size"), value: "", stock: "0", lowStockThreshold: "2" }])}><Plus className="size-4" /> Add size</Button>
                   </div>
                   {!editingVariantStructureUnlocked ? <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold leading-5 text-amber-800">Size names can only be added, removed, or renamed when this product has zero stock and no active reservations. Warning levels can still be changed now.</p> : null}
-                  <div className="overflow-hidden rounded-lg border border-border bg-white">
-                    <div className="grid grid-cols-[1fr_64px_86px_36px] gap-2 bg-[#f6f9f6] px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-[#718078]"><span>Size</span><span>Stock</span><span>Warn at</span><span /></div>
-                    <div className="divide-y divide-[#e7ece8]">
+                  <div className="overflow-hidden rounded-lg border bg-white">
+                    <div className="grid grid-cols-[1fr_64px_86px_36px] gap-2 bg-surface-subtle px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-muted-foreground"><span>Size</span><span>Stock</span><span>Auto alert</span><span /></div>
+                    <div className="divide-y divide-border">
                       {editSizeVariants.length ? editSizeVariants.map((variant, index) => (
                         <div key={variant.key} className="grid grid-cols-[1fr_64px_86px_36px] gap-2 p-3">
                           <input value={variant.value} disabled={Boolean(variant.id) && !editingVariantStructureUnlocked} onChange={(event) => setEditSizeVariants((current) => current.map((item) => item.key === variant.key ? { ...item, value: event.target.value } : item))} placeholder="Size" aria-label={`Size ${index + 1} name`} className="h-10 min-w-0 rounded-md border bg-white px-2 text-sm disabled:bg-[#f2f5f2] disabled:text-muted-foreground" />
                           <div className={cn("flex h-10 items-center justify-center rounded-md border bg-white px-2 text-sm font-bold", Number(variant.stock) <= Number(variant.lowStockThreshold) ? "border-amber-200 text-amber-800" : "text-foreground")}>{variant.id ? variant.stock : "New"}</div>
-                          <input type="number" min="0" step="1" inputMode="numeric" value={variant.lowStockThreshold} disabled={editingProduct.skuInventoryEnabled} title={editingProduct.skuInventoryEnabled ? "Set alerts under Inventory combinations." : undefined} onChange={(event) => setEditSizeVariants((current) => current.map((item) => item.key === variant.key ? { ...item, lowStockThreshold: event.target.value } : item))} aria-label={`${variant.value || `Size ${index + 1}`} low stock warning`} className="h-10 min-w-0 rounded-md border bg-white px-2 text-sm disabled:bg-[#f2f5f2] disabled:text-[#829087]" />
+                          <div aria-label={`${variant.value || `Size ${index + 1}`} automatic low stock alert`} className="flex h-10 min-w-0 items-center justify-center rounded-md border bg-surface-subtle px-2 text-xs font-bold text-muted-foreground">{editingProduct.skuInventoryEnabled ? "Per SKU" : `≤ ${automaticEditVariantThreshold(variant.id, variant.stock)}`}</div>
                           <button type="button" disabled={!editingVariantStructureUnlocked || savingVariants || submitting || Boolean(variant.id && editingProduct.skus.some((sku) => sku.variantIds.includes(variant.id!)))} title={variant.id && editingProduct.skus.some((sku) => sku.variantIds.includes(variant.id!)) ? "This size is used by an inventory combination. Rebuild combinations before removing it." : undefined} onClick={() => setEditSizeVariants((current) => current.filter((item) => item.key !== variant.key))} aria-label={`Remove ${variant.value || `size ${index + 1}`}`} className="grid size-10 place-items-center rounded-md text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"><X className="size-4" /></button>
                         </div>
                       )) : <p className="px-4 py-5 text-sm text-muted-foreground">This product does not have sizes yet.</p>}
                     </div>
                   </div>
-                  <div className="flex justify-end gap-2 border-t border-[#e1e8e2] pt-4"><Button type="button" variant="secondary" onClick={() => setManageSection("menu")} disabled={savingVariants}>Cancel</Button><Button type="button" onClick={() => void saveVariantSettings()} disabled={savingVariants || submitting}>{savingVariants ? "Saving..." : "Save size settings"}</Button></div>
+                  <div className="flex justify-end gap-2 border-t border-border pt-4"><Button type="button" variant="secondary" onClick={() => setManageSection("menu")} disabled={savingVariants}>Cancel</Button><Button type="button" onClick={() => void saveVariantSettings()} disabled={savingVariants || submitting}>{savingVariants ? "Saving..." : "Save size settings"}</Button></div>
                 </div>
               ) : null}
             </div>
@@ -1596,7 +1657,7 @@ export function StaffInventoryExperience() {
         />
       ) : null}
       {restockingProduct ? (
-        <div className="fixed inset-0 z-[10000] grid place-items-center overflow-hidden bg-[#101820]/50 p-2 sm:p-4">
+        <div className="fixed inset-0 z-[10000] grid place-items-center overflow-hidden bg-foreground/50 p-2 sm:p-4">
           <form
             ref={restockDialog.dialogRef}
             {...restockDialog.dialogProps}
@@ -1604,9 +1665,9 @@ export function StaffInventoryExperience() {
             onSubmit={(event) => { event.preventDefault(); saveRestock(); }}
           >
             <ActionLoadingOverlay active={submitting} title="Updating stock" detail="We are saving the stock count and refreshing its status." />
-            <header className="shrink-0 border-b border-[#e1e8e2] p-4 sm:p-5">
+            <header className="shrink-0 border-b border-border p-4 sm:p-5">
               <div className="flex items-start gap-3">
-                <div className="relative grid size-16 shrink-0 place-items-center overflow-hidden rounded-lg border border-border bg-[#f8fbf8]">
+                <div className="relative grid size-16 shrink-0 place-items-center overflow-hidden rounded-lg border bg-surface-subtle">
                   <Image src={shopProductCardImage(restockingProduct.imageUrl)} alt={restockingProduct.name} fill sizes="64px" unoptimized className="object-contain p-1" />
                 </div>
                 <div className="min-w-0 flex-1">
@@ -1614,7 +1675,7 @@ export function StaffInventoryExperience() {
                   <p className="mt-1 truncate text-sm font-bold text-foreground">{restockingProduct.name}</p>
                   <p className="mt-0.5 text-xs text-muted-foreground">Current total: {restockingProduct.stock} items</p>
                 </div>
-                <button type="button" data-dialog-autofocus onClick={closeRestockDialog} disabled={submitting} aria-label="Close stock editor" className="grid size-9 shrink-0 place-items-center rounded-md hover:bg-[#eef3ee] disabled:opacity-50"><X /></button>
+                <button type="button" data-dialog-autofocus onClick={closeRestockDialog} disabled={submitting} aria-label="Close stock editor" className="grid size-9 shrink-0 place-items-center rounded-md hover:bg-muted disabled:opacity-50"><X /></button>
               </div>
             </header>
 
@@ -1632,7 +1693,7 @@ export function StaffInventoryExperience() {
               </div>
 
               {batchResult ? (
-                <section className="mt-4 rounded-lg border border-border bg-muted/40 p-4">
+                <section className="mt-4 rounded-lg border bg-muted/40 p-4">
                   <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
                     <div><p className="text-xs font-bold uppercase text-muted-foreground">Latest cost</p><p className="mt-1 font-extrabold text-foreground">{batchResult.summary.latestCost === null ? "Not set" : `PHP ${batchResult.summary.latestCost.toFixed(2)}`}</p></div>
                     <div><p className="text-xs font-bold uppercase text-muted-foreground">Average cost</p><p className="mt-1 font-extrabold text-foreground">{batchResult.summary.averageInventoryCost === null ? "—" : `PHP ${batchResult.summary.averageInventoryCost.toFixed(2)}`}</p></div>
@@ -1674,11 +1735,11 @@ export function StaffInventoryExperience() {
                             onClick={() => setActiveRestockOptionName(optionName)}
                             className={cn(
                               "shrink-0 rounded-md border px-3 py-2 text-left text-xs font-bold transition",
-                              active ? "border-primary bg-primary/10 text-primary" : "border-border bg-white text-muted-foreground hover:bg-[#f8fbf8]"
+                              active ? "border-primary bg-primary/10 text-primary" : "border-border bg-white text-muted-foreground hover:bg-surface-subtle"
                             )}
                           >
                             <span>{optionName}</span>
-                            <span className={cn("ml-2", targetMatches && restockEnteredQuantity > 0 ? "text-primary" : "text-[#8a958e]")}>{targetMatches && restockEnteredQuantity > 0 ? "✓" : enteredTotal}</span>
+                            <span className={cn("ml-2", targetMatches && restockEnteredQuantity > 0 ? "text-primary" : "text-muted-foreground")}>{targetMatches && restockEnteredQuantity > 0 ? "✓" : enteredTotal}</span>
                           </button>
                         );
                       })}
@@ -1686,7 +1747,7 @@ export function StaffInventoryExperience() {
                   ) : null}
 
                   {activeRestockGroup ? (
-                    <div className="rounded-lg border border-border bg-[#fbfdfb] p-4">
+                    <div className="rounded-lg border bg-surface-subtle p-4">
                       <div className="flex items-center justify-between gap-3">
                         <div>
                           <h3 className="font-extrabold text-foreground">{activeRestockGroup[0]}</h3>
@@ -1706,9 +1767,9 @@ export function StaffInventoryExperience() {
                               value={restockVariantQuantities[variant.id] ?? "0"}
                               onChange={(event) => setRestockVariantQuantities((current) => ({ ...current, [variant.id]: event.target.value }))}
                               aria-label={`${activeRestockGroup[0]} ${variant.optionValue} ${restockMode === "add" ? "new quantity" : "exact quantity"}`}
-                              className="h-11 min-w-0 rounded-md border border-border px-2 text-center text-base font-normal outline-none focus:border-primary"
+                              className="h-11 min-w-0 rounded-md border px-2 text-center text-base font-normal outline-none focus:border-primary"
                             />
-                            <span className="text-center text-[10px] font-normal text-[#829087]">Current {variant.stock}</span>
+                            <span className="text-center text-[10px] font-normal text-muted-foreground">Current {variant.stock}</span>
                           </label>
                         ))}
                       </div>
@@ -1727,20 +1788,20 @@ export function StaffInventoryExperience() {
               )}
 
               {restockMode === "add" ? (
-                <section className="mt-5 rounded-lg border border-border bg-muted/40 p-4">
+                <section className="mt-5 rounded-lg border bg-muted/40 p-4">
                   <div className="grid gap-4 sm:grid-cols-2">
                     <label className="grid gap-1.5 text-sm font-semibold">
                       Unit acquisition cost
                       <div className="flex h-12 items-center rounded-md border bg-white px-3 focus-within:border-primary">
                         <span className="mr-2 text-sm font-bold text-muted-foreground">PHP</span>
-                        <input required type="number" min="0" max="10000000" step="0.01" inputMode="decimal" value={restockUnitCost} onChange={(event) => setRestockUnitCost(event.target.value)} placeholder="0.00" className="min-w-0 flex-1 bg-transparent text-base outline-none" />
+                        <input required type="number" min="0" max="10000000" step="0.01" inputMode="decimal" value={restockUnitCost} onChange={(event) => setRestockUnitCost(event.target.value)} placeholder="0.00" className="min-w-0 flex-1 bg-transparent text-base outline-none focus-visible:outline-none" />
                       </div>
                     </label>
                     <label className="grid gap-1.5 text-sm font-semibold">
                       Selling price
                       <div className="flex h-12 items-center rounded-md border bg-white px-3 focus-within:border-primary">
                         <span className="mr-2 text-sm font-bold text-muted-foreground">PHP</span>
-                        <input required aria-label="Selling price" type="number" min="0" max="10000000" step="0.01" inputMode="decimal" value={restockSellingPrice} onChange={(event) => setRestockSellingPrice(event.target.value)} placeholder="0.00" className="min-w-0 flex-1 bg-transparent text-base outline-none" />
+                        <input required aria-label="Selling price" type="number" min="0" max="10000000" step="0.01" inputMode="decimal" value={restockSellingPrice} onChange={(event) => setRestockSellingPrice(event.target.value)} placeholder="0.00" className="min-w-0 flex-1 bg-transparent text-base outline-none focus-visible:outline-none" />
                       </div>
                       <span className="text-xs font-normal leading-4 text-muted-foreground">Applies to the whole product and future sales.</span>
                     </label>
@@ -1755,7 +1816,7 @@ export function StaffInventoryExperience() {
                       <input type="text" maxLength={500} value={restockSupplierNote} onChange={(event) => setRestockSupplierNote(event.target.value)} placeholder="Invoice, delivery receipt, or supplier note" className="h-12 rounded-md border bg-white px-3 font-normal outline-none focus:border-primary" />
                     </label>
                   </div>
-                  <div className="mt-4 grid gap-2 rounded-md border border-border bg-white p-3 sm:grid-cols-3">
+                  <div className="mt-4 grid gap-2 rounded-md border bg-white p-3 sm:grid-cols-3">
                     <div><p className="text-xs font-bold text-muted-foreground">Selling price after saving</p><p className="mt-1 font-extrabold">{enteredRestockSellingPrice === null || !Number.isFinite(enteredRestockSellingPrice) ? "Enter price" : `PHP ${enteredRestockSellingPrice.toFixed(2)}`}</p></div>
                     <div><p className="text-xs font-bold text-muted-foreground">New unit cost</p><p className="mt-1 font-extrabold">{enteredRestockUnitCost === null || !Number.isFinite(enteredRestockUnitCost) ? "Enter cost" : `PHP ${enteredRestockUnitCost.toFixed(2)}`}</p></div>
                     <div><p className="text-xs font-bold text-muted-foreground">Estimated gross profit</p><p className={cn("mt-1 font-extrabold", estimatedUnitGrossProfit !== null && estimatedUnitGrossProfit < 0 ? "text-red-700" : "text-primary")}>{estimatedUnitGrossProfit === null ? "—" : `PHP ${estimatedUnitGrossProfit.toFixed(2)} / item${estimatedGrossMargin === null ? "" : ` (${estimatedGrossMargin.toFixed(1)}%)`}`}</p></div>
@@ -1764,6 +1825,27 @@ export function StaffInventoryExperience() {
                   <p className="mt-3 text-xs leading-5 text-muted-foreground">The selling price applies to the whole product and future sales. A new immutable FIFO cost batch will be created; completed historical sales keep their original price and cost allocation.</p>
                 </section>
               ) : null}
+
+              <section className="mt-5 rounded-lg border bg-surface-subtle p-4">
+                <label className="grid gap-1.5 text-sm font-semibold sm:max-w-xs">
+                  Low-stock warning
+                  <select
+                    value={restockLowStockPercent}
+                    onChange={(event) => setRestockLowStockPercent(Number(event.target.value))}
+                    className="h-11 rounded-md border bg-white px-3 font-normal outline-none focus:border-primary"
+                  >
+                    <option value={10}>10% — very low</option>
+                    <option value={20}>20% — low</option>
+                    <option value={25}>25% — recommended</option>
+                    <option value={30}>30% — early warning</option>
+                    <option value={40}>40% — extra early</option>
+                    <option value={50}>50% — half stock</option>
+                  </select>
+                </label>
+                <p className="mt-3 text-xs leading-5 text-muted-foreground">
+                  Staff will be warned at <strong className="text-foreground">{resultingLowStockThreshold} items or fewer</strong>, based on a stable target of {resultingStockTarget} items. The target can grow after a larger delivery, but it will not shrink as items are sold.
+                </p>
+              </section>
 
               <div className="mt-5 flex items-center gap-3 rounded-lg bg-primary/10 px-4 py-3">
                 <Plus className="size-6 shrink-0 text-primary" />
@@ -1774,7 +1856,7 @@ export function StaffInventoryExperience() {
               </div>
             </div>
 
-            <footer className="flex shrink-0 items-center justify-end gap-2 border-t border-[#e1e8e2] bg-white p-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+            <footer className="flex shrink-0 items-center justify-end gap-2 border-t border-border bg-white p-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
               <Button type="button" variant="secondary" onClick={closeRestockDialog} disabled={submitting}>Cancel</Button>
               <Button type="submit" disabled={submitting || !restockCanSubmit || restockHasLegacyMismatch}>
                 {submitting ? "Saving..." : restockMode === "add" ? "Confirm & add" : "Save corrected stock"}
@@ -1784,10 +1866,10 @@ export function StaffInventoryExperience() {
         </div>
       ) : null}
       {permanentDeleteProduct ? (
-        <div className="fixed inset-0 z-[11000] grid place-items-center overflow-y-auto bg-[#101820]/60 p-3" onMouseDown={(event) => { if (!submitting && event.target === event.currentTarget) setPermanentDeleteProduct(null); }}>
+        <div className="fixed inset-0 z-[11000] grid place-items-center overflow-y-auto bg-foreground/60 p-3" onMouseDown={(event) => { if (!submitting && event.target === event.currentTarget) setPermanentDeleteProduct(null); }}>
           <section role="alertdialog" aria-modal="true" aria-labelledby="permanent-product-delete-title" aria-describedby="permanent-product-delete-description" className="w-full max-w-lg rounded-lg bg-white p-5 shadow-2xl sm:p-6">
             <div className="flex items-start gap-3"><span className="grid size-11 shrink-0 place-items-center rounded-md bg-red-50 text-red-700"><Trash2 className="size-6" /></span><div><p className="text-xs font-bold uppercase text-red-700">Admin only · irreversible</p><h2 id="permanent-product-delete-title" className="mt-1 text-xl font-extrabold text-foreground">Delete {permanentDeleteProduct.name} permanently?</h2></div><button type="button" autoFocus aria-label="Close permanent deletion dialog" onClick={() => setPermanentDeleteProduct(null)} disabled={submitting} className="ml-auto grid size-9 place-items-center rounded-md hover:bg-muted"><X className="size-5" /></button></div>
-            <p id="permanent-product-delete-description" className="mt-4 text-sm leading-6 text-[#59665e]">WESCOMM confirmed that this archived product has no reservation or payment history that must be retained. Its uploaded image will also be removed.</p>
+            <p id="permanent-product-delete-description" className="mt-4 text-sm leading-6 text-muted-foreground">WESCOMM confirmed that this archived product has no reservation or payment history that must be retained. Its uploaded image will also be removed.</p>
             <label className="mt-5 grid gap-1.5 text-sm font-bold">Deletion reason<textarea required minLength={10} maxLength={500} value={permanentDeleteReason} onChange={(event) => setPermanentDeleteReason(event.target.value)} placeholder="Document why this product and its files should be removed." className="min-h-24 rounded-md border border-[#dfc4c4] px-3 py-2 font-normal outline-none focus:border-red-600" /></label>
             <label className="mt-4 grid gap-1.5 text-sm font-bold">Type the exact product name to confirm<input value={permanentDeleteConfirmation} onChange={(event) => setPermanentDeleteConfirmation(event.target.value)} placeholder={permanentDeleteProduct.name} autoComplete="off" className="h-11 rounded-md border border-[#dfc4c4] px-3 font-normal outline-none focus:border-red-600" /></label>
             <div className="mt-6 grid grid-cols-2 gap-3"><Button variant="secondary" onClick={() => setPermanentDeleteProduct(null)} disabled={submitting}>Keep archived</Button><Button className="bg-red-700 hover:bg-red-800" onClick={() => void deleteProductPermanently()} disabled={submitting || permanentDeleteConfirmation !== permanentDeleteProduct.name || permanentDeleteReason.trim().length < 10}>{submitting ? "Deleting..." : "Delete permanently"}</Button></div>

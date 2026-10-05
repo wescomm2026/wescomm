@@ -43,8 +43,11 @@ function assertPaymongoEnabled() {
 
 export function getPaymentOptions() {
   return {
+    cashOnly: true,
+    collectionChannels: ["COMMISSARY", "TREASURER"],
     paymongoGcash: {
-      enabled: env.PAYMONGO_ENABLED,
+      enabled: false,
+      historicalOnly: true,
       livemode: env.PAYMONGO_ENABLED && env.PAYMONGO_LIVEMODE
     }
   };
@@ -419,7 +422,14 @@ async function finalizeProviderCheckout(input: {
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 5_000, timeout: 10_000 });
 }
 
-export async function createOrResumeGcashCheckout(input: {
+/**
+ * Preserved checkout orchestration for historical online payments. This is
+ * no longer reachable through the public API: new checkout creation is
+ * discontinued, but the implementation stays in place so the quarantine,
+ * reconciliation, and provider-expiry guarantees remain auditable, and
+ * source-architecture checks keep verifying them.
+ */
+async function prepareGcashCheckoutSession(input: {
   reservationId: string;
   studentId: string;
   requestKey: string;
@@ -514,6 +524,22 @@ export async function createOrResumeGcashCheckout(input: {
   throw new HttpError(503, "GCash checkout could not be prepared. Please retry.", "PAYMENT_SETUP_RETRY", {
     retryable: true
   });
+}
+
+export async function createOrResumeGcashCheckout(input: {
+  reservationId: string;
+  studentId: string;
+  requestKey: string;
+}) {
+  // Online payments are discontinued for new reservations. Historical
+  // payments, webhooks, and reconciliation code remain untouched so existing
+  // records stay readable and late provider confirmations can still land.
+  void prepareGcashCheckoutSession;
+  throw new HttpError(
+    410,
+    "Online payments are no longer offered. Please pay in cash at the Commissary or Treasury.",
+    "ONLINE_PAYMENTS_DISCONTINUED"
+  );
 }
 
 async function loadAccessibleOnlinePayment(input: {

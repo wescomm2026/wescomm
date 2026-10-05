@@ -3,6 +3,7 @@ import type { AppRole, NotificationType } from "../types/app.js";
 import { sendPushToUser } from "./push.service.js";
 import { HttpError } from "../utils/http-error.js";
 import { publishRealtimeEventsBestEffort, REALTIME_TOPICS } from "./realtime-event.service.js";
+import { filterStaffRecipientsByPreference } from "./staff-settings.service.js";
 
 type RawNotification = {
   id: string;
@@ -122,13 +123,17 @@ export async function createNotificationsForRoles(
 
   if (profileError) throw HttpError.fromSupabase(profileError);
 
-  const rows = (profileRows ?? []).map((profile) => ({
-    user_id: profile.id,
+  const recipients = await filterStaffRecipientsByPreference(
+    (profileRows ?? []).map((profile) => ({ userId: profile.id as string, role: profile.role as AppRole })),
+    input.type ?? "SYSTEM"
+  );
+  const rows = recipients.map((profile) => ({
+    user_id: profile.userId,
     title: input.title,
     message: input.message,
     type: input.type ?? "SYSTEM",
     action_url: input.actionUrl ?? null,
-    dedupe_key: input.dedupeKey ? `${input.dedupeKey}:${profile.id}` : null
+    dedupe_key: input.dedupeKey ? `${input.dedupeKey}:${profile.userId}` : null
   }));
 
   if (!rows.length) return [];

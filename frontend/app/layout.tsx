@@ -3,6 +3,7 @@ import { WelcomeGateOverlay } from "@/components/auth/WelcomeGateOverlay";
 import { PwaLifecycle } from "@/components/pwa/PwaLifecycle";
 import { ConfirmationDialogProvider } from "@/components/ui/ConfirmationDialogProvider";
 import { welcomeIntroBootstrapScript } from "@/lib/welcome-intro";
+import { developmentPwaCleanupScript } from "@/lib/service-worker";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -41,6 +42,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
   return (
     <html lang="en" suppressHydrationWarning>
+      <head>
+        {!enableServiceWorker ? (
+          <script
+            id="wescomm-development-pwa-cleanup"
+            dangerouslySetInnerHTML={{ __html: developmentPwaCleanupScript() }}
+          />
+        ) : null}
+      </head>
       <body suppressHydrationWarning>
         {/* This first-party bootstrap must execute while HTML is parsed so a
             reload never paints or downloads the already-seen intro. */}

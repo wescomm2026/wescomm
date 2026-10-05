@@ -18,8 +18,8 @@ test("read-heavy pages minimize database round trips without read-only transacti
 
   assert.match(dashboard, /buildStaffDashboardSummary[\s\S]*withTransientPrismaReadRetry\(\(\) => prisma\.\$queryRaw/);
   assert.equal(dashboard.match(/prisma\.\$queryRaw/g)?.length, 1);
-  assert.match(reports, /buildReportSummary[\s\S]*withTransientPrismaReadRetry\(\(\) => prisma\.\$queryRaw/);
-  assert.equal(reports.match(/prisma\.\$queryRaw/g)?.length, 1);
+  assert.match(reports, /buildReportSummary[\s\S]*withTransientPrismaReadRetry\(\(\) => Promise\.all\(\[/);
+  assert.equal(reports.match(/prisma\.\$queryRaw/g)?.length, 5);
   assert.match(users, /listUsers[\s\S]*withTransientPrismaReadRetry\(\(\) => prisma\.\$queryRaw/);
   assert.doesNotMatch(dashboard, /prisma\.\$transaction/);
   assert.doesNotMatch(reports, /prisma\.\$transaction/);

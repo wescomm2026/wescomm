@@ -16,6 +16,8 @@ export type StaffProductVariant = {
   optionName: string;
   optionValue: string;
   stock: number;
+  stockTarget?: number;
+  lowStockPercent?: number;
   lowStockThreshold: number;
 };
 
@@ -23,6 +25,8 @@ export type StaffProductSku = {
   id: string;
   code?: string | null;
   stock: number;
+  stockTarget?: number;
+  lowStockPercent?: number;
   lowStockThreshold: number;
   isActive?: boolean;
   variantIds: string[];
@@ -44,6 +48,8 @@ export type StaffProduct = {
   isOnSale?: boolean;
   status: "IN_STOCK" | "RESTOCK_SOON" | "OUT_OF_STOCK" | "ON_SALE";
   stock: number;
+  stockTarget?: number;
+  lowStockPercent?: number;
   lowStockThreshold: number;
   isActive: boolean;
   saleMode: ProductSaleMode;
@@ -66,6 +72,7 @@ export type StaffProductPayload = {
   oldPrice?: number | null;
   saleMode?: ProductSaleMode;
   stock?: number;
+  lowStockPercent?: number;
   lowStockThreshold?: number;
   variants?: Array<{
     optionName: string;
@@ -340,6 +347,7 @@ export async function restockStaffProduct(
     sellingPrice?: number;
     receivedAt?: string;
     supplierNote?: string;
+    lowStockPercent?: number;
   }
 ) {
   const data = await staffFetch<{ product: StaffProduct }>(`/staff/products/${productId}/restock`, token, {
@@ -373,11 +381,12 @@ export async function reconcileStaffProductSkuInventory(
   productId: string,
   skus: StaffSkuDefinition[],
   notes?: string,
-  optionGroups?: StaffSkuOptionGroupDefinition[]
+  optionGroups?: StaffSkuOptionGroupDefinition[],
+  lowStockPercent?: number
 ) {
   const data = await staffFetch<{ product: StaffProduct }>(`/staff/products/${productId}/sku-inventory`, token, {
     method: "PUT",
-    body: JSON.stringify({ skus, notes, optionGroups })
+    body: JSON.stringify({ skus, notes, optionGroups, lowStockPercent })
   });
   return data.product;
 }
@@ -393,6 +402,7 @@ export async function restockStaffProductSkus(
     sellingPrice?: number;
     receivedAt?: string;
     supplierNote?: string;
+    lowStockPercent?: number;
   }
 ) {
   const data = await staffFetch<{ product: StaffProduct }>(`/staff/products/${productId}/skus/restock`, token, {
@@ -434,4 +444,101 @@ export async function uploadStaffProductImage(token: string, file: File) {
   });
 
   return data.image;
+}
+
+export type WalkInSaleItemPayload = {
+  productId: string;
+  skuId?: string;
+  variantId?: string;
+  quantity: number;
+};
+
+export type WalkInReceiptItem = {
+  id: string;
+  productId: string;
+  skuId: string | null;
+  variantId: string | null;
+  productName: string;
+  options: Array<{ optionName: string; optionValue: string }>;
+  quantity: number;
+  unitPrice: string;
+  subtotal: string;
+};
+
+export type WalkInReceipt = {
+  id: string;
+  receiptCode: string;
+  studentId: string | null;
+  buyerName: string;
+  totalAmount: string;
+  paymentMethod: string;
+  status: "PENDING" | "VERIFIED" | "VOIDED";
+  issuedAt: string;
+  verifiedAt: string | null;
+  voidedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  student: {
+    id: string;
+    fullName: string;
+    email: string;
+    studentNumber: string | null;
+  } | null;
+  issuedBy: { id: string; fullName: string } | null;
+  sale: {
+    cashTendered: string;
+    changeDue: string;
+    cashierId: string | null;
+    cashierName: string;
+    clientSaleId: string;
+    voidedById: string | null;
+    voidReason: string | null;
+    voidedAt: string | null;
+  } | null;
+  items: WalkInReceiptItem[];
+};
+
+export async function recordWalkInSale(
+  token: string,
+  payload: {
+    items: WalkInSaleItemPayload[];
+    buyerName: string;
+    studentId?: string;
+    receiptCode?: string;
+    cashReceived: number;
+    clientSaleId: string;
+  }
+) {
+  const data = await staffFetch<{ receipt: WalkInReceipt }>("/staff/walk-in-sales", token, {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+  return data.receipt;
+}
+
+export async function listWalkInSales(
+  token: string,
+  options: { limit?: number; cursor?: string | null; query?: string; status?: WalkInReceipt["status"]; signal?: AbortSignal } = {}
+) {
+  const params = new URLSearchParams();
+  if (options.limit) params.set("limit", String(options.limit));
+  if (options.cursor) params.set("cursor", options.cursor);
+  if (options.query?.trim()) params.set("query", options.query.trim());
+  if (options.status) params.set("status", options.status);
+  const suffix = params.size ? `?${params.toString()}` : "";
+  const data = await staffFetch<{ items: WalkInReceipt[]; nextCursor: string | null }>(
+    `/staff/walk-in-sales${suffix}`,
+    token,
+    { signal: options.signal }
+  );
+  return { items: data.items, nextCursor: data.nextCursor };
+}
+
+export async function voidWalkInSale(token: string, receiptId: string, reason: string) {
+  const data = await staffFetch<{ receipt: WalkInReceipt }>(
+    `/staff/walk-in-sales/${encodeURIComponent(receiptId)}/void`,
+    token,
+    { method: "POST", body: JSON.stringify({ reason }) }
+  );
+  return data.receipt;
 }

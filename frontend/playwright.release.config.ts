@@ -12,8 +12,12 @@ export default defineConfig({
     "staff-inventory-responsive.spec.ts",
     "staff-message-loading.spec.ts",
     "staff-reservation-confirmations.spec.ts",
+    "staff-settings-and-queues.spec.ts",
     "student-checkout-flow.spec.ts",
-    "student-wesbot-chat.spec.ts"
+    "student-receipts.spec.ts",
+    "student-reservation-filters.spec.ts",
+    "student-wesbot-chat.spec.ts",
+    "team-access-confirmation.spec.ts"
   ],
   fullyParallel: false,
   forbidOnly: true,
@@ -42,6 +46,7 @@ export default defineConfig({
       ...process.env,
       NEXT_PUBLIC_ENABLE_DEV_LOGIN: "true",
       NEXT_PUBLIC_E2E_TEST: "true",
+      NEXT_PUBLIC_REQUIRE_STUDENT_ONBOARDING: "false",
       E2E_WORKSPACE_BYPASS_TOKEN: "playwright-release-contracts",
       NEXT_PUBLIC_API_URL: "/api/backend",
       BACKEND_API_URL: "http://127.0.0.1:1/api",

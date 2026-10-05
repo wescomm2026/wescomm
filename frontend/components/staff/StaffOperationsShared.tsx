@@ -1,10 +1,12 @@
 "use client";
 
 import Image from "next/image";
+import { useEffect, useRef, useState } from "react";
 import { Check, Filter, Headphones, Search, Trash2, X } from "lucide-react";
 import { ActionLoadingOverlay } from "@/components/ui/ActionLoadingOverlay";
 import { AssetIcon } from "@/components/ui/AssetIcon";
 import { Button } from "@/components/ui/button";
+import { PageHeader } from "@/components/ui/PageHeader";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { useAccessibleDialog } from "@/components/ui/useAccessibleDialog";
 import {
@@ -38,6 +40,8 @@ export type Product = {
   imageUrl: string;
   imageStoragePath: string | null;
   stock: number;
+  stockTarget: number;
+  lowStockPercent: number;
   minimum: number;
   price: number;
   oldPrice: number | null;
@@ -52,6 +56,8 @@ export type Product = {
     id: string;
     code?: string | null;
     stock: number;
+    stockTarget: number;
+    lowStockPercent: number;
     lowStockThreshold: number;
     variantIds: string[];
     options: Array<{ optionName: string; optionValue: string }>;
@@ -61,6 +67,8 @@ export type Product = {
     optionName: string;
     optionValue: string;
     stock: number;
+    stockTarget: number;
+    lowStockPercent: number;
     lowStockThreshold: number;
   }>;
 };
@@ -189,6 +197,8 @@ export function mapStaffProduct(product: StaffProduct): Product {
     imageUrl: asset.image,
     imageStoragePath: product.imageStoragePath ?? null,
     stock: product.stock,
+    stockTarget: product.stockTarget ?? product.stock,
+    lowStockPercent: product.lowStockPercent ?? 25,
     minimum: product.lowStockThreshold,
     price: numericValue(product.price),
     oldPrice: product.oldPrice === null || product.oldPrice === undefined ? null : numericValue(product.oldPrice),
@@ -199,19 +209,23 @@ export function mapStaffProduct(product: StaffProduct): Product {
     targetDepartments: product.targetDepartments ?? [],
     skuInventoryEnabled: Boolean(product.skuInventoryEnabled),
     inventoryReconciledAt: product.inventoryReconciledAt ?? null,
-    skus: (product.skus ?? []).map((sku) => ({
+    skus: (product.skus ?? []).flatMap((sku) => sku.id ? [{
       id: sku.id,
       code: sku.code,
       stock: sku.stock,
+      stockTarget: sku.stockTarget ?? sku.stock,
+      lowStockPercent: sku.lowStockPercent ?? product.lowStockPercent ?? 25,
       lowStockThreshold: sku.lowStockThreshold,
       variantIds: sku.variantIds ?? [],
       options: sku.options ?? []
-    })),
+    }] : []),
     variants: (product.variants ?? []).flatMap((variant) => variant.id ? [{
       id: variant.id,
       optionName: variant.optionName,
       optionValue: variant.optionValue,
       stock: variant.stock,
+      stockTarget: variant.stockTarget ?? variant.stock,
+      lowStockPercent: variant.lowStockPercent ?? product.lowStockPercent ?? 25,
       lowStockThreshold: variant.lowStockThreshold
     }] : []).sort((left, right) => {
       if (left.optionName.toLowerCase() !== right.optionName.toLowerCase()) return left.optionName.localeCompare(right.optionName);
@@ -357,21 +371,24 @@ export function formatStaffReceiptDate(value: string) {
 
 export function mapStaffReceipt(row: BackendReceipt): StaffReceiptRow {
   const receiptItems = row.reservation?.items ?? [];
-  const itemNames = receiptItems.map((item) => item.product?.name ?? "Campus Item");
+  const walkInItems = row.walkInSaleItems ?? [];
+  const itemNames = receiptItems.length
+    ? receiptItems.map((item) => item.product?.name ?? "Campus Item")
+    : walkInItems.map((item) => item.productName);
 
   return {
     id: row.id,
     code: row.receiptCode,
-    student: row.student?.fullName || row.student?.email || "Student",
+    student: row.buyerName || row.student?.fullName || row.student?.email || "Walk-in buyer",
     date: formatStaffReceiptDate(row.issuedAt || row.createdAt),
-    reference: row.reservation?.referenceCode ?? "Manual receipt",
+    reference: row.reservation?.referenceCode ?? (walkInItems.length ? "Walk-in sale" : "Manual receipt"),
     payment: formatPaymentMethod(row.paymentMethod),
     items: itemNames.length > 1 ? `${itemNames[0]} + ${itemNames.length - 1} more` : itemNames[0] ?? "Manual transaction",
-    itemCount: receiptItems.reduce((total, item) => total + item.quantity, 0),
+    itemCount: [...receiptItems, ...walkInItems].reduce((total, item) => total + item.quantity, 0),
     total: Number(row.totalAmount),
     status: formatStaffReceiptStatus(row.status),
     backendStatus: row.status,
-    verifiedBy: row.issuedBy?.fullName ?? "",
+    verifiedBy: row.status === "VERIFIED" ? row.issuedBy?.fullName ?? "" : "",
     receipt: row
   };
 }
@@ -455,7 +472,7 @@ export function StaffConversationAvatar({
     .join("") || "ST";
 
   return (
-    <span className={cn("inline-grid shrink-0 place-items-center rounded-full bg-[#e8f3e9] font-extrabold text-primary ring-1 ring-inset ring-[#c8ddca]", sizeClass, size === "sm" ? "text-[10px]" : size === "lg" ? "text-lg" : "text-xs")} aria-hidden="true">
+    <span className={cn("inline-grid shrink-0 place-items-center rounded-full bg-muted font-extrabold text-primary ring-1 ring-inset ring-[#c8ddca]", sizeClass, size === "sm" ? "text-[10px]" : size === "lg" ? "text-lg" : "text-xs")} aria-hidden="true">
       {initials}
     </span>
   );
@@ -469,41 +486,98 @@ export function getNextReservationStatus(status: BackendReservationStatus): Back
 }
 
 export function PageHeading({ eyebrow, title, detail, action }: { eyebrow: string; title: string; detail: string; action?: React.ReactNode }) {
-  return (
-    <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-      <div>
-        <p className="text-sm font-bold uppercase text-primary">{eyebrow}</p>
-        <h1 className="mt-1 text-3xl font-extrabold text-[#101820]">{title}</h1>
-        <p className="mt-2 text-sm text-[#68746d]">{detail}</p>
-      </div>
-      {action}
-    </header>
-  );
+  return <PageHeader eyebrow={eyebrow} title={title} description={detail} action={action} />;
 }
 
-export function Toolbar({ search, onSearch, status, onStatus, placeholder, statuses }: { search: string; onSearch: (value: string) => void; status: string; onStatus: (value: string) => void; placeholder: string; statuses: string[] }) {
+export function Toolbar({
+  search,
+  onSearch,
+  status,
+  onStatus,
+  placeholder,
+  statuses,
+  statusLabel = "Filter by status",
+  children
+}: {
+  search: string;
+  onSearch: (value: string) => void;
+  status: string;
+  onStatus: (value: string) => void;
+  placeholder: string;
+  statuses: string[];
+  statusLabel?: string;
+  children?: React.ReactNode;
+}) {
   return (
-    <div className="flex flex-col gap-3 rounded-lg border border-[#dce5dd] bg-white p-3 sm:flex-row">
-      <label className="flex h-11 min-w-0 flex-1 items-center rounded-md border border-[#d7e1d8] px-3 focus-within:border-primary">
-        <Search className="mr-2 size-5 text-[#68746d]" />
-        <input value={search} onChange={(event) => onSearch(event.target.value)} placeholder={placeholder} className="min-w-0 flex-1 bg-transparent text-sm outline-none" />
+    <div className="flex flex-col gap-2 rounded-xl border bg-card p-2 shadow-soft sm:flex-row sm:items-center">
+      <label className="relative flex h-11 min-w-0 flex-1 items-center rounded-control border border-border-strong bg-white transition focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/15">
+        <span className="sr-only">{placeholder}</span>
+        <Search className="pointer-events-none ml-3 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+        <input
+          type="search"
+          value={search}
+          onChange={(event) => onSearch(event.target.value)}
+          placeholder={placeholder}
+          className="h-full min-w-0 flex-1 bg-transparent px-2.5 text-sm outline-none focus-visible:outline-none placeholder:text-muted-foreground [&::-webkit-search-cancel-button]:hidden"
+        />
+        {search ? (
+          <button
+            type="button"
+            onClick={() => onSearch("")}
+            aria-label="Clear search"
+            className="mr-1.5 grid size-8 shrink-0 place-items-center rounded-control text-muted-foreground hover:bg-muted hover:text-foreground"
+          >
+            <X className="size-4" aria-hidden="true" />
+          </button>
+        ) : null}
       </label>
-      <label className="flex h-11 items-center gap-2 rounded-md border border-[#d7e1d8] px-3 text-sm">
-        <Filter className="size-4 text-primary" />
-        <select value={status} onChange={(event) => onStatus(event.target.value)} className="bg-transparent font-semibold outline-none">
+      <label className="flex h-11 items-center gap-2 rounded-control border border-border-strong bg-white px-3 text-sm transition focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/15">
+        <Filter className="size-4 shrink-0 text-primary" aria-hidden="true" />
+        <select
+          value={status}
+          onChange={(event) => onStatus(event.target.value)}
+          aria-label={statusLabel}
+          className="h-full min-w-0 flex-1 cursor-pointer bg-transparent pr-1 font-semibold text-foreground outline-none focus-visible:outline-none"
+        >
           <option value="All">All statuses</option>
-          {statuses.map((option) => <option key={option} value={option}>{option}</option>)}
+          {statuses.filter((option) => option !== "All").map((option) => <option key={option} value={option}>{option}</option>)}
         </select>
       </label>
+      {children}
     </div>
   );
 }
 
+const NOTICE_DISMISS_MS = 7000;
+
 export function Notice({ text, onClose }: { text: string; onClose: () => void }) {
+  const closeRef = useRef(onClose);
+  const [paused, setPaused] = useState(false);
+  closeRef.current = onClose;
+
+  useEffect(() => {
+    if (paused) return;
+    const timer = window.setTimeout(() => closeRef.current(), NOTICE_DISMISS_MS);
+    return () => window.clearTimeout(timer);
+  }, [paused, text]);
+
   return (
-    <div className="fixed bottom-5 right-5 z-[100] flex max-w-sm items-center gap-3 rounded-lg bg-[#173d27] px-4 py-3 text-sm font-semibold text-white shadow-xl">
-      <Check className="size-5" /> {text}
-      <button type="button" onClick={onClose} aria-label="Dismiss" className="ml-2"><X className="size-4" /></button>
+    <div
+      role="status"
+      aria-live="polite"
+      onMouseEnter={() => setPaused(true)}
+      onMouseLeave={() => setPaused(false)}
+      onFocus={() => setPaused(true)}
+      onBlur={() => setPaused(false)}
+      className="fixed inset-x-3 bottom-4 z-[100] mx-auto flex max-w-md items-start gap-3 rounded-xl bg-foreground px-4 py-3 text-sm font-semibold text-white shadow-overlay sm:inset-x-auto sm:bottom-6 sm:right-6 sm:mx-0"
+    >
+      <span className="mt-0.5 grid size-5 shrink-0 place-items-center rounded-full bg-success text-white">
+        <Check className="size-3.5" aria-hidden="true" />
+      </span>
+      <span className="min-w-0 flex-1 leading-5">{text}</span>
+      <button type="button" onClick={onClose} aria-label="Dismiss" className="-mr-1 grid size-6 shrink-0 place-items-center rounded-control text-white/70 hover:bg-white/10 hover:text-white">
+        <X className="size-4" aria-hidden="true" />
+      </button>
     </div>
   );
 }
@@ -527,42 +601,42 @@ export function StaffReceiptPreviewModal({
   const items = row.receipt.reservation?.items ?? [];
 
   return (
-    <div className="fixed inset-0 z-[10000] grid place-items-center overflow-y-auto bg-[#101820]/50 p-4">
+    <div className="fixed inset-0 z-[10000] grid place-items-center overflow-y-auto bg-foreground/50 p-4">
       <section ref={dialog.dialogRef} {...dialog.dialogProps} className="my-auto w-full max-w-3xl rounded-lg bg-white shadow-2xl">
-        <div className="flex items-start gap-4 border-b border-[#e3ebe4] p-5">
+        <div className="flex items-start gap-4 border-b border-border p-5">
           <AssetIcon src="/assets/digital-receipts.svg" className="size-12" />
           <div>
             <p className="text-sm font-bold uppercase text-primary">Receipt preview</p>
-            <h2 id={dialog.titleId} className="mt-1 text-2xl font-extrabold text-[#101820]">{row.code}</h2>
-            <p className="mt-1 text-sm text-[#68746d]">Review details before verification or voiding.</p>
+            <h2 id={dialog.titleId} className="mt-1 text-2xl font-extrabold text-foreground">{row.code}</h2>
+            <p className="mt-1 text-sm text-muted-foreground">Review details before verification or voiding.</p>
           </div>
-          <button type="button" data-dialog-autofocus onClick={onClose} aria-label="Close receipt preview" className="ml-auto grid size-9 place-items-center rounded-md hover:bg-[#eef3ee]">
+          <button type="button" data-dialog-autofocus onClick={onClose} aria-label="Close receipt preview" className="ml-auto grid size-9 place-items-center rounded-md hover:bg-muted">
             <X className="size-5" />
           </button>
         </div>
 
         <div className="max-h-[calc(100svh-230px)] overflow-y-auto p-5">
-          <div className="grid gap-3 rounded-lg border border-[#dce5dd] bg-[#f7fbf7] p-4 text-sm sm:grid-cols-2">
-            <div><p className="text-[#68746d]">Student</p><p className="mt-1 font-extrabold">{row.student}</p></div>
-            <div><p className="text-[#68746d]">Reservation</p><p className="mt-1 font-extrabold">{row.reference}</p></div>
-            <div><p className="text-[#68746d]">Payment</p><p className="mt-1 font-extrabold">{row.payment}</p></div>
-            <div><p className="text-[#68746d]">Issued</p><p className="mt-1 font-extrabold">{row.date}</p></div>
-            <div><p className="text-[#68746d]">Status</p><span className="mt-1 inline-block"><StatusBadge status={row.status} /></span></div>
-            <div><p className="text-[#68746d]">Verified by</p><p className="mt-1 font-extrabold">{row.verifiedBy || "Not verified yet"}</p></div>
+          <div className="grid gap-3 rounded-lg border bg-surface-subtle p-4 text-sm sm:grid-cols-2">
+            <div><p className="text-muted-foreground">Student</p><p className="mt-1 font-extrabold">{row.student}</p></div>
+            <div><p className="text-muted-foreground">Reservation</p><p className="mt-1 font-extrabold">{row.reference}</p></div>
+            <div><p className="text-muted-foreground">Payment</p><p className="mt-1 font-extrabold">{row.payment}</p></div>
+            <div><p className="text-muted-foreground">Issued</p><p className="mt-1 font-extrabold">{row.date}</p></div>
+            <div><p className="text-muted-foreground">Status</p><span className="mt-1 inline-block"><StatusBadge status={row.status} /></span></div>
+            <div><p className="text-muted-foreground">Verified by</p><p className="mt-1 font-extrabold">{row.verifiedBy || "Not verified yet"}</p></div>
           </div>
 
-          <section className="mt-5 overflow-hidden rounded-lg border border-[#dce5dd]">
-            <div className="grid grid-cols-[1fr_auto_auto] gap-3 bg-[#f6f9f6] px-4 py-3 text-xs font-bold uppercase text-[#59655d]">
+          <section className="mt-5 overflow-hidden rounded-lg border">
+            <div className="grid grid-cols-[1fr_auto_auto] gap-3 bg-surface-subtle px-4 py-3 text-xs font-bold uppercase text-muted-foreground">
               <span>Item</span>
               <span>Qty</span>
               <span>Amount</span>
             </div>
-            <div className="divide-y divide-[#e7ece8]">
+            <div className="divide-y divide-border">
               {items.length ? items.map((item) => (
                 <div key={item.id} className="grid grid-cols-[1fr_auto_auto] gap-3 px-4 py-3 text-sm">
                   <div>
                     <p className="font-extrabold">{item.product?.name ?? "Campus Item"}</p>
-                    <p className="mt-1 text-xs text-[#68746d]">{item.variantSummary || item.product?.description || "Reserved item"}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">{item.variantSummary || item.product?.description || "Reserved item"}</p>
                   </div>
                   <p className="font-bold">{item.quantity}</p>
                   <p className="font-extrabold text-primary">PHP {Number(item.subtotal).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
@@ -580,15 +654,15 @@ export function StaffReceiptPreviewModal({
           <div className="mt-5 rounded-lg bg-[#edf6ef] p-4">
             <div className="flex items-end justify-between gap-4">
               <div>
-                <p className="text-xs font-bold uppercase text-[#68746d]">Secure verification</p>
-                <p className="mt-1 text-xs font-semibold text-[#405047]">{row.receipt.publicVerificationUrl ? "QR verification link issued" : "Secure QR is being prepared"}</p>
+                <p className="text-xs font-bold uppercase text-muted-foreground">Secure verification</p>
+                <p className="mt-1 text-xs font-semibold text-foreground">{row.receipt.publicVerificationUrl ? "QR verification link issued" : "Secure QR is being prepared"}</p>
               </div>
               <p className="text-right text-2xl font-extrabold text-primary">PHP {row.total.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
             </div>
           </div>
         </div>
 
-        <div className="flex flex-col gap-2 border-t border-[#e3ebe4] p-5 sm:flex-row sm:justify-end">
+        <div className="flex flex-col gap-2 border-t border-border p-5 sm:flex-row sm:justify-end">
           <Button type="button" variant="secondary" onClick={onClose}>Close</Button>
           {row.backendStatus === "PENDING" ? (
             <Button type="button" disabled={submitting} onClick={() => onAskVerify(row)}>
@@ -629,7 +703,7 @@ export function ReceiptActionModal({
   const isVoid = action.type === "void";
 
   return (
-    <div className="fixed inset-0 z-[10001] grid place-items-center bg-[#101820]/60 p-4">
+    <div className="fixed inset-0 z-[10001] grid place-items-center bg-foreground/60 p-4">
       <section ref={dialog.dialogRef} {...dialog.dialogProps} className="relative w-full max-w-md overflow-hidden rounded-lg bg-white p-5 shadow-2xl">
         <ActionLoadingOverlay
           active={submitting}
@@ -639,13 +713,13 @@ export function ReceiptActionModal({
         <div className="flex items-start gap-3">
           <div>
             <p className="text-sm font-bold uppercase text-primary">{isVoid ? "Void receipt" : "Verify receipt"}</p>
-            <h2 id={dialog.titleId} className="mt-1 text-xl font-extrabold text-[#101820]">{action.row.code}</h2>
+            <h2 id={dialog.titleId} className="mt-1 text-xl font-extrabold text-foreground">{action.row.code}</h2>
           </div>
-          <button type="button" data-dialog-autofocus onClick={onClose} disabled={submitting} aria-label="Close confirmation" className="ml-auto grid size-9 place-items-center rounded-md hover:bg-[#eef3ee] disabled:opacity-50">
+          <button type="button" data-dialog-autofocus onClick={onClose} disabled={submitting} aria-label="Close confirmation" className="ml-auto grid size-9 place-items-center rounded-md hover:bg-muted disabled:opacity-50">
             <X className="size-5" />
           </button>
         </div>
-        <p className="mt-4 text-sm leading-6 text-[#68746d]">
+        <p className="mt-4 text-sm leading-6 text-muted-foreground">
           {isVoid
             ? "This receipt will be marked as voided and the student will be notified."
             : "This receipt will be marked as officially verified and the student will be notified."}
@@ -657,9 +731,9 @@ export function ReceiptActionModal({
               value={reason}
               onChange={(event) => onReasonChange(event.target.value.slice(0, 300))}
               placeholder="Example: wrong item quantity, duplicate receipt, or cancelled transaction"
-              className="min-h-28 rounded-md border border-[#d7e1d8] p-3 text-sm font-normal leading-6 outline-none focus:border-primary"
+              className="min-h-28 rounded-md border border-border-strong p-3 text-sm font-normal leading-6 outline-none focus:border-primary"
             />
-            <span className="text-right text-xs font-normal text-[#68746d]">{reason.length}/300</span>
+            <span className="text-right text-xs font-normal text-muted-foreground">{reason.length}/300</span>
           </label>
         ) : null}
         <div className="mt-5 flex justify-end gap-2">

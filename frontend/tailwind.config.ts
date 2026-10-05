@@ -17,6 +17,7 @@ const config: Config = {
         success: "hsl(var(--success))",
         warning: "hsl(var(--warning))",
         danger: "hsl(var(--danger))",
+        info: "hsl(var(--info))",
         "surface-subtle": "hsl(var(--surface-subtle))",
         "border-strong": "hsl(var(--border-strong))",
         muted: {

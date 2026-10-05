@@ -1,4 +1,4 @@
-const BUILD_ID = "a666318346d6539b";
+const BUILD_ID = "c18546a09271c20f";
 const CACHE_PREFIX = "wescomm-pwa";
 const SHELL_CACHE = `${CACHE_PREFIX}-shell-${BUILD_ID}`;
 const STATIC_CACHE = `${CACHE_PREFIX}-static-${BUILD_ID}`;
@@ -40,21 +40,22 @@ self.addEventListener("message", (event) => {
   }
 });
 
-async function cacheFirst(request) {
-  const cached = await caches.match(request);
-  if (cached) return cached;
-
-  const response = await fetch(request);
-  if (response.ok && response.type === "basic") {
-    try {
-      const cache = await caches.open(STATIC_CACHE);
-      await cache.put(request, response.clone());
-      await trimCache(cache, MAX_STATIC_ASSETS);
-    } catch {
-      // Cache writes are best-effort and must never break an online request.
+async function networkFirstStatic(request) {
+  try {
+    const response = await fetch(request);
+    if (response.ok && response.type === "basic") {
+      try {
+        const cache = await caches.open(STATIC_CACHE);
+        await cache.put(request, response.clone());
+        await trimCache(cache, MAX_STATIC_ASSETS);
+      } catch {
+        // Cache writes are best-effort and must never break an online request.
+      }
     }
+    return response;
+  } catch {
+    return (await caches.match(request)) ?? Response.error();
   }
-  return response;
 }
 
 async function trimCache(cache, maximumEntries) {
@@ -117,7 +118,7 @@ self.addEventListener("fetch", (event) => {
   }
 
   if (url.pathname.startsWith("/_next/static/")) {
-    event.respondWith(cacheFirst(request));
+    event.respondWith(networkFirstStatic(request));
     return;
   }
 

@@ -1,0 +1,354 @@
+WESCOMM STAGING SETUP GUIDE
+Last updated: October 1, 2026
+
+Complete, step-by-step owner guide for creating the protected WESCOMM staging
+environment (separate Supabase project + branch-scoped Vercel Preview + protected
+GitHub deployment). The repository-side tooling is already implemented and
+validated (314/314 backend tests, migration preflight, staging verifier, workflow
+YAML). Everything below is what must be done OUTSIDE the repository, plus the
+exact commands to finish it.
+
+Follow the steps in order. Credentials are never pasted into chat, files, or
+commits: they go only into Vercel/GitHub secret stores.
+
+============================================================
+0. SAFETY RULES (READ FIRST)
+============================================================
+
+1. Staging and Production must use DIFFERENT Supabase project references. The
+   reset/seed scripts refuse to run if any of DATABASE_URL, DIRECT_URL, or
+   NEXT_PUBLIC_SUPABASE_URL resolves to the Production project ref.
+2. Never copy Production data, storage objects, DATA_ENCRYPTION_KEYS, VAPID keys,
+   PayMongo keys, or service-role keys into Staging. Generate new ones.
+3. Generic feature-branch Previews must NOT receive the staging database,
+   service-role key, or DIRECT_URL. Use branch-scoped Preview variables
+   (Vercel > Settings > Environment Variables > Preview with a git-branch scope).
+4. The staging mutation scripts are fingerprint-guarded:
+   - Dry-run is always the default.
+   - Apply requires the exact fingerprint printed by the dry-run, plus
+     --delete-all-users for reset.
+   - They also refuse ordinary local/production configurations.
+5. Do not enable Vercel Automatic Deployment for staging: the GitHub workflow
+   must run migrations BEFORE any code deploy. Verify "Auto-Assign Custom
+   Domains"/auto-deploy behavior does not publish the branch build ahead of
+   the workflow's prebuilt deploy.
+
+============================================================
+1. CREATE THE STAGING SUPABASE PROJECT
+============================================================
+
+1. Sign in to Supabase (same organization as Production) and create a NEW
+   project:
+   - Name: wescomm-staging
+   - Region: same geographic region as Production (keeps latency/behaviour close)
+   - Database password: generate a new random password (store in the password
+     manager, never reuse the Production one)
+   - Plan: any plan that supports RLS, Realtime, Storage, and Auth (free tier is
+     sufficient for QA)
+2. Copy these values for later steps:
+   - Project reference (Settings > General > Reference ID), e.g. abcdefghijklm
+   - Project URL (https://<ref>.supabase.co)
+   - Database connection strings: Settings > Database:
+     - Transaction pooler (port 6543, TLS) -> DATABASE_URL
+     - Session/direct (port 5432, TLS) -> DIRECT_URL
+     Both must include sslmode=require (the verifier requires TLS).
+   - API keys: Settings > API:
+     - anon public key -> NEXT_PUBLIC_SUPABASE_ANON_KEY
+     - publishable key -> NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
+     - service_role key -> SUPABASE_SERVICE_ROLE_KEY (never expose publicly)
+3. Configure Supabase Auth (Authentication > URL Configuration):
+   - Site URL: https://staging.wescomm.store
+   - Redirect URL: https://staging.wescomm.store/auth/callback
+
+============================================================
+2. BOOTSTRAP THE STAGING DATABASE (ONE-TIME)
+============================================================
+
+Run the platform bootstrap SQL files in the SQL Editor, in this exact order
+(same as documented in backend/README.md):
+
+  1. txt_files/SUPABASE_SQL_EDITOR_COMMANDS.txt
+  2. txt_files/DATABASE_WEB_PUSH_NOTIFICATIONS_SQL.txt
+  3. txt_files/DATABASE_AUTH_SESSIONS_SQL.txt
+  4. txt_files/DATABASE_RESERVATION_IDEMPOTENCY_SQL.txt
+  5. txt_files/DATABASE_STUDENT_RESERVATION_RESTRICTIONS_SQL.txt
+  6. txt_files/DATABASE_AUDIT_LOGS_SQL.txt
+
+These own Supabase Auth integration, RLS policies, storage, Realtime, custom
+checks, and platform tables that Prisma cannot represent.
+
+Then record the Prisma baseline ONCE, so `prisma migrate deploy` does not try
+to recreate tables the bootstrap already made. Run this AFTER the Vercel
+branch-scoped variables exist (Section 5), using the staging-scoped
+environment:
+
+  npx vercel env run --environment=preview --git-branch=staging --token=%VERCEL_TOKEN% -- npm --prefix backend run prisma:migrate:baseline:existing
+
+Confirm the output says 0_init was recorded as applied and the baseline
+verifier passed. Never run this against Production (it is already baselined).
+
+============================================================
+3. CREATE THE PERMANENT staging GIT BRANCH
+============================================================
+
+  git switch -c staging
+  git push -u origin staging
+
+Keep main and staging in sync going forward (merge main into staging for each
+release candidate). CI (.github/workflows/ci.yml) already runs for both.
+
+============================================================
+4. CONFIGURE GITHUB PROTECTED ENVIRONMENT
+============================================================
+
+In the repository: Settings > Environments > New environment
+
+  Name:        staging
+  Environment secrets:
+    VERCEL_TOKEN                    (project-scoped Vercel token; recommended)
+    VERCEL_ORG_ID                   (Vercel organization id)
+    VERCEL_PROJECT_ID               (Vercel project id)
+  Environment variable:
+    STAGING_DOMAIN = staging.wescomm.store
+
+  Deployment branches: restrict to the staging branch ONLY.
+  Required reviewers: enable if your plan supports it (recommended).
+
+The workflow (.github/workflows/staging-release.yml) is environment-gated:
+it will not start without these secrets, and it refuses to run from any branch
+other than staging or without the exact DEPLOY_STAGING confirmation, and it
+requires a passing "Release gate" check on the selected commit.
+
+============================================================
+5. CONFIGURE VERCEL (DOMAIN + BRANCH-SCOPED VARIABLES)
+============================================================
+
+Project setup:
+- Same Vercel project as Production, or a dedicated one (must match
+  VERCEL_PROJECT_ID above).
+- Add domain: staging.wescomm.store (Add Domain, configure the DNS record
+  Vercel asks for).
+- Project Settings:
+  - Framework Preset/Application: Services (the repo vercel.json routes /api/*
+    to the backend and everything else to the frontend).
+  - Enable "System Environment Variables" in Project Settings so the backend
+    can read VERCEL_ENV/VERCEL_TARGET_ENV.
+  - Set Root Directory = ./ (per the existing deployment docs).
+  - Disable automatic deployments for the staging branch, or make sure Vercel
+    does not alias the staging branch build to the custom domain. The GitHub
+    workflow performs the canonical migrate -> build -> deploy -> alias.
+  - Optional: enable Deployment Protection (Vercel Authentication) for the
+    Preview. The release workflow uses `vercel curl` with the scoped token for
+    its readiness check, so no separate bypass secret is required.
+
+Variables: add ALL of these in Vercel > Settings > Environment Variables,
+Preview environment, scoped ONLY to the git branch "staging".
+
+IMPORTANT FOR THE DEPLOYMENT WORKFLOW:
+- Store workflow-required values as normal Vercel environment variables. Vercel
+  encrypts these at rest and restricts them to the selected environment/branch.
+- Do NOT enable Vercel's additional "Sensitive" flag for values consumed by
+  `vercel env run` (including DATABASE_URL, DIRECT_URL, Supabase keys,
+  AUTH_DEV_LOGIN_PASSWORD, DATA_ENCRYPTION_KEYS, and VAPID keys). Sensitive
+  values are write-only and cannot be downloaded into the protected GitHub
+  deployment job. Keep their values out of logs and source control.
+- GitHub's VERCEL_TOKEN remains an Environment secret; never store it in Vercel
+  or commit it to the repository.
+
+Environment identity (branch-scoped):
+  WESCOMM_ENV=staging
+  STAGING_SUPABASE_PROJECT_REF=<staging project ref>
+  PRODUCTION_SUPABASE_PROJECT_REF=<production project ref; identifier only>
+
+Database and Supabase (branch-scoped):
+  DATABASE_URL=<staging transaction pooler URL, includes sslmode=require>
+  DIRECT_URL=<staging session/direct URL, includes sslmode=require>
+  NEXT_PUBLIC_SUPABASE_URL=https://<staging-ref>.supabase.co
+  NEXT_PUBLIC_SUPABASE_ANON_KEY=<staging anon key>
+  NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=<staging publishable key>
+  SUPABASE_SERVICE_ROLE_KEY=<staging service-role key>
+
+Runtime (branch-scoped):
+  NODE_ENV=production
+  NEXT_PUBLIC_APP_ENV=staging
+  NEXT_PUBLIC_API_URL=/api
+  FRONTEND_ORIGIN=https://staging.wescomm.store
+  FRONTEND_ORIGINS=https://staging.wescomm.store
+  TRUST_PROXY_HOPS=1
+  NEXT_PUBLIC_E2E_TEST=false
+
+Staging-only development login (branch-scoped, secret value):
+  AUTH_ENABLE_DEV_LOGIN=true
+  NEXT_PUBLIC_ENABLE_DEV_LOGIN=true
+  AUTH_DEV_LOGIN_PASSWORD=<new random 20+ character secret>
+  AUTH_DEV_LOGIN_EMAILS=student@wesleyan.edu.ph,qa.student02@wesleyan.edu.ph,staff@wesleyan.edu.ph,admin@wesleyan.edu.ph
+
+Temporary production staff login must be EXPLICITLY disabled:
+  AUTH_ENABLE_TEMP_PRODUCTION_STAFF_LOGIN=false
+  NEXT_PUBLIC_ENABLE_TEMP_PRODUCTION_STAFF_LOGIN=false
+
+Payments and external AI disabled:
+  PAYMONGO_ENABLED=false
+  PAYMONGO_LIVEMODE=false
+  WESBOT_AI_ENABLED=false
+
+Staging-only secrets (generate NEW values, never reuse Production):
+  DATA_ENCRYPTION_CURRENT_VERSION=v1
+  DATA_ENCRYPTION_KEYS=<new versioned "v1:<base64>" key for staging only>
+  VAPID_PUBLIC_KEY=<new staging VAPID public key>
+  VAPID_PRIVATE_KEY=<new staging VAPID private key>
+  VAPID_SUBJECT=mailto:wescomm@wesleyan.edu.ph
+
+Do NOT set BACKEND_API_URL anywhere (the verifier rejects it for the
+same-origin Services deployment).
+
+Generic feature-branch Previews keep only harmless values (NEXT_PUBLIC_API_URL
+etc.); they must never see DATABASE_URL, DIRECT_URL, SUPABASE_SERVICE_ROLE_KEY,
+the dev-login password, or the staging Supabase keys. Verify by opening a
+random PR preview and confirming it does not reach the staging database.
+
+============================================================
+6. VERIFY THE STAGING VARIABLES LOCALLY
+============================================================
+
+From a machine with the Vercel CLI authenticated (or in the workflow itself):
+
+  npx vercel env run --environment=preview --git-branch=staging --token=%VERCEL_TOKEN% -- npm --prefix backend run staging:verify
+
+Expected output: {"status":"passed", ..., "environment":"staging", ...}.
+
+Target-only check (no frontend vars needed, useful while wiring up):
+
+  npm --prefix backend run staging:verify:target
+
+============================================================
+7. RUN THE PROTECTED DEPLOYMENT WORKFLOW
+============================================================
+
+1. Push the release candidate to the staging branch and wait for the CI
+   "Release gate" check to succeed on that commit.
+2. In GitHub: Actions > "Deploy protected WESCOMM staging" > Run workflow.
+   - Branch: staging
+   - Confirmation: DEPLOY_STAGING (exact)
+3. The workflow, in order:
+   a. Refuses unless branch=staging and confirmation=DEPLOY_STAGING.
+   b. Refuses unless the selected commit has a successful Release gate.
+   c. Validates VERCEL_* secrets and STAGING_DOMAIN (rejects production domains).
+   d. Pulls branch-scoped Preview settings (vercel pull --git-branch=staging).
+   e. Runs staging:verify with the branch-scoped variables.
+   f. Runs release:preflight (migration safety).
+   g. Applies and verifies Prisma migrations (prisma:migrate:deploy + verify).
+   h. Builds with the staging variables, deploys prebuilt, and aliases
+      https://staging.wescomm.store.
+    i. Polls /api/health/ready on the exact new deployment for up to 5 minutes
+       using authenticated `vercel curl` (works with Deployment Protection).
+
+============================================================
+8. SEED FAKE FIXTURES (RESET + SEED WITH FINGERPRINTS)
+============================================================
+
+Run every command through the SAME branch-scoped environment so the
+fingerprint always matches the staging database.
+
+1. Preview the destructive reset (dry-run is the default):
+
+   npx vercel env run --environment=preview --git-branch=staging --token=%VERCEL_TOKEN% -- npm --prefix backend run staging:reset
+
+   The dry-run prints target info, would-delete counts, and an applyCommand
+   line containing the exact fingerprint.
+
+2. Copy the fingerprint from the dry-run output and apply with BOTH flags:
+
+   npx vercel env run --environment=preview --git-branch=staging --token=%VERCEL_TOKEN% -- npm --prefix backend run staging:reset -- --apply --delete-all-users --confirm-reset-testing-data:<fingerprint>
+
+   The script deletes transactional data (including walk-in sales and cost
+   allocations), deletes ALL Supabase Auth users, zeroes product/variant/SKU
+   stock, and then fails the run if any post-reset count is not zero. It
+   preserves catalog shape (categories, products, departments, FAQs, settings,
+   pickup policies).
+
+3. Preview the deterministic seed:
+
+   npx vercel env run --environment=preview --git-branch=staging --token=%VERCEL_TOKEN% -- npm --prefix backend run staging:seed
+
+4. Apply with the printed fingerprint:
+
+   npx vercel env run --environment=preview --git-branch=staging --token=%VERCEL_TOKEN% -- npm --prefix backend run staging:seed -- --apply --confirm-seed-staging:<fingerprint>
+
+The seed creates:
+  - 10 fake students (student@wesleyan.edu.ph and qa.student02..10)
+  - 1 Staff (staff@wesleyan.edu.ph), 1 Admin (admin@wesleyan.edu.ph)
+  - qa.student02@wesleyan.edu.ph for two-account concurrency tests
+  - [QA] Simple Notebook (simple stock)
+  - [QA] Variant PE Shirt (variant-only, RESTOCK_SOON to exercise low-stock)
+  - [QA] SKU Uniform Set (SKU-backed with two FIFO cost layers)
+  - [QA] Out-of-stock Tote (sold-out UI)
+  - Verified opening-cost batches + a fake-data audit entry
+
+Reseeding is refused while any QA fixture has transaction activity; run the
+protected reset first.
+
+============================================================
+9. POST-DEPLOY SMOKE CHECKLIST
+============================================================
+
+[ ] https://staging.wescomm.store/api/health/ready returns status=ready with
+    every check=true (database, encryption, Realtime, etc.).
+[ ] Login as student@wesleyan.edu.ph with the AUTH_DEV_LOGIN_PASSWORD.
+[ ] Login as staff@wesleyan.edu.ph and admin@wesleyan.edu.ph.
+[ ] Catalog shows the four [QA] products with correct stock.
+[ ] Reservation flow: student reserves [QA] Simple Notebook, stock drops
+    exactly once, double-submit creates no duplicate.
+[ ] Walk-in sale: staff records an over-the-counter cash sale for
+    [QA] SKU Uniform Set, stock deducts, receipt appears for the student;
+    void it and confirm stock and FIFO allocations restore.
+[ ] Concurrency: qa.student02 and a second account race for the last unit of a
+    QA product; exactly one succeeds.
+[ ] Reports show walk-in sales, voids, and cashier reconciliation.
+[ ] Browser cookie is __Host-wescomm_session with HttpOnly/Secure/Lax.
+[ ] Wrong-role API calls return 403.
+[ ] PayMongo routes reject with the disabled-payments error (never a live key).
+[ ] Every write appears in Admin Audit Logs.
+
+============================================================
+10. TROUBLESHOOTING
+============================================================
+
+- Workflow fails at "Verify the isolated Staging runtime configuration":
+  A variable is missing or wrong. Run staging:verify locally via
+  `vercel env run ... --git-branch=staging` to see the exact message. Common
+  causes: missing sslmode=require, VERCEL_ENV mismatch, BACKEND_API_URL set,
+  or temp-staff-login flags missing (must be explicitly false).
+- "Release gate" not found on the commit: wait for CI on the staging branch
+  to finish green, then re-run the workflow.
+- Reset dry-run prints a different fingerprint after variables change: the
+  fingerprint is derived from the database target. Never reuse an old
+  confirmation; always copy the fresh one from the current dry-run.
+- Reset fails with "Reset refused without exact database-target confirmation":
+  the --confirm-reset-testing-data:<fingerprint> argument does not match, or
+  --delete-all-users is missing.
+- Migrations fail on a fresh database with "already exists":
+  0_init was not baselined. Re-run prisma:migrate:baseline:existing once
+  (Section 2), then re-run the workflow.
+- Vercel auto-deploys the staging branch before migrations: disable automatic
+  deployment for the staging branch (or stop auto-aliasing the custom domain);
+  the workflow performs the canonical deploy.
+- Staging site is password-protected but health check fails: confirm the
+  project-scoped VERCEL_TOKEN is valid and still has access to the deployment.
+
+============================================================
+11. NEVER DO ON STAGING
+============================================================
+
+- Never run `prisma db push`.
+- Never copy Production DATA_ENCRYPTION_KEYS or service keys in.
+- Never enable PAYMONGO_ENABLED or WESBOT_AI_ENABLED with live credentials.
+- Never run staging:reset/staging:seed without the printed fingerprint.
+- Never paste AUTH_DEV_LOGIN_PASSWORD or service-role keys into chat, files,
+  or commits.
+- Never import real student data into the staging project.
+
+Rotation note: rotate the staging credentials after any accidental exposure;
+the release gate checklist (WESCOMM_QA_STAGING_RUNBOOK.txt, Section 8)
+requires credential rotation before staging is shared publicly or Production
+is deployed.

@@ -46,7 +46,7 @@ test("PostgreSQL keeps completion and its reservation receipt atomic and idempot
     assert.equal(completed.receipt?.studentId, studentId);
     assert.equal(completed.receipt?.totalAmount, "321.45");
     assert.equal(completed.receipt?.paymentMethod, "CASH");
-    assert.equal(completed.receipt?.status, "VERIFIED");
+    assert.equal(completed.receipt?.status, "PENDING");
     assert.equal(await prisma.payment.count({ where: { reservationId: reservationIds[0] } }), 1);
 
     const replay = await updateReservationStatus(reservationIds[0], "COMPLETED", staffId);

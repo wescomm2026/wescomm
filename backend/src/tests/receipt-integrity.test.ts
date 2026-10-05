@@ -29,8 +29,11 @@ test("completion creates or repairs its receipt inside the serializable reservat
   const outbox = source("src/services/outbox.service.ts");
 
   assert.match(reservations, /prisma\.\$transaction\([\s\S]*ensureReceiptForCompletedReservationInTransaction\(tx/);
+  assert.doesNotMatch(reservations, /verified:\s*true/);
   assert.doesNotMatch(reservations, /createReceiptForReservation/);
   assert.match(receipts, /tx\.receipt\.upsert\([\s\S]*where: \{ reservationId: input\.reservation\.id \}/);
+  assert.match(receipts, /status:\s*"PENDING"/);
+  assert.doesNotMatch(receipts, /status:\s*input\.verified/);
   assert.match(receipts, /type: OUTBOX_EVENT_TYPES\.receiptCreated/);
   assert.match(outbox, /receiptCreated: "RECEIPT_CREATED"/);
   assert.match(outbox, /processReceiptCreated/);

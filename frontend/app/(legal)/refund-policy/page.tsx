@@ -35,11 +35,11 @@ export default function RefundPolicyPage() {
           Cancellation depends on the reservation, payment, and fulfillment status. Student self-cancellation is available only under the limited pending-reservation rule below.
         </p>
         <LegalList>
-          <li>A student may directly cancel only their own reservation while its status is Pending and no confirmed online payment or refund issue requires staff review.</li>
+          <li>A student may directly cancel only their own reservation while its status is Pending and no confirmed historical online payment or refund issue requires staff review.</li>
           <li>Once a reservation is Confirmed or Ready for Pickup, the student can no longer cancel it directly. Authorized staff or an administrator must handle the request when system rules allow.</li>
-          <li>A Pending reservation with a successful or Paid online GCash transaction cannot be automatically self-cancelled. Staff or an administrator must review the payment and required refund first.</li>
+          <li>A Pending reservation with a successful or Paid historical online GCash transaction cannot be automatically self-cancelled. Staff or an administrator must review the payment and required refund first.</li>
           <li>Submit staff-handled requests as soon as possible through WESCOMM Support or the contact email below.</li>
-          <li>Leaving PayMongo, closing the checkout page, or returning through a cancel link does not by itself cancel a reservation or payment session.</li>
+          <li>Online payments are no longer offered for new reservations. Closing the checkout page or returning through a cancel link does not by itself cancel a reservation or historical payment session.</li>
           <li>Completed reservations cannot be reopened. Any item concern after pickup follows the return review below.</li>
         </LegalList>
       </LegalSection>
@@ -48,8 +48,8 @@ export default function RefundPolicyPage() {
         <p>A full or partial refund may be considered when:</p>
         <LegalList>
           <li>WESCOMM cannot fulfill a paid reservation because an item is unavailable or the University cancels the transaction.</li>
-          <li>A duplicate, incorrect, or mismatched payment is verified against PayMongo and WESCOMM records.</li>
-          <li>A valid payment reaches WESCOMM after its reservation or checkout was already cancelled or expired.</li>
+          <li>A duplicate, incorrect, or mismatched historical online payment is verified against PayMongo and WESCOMM records.</li>
+          <li>A valid historical online payment reaches WESCOMM after its reservation or checkout was already cancelled or expired.</li>
           <li>An item released at pickup is materially defective, damaged, or different from the confirmed item.</li>
           <li>A paid cancellation is otherwise approved under University policy or applicable law.</li>
         </LegalList>
@@ -76,9 +76,9 @@ export default function RefundPolicyPage() {
         </p>
       </LegalSection>
 
-      <LegalSection title="5. How approved GCash refunds are processed">
+      <LegalSection title="5. How approved historical GCash refunds are processed">
         <LegalList>
-          <li>Approved online refunds are returned through PayMongo to the original payment method whenever supported.</li>
+          <li>Approved refunds for historical online payments are returned through PayMongo to the original payment method whenever supported.</li>
           <li>WESCOMM does not use a screenshot or a browser success message as the sole basis for a refund.</li>
           <li>Provider processing time begins only after the refund is approved and submitted. Final posting time may depend on PayMongo and GCash.</li>
           <li>Do not send your GCash PIN, OTP, password, or other wallet credentials to WESCOMM.</li>
@@ -100,7 +100,7 @@ export default function RefundPolicyPage() {
 
       <LegalSection title="7. Fair application">
         <p>
-          WESCOMM reviews requests using the application record, PayMongo record when applicable, item condition, University policy, and applicable Philippine law. Nothing in this policy removes rights or remedies that cannot lawfully be waived.
+          WESCOMM reviews requests using the application record, the PayMongo record for historical online payments when applicable, item condition, University policy, and applicable Philippine law. Nothing in this policy removes rights or remedies that cannot lawfully be waived.
         </p>
         <p>
           Questions may be sent through the <Link href="/contact" className="font-bold text-primary hover:underline">Contact page</Link>.

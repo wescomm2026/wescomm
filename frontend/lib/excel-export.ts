@@ -6,13 +6,19 @@ export type ExcelWorkbookSection = {
   rows: ExcelCellValue[][];
 };
 
+export type ExcelWorkbookWorksheet = {
+  name: string;
+  sections: ExcelWorkbookSection[];
+};
+
 type ExcelWorkbookOptions = {
   fileName: string;
-  worksheetName: string;
+  worksheetName?: string;
   title: string;
   subtitle?: string;
   metadata?: Array<[string, ExcelCellValue]>;
-  sections: ExcelWorkbookSection[];
+  sections?: ExcelWorkbookSection[];
+  worksheets?: ExcelWorkbookWorksheet[];
 };
 
 function escapeXml(value: ExcelCellValue) {
@@ -66,28 +72,46 @@ export function exportStyledExcelWorkbook({
   title,
   subtitle,
   metadata = [],
-  sections
+  sections = [],
+  worksheets
 }: ExcelWorkbookOptions) {
-  const totalColumns = Math.max(4, ...sections.map((section) => section.headers.length), ...sections.flatMap((section) => section.rows.map((sectionRow) => sectionRow.length)));
-  const mergeAll = totalColumns - 1;
-  const columns = Array.from({ length: totalColumns }, (_, index) => {
-    const width = index === 0 ? 210 : index === totalColumns - 1 ? 240 : 165;
-    return `<Column ss:AutoFitWidth="0" ss:Width="${width}" />`;
-  }).join("");
+  const workbookSheets = worksheets?.length
+    ? worksheets
+    : [{ name: worksheetName ?? "Report", sections }];
 
-  const metadataRows = metadata.map(([label, value]) =>
-    row([
+  const worksheetXml = workbookSheets.map((worksheet) => {
+    const totalColumns = Math.max(4, ...worksheet.sections.map((section) => section.headers.length), ...worksheet.sections.flatMap((section) => section.rows.map((sectionRow) => sectionRow.length)));
+    const mergeAll = totalColumns - 1;
+    const columns = Array.from({ length: totalColumns }, (_, index) => {
+      const width = index === 0 ? 210 : index === totalColumns - 1 ? 240 : 165;
+      return `<Column ss:AutoFitWidth="0" ss:Width="${width}" />`;
+    }).join("");
+    const metadataRows = metadata.map(([label, value]) => row([
       cell(label, "MetaLabel"),
       cell(value, "MetaValue", Math.max(0, totalColumns - 2))
-    ])
-  );
+    ]));
+    const sectionRows = worksheet.sections.flatMap((section) => [
+      blankRow(),
+      row([cell(section.title, "SectionTitle", mergeAll)], 24),
+      row(padCells(section.headers, totalColumns).map((heading) => cell(heading, "HeaderCell")), 22),
+      ...section.rows.map((sectionRow) => row(padCells(sectionRow, totalColumns).map((value) => cell(value))))
+    ]);
 
-  const sectionRows = sections.flatMap((section) => [
-    blankRow(),
-    row([cell(section.title, "SectionTitle", mergeAll)], 24),
-    row(padCells(section.headers, totalColumns).map((heading) => cell(heading, "HeaderCell")), 22),
-    ...section.rows.map((sectionRow) => row(padCells(sectionRow, totalColumns).map((value) => cell(value))))
-  ]);
+    return `<Worksheet ss:Name="${escapeXml(safeWorksheetName(worksheet.name))}">
+      <Table ss:ExpandedColumnCount="${totalColumns}" x:FullColumns="1" x:FullRows="1">
+        ${columns}
+        ${row([cell(title, "Title", mergeAll)], 32)}
+        ${subtitle ? row([cell(subtitle, "Subtitle", mergeAll)], 22) : ""}
+        ${metadataRows.join("")}
+        ${sectionRows.join("")}
+      </Table>
+      <WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel">
+        <PageSetup><Layout x:Orientation="Landscape" /></PageSetup>
+        <FitToPage /><Print><FitWidth>1</FitWidth><FitHeight>0</FitHeight></Print>
+        <ProtectObjects>False</ProtectObjects><ProtectScenarios>False</ProtectScenarios>
+      </WorksheetOptions>
+    </Worksheet>`;
+  }).join("");
 
   const workbook = `<?xml version="1.0" encoding="UTF-8"?>
 <?mso-application progid="Excel.Sheet"?>
@@ -160,33 +184,7 @@ export function exportStyledExcelWorkbook({
       </Borders>
     </Style>
   </Styles>
-  <Worksheet ss:Name="${escapeXml(safeWorksheetName(worksheetName))}">
-    <Table ss:ExpandedColumnCount="${totalColumns}" x:FullColumns="1" x:FullRows="1">
-      ${columns}
-      ${row([cell(title, "Title", mergeAll)], 32)}
-      ${subtitle ? row([cell(subtitle, "Subtitle", mergeAll)], 22) : ""}
-      ${metadataRows.join("")}
-      ${sectionRows.join("")}
-    </Table>
-    <WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel">
-      <PageSetup>
-        <Layout x:Orientation="Landscape" />
-      </PageSetup>
-      <FitToPage />
-      <Print>
-        <FitWidth>1</FitWidth>
-        <FitHeight>0</FitHeight>
-      </Print>
-      <Selected />
-      <FreezePanes />
-      <FrozenNoSplit />
-      <SplitHorizontal>1</SplitHorizontal>
-      <TopRowBottomPane>1</TopRowBottomPane>
-      <ActivePane>2</ActivePane>
-      <ProtectObjects>False</ProtectObjects>
-      <ProtectScenarios>False</ProtectScenarios>
-    </WorksheetOptions>
-  </Worksheet>
+  ${worksheetXml}
 </Workbook>`;
 
   downloadFile(workbook, fileName);

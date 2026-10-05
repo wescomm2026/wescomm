@@ -85,7 +85,14 @@ export function validateRecognizedCheckoutIdentity(input: {
   if (checkoutSession.metadata.reservation_id !== onlinePayment.reservation.id) {
     return { valid: false, reasonCode: "RESERVATION_METADATA_MISMATCH" };
   }
-  if (onlinePayment.reservation.paymentMethod !== "PAYMONGO_GCASH") {
+  if (
+    onlinePayment.reservation.paymentMethod !== "PAYMONGO_GCASH"
+    && onlinePayment.status !== "CANCELLED"
+  ) {
+    // A CANCELLED payment may belong to a reservation that was already
+    // converted to cash. Its late paid confirmation must still be recorded,
+    // so the transition machinery can route it to refund/staff review
+    // instead of silently dropping real money.
     return { valid: false, reasonCode: "PAYMENT_METHOD_MISMATCH" };
   }
   if (checkoutSession.referenceNumber !== onlinePayment.reservation.referenceCode) {

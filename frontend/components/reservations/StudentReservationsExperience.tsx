@@ -11,10 +11,12 @@ import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import { useRealtimeRefresh } from "@/components/realtime/RealtimeProvider";
 import { AssetIcon } from "@/components/ui/AssetIcon";
 import { Button } from "@/components/ui/button";
+import { InlineAlert } from "@/components/ui/InlineAlert";
 import { StatusBadge } from "@/components/ui/StatusBadge";
+import { useStudentOverview } from "@/components/student/useStudentOverview";
+import { cn } from "@/lib/utils";
 import {
   cancelMyReservationFromApi,
-  createGcashCheckoutFromApi,
   getReservationFromApi,
   getReservationPageFromApi,
   type BackendPaymentMethod,
@@ -33,11 +35,6 @@ import {
   writeServerState
 } from "@/lib/server-state";
 import { collectionChannelLabel, type CollectionChannel } from "@/lib/collection-channel";
-import {
-  getPaymentIdempotencyKey,
-  openTrustedPaymongoCheckout,
-  rememberPaymentCheckout
-} from "@/lib/payment-checkout";
 import { resolveShopProductAsset, shopProductCardImage } from "@/lib/shop-assets";
 import { calendarDayDifference, manilaDateKey } from "@/lib/manila-date";
 
@@ -64,6 +61,7 @@ type StoredReservation = {
   notes: string;
   status: ReservationStatus;
   createdAt: string;
+  confirmationQueue: BackendReservation["confirmationQueue"];
 };
 
 type ReservationStatus = "Pending" | "Confirmed" | "Ready for Pickup" | "Completed" | "Cancelled" | "No-show";
@@ -78,6 +76,15 @@ const reservationFilters: readonly ReservationFilter[] = [
   "Cancelled",
   "No-show"
 ];
+
+const FILTER_STATUS: Record<Exclude<ReservationFilter, "All">, BackendReservationStatus> = {
+  Pending: "PENDING",
+  Confirmed: "CONFIRMED",
+  "Ready for Pickup": "READY_FOR_PICKUP",
+  Completed: "COMPLETED",
+  Cancelled: "CANCELLED",
+  "No-show": "NO_SHOW"
+};
 
 function formatDate(value: string) {
   const date = new Date(`${value}T00:00:00`);
@@ -119,10 +126,15 @@ function formatBackendStatus(status: BackendReservationStatus): ReservationStatu
 function reservationGuidance(
   status: ReservationStatus,
   paymentMethod: BackendPaymentMethod,
-  payment: BackendPaymentSummary | null
+  payment: BackendPaymentSummary | null,
+  preferredCollectionChannel: CollectionChannel
 ) {
   const isOnlineGcash = paymentMethod === "PAYMONGO_GCASH";
   const isPaidOnline = isOnlineGcash && payment?.status === "PAID";
+  const cashLocation = preferredCollectionChannel === "TREASURER" ? "Treasury" : "Commissary";
+  const readyForPickupCashDetail = preferredCollectionChannel === "TREASURER"
+    ? "Pay in cash at the Treasury, keep your official receipt, and present it during pickup. Bring your reference code."
+    : "Pay in cash and claim your order at the Commissary during your pickup window. Bring your reference code.";
 
   if (status === "Pending") {
     if (isPaidOnline) {
@@ -132,10 +144,10 @@ function reservationGuidance(
       };
     }
     return {
-      title: isOnlineGcash ? "Online payment is not yet confirmed" : "Waiting for staff confirmation",
+      title: isOnlineGcash ? "Historical online payment record" : "Waiting for staff confirmation",
       detail: isOnlineGcash
-        ? "Your reservation is saved. Complete or check the secure GCash payment below before staff processing."
-        : "Your item is held while commissary staff reviews the reservation."
+        ? "Online payments are closed for new reservations. Staff is safely closing this historical payment record; check this reservation for its updated cash payment location."
+        : `Your item is held while staff reviews the reservation. You selected cash payment at the ${cashLocation}.`
     };
   }
   if (status === "Confirmed") {
@@ -150,8 +162,8 @@ function reservationGuidance(
       detail: isPaidOnline
         ? "Your GCash payment is confirmed. Bring your reference code during the pickup window."
         : isOnlineGcash
-          ? "Check the online payment status below before visiting the commissary."
-          : "Bring your reference code and complete payment at the commissary during the pickup window."
+          ? "This historical online payment is not confirmed. Wait for the reservation to show its cash payment location before pickup."
+          : readyForPickupCashDetail
     };
   }
   if (status === "Completed") {
@@ -234,7 +246,8 @@ function mapBackendReservations(rows: BackendReservation[]): StoredReservation[]
     payment: reservation.payment ?? null,
     notes: reservation.staffNotes?.trim() ?? "",
     status: formatBackendStatus(reservation.status),
-    createdAt: reservation.createdAt
+    createdAt: reservation.createdAt,
+    confirmationQueue: reservation.confirmationQueue ?? null
   }));
 }
 
@@ -261,23 +274,112 @@ function paymentStatusDisplay(status?: BackendPaymentStatus) {
 }
 
 function reservationPreviewAction(reservation: StoredReservation) {
-  const canContinuePayment = reservation.paymentMethod === "PAYMONGO_GCASH"
-    && reservation.payment?.status !== "PAID"
-    && (reservation.payment ? reservation.payment.canResume || reservation.payment.canRetry : true);
-
-  if (canContinuePayment) return "Continue payment";
   if (reservation.status === "Ready for Pickup") return "View pickup details";
-  if (reservation.status === "Completed") return "View Details";
   return "View details";
+}
+
+const activeReservationSteps = [
+  "Pending",
+  "Confirmed",
+  "Ready for Pickup",
+  "Completed"
+] as const satisfies readonly ReservationStatus[];
+
+function ReservationProgress({
+  status,
+  compact = false
+}: {
+  status: ReservationStatus;
+  compact?: boolean;
+}) {
+  const currentIndex = activeReservationSteps.findIndex((step) => step === status);
+
+  if (currentIndex < 0) {
+    return (
+      <div
+        data-testid="reservation-progress"
+        aria-label="Reservation progress"
+        className={`rounded-xl border border-[#eadfda] bg-[#fffaf8] ${compact ? "p-3" : "mx-4 mb-4 p-4 sm:mx-5 sm:mb-5"}`}
+      >
+        <p className="text-[10px] font-extrabold uppercase tracking-wide text-[#765e58] sm:text-xs">Reservation progress</p>
+        <div className="mt-2 flex items-start gap-2 text-[#692f24]">
+          <XCircle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+          <div>
+            <p className="text-sm font-extrabold">Progress ended: {status}</p>
+            <p className="mt-0.5 text-xs leading-5 text-[#765e58]">No later fulfillment step will be marked complete.</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const nextStep = activeReservationSteps[currentIndex + 1] ?? null;
+
+  return (
+    <div
+      data-testid="reservation-progress"
+      aria-label="Reservation progress"
+      className={`rounded-xl border border-[#dce6dc] bg-[#f8fbf8] ${compact ? "p-3" : "mx-4 mb-4 p-4 sm:mx-5 sm:mb-5"}`}
+    >
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+        <p className="text-[10px] font-extrabold uppercase tracking-wide text-primary sm:text-xs">Reservation progress</p>
+        <p className="text-xs font-semibold text-[#526158]">
+          Current step: <span className="font-extrabold text-primary">{status}</span>
+        </p>
+      </div>
+      <ol className="mt-3 flex" aria-label={`Current reservation step: ${status}`}>
+        {activeReservationSteps.map((step, index) => {
+          const isComplete = index < currentIndex || status === "Completed";
+          const isCurrent = index === currentIndex;
+          const leftActive = index <= currentIndex;
+          const rightActive = index < currentIndex;
+
+          return (
+            <li key={step} className="min-w-0 flex-1" aria-current={isCurrent ? "step" : undefined}>
+              <div className="flex items-center" aria-hidden="true">
+                <span className={`h-1 min-w-0 flex-1 rounded-full ${index === 0 ? "invisible" : leftActive ? "bg-primary" : "bg-[#d7e0d8]"}`} />
+                <span className={`grid size-7 shrink-0 place-items-center rounded-full border text-[10px] font-extrabold sm:size-8 sm:text-xs ${isCurrent
+                  ? "border-primary bg-primary text-white ring-4 ring-primary/15"
+                  : isComplete
+                    ? "border-primary bg-primary text-white"
+                    : "border-[#cbd7cd] bg-white text-[#77817b]"
+                }`}>
+                  {isComplete ? <CheckCircle2 className="size-4" /> : index + 1}
+                </span>
+                <span className={`h-1 min-w-0 flex-1 rounded-full ${index === activeReservationSteps.length - 1 ? "invisible" : rightActive ? "bg-primary" : "bg-[#d7e0d8]"}`} />
+              </div>
+              <p className={`mt-2 text-center text-[9px] leading-4 sm:text-[11px] ${isCurrent ? "font-extrabold text-primary" : isComplete ? "font-bold text-[#425148]" : "font-semibold text-[#7a857d]"}`}>
+                {step}
+              </p>
+              <span className="sr-only">{isCurrent ? "Current step" : isComplete ? "Completed step" : "Upcoming step"}</span>
+            </li>
+          );
+        })}
+      </ol>
+      <p className="mt-3 text-xs leading-5 text-[#5f6d64]">
+        {nextStep ? <>Next: <strong className="text-[#26322b]">{nextStep}</strong>. Staff must update the reservation before it moves forward.</> : "All reservation steps are complete."}
+      </p>
+    </div>
+  );
 }
 
 function ReservationPreviewCard({
   reservation,
+  pickupGuidance,
   onOpen
 }: {
   reservation: StoredReservation;
+  pickupGuidance: string | null;
   onOpen: (trigger: HTMLButtonElement) => void;
 }) {
+  const isReady = reservation.status === "Ready for Pickup";
+  const scheduleClosed = reservation.status === "Cancelled" || reservation.status === "No-show";
+  const scheduleInactive = scheduleClosed || reservation.status === "Completed";
+  const scheduleLabel = scheduleClosed
+    ? "Was scheduled for"
+    : !scheduleInactive && reservation.pickupDate
+      ? getPickupLabel(reservation.pickupDate)
+      : "Pickup schedule";
   const firstItem = reservation.items[0] ?? null;
   const remainingLineItems = Math.max(0, reservation.items.length - 1);
   const totalQuantity = reservation.items.reduce((sum, item) => sum + item.quantity, 0);
@@ -287,8 +389,12 @@ function ReservationPreviewCard({
     <article
       id={`reservation-${reservation.id}`}
       data-testid="reservation-preview-card"
-      className="scroll-mt-24 overflow-hidden rounded-2xl border border-[#dce5dd] bg-white shadow-soft transition hover:border-[#b8cfba] hover:shadow-md target:border-primary target:ring-2 target:ring-primary/30"
+      className={cn(
+        "relative scroll-mt-24 overflow-hidden rounded-2xl border bg-card shadow-soft transition hover:border-primary/40 hover:shadow-md target:border-primary target:ring-2 target:ring-primary/30",
+        isReady && "border-primary/50"
+      )}
     >
+      {isReady ? <span className="absolute inset-x-0 top-0 h-1 bg-primary" aria-hidden="true" /> : null}
       <button
         type="button"
         onClick={(event) => onOpen(event.currentTarget)}
@@ -323,21 +429,46 @@ function ReservationPreviewCard({
                 {firstItem.details ? <p className="mt-1 truncate text-xs text-[#657169]">{firstItem.details}</p> : null}
               </div>
             ) : <p className="mt-3 text-sm text-[#68746d]">Reservation item preview is unavailable.</p>}
+            {reservation.status === "Pending" && reservation.confirmationQueue ? (
+              <div className="mt-3 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2.5" aria-label={`Confirmation queue position ${reservation.confirmationQueue.position}`}>
+                <p className="text-xs font-extrabold text-primary">Confirmation queue #{reservation.confirmationQueue.position} of {reservation.confirmationQueue.total}</p>
+                <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
+                  {reservation.confirmationQueue.ahead === 0
+                    ? "Your request is first for this pickup schedule."
+                    : `${reservation.confirmationQueue.ahead} eligible request${reservation.confirmationQueue.ahead === 1 ? " is" : "s are"} ahead for this pickup schedule.`}
+                  {" "}Position may change when staff confirms or students cancel.
+                </p>
+              </div>
+            ) : null}
           </div>
         </div>
 
-        <div className="mt-4 flex items-start gap-3 rounded-xl border border-[#dce6dc] bg-[#edf7ee] px-3 py-3 text-sm sm:px-4">
-          <span className="grid size-9 shrink-0 place-items-center rounded-lg border border-[#dce6dc] bg-white text-primary"><CalendarDays className="size-5" aria-hidden="true" /></span>
+        <div className="mt-3">
+          <ReservationProgress status={reservation.status} compact />
+        </div>
+
+        <div className={cn(
+          "mt-4 flex items-start gap-3 rounded-xl border px-3 py-3 text-sm sm:px-4",
+          scheduleInactive ? "border-border bg-surface-subtle" : isReady ? "border-primary/30 bg-primary/10" : "border-primary/15 bg-primary/5"
+        )}>
+          <span className={cn("grid size-9 shrink-0 place-items-center rounded-lg border bg-card", scheduleInactive ? "text-muted-foreground" : "border-primary/15 text-primary")}><CalendarDays className="size-5" aria-hidden="true" /></span>
           <div className="min-w-0">
-            <p className="text-[10px] font-extrabold uppercase tracking-wide text-primary sm:text-xs">Pickup Schedule</p>
+            <p className={cn("text-[10px] font-extrabold uppercase tracking-wide sm:text-xs", scheduleInactive ? "text-muted-foreground" : "text-primary")}>{scheduleLabel}</p>
             {reservation.pickupDate ? (
               <>
-                <p className="mt-0.5 font-extrabold text-[#17211b]">{formatDate(reservation.pickupDate)}</p>
-                <p className="text-xs text-[#526158] sm:text-sm">{reservation.pickupTime ?? "Time to be confirmed"}</p>
+                <p className={cn("mt-0.5 font-extrabold", scheduleClosed ? "text-muted-foreground line-through decoration-1" : "text-foreground")}>{formatDate(reservation.pickupDate)}</p>
+                <p className="text-xs text-muted-foreground sm:text-sm">{reservation.pickupTime ?? "Time to be confirmed"}</p>
               </>
-            ) : <p className="mt-1 font-semibold text-[#526158]">Awaiting staff confirmation</p>}
+            ) : <p className="mt-1 font-semibold text-muted-foreground">Awaiting staff confirmation</p>}
           </div>
         </div>
+
+        {isReady && pickupGuidance ? (
+          <p className="mt-3 flex items-start gap-2 rounded-lg bg-primary/5 px-3 py-2 text-xs leading-5 text-foreground">
+            <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
+            <span><span className="font-bold text-primary">Before you go: </span>{pickupGuidance}</span>
+          </p>
+        ) : null}
 
         {isOnlineGcash ? (
           <div className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-[#dce7dd] px-3 py-2">
@@ -512,14 +643,16 @@ function ReservationDetails({
   accessToken: string;
   onCancelled: (reservation: BackendReservation) => void;
 }) {
-  const guidance = reservationGuidance(reservation.status, reservation.paymentMethod, reservation.payment);
+  const guidance = reservationGuidance(
+    reservation.status,
+    reservation.paymentMethod,
+    reservation.payment,
+    reservation.preferredCollectionChannel
+  );
   const totalQuantity = reservation.items.reduce((sum, item) => sum + item.quantity, 0);
-  const [paymentError, setPaymentError] = useState("");
-  const [openingPayment, setOpeningPayment] = useState(false);
   const [confirmingCancellation, setConfirmingCancellation] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [cancellationError, setCancellationError] = useState("");
-  const paymentErrorRef = useRef<HTMLParagraphElement | null>(null);
   const cancellationErrorRef = useRef<HTMLParagraphElement | null>(null);
   const isOnlineGcash = reservation.paymentMethod === "PAYMONGO_GCASH";
   const requiresStaffCancellation = paymentRequiresStaffCancellation(
@@ -528,38 +661,10 @@ function ReservationDetails({
   );
   const canSelfCancel = reservation.status === "Pending" && !requiresStaffCancellation;
   const selfCancellationClosed = reservation.status === "Confirmed" || reservation.status === "Ready for Pickup";
-  const canContinuePayment = isOnlineGcash
-    && reservation.payment?.status !== "PAID"
-    && (reservation.payment ? reservation.payment.canResume || reservation.payment.canRetry : true);
-
-  useEffect(() => {
-    if (paymentError) paymentErrorRef.current?.focus();
-  }, [paymentError]);
 
   useEffect(() => {
     if (cancellationError) cancellationErrorRef.current?.focus();
   }, [cancellationError]);
-
-  const continuePayment = async () => {
-    if (!accessToken || !canContinuePayment) return;
-    setOpeningPayment(true);
-    setPaymentError("");
-    try {
-      const checkout = await createGcashCheckoutFromApi(
-        accessToken,
-        reservation.id,
-        getPaymentIdempotencyKey(reservation.id, { renew: reservation.payment?.canRetry === true })
-      );
-      if (!rememberPaymentCheckout(checkout.payment, checkout.checkoutUrl)) {
-        throw new Error("WESCOMM blocked an invalid payment destination. Please try again.");
-      }
-      openTrustedPaymongoCheckout(checkout.checkoutUrl);
-    } catch (error) {
-      setPaymentError(userFacingErrorMessage(error, "Unable to continue this payment."));
-    } finally {
-      setOpeningPayment(false);
-    }
-  };
 
   const cancelReservation = async () => {
     if (!accessToken || !canSelfCancel) return;
@@ -605,6 +710,8 @@ function ReservationDetails({
         <p className="p-5 text-sm font-semibold text-[#68746d]">Reservation item details are unavailable.</p>
       )}
 
+      <ReservationProgress status={reservation.status} />
+
       <section className="mx-4 mb-4 mt-4 rounded-xl border border-[#cfe2d1] bg-[#edf7ee] p-4 sm:mx-5 sm:mb-5 sm:mt-5">
         <div className="flex items-start gap-3">
           <span className="grid size-11 shrink-0 place-items-center rounded-lg border border-[#dce6dc] bg-white text-primary">
@@ -648,14 +755,14 @@ function ReservationDetails({
       </section>
 
       {isOnlineGcash ? (
-        <section className="mx-4 mb-4 rounded-lg border border-[#d8e5d9] bg-[#fbfdfb] p-4 sm:mx-5 sm:mb-5" aria-label="Online payment status">
+        <section className="mx-4 mb-4 rounded-lg border border-[#d8e5d9] bg-[#fbfdfb] p-4 sm:mx-5 sm:mb-5" aria-label="Historical online payment status">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <p className="text-xs font-extrabold uppercase text-primary">PayMongo GCash</p>
+              <p className="text-xs font-extrabold uppercase text-primary">PayMongo GCash (historical)</p>
               <p className="mt-1 text-sm font-bold text-[#17211b]">
                 {reservation.payment?.status === "PAID"
                   ? "Payment confirmed by the secure server record"
-                  : "Payment is separate from the reservation status"}
+                  : "Online payments are closed. Staff is processing this historical record; follow the cash location shown by the reservation after conversion."}
               </p>
             </div>
             <StatusBadge status={paymentStatusDisplay(reservation.payment?.status)} />
@@ -664,19 +771,6 @@ function ReservationDetails({
             <p className="mt-3 break-all text-xs text-[#657169]">
               Payment reference: <strong>{reservation.payment.providerReference}</strong>
             </p>
-          ) : null}
-          {paymentError ? (
-            <p ref={paymentErrorRef} tabIndex={-1} role="alert" className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">
-              {paymentError}
-            </p>
-          ) : null}
-          {canContinuePayment ? (
-            <Button className="mt-3 min-h-11" onClick={() => void continuePayment()} disabled={openingPayment} aria-busy={openingPayment}>
-              <AssetIcon src="/assets/e-wallet.svg" className="size-5" />
-              {openingPayment
-                ? "Opening GCash..."
-                : reservation.payment?.canRetry ? "Try GCash Again" : "Continue GCash Payment"}
-            </Button>
           ) : null}
         </section>
       ) : null}
@@ -804,6 +898,44 @@ export function StudentReservationsExperience() {
   const accountId = user?.id ?? "";
   const cacheKey = reservationCacheKey(accountId);
   const reservationPage = useServerState<CursorPage<BackendReservation>>(cacheKey);
+  const { overview, reload: reloadOverview } = useStudentOverview();
+  const [serverFilter, setServerFilter] = useState<{
+    filter: ReservationFilter;
+    items: BackendReservation[];
+    nextCursor: string | null;
+    loading: boolean;
+    error: string;
+  } | null>(null);
+  // Only the first page is cached. When older pages exist, ask the server for the status
+  // so a filter never hides matching reservations that simply haven't been loaded yet.
+  const needsServerFilter = activeFilter !== "All" && Boolean(reservationPage?.nextCursor);
+
+  const loadFilteredPage = useCallback(async (filter: ReservationFilter, cursor?: string) => {
+    if (filter === "All" || !user?.accessToken) return;
+    setServerFilter((current) => current?.filter === filter
+      ? { ...current, loading: true, error: "" }
+      : { filter, items: [], nextCursor: null, loading: true, error: "" });
+    try {
+      const page = await getReservationPageFromApi(user.accessToken, { limit: 20, cursor, status: FILTER_STATUS[filter] });
+      setServerFilter((current) => current?.filter !== filter ? current : {
+        filter,
+        items: cursor ? [...current.items, ...page.items] : page.items,
+        nextCursor: page.nextCursor,
+        loading: false,
+        error: ""
+      });
+    } catch (filterError) {
+      setServerFilter((current) => current?.filter !== filter ? current : {
+        ...current,
+        loading: false,
+        error: userFacingErrorMessage(filterError, "Unable to load these reservations.")
+      });
+    }
+  }, [user?.accessToken]);
+
+  useEffect(() => {
+    if (needsServerFilter) void loadFilteredPage(activeFilter);
+  }, [activeFilter, loadFilteredPage, needsServerFilter]);
 
   const loadReservations = useCallback(async ({
     background = false,
@@ -840,6 +972,7 @@ export function StudentReservationsExperience() {
   }, [accountId, authReady, cacheKey, user?.accessToken]);
 
   useRealtimeRefresh(["reservations"], (update) => {
+    if (needsServerFilter) void loadFilteredPage(activeFilter);
     if (!user?.accessToken || !update.entityId) {
       void loadReservations({ background: true });
       return;
@@ -893,15 +1026,27 @@ export function StudentReservationsExperience() {
     return () => window.cancelAnimationFrame(frame);
   }, [ready, reservations]);
 
+  const serverFilteredReservations = useMemo(
+    () => needsServerFilter && serverFilter?.filter === activeFilter ? mapBackendReservations(serverFilter.items) : null,
+    [activeFilter, needsServerFilter, serverFilter]
+  );
   const filteredReservations = useMemo(
     () => activeFilter === "All"
       ? reservations
-      : reservations.filter((reservation) => reservation.status === activeFilter),
-    [activeFilter, reservations]
+      : (serverFilteredReservations ?? reservations).filter((reservation) => reservation.status === activeFilter),
+    [activeFilter, reservations, serverFilteredReservations]
   );
+  const filterLoading = needsServerFilter && (serverFilter?.filter !== activeFilter || (serverFilter.loading && !serverFilter.items.length));
+  const listNextCursor = needsServerFilter ? serverFilter?.nextCursor ?? null : reservationPage?.nextCursor ?? null;
+  const totalReservations = overview?.reservations.total ?? reservations.length;
+  const filterCount = (filter: ReservationFilter) => overview
+    ? filter === "All" ? overview.reservations.total : overview.reservations[FILTER_STATUS[filter]]
+    : null;
 
   const selectedReservation = selectedReservationId
-    ? reservations.find((reservation) => reservation.id === selectedReservationId) ?? null
+    ? reservations.find((reservation) => reservation.id === selectedReservationId)
+      ?? serverFilteredReservations?.find((reservation) => reservation.id === selectedReservationId)
+      ?? null
     : null;
 
   const openReservationDetails = useCallback((reservationId: string, trigger: HTMLButtonElement) => {
@@ -915,16 +1060,18 @@ export function StudentReservationsExperience() {
     const mappedReservation = mapBackendReservations([updatedReservation])[0];
     if (!mappedReservation) return;
     upsertCursorItem(cacheKey, updatedReservation);
-  }, [cacheKey]);
+    setServerFilter((current) => current ? { ...current, items: current.items.map((item) => item.id === updatedReservation.id ? updatedReservation : item) } : current);
+    void reloadOverview();
+  }, [cacheKey, reloadOverview]);
 
   return (
     <>
       <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="text-sm font-semibold uppercase text-primary">Reservations</p>
-          <h1 className="mt-1 text-2xl font-semibold sm:text-3xl">My item reservations</h1>
-          <p className="mt-2 text-sm text-[#657169]">Track confirmation status and see exactly when each item is ready for pickup.</p>
+          <p className="text-xs font-extrabold uppercase tracking-[0.14em] text-primary">Reservations</p>
+          <h1 className="mt-1 text-2xl font-extrabold tracking-tight text-foreground sm:text-3xl">My item reservations</h1>
+          <p className="mt-2 text-sm text-muted-foreground">Track confirmation status and see exactly when each item is ready for pickup.</p>
         </div>
         <Link href="/student/shop">
           <Button className="h-11 w-full sm:w-auto">
@@ -935,7 +1082,9 @@ export function StudentReservationsExperience() {
       </div>
 
       {!authReady || !ready ? (
-        <div className="h-64 animate-pulse rounded-lg border border-[#e0e7e1] bg-white" />
+        <div className="grid gap-5 xl:grid-cols-2" role="status" aria-label="Loading your reservations">
+          {Array.from({ length: 2 }, (_, index) => <div key={index} className="h-80 animate-pulse rounded-2xl border bg-card motion-reduce:animate-none" />)}
+        </div>
       ) : !user?.accessToken ? (
         <section className="rounded-lg border border-[#dce5dd] bg-white p-4 shadow-sm">
           <p className="text-sm leading-6 text-[#657169]">Log in with your Wesleyan account to view live reservation status from the commissary.</p>
@@ -943,22 +1092,25 @@ export function StudentReservationsExperience() {
         </section>
       ) : reservations.length ? (
         <>
-          {error ? <p className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p> : null}
-          <section className="rounded-lg border border-[#cfe0d0] bg-[#f3f9f3] p-4">
+          {error ? <InlineAlert>{error}</InlineAlert> : null}
+          <section className="rounded-xl border border-primary/20 bg-primary/5 p-4">
             <div className="flex items-start gap-3">
-              <CalendarDays className="mt-0.5 size-6 shrink-0 text-primary" />
+              <CalendarDays className="mt-0.5 size-6 shrink-0 text-primary" aria-hidden="true" />
               <div>
-                <p className="font-bold text-[#203027]">Pickup information</p>
-                <p className="mt-1 text-sm leading-6 text-[#5f6d64]">
+                <p className="font-bold text-foreground">Pickup information</p>
+                <p className="mt-1 text-sm leading-6 text-muted-foreground">
                   Wait for staff confirmation before visiting the commissary. Ready reservations will show their approved pickup schedule.
                 </p>
+                {overview?.pickupGuidance ? (
+                  <p className="mt-2 text-sm leading-6 text-foreground"><span className="font-bold text-primary">When you pick up: </span>{overview.pickupGuidance}</p>
+                ) : null}
               </div>
             </div>
           </section>
 
           <section aria-labelledby="reservation-list-heading" className="space-y-4">
             <h2 id="reservation-list-heading" className="sr-only">Your reservations</h2>
-            <div className="rounded-lg border border-[#dce5dd] bg-white p-2 shadow-sm sm:p-3">
+            <div className="rounded-xl border bg-card p-2 shadow-soft sm:p-3">
               <div
                 role="group"
                 aria-label="Filter reservations by status"
@@ -966,6 +1118,7 @@ export function StudentReservationsExperience() {
               >
                 {reservationFilters.map((filter) => {
                   const selected = filter === activeFilter;
+                  const count = filterCount(filter);
 
                   return (
                     <button
@@ -973,37 +1126,55 @@ export function StudentReservationsExperience() {
                       type="button"
                       aria-pressed={selected}
                       onClick={() => setActiveFilter(filter)}
-                      className={`min-h-10 shrink-0 rounded-md px-4 text-sm font-bold transition focus:outline-none focus:ring-2 focus:ring-primary/30 ${
+                      className={cn(
+                        "inline-flex min-h-10 shrink-0 items-center gap-1.5 rounded-lg px-4 text-sm font-bold transition focus:outline-none focus:ring-2 focus:ring-primary/30",
                         selected
-                          ? "bg-primary text-white shadow-[0_6px_14px_rgba(0,91,43,0.18)]"
-                          : "border border-[#d6e2d7] bg-white text-[#506057] hover:border-[#a9c6ac] hover:bg-[#f3f8f3]"
-                      }`}
+                          ? "bg-primary text-primary-foreground shadow-soft"
+                          : "border bg-card text-muted-foreground hover:border-primary/40 hover:bg-primary/5 hover:text-primary"
+                      )}
                     >
                       {filter}
+                      {count !== null ? (
+                        <span
+                          aria-hidden="true"
+                          className={cn(
+                            "min-w-5 rounded-full px-1.5 text-center text-[11px] font-extrabold tabular-nums",
+                            selected ? "bg-primary-foreground/20 text-primary-foreground" : count ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"
+                          )}
+                        >
+                          {count}
+                        </span>
+                      ) : null}
                     </button>
                   );
                 })}
               </div>
             </div>
 
-            <p aria-live="polite" className="text-sm font-semibold text-[#657169]">
-              Showing {filteredReservations.length} of {reservations.length} reservation{reservations.length === 1 ? "" : "s"}
+            <p aria-live="polite" className="text-sm font-semibold text-muted-foreground">
+              Showing {filteredReservations.length} of {totalReservations} reservation{totalReservations === 1 ? "" : "s"}
             </p>
+            {needsServerFilter && serverFilter?.error ? <InlineAlert>{serverFilter.error}</InlineAlert> : null}
 
-            {filteredReservations.length ? (
+            {filterLoading ? (
+              <div className="grid gap-5 xl:grid-cols-2" role="status" aria-label={`Loading ${activeFilter.toLowerCase()} reservations`}>
+                {Array.from({ length: 2 }, (_, index) => <div key={index} className="h-72 animate-pulse rounded-2xl border bg-card motion-reduce:animate-none" />)}
+              </div>
+            ) : filteredReservations.length ? (
               <div className="grid gap-5 xl:grid-cols-2">
                 {filteredReservations.map((reservation) => (
                   <ReservationPreviewCard
                     key={reservation.id}
                     reservation={reservation}
+                    pickupGuidance={overview?.pickupGuidance ?? null}
                     onOpen={(trigger) => openReservationDetails(reservation.id, trigger)}
                   />
                 ))}
               </div>
             ) : (
-              <div className="flex min-h-48 flex-col items-center justify-center rounded-lg border border-dashed border-[#cbd9cd] bg-white px-6 text-center">
-                <h3 className="text-lg font-extrabold text-[#17211b]">No {activeFilter.toLowerCase()} reservations</h3>
-                <p className="mt-2 max-w-md text-sm leading-6 text-[#657169]">
+              <div className="flex min-h-48 flex-col items-center justify-center rounded-xl border border-dashed border-border-strong bg-card px-6 text-center">
+                <h3 className="text-lg font-extrabold text-foreground">No {activeFilter.toLowerCase()} reservations</h3>
+                <p className="mt-2 max-w-md text-sm leading-6 text-muted-foreground">
                   None of your reservations currently match this status. Choose another filter to see more.
                 </p>
                 <Button type="button" variant="secondary" className="mt-4" onClick={() => setActiveFilter("All")}>
@@ -1011,15 +1182,17 @@ export function StudentReservationsExperience() {
                 </Button>
               </div>
             )}
-            {reservationPage?.nextCursor ? (
+            {listNextCursor && !filterLoading ? (
               <div className="flex justify-center pt-2">
                 <Button
                   type="button"
                   variant="secondary"
-                  disabled={loadingMore}
-                  onClick={() => void loadReservations({ cursor: reservationPage.nextCursor ?? undefined })}
+                  disabled={needsServerFilter ? serverFilter?.loading : loadingMore}
+                  onClick={() => needsServerFilter
+                    ? void loadFilteredPage(activeFilter, listNextCursor)
+                    : void loadReservations({ cursor: listNextCursor })}
                 >
-                  {loadingMore ? "Loading more..." : "Load more reservations"}
+                  {(needsServerFilter ? serverFilter?.loading : loadingMore) ? "Loading more..." : "Load more reservations"}
                 </Button>
               </div>
             ) : null}
@@ -1027,13 +1200,13 @@ export function StudentReservationsExperience() {
         </>
       ) : (
         <>
-          {error ? <p className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p> : null}
-          <section className="flex min-h-72 flex-col items-center justify-center rounded-lg border border-[#dce5dd] bg-white px-6 text-center shadow-sm">
-            <span className="grid size-14 place-items-center rounded-full bg-[#e8f4e8] text-primary">
+          {error ? <InlineAlert>{error}</InlineAlert> : null}
+          <section className="flex min-h-72 flex-col items-center justify-center rounded-xl border bg-card px-6 text-center shadow-soft">
+            <span className="grid size-14 place-items-center rounded-full bg-primary/10 text-primary">
               <AssetIcon src="/assets/my-reservations.svg" className="size-10" />
             </span>
-            <h2 className="mt-4 text-xl font-extrabold text-[#17211b]">No reservations yet</h2>
-            <p className="mt-2 max-w-md text-sm leading-6 text-[#657169]">
+            <h2 className="mt-4 text-xl font-extrabold text-foreground">No reservations yet</h2>
+            <p className="mt-2 max-w-md text-sm leading-6 text-muted-foreground">
               Browse available campus essentials and use Reserve Now to choose your item details and pickup schedule.
             </p>
             <Link href="/student/shop" className="mt-5">

@@ -4,12 +4,18 @@ import { userFacingErrorMessage } from "@/lib/user-facing-error";
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ArrowRight, ChevronDown, Megaphone, RefreshCw } from "lucide-react";
+import { ArrowRight, CalendarClock, CheckCircle2, PackagePlus, RefreshCw, ShoppingBag, UserSearch } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import { useRealtimeRefresh } from "@/components/realtime/RealtimeProvider";
 import { SiteFooterLinks } from "@/components/layout/SiteFooterLinks";
 import { AssetIcon } from "@/components/ui/AssetIcon";
 import { Button } from "@/components/ui/button";
+import { FeedbackState } from "@/components/ui/FeedbackState";
+import { InlineAlert } from "@/components/ui/InlineAlert";
+import { MetricCard } from "@/components/ui/MetricCard";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { Panel } from "@/components/ui/Panel";
+import { MetricSkeletonGrid } from "@/components/ui/Skeleton";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import {
   getStaffDashboardSummaryFromApi,
@@ -216,108 +222,23 @@ function useStaffDashboardData() {
   };
 }
 
-function SectionHeader({
-  title,
-  iconSrc,
-  href,
-  action
-}: {
-  title: string;
-  iconSrc: string;
-  href: string;
-  action: string;
-}) {
+function PanelLink({ href, children }: { href: string; children: ReactNode }) {
   return (
-    <div className="flex min-h-14 items-center gap-3 border-b border-[#e5ebe6] px-4 sm:px-5">
-      <AssetIcon src={iconSrc} className="size-7" />
-      <h2 className="font-extrabold text-[#17211b]">{title}</h2>
-      <Link href={href} className="ml-auto flex items-center gap-2 text-sm font-bold text-primary">
-        {action}
-        <ArrowRight className="size-4" />
-      </Link>
-    </div>
-  );
-}
-
-function DashboardStat({
-  title,
-  value,
-  detail,
-  href,
-  action,
-  iconSrc,
-  warning = false
-}: {
-  title: string;
-  value: string;
-  detail: string;
-  href: string;
-  action: string;
-  iconSrc: string;
-  warning?: boolean;
-}) {
-  return (
-    <article className="rounded-lg border border-[#dce5dd] bg-white p-5 shadow-sm">
-      <div className="flex items-start gap-4">
-        <span className={warning ? "grid size-16 shrink-0 place-items-center rounded-full bg-[#fff2d4]" : "grid size-16 shrink-0 place-items-center rounded-full bg-[#eaf4ea]"}>
-          <AssetIcon src={iconSrc} className="size-11" />
-        </span>
-        <div className="min-w-0">
-          <p className="text-sm font-bold text-[#26322b]">{title}</p>
-          <p className={warning ? "mt-1 text-3xl font-extrabold text-[#f0a400]" : "mt-1 text-3xl font-extrabold text-primary"}>{value}</p>
-          <p className="mt-1 text-xs leading-5 text-[#68746d]">{detail}</p>
-          <Link href={href} className="mt-4 flex items-center gap-2 text-sm font-bold text-primary">
-            {action}
-            <ArrowRight className="size-4" />
-          </Link>
-        </div>
-      </div>
-    </article>
-  );
-}
-
-function CollapsibleHeader({
-  title,
-  summary,
-  iconSrc
-}: {
-  title: string;
-  summary: string;
-  iconSrc: string;
-}) {
-  return (
-    <summary className="flex min-h-[72px] cursor-pointer list-none items-center gap-3 px-4 py-3 marker:content-none sm:px-5">
-      <span className="grid size-11 shrink-0 place-items-center rounded-md bg-[#eef6ee]">
-        <AssetIcon src={iconSrc} className="size-8" />
-      </span>
-      <span className="min-w-0">
-        <span className="block font-extrabold text-[#17211b]">{title}</span>
-        <span className="mt-0.5 block text-xs text-[#68746d]">{summary}</span>
-      </span>
-      <ChevronDown className="ml-auto size-5 shrink-0 text-primary transition-transform group-open:rotate-180" />
-    </summary>
+    <Link href={href} className="flex min-h-11 items-center justify-between px-4 text-sm font-bold text-primary transition-colors hover:bg-surface-subtle sm:px-5">
+      {children}
+      <ArrowRight className="size-4" aria-hidden="true" />
+    </Link>
   );
 }
 
 function EmptyPanel({ children }: { children: ReactNode }) {
-  return <div className="p-5 text-sm font-semibold text-[#68746d]">{children}</div>;
-}
-
-function StaffDashboardLoading() {
   return (
-    <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4" role="status" aria-live="polite">
-      <span className="sr-only">Loading live staff dashboard data.</span>
-      {Array.from({ length: 4 }).map((_, index) => (
-        <div key={index} className="rounded-lg border border-[#dce5dd] bg-white p-5 shadow-sm" aria-hidden="true">
-          <div className="animate-pulse space-y-3 motion-reduce:animate-none">
-            <div className="size-12 rounded-full bg-[#e7f0e7]" />
-            <div className="h-3 w-28 rounded-full bg-[#e4ece4]" />
-            <div className="h-8 w-20 rounded-md bg-[#d8e6d9]" />
-            <div className="h-2.5 w-36 max-w-full rounded-full bg-[#edf3ed]" />
-          </div>
-        </div>
-      ))}
-    </section>
+    <div className="flex flex-col items-center gap-2 px-5 py-8 text-center">
+      <span className="grid size-10 place-items-center rounded-full bg-success/10 text-success">
+        <CheckCircle2 className="size-5" aria-hidden="true" />
+      </span>
+      <p className="text-sm font-semibold text-muted-foreground">{children}</p>
+    </div>
   );
 }
 
@@ -335,25 +256,33 @@ function StaffAccessState({
   openAuth: () => void;
 }) {
   if (!ready || (loading && !hasCredential)) {
-    return <StaffDashboardLoading />;
+    return <MetricSkeletonGrid label="Loading live staff dashboard data." />;
   }
 
   if (user?.role === "STUDENT") {
-    return <div className="rounded-lg border border-red-200 bg-red-50 p-6 text-sm font-semibold text-red-700">This page is restricted to staff and admin accounts.</div>;
+    return <InlineAlert>This page is restricted to staff and admin accounts.</InlineAlert>;
   }
 
   if (!hasCredential) {
     return (
-      <section className="rounded-lg border border-[#dce5dd] bg-white p-6 shadow-sm">
-        <p className="font-extrabold text-[#17211b]">Staff sign in required</p>
-        <p className="mt-2 text-sm text-[#68746d]">Use a staff or admin Wesleyan account to load live commissary data.</p>
-        <Button className="mt-5" onClick={openAuth}>Sign in</Button>
-      </section>
+      <FeedbackState
+        kind="empty"
+        title="Staff sign in required"
+        description="Use a staff or admin Wesleyan account to load live commissary data."
+        action={<Button onClick={openAuth}>Sign in</Button>}
+      />
     );
   }
 
   return null;
 }
+
+const quickActions = [
+  { href: "/staff/walk-in-sales", label: "Record walk-in sale", icon: ShoppingBag },
+  { href: "/staff/inventory", label: "Update stock", icon: PackagePlus },
+  { href: "/staff/pickup-schedule", label: "Pickup schedule", icon: CalendarClock },
+  { href: "/staff/students", label: "Look up a student", icon: UserSearch }
+];
 
 export function StaffDashboard() {
   const { user, ready, openAuth, data, loading, initialLoadComplete, error, hasCredential, hasSuccessfulLoad, lastUpdatedAt, reload } = useStaffDashboardData();
@@ -388,228 +317,267 @@ export function StaffDashboard() {
   const totalProducts = data.metrics.totalProducts;
   const itemsToRestock = data.metrics.itemsToRestock;
   const staffName = user?.fullName?.split(" ")[0] || getStoredStaffSession().email || "Staff";
-
-  const operationalNotices = useMemo(() => {
-    const notices: Array<{ title: string; detail: string; tone: "yellow" | "green" }> = [];
-
-    if (itemsToRestock) {
-      notices.push({
-        title: "Restock attention needed",
-        detail: `${formatNumber(itemsToRestock)} item${itemsToRestock === 1 ? "" : "s"} reached the restock alert count.`,
-        tone: "yellow"
-      });
-    }
-
-    if (data.metrics.pendingReservations) {
-      notices.push({
-        title: "Reservation queue active",
-        detail: `${formatNumber(data.metrics.pendingReservations)} reservation${data.metrics.pendingReservations === 1 ? "" : "s"} awaiting staff review.`,
-        tone: "green"
-      });
-    }
-
-    if (data.metrics.receiptsToVerify) {
-      notices.push({
-        title: "Receipt verification queue",
-        detail: `${formatNumber(data.metrics.receiptsToVerify)} receipt${data.metrics.receiptsToVerify === 1 ? "" : "s"} waiting for verification.`,
-        tone: "green"
-      });
-    }
-
-    if (data.metrics.openConversations) {
-      notices.push({
-        title: "Student support messages",
-        detail: `${formatNumber(data.metrics.openConversations)} open conversation${data.metrics.openConversations === 1 ? "" : "s"} need a reply or follow-up.`,
-        tone: "green"
-      });
-    }
-
-    if (error || !hasSuccessfulLoad) {
-      return [{ title: "Unable to verify operations", detail: "Live operational data could not be loaded. Retry before acting on queue status.", tone: "yellow" as const }];
-    }
-    return notices.length
-      ? notices
-      : [{ title: "Operations are clear", detail: "No urgent stock, reservation, receipt, or message alerts right now.", tone: "green" as const }];
-  }, [data.metrics.openConversations, data.metrics.pendingReservations, data.metrics.receiptsToVerify, error, hasSuccessfulLoad, itemsToRestock]);
+  const verified = !error && hasSuccessfulLoad;
+  const allClear = verified
+    && !itemsToRestock
+    && !data.metrics.pendingReservations
+    && !data.metrics.receiptsToVerify
+    && !data.metrics.openConversations;
 
   if (!ready || !hasCredential || user?.role === "STUDENT") return accessState;
 
+  const header = (
+    <PageHeader
+      eyebrow="Staff dashboard"
+      title={`Welcome back, ${staffName}`}
+      description={initialLoadComplete
+        ? "Here is what needs attention in the commissary right now."
+        : `Preparing live commissary data for ${staffName}.`}
+      meta={initialLoadComplete ? (
+        <span className="inline-flex items-center gap-2">
+          <span className={verified ? "size-2 rounded-full bg-success" : "size-2 rounded-full bg-warning"} aria-hidden="true" />
+          {lastUpdatedAt
+            ? `Updated ${lastUpdatedAt.toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit", timeZone: "Asia/Manila" })}`
+            : "Live data is not yet verified."}
+        </span>
+      ) : undefined}
+      action={initialLoadComplete ? (
+        <Button variant="secondary" onClick={() => void reload()} disabled={loading}>
+          <RefreshCw className={loading ? "size-4 animate-spin motion-reduce:animate-none" : "size-4"} aria-hidden="true" />
+          {loading ? "Refreshing..." : "Refresh"}
+        </Button>
+      ) : undefined}
+    />
+  );
+
   if (!initialLoadComplete) {
     return (
-      <div className="space-y-5">
-        <header>
-          <h1 className="text-3xl font-extrabold text-[#111a15] sm:text-4xl">Dashboard</h1>
-          <p className="mt-2 text-sm text-[#606c64] sm:text-base">Preparing live commissary data for {staffName}.</p>
-        </header>
-        <StaffDashboardLoading />
+      <div className="space-y-6">
+        {header}
+        <MetricSkeletonGrid label="Loading live staff dashboard data." />
       </div>
     );
   }
 
   return (
-    <div className="space-y-5">
-      <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 className="text-3xl font-extrabold text-[#111a15] sm:text-4xl">Dashboard</h1>
-          <p className="mt-2 text-sm text-[#606c64] sm:text-base">Welcome back, {staffName}. {lastUpdatedAt ? `Updated ${lastUpdatedAt.toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit", timeZone: "Asia/Manila" })}.` : "Live data is not yet verified."}</p>
-        </div>
-        <Button variant="secondary" onClick={() => void reload()} disabled={loading}>
-          <RefreshCw className="size-4" />
-          Refresh
-        </Button>
-      </header>
+    <div className="space-y-6">
+      {header}
 
-      {error ? <p className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p> : null}
-      <section className="overflow-hidden rounded-lg border border-[#d8e4d9] bg-white shadow-sm">
-        <div className="flex items-center gap-3 border-b border-[#e5ebe6] bg-[#f3f8f3] px-4 py-3 sm:px-5">
-          <span className="grid size-10 shrink-0 place-items-center rounded-md bg-white text-primary shadow-sm">
-            <Megaphone className="size-5" />
-          </span>
-          <div>
-            <h2 className="font-extrabold text-[#17211b]">Operational Notices</h2>
-            <p className="text-xs text-[#68746d]">Generated from live stock, reservation, receipt, and support data.</p>
-          </div>
-        </div>
-        <div className="grid divide-y divide-[#e8ede9] md:grid-cols-2 md:divide-x md:divide-y-0">
-          {operationalNotices.map((notice) => (
-            <article key={notice.title} className="px-4 py-4 sm:px-5">
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                <span className={notice.tone === "yellow" ? "size-2 rounded-full bg-[#f5b000]" : "size-2 rounded-full bg-primary"} />
-                <h3 className="font-extrabold text-primary">{notice.title}</h3>
-                <span className="text-xs text-[#69746e] md:ml-auto">Live now</span>
-              </div>
-              <p className="mt-2 pl-5 text-sm leading-6 text-[#56625a]">{notice.detail}</p>
-            </article>
-          ))}
+      {error ? (
+        <InlineAlert action={<Button size="sm" variant="secondary" onClick={() => void reload()} disabled={loading}>Retry</Button>}>
+          {error}
+        </InlineAlert>
+      ) : null}
+      {!verified ? (
+        <InlineAlert tone="warning" title="Unable to verify operations">
+          Live operational data could not be loaded. Retry before acting on queue status.
+        </InlineAlert>
+      ) : allClear ? (
+        <InlineAlert tone="success" title="Operations are clear">
+          No urgent stock, reservation, receipt, or message alerts right now.
+        </InlineAlert>
+      ) : null}
+
+      <section aria-labelledby="staff-priorities-heading" className="space-y-3">
+        <h2 id="staff-priorities-heading" className="text-sm font-extrabold uppercase tracking-[0.12em] text-muted-foreground">Needs attention</h2>
+        <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
+          <MetricCard
+            label="Pending reservations"
+            value={formatNumber(data.metrics.pendingReservations)}
+            detail={data.metrics.pendingReservations ? "Awaiting staff review" : "Nothing waiting for review"}
+            href="/staff/reservations"
+            actionLabel="Review reservations"
+            iconSrc="/assets/pending.svg"
+            tone={data.metrics.pendingReservations ? "attention" : "default"}
+          />
+          <MetricCard
+            label="Receipts to verify"
+            value={formatNumber(data.metrics.receiptsToVerify)}
+            detail={data.metrics.receiptsToVerify ? "Pending verification" : "Verification queue is empty"}
+            href="/staff/receipt-verification"
+            actionLabel="Verify receipts"
+            iconSrc="/assets/scan-receipt.svg"
+            tone={data.metrics.receiptsToVerify ? "attention" : "default"}
+          />
+          <MetricCard
+            label="Items to restock"
+            value={formatNumber(itemsToRestock)}
+            detail="Reached the restock alert count"
+            href="/staff/inventory?status=needs-restock"
+            actionLabel="Open restock list"
+            iconSrc="/assets/low-stock.svg"
+            tone={itemsToRestock ? "critical" : "default"}
+          />
+          <MetricCard
+            label="Open conversations"
+            value={formatNumber(data.metrics.openConversations)}
+            detail={data.metrics.openConversations ? "Need a reply or follow-up" : "No student is waiting"}
+            href="/staff/messages"
+            actionLabel="Open messages"
+            iconSrc="/assets/messages.svg"
+            tone={data.metrics.openConversations ? "attention" : "default"}
+          />
         </div>
       </section>
 
-      <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <DashboardStat title="Total Products" value={formatNumber(totalProducts)} detail="Active products in inventory" href="/staff/inventory" action="View Inventory" iconSrc="/assets/all-items.svg" />
-        <DashboardStat title="Items to Restock" value={formatNumber(itemsToRestock)} detail="Reached the restock alert count" href="/staff/inventory?status=needs-restock" action="Review Restock List" iconSrc="/assets/low-stock.svg" warning={itemsToRestock > 0} />
-        <DashboardStat title="Pending Reservations" value={formatNumber(data.metrics.pendingReservations)} detail="Awaiting staff review" href="/staff/reservations" action="View Reservations" iconSrc="/assets/pending.svg" />
-        <DashboardStat title="Receipts to Verify" value={formatNumber(data.metrics.receiptsToVerify)} detail="Pending verification" href="/staff/receipt-verification" action="Verify Receipts" iconSrc="/assets/scan-receipt.svg" />
-      </section>
-
-      <section className="overflow-hidden rounded-lg border border-[#dce5dd] bg-white shadow-sm">
-        <SectionHeader title="Inventory Overview" iconSrc="/assets/all-items.svg" href="/staff/inventory" action="Open Inventory" />
-        {inventoryRows.length ? (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[640px] text-left text-sm">
-              <thead className="bg-[#f8faf8] text-xs text-[#59655d]">
-                <tr>
-                  <th className="px-4 py-3 font-bold">Product</th>
-                  <th className="px-4 py-3 font-bold">Category</th>
-                  <th className="px-4 py-3 font-bold">Current Stock</th>
-                  <th className="px-4 py-3 font-bold">Restock Alert At</th>
-                  <th className="px-4 py-3 font-bold">Stock Status</th>
-                  <th className="px-4 py-3 font-bold">Unit</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[#e8ede9]">
-                {inventoryRows.map((row) => (
-                  <tr key={row.id}>
-                    <td className="px-4 py-3 font-semibold">
-                      <Link href={`/staff/inventory?productId=${encodeURIComponent(row.id)}`} className="text-primary hover:underline">
-                        {row.name}
-                      </Link>
-                    </td>
-                    <td className="px-4 py-3 text-[#58645d]">{categoryName(row)}</td>
-                    <td className="px-4 py-3">{formatNumber(row.stock)}</td>
-                    <td className="px-4 py-3">{formatNumber(row.lowStockThreshold)}</td>
-                    <td className="px-4 py-3"><div className="flex flex-wrap gap-1"><StatusBadge status={stockStatus(row)} />{row.isOnSale ? <StatusBadge status="On Sale" /> : null}</div></td>
-                    <td className="px-4 py-3 text-[#58645d]">pcs</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <EmptyPanel>No active products are available yet.</EmptyPanel>
-        )}
-      </section>
+      <nav aria-label="Quick actions" className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+        {quickActions.map((action) => (
+          <Link
+            key={action.href}
+            href={action.href}
+            className="flex min-h-12 items-center gap-3 rounded-xl border bg-card px-3 py-2 text-sm sm:px-4 font-bold text-foreground shadow-soft transition hover:border-primary/40 hover:text-primary"
+          >
+            <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary">
+              <action.icon className="size-4" aria-hidden="true" />
+            </span>
+            <span className="min-w-0 leading-tight">{action.label}</span>
+          </Link>
+        ))}
+      </nav>
 
       <div className="grid items-start gap-4 xl:grid-cols-3">
-        <details className="group overflow-hidden rounded-lg border border-[#dce5dd] bg-white shadow-sm">
-          <CollapsibleHeader title="Restock Alerts" summary={`${formatNumber(itemsToRestock)} item${itemsToRestock === 1 ? "" : "s"} need attention`} iconSrc="/assets/low-stock.svg" />
-          <div className="border-t border-[#e5ebe6]">
-            {restockProducts.length ? (
-              <div className="divide-y divide-[#e8ede9]">
-                {restockProducts.slice(0, 5).map((row) => (
-                  <Link href={`/staff/inventory?productId=${encodeURIComponent(row.id)}`} key={row.id} className="grid grid-cols-[1fr_auto_auto] items-center gap-3 px-4 py-3 text-sm hover:bg-[#f4f8f4]">
-                    <p className="min-w-0 truncate font-semibold">{row.name}</p>
-                    <p className="text-right text-xs font-bold text-red-600">
-                      {formatNumber(row.stock)} pcs left
-                      <span className="block text-[#8a6a20]">Alert at {formatNumber(row.lowStockThreshold)}</span>
-                    </p>
-                    <div className="flex flex-wrap gap-1"><StatusBadge status={stockStatus(row)} />{row.isOnSale ? <StatusBadge status="On Sale" /> : null}</div>
-                  </Link>
-                ))}
-              </div>
-            ) : (
-              <EmptyPanel>No products are currently marked for restock.</EmptyPanel>
-            )}
-            <Link href="/staff/inventory?status=needs-restock" className="flex min-h-12 items-center justify-between border-t border-[#e5ebe6] px-4 text-sm font-bold text-primary">
-              Open restock list <ArrowRight className="size-4" />
-            </Link>
-          </div>
-        </details>
-
-        <details className="group overflow-hidden rounded-lg border border-[#dce5dd] bg-white shadow-sm">
-          <CollapsibleHeader title="Reservation Queue" summary={`${formatNumber(data.metrics.activeReservations)} active reservation${data.metrics.activeReservations === 1 ? "" : "s"}`} iconSrc="/assets/reservations.svg" />
-          <div className="border-t border-[#e5ebe6]">
-            {activeReservations.length ? (
-              <div className="divide-y divide-[#e8ede9]">
-                {activeReservations.slice(0, 5).map((row) => (
-                  <Link href={`/staff/reservations?reservationId=${encodeURIComponent(row.id)}`} key={row.id} className="grid grid-cols-[1fr_auto] gap-2 px-4 py-3 text-sm hover:bg-[#f4f8f4]">
+        <Panel
+          title="Reservation queue"
+          description={`${formatNumber(data.metrics.activeReservations)} active reservation${data.metrics.activeReservations === 1 ? "" : "s"}`}
+          icon={<AssetIcon src="/assets/reservations.svg" className="size-6" />}
+          footer={<PanelLink href="/staff/reservations">Open reservation queue</PanelLink>}
+        >
+          {activeReservations.length ? (
+            <ul className="divide-y">
+              {activeReservations.slice(0, 5).map((row) => (
+                <li key={row.id}>
+                  <Link href={`/staff/reservations?reservationId=${encodeURIComponent(row.id)}`} className="grid grid-cols-[1fr_auto] items-center gap-3 px-4 py-3 text-sm transition-colors hover:bg-surface-subtle sm:px-5">
                     <div className="min-w-0">
-                      <p className="truncate font-semibold">{row.referenceCode}</p>
-                      <p className="mt-1 truncate text-xs text-[#4f5b54]">{studentName(row)} - {formatDate(row.pickupStart ?? row.createdAt)}</p>
+                      <p className="truncate font-bold text-foreground">{row.referenceCode}</p>
+                      <p className="mt-0.5 truncate text-xs text-muted-foreground">{studentName(row)} · {formatDate(row.pickupStart ?? row.createdAt)}</p>
                     </div>
                     <StatusBadge status={reservationStatusLabel(row.status)} />
                   </Link>
-                ))}
-              </div>
-            ) : (
-              <EmptyPanel>No active reservations are waiting in the queue.</EmptyPanel>
-            )}
-            <Link href="/staff/reservations" className="flex min-h-12 items-center justify-between border-t border-[#e5ebe6] px-4 text-sm font-bold text-primary">
-              Open reservation queue <ArrowRight className="size-4" />
-            </Link>
-          </div>
-        </details>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <EmptyPanel>No active reservations are waiting in the queue.</EmptyPanel>
+          )}
+        </Panel>
 
-        <details className="group overflow-hidden rounded-lg border border-[#dce5dd] bg-white shadow-sm">
-          <CollapsibleHeader title="Receipt Verification" summary={`${formatNumber(data.metrics.receiptsToVerify)} receipt${data.metrics.receiptsToVerify === 1 ? "" : "s"} waiting`} iconSrc="/assets/receipts.svg" />
-          <div className="border-t border-[#e5ebe6]">
-            {receiptsToVerify.length ? (
-              <div className="divide-y divide-[#e8ede9]">
-                {receiptsToVerify.slice(0, 5).map((row) => (
-                  <Link href={`/staff/receipt-verification?receiptId=${encodeURIComponent(row.id)}`} key={row.id} className="grid grid-cols-[auto_1fr_auto] items-center gap-3 px-4 py-3 hover:bg-[#f4f8f4]">
-                    <AssetIcon src="/assets/digital-receipts.svg" className="size-8" />
+        <Panel
+          title="Receipt verification"
+          description={`${formatNumber(data.metrics.receiptsToVerify)} receipt${data.metrics.receiptsToVerify === 1 ? "" : "s"} waiting`}
+          icon={<AssetIcon src="/assets/receipts.svg" className="size-6" />}
+          footer={<PanelLink href="/staff/receipt-verification">Open receipt verification</PanelLink>}
+        >
+          {receiptsToVerify.length ? (
+            <ul className="divide-y">
+              {receiptsToVerify.slice(0, 5).map((row) => (
+                <li key={row.id}>
+                  <Link href={`/staff/receipt-verification?receiptId=${encodeURIComponent(row.id)}`} className="grid grid-cols-[1fr_auto] items-center gap-3 px-4 py-3 transition-colors hover:bg-surface-subtle sm:px-5">
                     <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold">Receipt #{row.receiptCode}</p>
-                      <p className="truncate text-xs text-[#69746e]">{formatDateTime(row.issuedAt)}</p>
+                      <p className="truncate text-sm font-bold text-foreground">Receipt #{row.receiptCode}</p>
+                      <p className="mt-0.5 truncate text-xs text-muted-foreground">{formatDateTime(row.issuedAt)}</p>
                     </div>
-                    <p className="text-sm font-extrabold text-primary">{formatCurrency(row.totalAmount)}</p>
+                    <p className="text-sm font-extrabold tabular-nums text-primary">{formatCurrency(row.totalAmount)}</p>
                   </Link>
-                ))}
-              </div>
-            ) : (
-              <EmptyPanel>No receipts are waiting for verification.</EmptyPanel>
-            )}
-            <Link href="/staff/receipt-verification" className="flex min-h-12 items-center justify-between border-t border-[#e5ebe6] px-4 text-sm font-bold text-primary">
-              Open receipt verification <ArrowRight className="size-4" />
-            </Link>
-          </div>
-        </details>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <EmptyPanel>No receipts are waiting for verification.</EmptyPanel>
+          )}
+        </Panel>
+
+        <Panel
+          title="Restock alerts"
+          description={`${formatNumber(itemsToRestock)} item${itemsToRestock === 1 ? "" : "s"} need attention`}
+          icon={<AssetIcon src="/assets/low-stock.svg" className="size-6" />}
+          footer={<PanelLink href="/staff/inventory?status=needs-restock">Open restock list</PanelLink>}
+        >
+          {restockProducts.length ? (
+            <ul className="divide-y">
+              {restockProducts.slice(0, 5).map((row) => (
+                <li key={row.id}>
+                  <Link href={`/staff/inventory?productId=${encodeURIComponent(row.id)}`} className="grid grid-cols-[1fr_auto] items-center gap-3 px-4 py-3 text-sm transition-colors hover:bg-surface-subtle sm:px-5">
+                    <div className="min-w-0">
+                      <p className="truncate font-bold text-foreground">{row.name}</p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">
+                        <span className="font-bold text-danger">{formatNumber(row.stock)} pcs left</span> · Alert at {formatNumber(row.lowStockThreshold)}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap justify-end gap-1"><StatusBadge status={stockStatus(row)} />{row.isOnSale ? <StatusBadge status="On Sale" /> : null}</div>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <EmptyPanel>No products are currently marked for restock.</EmptyPanel>
+          )}
+        </Panel>
       </div>
 
-      <footer className="flex flex-col items-center gap-4 border-t border-[#e2e8e3] py-6 text-center text-xs text-[#68736c] md:flex-row md:justify-between md:text-left">
+      <Panel
+        title="Inventory overview"
+        description={`${formatNumber(totalProducts)} active product${totalProducts === 1 ? "" : "s"} · lowest stock first`}
+        icon={<AssetIcon src="/assets/all-items.svg" className="size-6" />}
+        action={(
+          <Link href="/staff/inventory" className="inline-flex items-center gap-1.5 text-sm font-bold text-primary hover:underline">
+            Open inventory <ArrowRight className="size-4" aria-hidden="true" />
+          </Link>
+        )}
+      >
+        {inventoryRows.length ? (
+          <>
+            <div className="hidden overflow-x-auto md:block">
+              <table className="w-full text-left text-sm">
+                <thead className="bg-surface-subtle text-xs uppercase tracking-wide text-muted-foreground">
+                  <tr>
+                    <th scope="col" className="px-5 py-3 font-bold">Product</th>
+                    <th scope="col" className="px-4 py-3 font-bold">Category</th>
+                    <th scope="col" className="px-4 py-3 text-right font-bold">Current stock</th>
+                    <th scope="col" className="px-4 py-3 text-right font-bold">Restock alert at</th>
+                    <th scope="col" className="px-5 py-3 font-bold">Stock status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {inventoryRows.map((row) => (
+                    <tr key={row.id} className="transition-colors hover:bg-surface-subtle">
+                      <td className="px-5 py-3 font-semibold">
+                        <Link href={`/staff/inventory?productId=${encodeURIComponent(row.id)}`} className="text-primary hover:underline">
+                          {row.name}
+                        </Link>
+                      </td>
+                      <td className="px-4 py-3 text-muted-foreground">{categoryName(row)}</td>
+                      <td className="px-4 py-3 text-right font-bold tabular-nums">{formatNumber(row.stock)} <span className="font-normal text-muted-foreground">pcs</span></td>
+                      <td className="px-4 py-3 text-right tabular-nums">{formatNumber(row.lowStockThreshold)}</td>
+                      <td className="px-5 py-3"><div className="flex flex-wrap gap-1"><StatusBadge status={stockStatus(row)} />{row.isOnSale ? <StatusBadge status="On Sale" /> : null}</div></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <ul className="divide-y md:hidden">
+              {inventoryRows.map((row) => (
+                <li key={row.id}>
+                  <Link href={`/staff/inventory?productId=${encodeURIComponent(row.id)}`} className="grid grid-cols-[1fr_auto] items-center gap-3 px-4 py-3 text-sm hover:bg-surface-subtle">
+                    <div className="min-w-0">
+                      <p className="truncate font-bold text-foreground">{row.name}</p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">{categoryName(row)} · {formatNumber(row.stock)} pcs · alert at {formatNumber(row.lowStockThreshold)}</p>
+                    </div>
+                    <StatusBadge status={stockStatus(row)} />
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </>
+        ) : (
+          <div className="px-5 py-8 text-center text-sm font-semibold text-muted-foreground">No active products are available yet.</div>
+        )}
+      </Panel>
+
+      <footer className="flex flex-col items-center gap-4 border-t pt-6 text-center text-xs text-muted-foreground md:flex-row md:justify-between md:text-left">
         <div className="flex items-center justify-center gap-3 md:justify-start">
           <AssetIcon src="/assets/wescomm-logo-ui.webp" className="h-10 w-24" />
           <div>
-            <p className="font-extrabold text-[#26322b]">Wesleyan University-Philippines</p>
+            <p className="font-extrabold text-foreground">Wesleyan University-Philippines</p>
             <p>Integrated Commissary Management System</p>
           </div>
         </div>

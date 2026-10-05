@@ -5,10 +5,12 @@ const student = {
   id: "86000000-0000-4000-8000-000000000001",
   role: "STUDENT",
   studentNumber: "QA-CHECKOUT-001",
+  departmentId: "86000000-0000-4000-8000-000000000006",
+  onboardingCompletedAt: "2026-08-01T08:00:00.000Z",
   fullName: "Checkout QA Student",
   email: "checkout.qa@wesleyan.edu.ph",
   phone: null,
-  department: null,
+  department: "QA Fixtures",
   address: null,
   avatarUrl: null
 } as const;
@@ -76,6 +78,78 @@ function successfulReservation() {
   };
 }
 
+test("an open pickup picker expires a selected slot when its start time passes", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "The slot-boundary refresh needs one deterministic clock run.");
+  await page.clock.install({ time: new Date("2026-08-03T01:59:58.000Z") });
+  let slotAvailabilityCalls = 0;
+
+  await page.route("**/api/backend/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (path === "/api/backend/auth/me") return json(route, { profile: student });
+    if (path === "/api/backend/restrictions/me") return json(route, { restrictionSummary: { activeRestriction: null, consecutiveOffenses: 0, offenses: [], policy: { firstRestrictionAt: 3 } } });
+    if (path === "/api/backend/notifications") return json(route, { notifications: [] });
+    if (path === "/api/backend/notifications/unread-count") return json(route, { unreadCount: 0 });
+    if (path === "/api/backend/realtime/updates") return json(route, { cursor: "0", hasMore: false, events: [] });
+    if (path === "/api/backend/push/public-key") return json(route, { enabled: false, publicKey: "" });
+    if (path === "/api/backend/wishlist") return json(route, { wishlist: [] });
+    if (path === "/api/backend/products") return json(route, { products: [{ id: productId, name: "Checkout QA Notebook", description: "Slot expiry test item", imageUrl: null, price: "125.00", oldPrice: null, status: "IN_STOCK", stock: 5, category: { id: "qa-category", name: "School Supplies", slug: "school-supplies" }, variants: [] }] });
+    if (path === "/api/backend/payments/options") return json(route, { paymongoGcash: { enabled: false, livemode: false } });
+    if (path === "/api/backend/pickup/availability") {
+      const policy = pickupPolicy(7);
+      return json(route, {
+        policy: {
+          ...policy,
+          minAdvanceDays: 0,
+          maxAdvanceDays: 0,
+          minDate: "2026-08-03",
+          maxDate: "2026-08-03",
+          serverDate: "2026-08-03",
+          days: policy.days.map((day) => ({ ...day, enabled: true }))
+        }
+      });
+    }
+    if (path === "/api/backend/pickup/availability/slots") {
+      slotAvailabilityCalls += 1;
+      const expired = slotAvailabilityCalls > 1;
+      return json(route, {
+        availability: {
+          pickupDate: "2026-08-03",
+          pickupPolicyVersion: 7,
+          serverTime: expired ? "2026-08-03T02:00:00.250Z" : "2026-08-03T01:59:58.000Z",
+          slots: [{
+            slotId: pickupSlotId,
+            capacity: 2,
+            booked: 0,
+            remaining: 2,
+            isFull: false,
+            isExpired: expired,
+            isUnavailable: expired,
+            unavailableReason: expired ? "PICKUP_SLOT_EXPIRED" : null
+          }]
+        }
+      });
+    }
+    return json(route, { error: `Unexpected mocked request: ${request.method()} ${path}` }, 500);
+  });
+
+  await page.goto("/student/shop");
+  await dismissWelcomeGate(page);
+  await page.getByRole("button", { name: "Reserve Now" }).first().click();
+  const checkout = page.getByRole("dialog", { name: "Item and pickup details" });
+  await checkout.getByRole("button", { name: "2026-08-03, available" }).click();
+  const availableSlot = checkout.getByRole("button", { name: "Morning pickup, 2 spots left" });
+  await expect(availableSlot).toBeEnabled();
+  await expect(availableSlot).toHaveAttribute("aria-pressed", "true");
+  await expect(checkout.getByRole("button", { name: "Next: Payment" })).toBeEnabled();
+
+  await page.clock.fastForward(2_500);
+
+  await expect.poll(() => slotAvailabilityCalls).toBeGreaterThan(1);
+  await expect(checkout.getByRole("button", { name: "Morning pickup, Time passed" })).toBeDisabled();
+  await expect(checkout.getByRole("button", { name: "Next: Payment" })).toBeDisabled();
+});
+
 test("Reserve Now writes only on final confirmation and recovers from a changed pickup policy", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop-chromium", "One complete checkout state transition is sufficient.");
   let availabilityCalls = 0;
@@ -129,7 +203,9 @@ test("Reserve Now writes only on final confirmation and recovers from a changed 
   expect(reservationCalls).toBe(0);
 
   checkout = page.getByRole("dialog", { name: "Payment and collection" });
-  await checkout.getByRole("radio", { name: /Cash at Pickup/ }).check();
+  await expect(
+    checkout.getByRole("group", { name: "How would you like to pay?" }).getByText("Cash", { exact: true })
+  ).toBeVisible();
   await checkout.getByRole("radio", { name: /Treasury/ }).check();
   await checkout.getByRole("button", { name: "Back" }).click();
 
@@ -137,7 +213,9 @@ test("Reserve Now writes only on final confirmation and recovers from a changed 
   await expect(checkout.getByRole("button", { name: "2026-08-03, available" })).toHaveAttribute("aria-pressed", "true");
   await checkout.getByRole("button", { name: "Next: Payment" }).click();
   checkout = page.getByRole("dialog", { name: "Payment and collection" });
-  await expect(checkout.getByRole("radio", { name: /Cash at Pickup/ })).toBeChecked();
+  await expect(
+    checkout.getByRole("group", { name: "How would you like to pay?" }).getByText("Cash", { exact: true })
+  ).toBeVisible();
   await expect(checkout.getByRole("radio", { name: /Treasury/ })).toBeChecked();
   const availabilityBeforeConfirm = availabilityCalls;
   await checkout.getByRole("checkbox", { name: /I agree to the Terms & Conditions/ }).check();
@@ -147,8 +225,8 @@ test("Reserve Now writes only on final confirmation and recovers from a changed 
   await expect(checkout.getByRole("alert")).toContainText("Pickup availability changed");
   await expect.poll(() => availabilityCalls).toBeGreaterThan(availabilityBeforeConfirm);
   expect(reservationCalls).toBe(1);
+  expect(reservationBody).not.toHaveProperty("paymentMethod");
   expect(reservationBody).toMatchObject({
-    paymentMethod: "PAY_AT_COMMISSARY",
     preferredCollectionChannel: "TREASURER",
     pickupDate: "2026-08-03",
     pickupSlotId,
@@ -157,9 +235,11 @@ test("Reserve Now writes only on final confirmation and recovers from a changed 
   });
 });
 
-test("pickup payment shows saving and saved states before View Reservation navigates", async ({ page }, testInfo) => {
+test("pickup payment keeps a failed state visible, retries safely, and shows the saved state", async ({ page }, testInfo) => {
   if (testInfo.project.name === "desktop-chromium") await page.emulateMedia({ reducedMotion: "reduce" });
   const reservation = successfulReservation();
+  let reservationAttempts = 0;
+  const idempotencyKeys: string[] = [];
 
   await page.route("**/api/backend/**", async (route) => {
     const request = route.request();
@@ -174,6 +254,15 @@ test("pickup payment shows saving and saved states before View Reservation navig
     if (path === "/api/backend/pickup/availability") return json(route, { policy: pickupPolicy(7) });
     if (path === "/api/backend/pickup/availability/slots") return json(route, { availability: { pickupDate: "2026-08-03", pickupPolicyVersion: 7, slots: [{ slotId: pickupSlotId, capacity: 2, booked: 0, remaining: 2, isFull: false, isExpired: false, isUnavailable: false, unavailableReason: null }] } });
     if (path === "/api/backend/reservations" && request.method() === "POST") {
+      reservationAttempts += 1;
+      idempotencyKeys.push(request.headers()["idempotency-key"] ?? "");
+      if (reservationAttempts === 1) {
+        return json(route, {
+          error: "WESCOMM could not complete this request right now. Please try again.",
+          code: "UNEXPECTED_ERROR",
+          requestId: "qa-reservation-failure"
+        }, 500);
+      }
       await new Promise((resolve) => setTimeout(resolve, 500));
       return json(route, { reservation });
     }
@@ -188,7 +277,9 @@ test("pickup payment shows saving and saved states before View Reservation navig
   await checkout.getByRole("button", { name: "2026-08-03, available" }).click();
   await checkout.getByRole("button", { name: "Next: Payment" }).click();
   checkout = page.getByRole("dialog", { name: "Payment and collection" });
-  await checkout.getByRole("radio", { name: /Cash at Pickup/ }).check();
+  await expect(
+    checkout.getByRole("group", { name: "How would you like to pay?" }).getByText("Cash", { exact: true })
+  ).toBeVisible();
   await checkout.getByRole("radio", { name: /Commissary/ }).check();
   await checkout.getByRole("checkbox", { name: /I agree to the Terms & Conditions/ }).check();
   await checkout.getByRole("button", { name: "Confirm Reservation" }).click();
@@ -198,10 +289,22 @@ test("pickup payment shows saving and saved states before View Reservation navig
   await expect(savingDialog.locator(testInfo.project.name === "desktop-chromium"
     ? 'img[src="/assets/wescomm_saving_reservation_static.svg"]'
     : 'img[src="/assets/wescomm_saving_reservation.svg"]')).toBeVisible();
-  await expect(page).toHaveURL(/\/student\/shop$/);
+  const failedDialog = page.getByRole("dialog", { name: "Reservation not saved" });
+  await expect(failedDialog).toBeVisible();
+  await expect(failedDialog.getByRole("alert")).toContainText("Support reference: qa-reservation-failure");
+  await failedDialog.getByRole("button", { name: "Review and try again" }).click();
+
+  checkout = page.getByRole("dialog", { name: "Payment and collection" });
+  await expect(checkout.getByRole("alert")).toContainText("Support reference: qa-reservation-failure");
+  await checkout.getByRole("button", { name: "Confirm Reservation" }).click();
+  await expect(page.getByRole("dialog", { name: "Saving Reservation" })).toBeVisible();
+
   const savedDialog = page.getByRole("dialog", { name: "Reservation Saved" });
   await expect(savedDialog).toBeVisible();
   await expect(savedDialog.getByTestId("saved-reservation-reference")).toContainText(reservation.referenceCode);
+  expect(reservationAttempts).toBe(2);
+  expect(idempotencyKeys[0]).not.toBe("");
+  expect(idempotencyKeys[1]).toBe(idempotencyKeys[0]);
   await expect(page).toHaveURL(/\/student\/shop$/);
   await savedDialog.getByRole("button", { name: "View Reservation" }).click();
   await expect(page).toHaveURL(new RegExp(`/student/reservations#reservation-${reservation.id}$`));
@@ -238,7 +341,9 @@ test("cart reservation Done closes the confirmation and stays in the shop", asyn
   await checkout.getByRole("button", { name: "2026-08-03, available" }).click();
   await checkout.getByRole("button", { name: "Next: Payment" }).click();
   checkout = page.getByRole("dialog", { name: "Payment & Review" });
-  await checkout.getByRole("radio", { name: /Cash at Pickup/ }).check();
+  await expect(
+    checkout.getByRole("group", { name: "How would you like to pay?" }).getByText("Cash", { exact: true })
+  ).toBeVisible();
   await checkout.getByRole("radio", { name: /Commissary/ }).check();
   await checkout.getByRole("checkbox", { name: /I agree to the Terms & Conditions/ }).check();
   await checkout.getByRole("button", { name: "Confirm Reservation" }).click();

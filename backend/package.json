@@ -39,6 +39,10 @@
     "push:keys": "web-push generate-vapid-keys",
     "security:encrypt-existing": "tsx src/scripts/encrypt-existing-sensitive-data.ts",
     "data:reset:testing": "tsx src/scripts/reset-testing-data.ts",
+    "staging:verify": "tsx src/scripts/verify-staging-environment.ts",
+    "staging:verify:target": "tsx src/scripts/verify-staging-environment.ts --target-only",
+    "staging:reset": "tsx src/scripts/reset-testing-data.ts",
+    "staging:seed": "tsx src/scripts/seed-staging-data.ts",
     "seed:wup-catalog": "tsx src/scripts/seed-new-uniform-products.ts"
   },
   "dependencies": {
@@ -50,6 +54,7 @@
     "ai": "^7.0.65",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
+    "exceljs": "^4.4.0",
     "express": "^4.21.1",
     "helmet": "^8.0.0",
     "morgan": "^1.10.0",
