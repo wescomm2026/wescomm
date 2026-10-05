@@ -6,7 +6,7 @@ import type {
   BackendReservation
 } from "../lib/api";
 import type { StaffProduct } from "../lib/staff-api";
-import { authorizeMockedWorkspace, dismissWelcomeGate } from "./helpers";
+import { authorizeMockedWorkspace, dismissWelcomeGate, fulfillWorkspaceShellExtras } from "./helpers";
 
 const staffProfile: BackendAuthProfile = {
   id: "91000000-0000-4000-8000-000000000001",
@@ -85,6 +85,7 @@ async function handleShellRequest(route: Route, profile: BackendAuthProfile) {
     await json(route, { notifications: [], nextCursor: null });
     return true;
   }
+  if (await fulfillWorkspaceShellExtras(route)) return true;
   if (path === "/api/backend/notifications/unread-count") {
     await json(route, { unreadCount: 0 });
     return true;

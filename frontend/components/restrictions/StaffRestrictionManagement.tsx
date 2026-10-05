@@ -280,8 +280,8 @@ export function StaffRestrictionManagement({ role }: { role: "STAFF" | "ADMIN" }
       <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p className="text-sm font-bold uppercase text-primary">Student access</p>
-          <h1 className="mt-1 text-3xl font-extrabold text-[#101820]">Reservation access review</h1>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-[#68746d]">Review confirmed unclaimed reservations and pause only reservation access. Students keep access to receipts, support, and their account.</p>
+          <h1 className="mt-1 text-3xl font-extrabold text-foreground">Reservation access review</h1>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">Review confirmed unclaimed reservations and pause only reservation access. Students keep access to receipts, support, and their account.</p>
         </div>
         <Button variant="secondary" onClick={() => { void loadOverview(); void loadNoShows(); }} disabled={loading || loadingNoShows}>
           <RefreshCw className={`size-4 ${loading || loadingNoShows ? "animate-spin" : ""}`} /> Refresh
@@ -293,21 +293,21 @@ export function StaffRestrictionManagement({ role }: { role: "STAFF" | "ADMIN" }
           <ShieldAlert className="mt-0.5 size-6 shrink-0 text-primary" />
           <div>
             <p className="font-extrabold text-[#203027]">Fair-use reservation policy</p>
-            <p className="mt-1 text-sm leading-6 text-[#5f6d64]">Only staff-confirmed no-shows after the pickup deadline and 24-hour grace period count. The first two are warnings; the third pauses access for 7 days. Later repeated cases escalate to 30 days, then administrator review. A completed pickup resets the consecutive warning count.</p>
+            <p className="mt-1 text-sm leading-6 text-muted-foreground">Only staff-confirmed no-shows after the pickup deadline and 24-hour grace period count. The first two are warnings; the third pauses access for 7 days. Later repeated cases escalate to 30 days, then administrator review. A completed pickup resets the consecutive warning count.</p>
           </div>
         </div>
       </section>
 
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {[
-          { label: "Student accounts", value: overview?.summary.totalStudents ?? 0, detail: "Available for review", icon: UserRoundCheck, tone: "bg-[#e8f4e8] text-primary" },
+          { label: "Student accounts", value: overview?.summary.totalStudents ?? 0, detail: "Available for review", icon: UserRoundCheck, tone: "bg-muted text-primary" },
           { label: "Access paused", value: restrictedCount, detail: "Active reservation restrictions", icon: Ban, tone: "bg-[#fde8e8] text-[#a22b2b]" },
           { label: "Active warnings", value: warningCount, detail: "Before automatic suspension", icon: TriangleAlert, tone: "bg-[#fff0c7] text-[#8a5b00]" },
           { label: "No-shows to review", value: noShowPage?.totalCandidates ?? 0, detail: "Grace period already passed", icon: Clock3, tone: "bg-[#e9f1fb] text-[#245b8f]" }
         ].map((card) => (
-          <article key={card.label} className="flex items-center gap-4 rounded-lg border border-[#dce5dd] bg-white p-4 shadow-sm">
+          <article key={card.label} className="flex items-center gap-4 rounded-lg border bg-white p-4 shadow-sm">
             <span className={`grid size-12 shrink-0 place-items-center rounded-full ${card.tone}`}><card.icon className="size-6" /></span>
-            <div><p className="text-sm font-bold text-[#4f5c54]">{card.label}</p><p className="mt-0.5 text-2xl font-extrabold text-[#17211b]">{card.value}</p><p className="text-xs text-[#738078]">{card.detail}</p></div>
+            <div><p className="text-sm font-bold text-muted-foreground">{card.label}</p><p className="mt-0.5 text-2xl font-extrabold text-foreground">{card.value}</p><p className="text-xs text-muted-foreground">{card.detail}</p></div>
           </article>
         ))}
       </section>
@@ -320,29 +320,29 @@ export function StaffRestrictionManagement({ role }: { role: "STAFF" | "ADMIN" }
       ) : null}
       {error ? <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700" role="alert">{error}</p> : null}
 
-      <details className="overflow-hidden rounded-lg border border-[#dce5dd] bg-white shadow-sm">
+      <details className="overflow-hidden rounded-lg border bg-white shadow-sm">
         <summary className="flex cursor-pointer list-none items-center gap-3 px-4 py-4 sm:px-5">
           <span className="grid size-10 place-items-center rounded-md bg-[#fff0c7] text-[#8a5b00]"><Clock3 className="size-5" /></span>
-          <div><p className="font-extrabold text-[#17211b]">Eligible no-show reviews</p><p className="text-xs text-[#68746d]">{noShowPage?.totalCandidates ?? 0} pickup{noShowPage?.totalCandidates === 1 ? "" : "s"} passed the grace period</p></div>
+          <div><p className="font-extrabold text-foreground">Eligible no-show reviews</p><p className="text-xs text-muted-foreground">{noShowPage?.totalCandidates ?? 0} pickup{noShowPage?.totalCandidates === 1 ? "" : "s"} passed the grace period</p></div>
           <ChevronDown className="ml-auto size-5 text-primary" />
         </summary>
-        <div className="border-t border-[#e7ece8] p-3 sm:p-4">
-          <label className="mb-3 flex h-11 min-w-0 items-center rounded-md border border-[#d7e1d8] px-3 focus-within:border-primary">
-            <Search className="mr-2 size-5 text-[#68746d]" />
-            <input type="search" value={noShowSearch} onChange={(event) => setNoShowSearch(event.target.value)} placeholder="Search reference, student, or item" className="min-w-0 flex-1 bg-transparent text-sm outline-none" />
+        <div className="border-t border-border p-3 sm:p-4">
+          <label className="mb-3 flex h-11 min-w-0 items-center rounded-md border border-border-strong px-3 focus-within:border-primary">
+            <Search className="mr-2 size-5 text-muted-foreground" />
+            <input type="search" value={noShowSearch} onChange={(event) => setNoShowSearch(event.target.value)} placeholder="Search reference, student, or item" className="min-w-0 flex-1 bg-transparent text-sm outline-none focus-visible:outline-none" />
           </label>
           {loadingNoShows ? (
-            <p className="px-2 py-5 text-sm font-semibold text-[#68746d]">Loading eligible no-show reviews...</p>
+            <p className="px-2 py-5 text-sm font-semibold text-muted-foreground">Loading eligible no-show reviews...</p>
           ) : noShowPage?.items.length ? (
             <>
               <div className="grid gap-3 lg:grid-cols-2">
               {noShowPage.items.map((candidate) => (
-                <article key={candidate.id} className="rounded-lg border border-[#e2e8e2] p-4">
+                <article key={candidate.id} className="rounded-lg border p-4">
                   <div className="flex items-start gap-3">
-                    <div className="min-w-0 flex-1"><p className="font-extrabold text-[#17211b]">{candidate.referenceCode}</p><p className="mt-1 text-sm font-semibold text-primary">{candidate.student.fullName || candidate.student.email}</p><p className="text-xs text-[#68746d]">Pickup ended {formatDateTime(candidate.pickupEnd)}</p></div>
+                    <div className="min-w-0 flex-1"><p className="font-extrabold text-foreground">{candidate.referenceCode}</p><p className="mt-1 text-sm font-semibold text-primary">{candidate.student.fullName || candidate.student.email}</p><p className="text-xs text-muted-foreground">Pickup ended {formatDateTime(candidate.pickupEnd)}</p></div>
                     <Button variant="secondary" className="shrink-0 border-red-200 text-red-700 hover:bg-red-50" onClick={() => { setNoShowCandidate(candidate); setError(""); }}><Ban className="size-4" /> Review</Button>
                   </div>
-                  <p className="mt-3 text-xs leading-5 text-[#68746d]">{candidate.items.map((item) => `${item.name} x${item.quantity}`).join(", ")}</p>
+                  <p className="mt-3 text-xs leading-5 text-muted-foreground">{candidate.items.map((item) => `${item.name} x${item.quantity}`).join(", ")}</p>
                 </article>
               ))}
               </div>
@@ -354,31 +354,31 @@ export function StaffRestrictionManagement({ role }: { role: "STAFF" | "ADMIN" }
                 </div>
               ) : null}
             </>
-          ) : <p className="px-2 py-5 text-sm font-semibold text-[#68746d]">No reservations currently qualify for no-show review.</p>}
+          ) : <p className="px-2 py-5 text-sm font-semibold text-muted-foreground">No reservations currently qualify for no-show review.</p>}
         </div>
       </details>
 
-      <section className="overflow-hidden rounded-lg border border-[#dce5dd] bg-white shadow-sm">
+      <section className="overflow-hidden rounded-lg border bg-white shadow-sm">
         <div className="grid gap-3 border-b border-[#e6ece6] p-4 sm:grid-cols-[1fr_auto] sm:p-5">
-          <label className="flex h-11 min-w-0 items-center rounded-md border border-[#d7e1d8] px-3 focus-within:border-primary">
-            <Search className="mr-2 size-5 text-[#68746d]" />
-            <input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search student name, email, number, or department" className="min-w-0 flex-1 bg-transparent text-sm outline-none" />
+          <label className="flex h-11 min-w-0 items-center rounded-md border border-border-strong px-3 focus-within:border-primary">
+            <Search className="mr-2 size-5 text-muted-foreground" />
+            <input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search student name, email, number, or department" className="min-w-0 flex-1 bg-transparent text-sm outline-none focus-visible:outline-none" />
           </label>
-          <select value={status} onChange={(event) => setStatus(event.target.value as typeof status)} className="h-11 rounded-md border border-[#d7e1d8] bg-white px-3 text-sm font-semibold outline-none focus:border-primary">
+          <select value={status} onChange={(event) => setStatus(event.target.value as typeof status)} className="h-11 rounded-md border border-border-strong bg-white px-3 text-sm font-semibold outline-none focus:border-primary">
             <option value="ACTIONABLE">Needs attention</option><option value="RESTRICTED">Access paused</option><option value="WARNING">Warnings</option><option value="REVIEW">Review cases</option><option value="ALL">All students</option>
           </select>
         </div>
 
         {loading ? (
-          <div className="p-6 text-sm font-semibold text-[#68746d]">Loading student access records...</div>
+          <div className="p-6 text-sm font-semibold text-muted-foreground">Loading student access records...</div>
         ) : visibleStudents.length ? (
           <>
             <div className="hidden overflow-x-auto lg:block">
               <table className="w-full min-w-[900px] text-left text-sm">
-                <thead className="bg-[#f4f7f4] text-xs uppercase text-[#617068]"><tr><th className="px-5 py-3">Student</th><th className="px-5 py-3">Student number</th><th className="px-5 py-3">Warnings</th><th className="px-5 py-3">Reservation access</th><th className="px-5 py-3">Until</th><th className="px-5 py-3 text-right">Action</th></tr></thead>
-                <tbody className="divide-y divide-[#e8ede9]">
+                <thead className="bg-surface-subtle text-xs uppercase text-muted-foreground"><tr><th className="px-5 py-3">Student</th><th className="px-5 py-3">Student number</th><th className="px-5 py-3">Warnings</th><th className="px-5 py-3">Reservation access</th><th className="px-5 py-3">Until</th><th className="px-5 py-3 text-right">Action</th></tr></thead>
+                <tbody className="divide-y divide-border">
                   {visibleStudents.map((student) => (
-                    <tr key={student.id} className="hover:bg-[#fbfdfb]"><td className="px-5 py-4"><p className="font-extrabold text-[#17211b]">{studentName(student)}</p><p className="text-xs text-[#68746d]">{student.email}</p></td><td className="px-5 py-4">{student.studentNumber || "Not provided"}</td><td className="px-5 py-4 font-bold">{student.consecutiveOffenses} / {overview?.policy.firstRestrictionAt ?? 3}</td><td className="px-5 py-4"><StatusBadge status={restrictionStatus(student)} /></td><td className="px-5 py-4 text-[#5f6b64]">{student.activeRestriction ? formatDateTime(student.activeRestriction.endsAt) : "-"}</td><td className="px-5 py-4 text-right"><Button variant="secondary" onClick={() => openStudent(student)}>Manage</Button></td></tr>
+                    <tr key={student.id} className="hover:bg-surface-subtle"><td className="px-5 py-4"><p className="font-extrabold text-foreground">{studentName(student)}</p><p className="text-xs text-muted-foreground">{student.email}</p></td><td className="px-5 py-4">{student.studentNumber || "Not provided"}</td><td className="px-5 py-4 font-bold">{student.consecutiveOffenses} / {overview?.policy.firstRestrictionAt ?? 3}</td><td className="px-5 py-4"><StatusBadge status={restrictionStatus(student)} /></td><td className="px-5 py-4 text-muted-foreground">{student.activeRestriction ? formatDateTime(student.activeRestriction.endsAt) : "-"}</td><td className="px-5 py-4 text-right"><Button variant="secondary" onClick={() => openStudent(student)}>Manage</Button></td></tr>
                   ))}
                 </tbody>
               </table>
@@ -386,51 +386,51 @@ export function StaffRestrictionManagement({ role }: { role: "STAFF" | "ADMIN" }
             <div className="grid gap-3 p-3 lg:hidden">
               {visibleStudents.map((student) => (
                 <article key={student.id} className="rounded-lg border border-[#e0e7e1] p-4">
-                  <div className="flex items-start gap-3"><div className="min-w-0 flex-1"><p className="font-extrabold text-[#17211b]">{studentName(student)}</p><p className="truncate text-xs text-[#68746d]">{student.email}</p></div><StatusBadge status={restrictionStatus(student)} /></div>
-                  <dl className="mt-4 grid grid-cols-2 gap-3 text-sm"><div><dt className="text-xs text-[#748078]">Student number</dt><dd className="mt-1 font-bold">{student.studentNumber || "Not provided"}</dd></div><div><dt className="text-xs text-[#748078]">Warnings</dt><dd className="mt-1 font-bold">{student.consecutiveOffenses} / {overview?.policy.firstRestrictionAt ?? 3}</dd></div></dl>
+                  <div className="flex items-start gap-3"><div className="min-w-0 flex-1"><p className="font-extrabold text-foreground">{studentName(student)}</p><p className="truncate text-xs text-muted-foreground">{student.email}</p></div><StatusBadge status={restrictionStatus(student)} /></div>
+                  <dl className="mt-4 grid grid-cols-2 gap-3 text-sm"><div><dt className="text-xs text-muted-foreground">Student number</dt><dd className="mt-1 font-bold">{student.studentNumber || "Not provided"}</dd></div><div><dt className="text-xs text-muted-foreground">Warnings</dt><dd className="mt-1 font-bold">{student.consecutiveOffenses} / {overview?.policy.firstRestrictionAt ?? 3}</dd></div></dl>
                   {student.activeRestriction ? <p className="mt-3 rounded-md bg-red-50 px-3 py-2 text-xs leading-5 text-red-700">Paused until: {formatDateTime(student.activeRestriction.endsAt)}</p> : null}
                   <Button variant="secondary" className="mt-4 w-full" onClick={() => openStudent(student)}>Manage reservation access</Button>
                 </article>
               ))}
             </div>
             {overview?.nextCursor ? (
-              <div className="flex justify-center border-t border-[#e8ede9] p-4">
+              <div className="flex justify-center border-t border-border p-4">
                 <Button variant="secondary" disabled={loadingMoreStudents} onClick={() => void loadOverview({ cursor: overview.nextCursor ?? undefined })}>
                   {loadingMoreStudents ? "Loading more..." : "Load more students"}
                 </Button>
               </div>
             ) : null}
           </>
-        ) : <p className="p-6 text-sm font-semibold text-[#68746d]">No matching student accounts found.</p>}
+        ) : <p className="p-6 text-sm font-semibold text-muted-foreground">No matching student accounts found.</p>}
       </section>
 
       {noShowCandidate ? (
-        <div className="fixed inset-0 z-[10000] grid place-items-center overflow-y-auto bg-[#101820]/55 p-3" onMouseDown={(event) => { if (!submitting && event.target === event.currentTarget) setNoShowCandidate(null); }}>
-          <section ref={noShowDialog.dialogRef} {...noShowDialog.dialogProps} className="relative w-full max-w-lg overflow-hidden rounded-lg border border-[#e0e6e0] bg-white p-5 shadow-2xl sm:p-6">
+        <div className="fixed inset-0 z-[10000] grid place-items-center overflow-y-auto bg-foreground/55 p-3" onMouseDown={(event) => { if (!submitting && event.target === event.currentTarget) setNoShowCandidate(null); }}>
+          <section ref={noShowDialog.dialogRef} {...noShowDialog.dialogProps} className="relative w-full max-w-lg overflow-hidden rounded-lg border bg-white p-5 shadow-2xl sm:p-6">
             <ActionLoadingOverlay
               active={submitting}
               title="Recording unclaimed pickup"
               detail="We are updating the reservation, stock, and student access record."
             />
-            <div className="flex items-start gap-3"><span className="grid size-11 shrink-0 place-items-center rounded-md bg-red-50 text-red-700"><TriangleAlert className="size-6" /></span><div><p className="text-xs font-bold uppercase text-red-700">Staff confirmation required</p><h2 id={noShowDialog.titleId} className="mt-1 text-xl font-extrabold text-[#17211b]">Record this pickup as unclaimed?</h2></div><button type="button" data-dialog-autofocus onClick={() => setNoShowCandidate(null)} disabled={submitting} className="ml-auto grid size-9 place-items-center rounded-md hover:bg-[#f1f5f1] disabled:opacity-50" aria-label="Close"><X className="size-5" /></button></div>
-            <div className="mt-5 rounded-lg border border-[#e2e8e2] bg-[#f8faf8] p-4 text-sm"><p className="font-extrabold">{noShowCandidate.referenceCode}</p><p className="mt-1 text-primary">{noShowCandidate.student.fullName || noShowCandidate.student.email}</p><p className="mt-2 text-[#68746d]">Pickup ended {formatDateTime(noShowCandidate.pickupEnd)}. The 24-hour grace period has passed.</p></div>
-            <p className="mt-4 text-sm leading-6 text-[#5f6b64]">Use this only after checking that the student did not collect the items. It records an offense, returns held stock to inventory, and may trigger a reservation restriction.</p>
+            <div className="flex items-start gap-3"><span className="grid size-11 shrink-0 place-items-center rounded-md bg-red-50 text-red-700"><TriangleAlert className="size-6" /></span><div><p className="text-xs font-bold uppercase text-red-700">Staff confirmation required</p><h2 id={noShowDialog.titleId} className="mt-1 text-xl font-extrabold text-foreground">Record this pickup as unclaimed?</h2></div><button type="button" data-dialog-autofocus onClick={() => setNoShowCandidate(null)} disabled={submitting} className="ml-auto grid size-9 place-items-center rounded-md hover:bg-surface-subtle disabled:opacity-50" aria-label="Close"><X className="size-5" /></button></div>
+            <div className="mt-5 rounded-lg border bg-surface-subtle p-4 text-sm"><p className="font-extrabold">{noShowCandidate.referenceCode}</p><p className="mt-1 text-primary">{noShowCandidate.student.fullName || noShowCandidate.student.email}</p><p className="mt-2 text-muted-foreground">Pickup ended {formatDateTime(noShowCandidate.pickupEnd)}. The 24-hour grace period has passed.</p></div>
+            <p className="mt-4 text-sm leading-6 text-muted-foreground">Use this only after checking that the student did not collect the items. It records an offense, returns held stock to inventory, and may trigger a reservation restriction.</p>
             <div className="mt-6 grid grid-cols-2 gap-3"><Button variant="secondary" onClick={() => setNoShowCandidate(null)} disabled={submitting}>Go back</Button><Button onClick={() => void confirmNoShow()} disabled={submitting} className="bg-red-700 hover:bg-red-800"><Ban className="size-4" />Confirm no-show</Button></div>
           </section>
         </div>
       ) : null}
 
       {selectedStudent ? (
-        <div className="fixed inset-0 z-[9999] grid place-items-center overflow-y-auto bg-[#101820]/55 p-3" onMouseDown={(event) => { if (!submitting && event.target === event.currentTarget) setSelectedStudent(null); }}>
-          <section ref={studentDialog.dialogRef} {...studentDialog.dialogProps} className="relative my-4 w-full max-w-2xl overflow-hidden rounded-lg border border-[#e0e6e0] bg-white shadow-2xl">
+        <div className="fixed inset-0 z-[9999] grid place-items-center overflow-y-auto bg-foreground/55 p-3" onMouseDown={(event) => { if (!submitting && event.target === event.currentTarget) setSelectedStudent(null); }}>
+          <section ref={studentDialog.dialogRef} {...studentDialog.dialogProps} className="relative my-4 w-full max-w-2xl overflow-hidden rounded-lg border bg-white shadow-2xl">
             <ActionLoadingOverlay
               active={submitting}
               title="Updating reservation access"
               detail="We are saving the review and refreshing the student's access."
             />
-            <header className="flex items-start gap-3 border-b border-[#e7ece8] p-5 sm:p-6"><span className="grid size-11 shrink-0 place-items-center rounded-md bg-[#e8f4e8] text-primary">{selectedStudent.activeRestriction ? <Ban className="size-6" /> : <UserRoundCheck className="size-6" />}</span><div className="min-w-0"><p className="text-xs font-bold uppercase text-primary">Student reservation access</p><h2 id={studentDialog.titleId} className="mt-1 text-xl font-extrabold text-[#17211b]">{studentName(selectedStudent)}</h2><p className="truncate text-sm text-[#68746d]">{selectedStudent.email}</p></div><button type="button" data-dialog-autofocus onClick={() => setSelectedStudent(null)} disabled={submitting} aria-label="Close" className="ml-auto grid size-9 place-items-center rounded-md hover:bg-[#f1f5f1] disabled:opacity-50"><X className="size-5" /></button></header>
+            <header className="flex items-start gap-3 border-b border-border p-5 sm:p-6"><span className="grid size-11 shrink-0 place-items-center rounded-md bg-muted text-primary">{selectedStudent.activeRestriction ? <Ban className="size-6" /> : <UserRoundCheck className="size-6" />}</span><div className="min-w-0"><p className="text-xs font-bold uppercase text-primary">Student reservation access</p><h2 id={studentDialog.titleId} className="mt-1 text-xl font-extrabold text-foreground">{studentName(selectedStudent)}</h2><p className="truncate text-sm text-muted-foreground">{selectedStudent.email}</p></div><button type="button" data-dialog-autofocus onClick={() => setSelectedStudent(null)} disabled={submitting} aria-label="Close" className="ml-auto grid size-9 place-items-center rounded-md hover:bg-surface-subtle disabled:opacity-50"><X className="size-5" /></button></header>
             <div className="max-h-[calc(100svh-170px)] space-y-5 overflow-y-auto p-5 sm:p-6">
-              <div className="grid gap-3 sm:grid-cols-3"><div className="rounded-md bg-[#f5f8f5] p-3"><p className="text-xs text-[#68746d]">Status</p><span className="mt-2 inline-block"><StatusBadge status={restrictionStatus(selectedStudent)} /></span></div><div className="rounded-md bg-[#f5f8f5] p-3"><p className="text-xs text-[#68746d]">Consecutive warnings</p><p className="mt-1 text-xl font-extrabold">{selectedStudent.consecutiveOffenses} / {overview?.policy.firstRestrictionAt ?? 3}</p></div><div className="rounded-md bg-[#f5f8f5] p-3"><p className="text-xs text-[#68746d]">Student number</p><p className="mt-1 font-extrabold">{selectedStudent.studentNumber || "Not provided"}</p></div></div>
+              <div className="grid gap-3 sm:grid-cols-3"><div className="rounded-md bg-surface-subtle p-3"><p className="text-xs text-muted-foreground">Status</p><span className="mt-2 inline-block"><StatusBadge status={restrictionStatus(selectedStudent)} /></span></div><div className="rounded-md bg-surface-subtle p-3"><p className="text-xs text-muted-foreground">Consecutive warnings</p><p className="mt-1 text-xl font-extrabold">{selectedStudent.consecutiveOffenses} / {overview?.policy.firstRestrictionAt ?? 3}</p></div><div className="rounded-md bg-surface-subtle p-3"><p className="text-xs text-muted-foreground">Student number</p><p className="mt-1 font-extrabold">{selectedStudent.studentNumber || "Not provided"}</p></div></div>
 
               {offenseToOverturn ? (
                 <form onSubmit={overturnOffense} className="rounded-lg border border-[#ead7a5] bg-[#fffaf0] p-4">
@@ -446,20 +446,20 @@ export function StaffRestrictionManagement({ role }: { role: "STAFF" | "ADMIN" }
                   {selectedStudent.activeRestriction.level === 3 && role !== "ADMIN" ? <p className="mt-2 text-xs font-semibold text-red-700">An administrator must review and lift an indefinite restriction.</p> : null}
                 </form>
               ) : (
-                <form onSubmit={applyRestriction} className="rounded-lg border border-[#dce5dd] p-4">
-                  <p className="font-extrabold text-[#17211b]">Pause reservation access manually</p><p className="mt-1 text-sm leading-6 text-[#68746d]">Use this for documented misuse that is not already handled by the automatic no-show policy.</p>
-                  <fieldset className="mt-4"><legend className="text-sm font-bold">Duration</legend><div className={`mt-2 grid gap-2 ${role === "ADMIN" ? "sm:grid-cols-3" : "sm:grid-cols-2"}`}>{(["7_DAYS", "30_DAYS", ...(role === "ADMIN" ? ["INDEFINITE"] : [])] as Duration[]).map((option) => <button key={option} type="button" onClick={() => setDuration(option)} className={`min-h-11 rounded-md border px-3 text-sm font-bold ${duration === option ? "border-primary bg-[#eaf4ea] text-primary ring-1 ring-primary" : "border-[#d7e0d8] bg-white"}`}>{durationLabel(option)}</button>)}</div></fieldset>
-                  <label className="mt-4 grid gap-1.5 text-sm font-bold">Documented reason<textarea required minLength={5} maxLength={500} value={reason} onChange={(event) => setReason(event.target.value)} className="min-h-24 rounded-md border border-[#d7e0d8] px-3 py-2 font-normal outline-none focus:border-primary" placeholder="Explain the behavior and evidence reviewed" /></label>
+                <form onSubmit={applyRestriction} className="rounded-lg border p-4">
+                  <p className="font-extrabold text-foreground">Pause reservation access manually</p><p className="mt-1 text-sm leading-6 text-muted-foreground">Use this for documented misuse that is not already handled by the automatic no-show policy.</p>
+                  <fieldset className="mt-4"><legend className="text-sm font-bold">Duration</legend><div className={`mt-2 grid gap-2 ${role === "ADMIN" ? "sm:grid-cols-3" : "sm:grid-cols-2"}`}>{(["7_DAYS", "30_DAYS", ...(role === "ADMIN" ? ["INDEFINITE"] : [])] as Duration[]).map((option) => <button key={option} type="button" onClick={() => setDuration(option)} className={`min-h-11 rounded-md border px-3 text-sm font-bold ${duration === option ? "border-primary bg-muted text-primary ring-1 ring-primary" : "border-border-strong bg-white"}`}>{durationLabel(option)}</button>)}</div></fieldset>
+                  <label className="mt-4 grid gap-1.5 text-sm font-bold">Documented reason<textarea required minLength={5} maxLength={500} value={reason} onChange={(event) => setReason(event.target.value)} className="min-h-24 rounded-md border border-border-strong px-3 py-2 font-normal outline-none focus:border-primary" placeholder="Explain the behavior and evidence reviewed" /></label>
                   <Button type="submit" disabled={submitting} className="mt-4"><Ban className="size-4" />Pause reservation access</Button>
                 </form>
               )}
 
-              <details className="rounded-lg border border-[#dce5dd]">
-                <summary className="flex cursor-pointer list-none items-center px-4 py-3 font-extrabold text-[#17211b]">Offense history <span className="ml-2 rounded-full bg-[#edf4ed] px-2 text-xs leading-6 text-primary">{selectedStudent.offenses.length}</span><ChevronDown className="ml-auto size-4" /></summary>
-                <div className="divide-y divide-[#e7ece8] border-t border-[#e7ece8]">
+              <details className="rounded-lg border">
+                <summary className="flex cursor-pointer list-none items-center px-4 py-3 font-extrabold text-foreground">Offense history <span className="ml-2 rounded-full bg-[#edf4ed] px-2 text-xs leading-6 text-primary">{selectedStudent.offenses.length}</span><ChevronDown className="ml-auto size-4" /></summary>
+                <div className="divide-y divide-border border-t border-border">
                   {selectedStudent.offenses.length ? selectedStudent.offenses.map((offense) => (
-                    <div key={offense.id} className="p-4"><div className="flex items-start gap-3"><div className="min-w-0 flex-1"><p className="text-sm font-extrabold text-[#17211b]">{offense.type === "NO_SHOW" ? "Confirmed no-show" : "Reservation policy offense"}</p><p className="mt-1 text-xs text-[#68746d]">{offense.reservationReference || "Manual record"} - {formatDateTime(offense.occurredAt)}</p><p className="mt-2 text-sm leading-6 text-[#59665e]">{offense.reason}</p></div><StatusBadge status={offense.status === "ACTIVE" ? "Warning" : "Lifted"} /></div>{role === "ADMIN" && offense.status === "ACTIVE" ? <Button type="button" variant="secondary" className="mt-3" onClick={() => { setOffenseToOverturn(offense); setReason(""); }}><Unlock className="size-4" />Overturn after review</Button> : null}</div>
-                  )) : <p className="p-4 text-sm text-[#68746d]">No recorded offenses.</p>}
+                    <div key={offense.id} className="p-4"><div className="flex items-start gap-3"><div className="min-w-0 flex-1"><p className="text-sm font-extrabold text-foreground">{offense.type === "NO_SHOW" ? "Confirmed no-show" : "Reservation policy offense"}</p><p className="mt-1 text-xs text-muted-foreground">{offense.reservationReference || "Manual record"} - {formatDateTime(offense.occurredAt)}</p><p className="mt-2 text-sm leading-6 text-muted-foreground">{offense.reason}</p></div><StatusBadge status={offense.status === "ACTIVE" ? "Warning" : "Lifted"} /></div>{role === "ADMIN" && offense.status === "ACTIVE" ? <Button type="button" variant="secondary" className="mt-3" onClick={() => { setOffenseToOverturn(offense); setReason(""); }}><Unlock className="size-4" />Overturn after review</Button> : null}</div>
+                  )) : <p className="p-4 text-sm text-muted-foreground">No recorded offenses.</p>}
                 </div>
               </details>
             </div>

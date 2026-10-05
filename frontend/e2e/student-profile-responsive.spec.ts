@@ -1,5 +1,5 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
-import { dismissWelcomeGate } from "./helpers";
+import { dismissWelcomeGate, fulfillStudentOverview } from "./helpers";
 
 const currentDepartmentId = "87000000-0000-4000-8000-000000000001";
 const nursingDepartmentId = "87000000-0000-4000-8000-000000000002";
@@ -25,6 +25,7 @@ function json(route: Route, body: unknown) {
 async function mockProfileApis(page: Page, onProfileUpdate?: (payload: Record<string, unknown>) => void) {
   await page.route("**/api/backend/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
+    if (await fulfillStudentOverview(route)) return;
 
     if (path === "/api/backend/auth/me") {
       if (route.request().method() === "PATCH") {

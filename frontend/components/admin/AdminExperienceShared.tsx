@@ -3,11 +3,14 @@
 import { userFacingErrorMessage } from "@/lib/user-facing-error";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import Link from "next/link";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import { useRealtimeRefresh } from "@/components/realtime/RealtimeProvider";
-import { AssetIcon } from "@/components/ui/AssetIcon";
 import { Button } from "@/components/ui/button";
+import { FeedbackState } from "@/components/ui/FeedbackState";
+import { InlineAlert } from "@/components/ui/InlineAlert";
+import { MetricCard } from "@/components/ui/MetricCard";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { MetricSkeletonGrid } from "@/components/ui/Skeleton";
 import {
   getAdminReportSummaryFromApi,
   isRequestAbortError,
@@ -155,16 +158,7 @@ export function AdminHeader({
   detail: string;
   action?: React.ReactNode;
 }) {
-  return (
-    <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-      <div>
-        <p className="text-sm font-bold uppercase text-primary">{eyebrow}</p>
-        <h1 className="mt-1 text-3xl font-extrabold text-[#101820]">{title}</h1>
-        <p className="mt-2 text-sm text-[#68746d]">{detail}</p>
-      </div>
-      {action}
-    </header>
-  );
+  return <PageHeader eyebrow={eyebrow} title={title} description={detail} action={action} />;
 }
 
 export function AdminStatCard({
@@ -182,41 +176,20 @@ export function AdminStatCard({
   tone?: "green" | "yellow" | "red";
   href?: string;
 }) {
-  const iconTone = tone === "red" ? "bg-red-50" : tone === "yellow" ? "bg-[#fff4d8]" : "bg-[#eaf4ea]";
-  const content = (
-    <article className="rounded-lg border border-[#dce5dd] bg-white p-5 shadow-sm transition hover:border-primary">
-      <div className="flex items-start gap-4">
-        <span className={`grid size-14 shrink-0 place-items-center rounded-full ${iconTone}`}>
-          <AssetIcon src={iconSrc} className="size-10" />
-        </span>
-        <div className="min-w-0">
-          <p className="text-sm font-bold text-[#27332c]">{title}</p>
-          <p className="mt-1 text-2xl font-extrabold text-primary">{value}</p>
-          <p className="mt-1 text-xs text-[#68746d]">{detail}</p>
-        </div>
-      </div>
-    </article>
+  return (
+    <MetricCard
+      label={title}
+      value={value}
+      detail={detail}
+      iconSrc={iconSrc}
+      href={href}
+      tone={tone === "red" ? "critical" : tone === "yellow" ? "attention" : "default"}
+    />
   );
-
-  return href ? <Link href={href}>{content}</Link> : content;
 }
 
 export function AdminDashboardLoading() {
-  return (
-    <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4" role="status" aria-live="polite">
-      <span className="sr-only">Loading live admin dashboard data.</span>
-      {Array.from({ length: 4 }).map((_, index) => (
-        <div key={index} className="rounded-lg border border-[#dce5dd] bg-white p-5 shadow-sm" aria-hidden="true">
-          <div className="animate-pulse space-y-3 motion-reduce:animate-none">
-            <div className="size-12 rounded-full bg-[#e7f0e7]" />
-            <div className="h-3 w-28 rounded-full bg-[#e4ece4]" />
-            <div className="h-8 w-24 rounded-md bg-[#d8e6d9]" />
-            <div className="h-2.5 w-36 max-w-full rounded-full bg-[#edf3ed]" />
-          </div>
-        </div>
-      ))}
-    </section>
-  );
+  return <MetricSkeletonGrid label="Loading live admin dashboard data." />;
 }
 
 export function AdminAccessState({
@@ -234,16 +207,17 @@ export function AdminAccessState({
 
   if (!user) {
     return (
-      <section className="rounded-lg border border-[#dce5dd] bg-white p-6 shadow-sm">
-        <p className="font-extrabold text-[#17211b]">Admin sign in required</p>
-        <p className="mt-2 text-sm text-[#68746d]">Use an admin Wesleyan account to continue.</p>
-        <Button className="mt-5" onClick={openAuth}>Sign in</Button>
-      </section>
+      <FeedbackState
+        kind="empty"
+        title="Admin sign in required"
+        description="Use an admin Wesleyan account to continue."
+        action={<Button onClick={openAuth}>Sign in</Button>}
+      />
     );
   }
 
   if (user.role !== "ADMIN") {
-    return <div className="rounded-lg border border-red-200 bg-red-50 p-6 text-sm font-semibold text-red-700">This page is restricted to admin accounts.</div>;
+    return <InlineAlert>This page is restricted to admin accounts.</InlineAlert>;
   }
 
   return null;

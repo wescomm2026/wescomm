@@ -1,6 +1,6 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
 import type { BackendAuthProfile, BackendReservation } from "../lib/api";
-import { authorizeMockedWorkspace, dismissWelcomeGate } from "./helpers";
+import { authorizeMockedWorkspace, dismissWelcomeGate, fulfillWorkspaceShellExtras } from "./helpers";
 
 const staffProfile: BackendAuthProfile = {
   id: "00000000-0000-4000-8000-000000000301",
@@ -57,12 +57,13 @@ function json(route: Route, body: unknown, status = 200) {
   return route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
 }
 
-async function mockReservations(page: Page) {
+async function mockReservations(page: Page, extraReservations: BackendReservation[] = []) {
   await authorizeMockedWorkspace(page, "STAFF");
   let reservations = [
     reservation("00000000-0000-4000-8000-000000000304", "WES-CONFIRM-0304", "PENDING"),
     reservation("00000000-0000-4000-8000-000000000305", "WES-CANCEL-0305", "CONFIRMED"),
-    reservation("00000000-0000-4000-8000-000000000306", "WES-TREASURY-0306", "READY_FOR_PICKUP", "TREASURER")
+    reservation("00000000-0000-4000-8000-000000000306", "WES-TREASURY-0306", "READY_FOR_PICKUP", "TREASURER"),
+    ...extraReservations
   ];
   const statusUpdates: string[] = [];
   const bulkConfirmations: string[][] = [];
@@ -80,6 +81,7 @@ async function mockReservations(page: Page) {
       await json(route, { notifications: [], nextCursor: null });
       return;
     }
+    if (await fulfillWorkspaceShellExtras(route)) return;
     if (path === "/api/backend/notifications/unread-count" && request.method() === "GET") {
       await json(route, { unreadCount: 0 });
       return;
@@ -149,6 +151,42 @@ test("staff can preview and confirm all eligible pending reservations", async ({
 
   await expect(page.getByText("1 reservation confirmed.")).toBeVisible();
   expect(requests.bulkConfirmations).toEqual([["00000000-0000-4000-8000-000000000304"]]);
+  expect(requests.unhandled).toEqual([]);
+});
+
+test("pending reservations can be selected and confirmed together from the default queue view", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "Focused bulk-selection flow runs once.");
+  const needsReview = {
+    ...reservation("00000000-0000-4000-8000-000000000308", "WES-REVIEW-0308", "PENDING"),
+    pickupReviewStatus: "NEEDS_REVIEW" as const,
+    pickupReviewReason: "The pickup window was retired."
+  };
+  const requests = await mockReservations(page, [
+    reservation("00000000-0000-4000-8000-000000000307", "WES-SECOND-0307", "PENDING"),
+    needsReview
+  ]);
+  await page.goto("/staff/reservations");
+  await dismissWelcomeGate(page);
+  await expect(page.getByRole("combobox")).toHaveValue("All");
+  await expect(page.getByRole("button", { name: "Confirm all eligible" })).toBeVisible();
+
+  const bulkBar = page.getByRole("region", { name: "Bulk reservation confirmation" });
+  await expect(bulkBar).toContainText("3 pending in view");
+  await expect(bulkBar).toContainText("2 ready to confirm together · 1 needs review or payment first");
+  await expect(page.getByRole("checkbox", { name: "Select WES-REVIEW-0308 for confirmation" })).toBeDisabled();
+  await expect(bulkBar.getByRole("button", { name: /Confirm selected/ })).toBeDisabled();
+
+  await bulkBar.getByRole("checkbox", { name: "Select all 2 eligible pending reservations" }).check();
+  await expect(bulkBar).toContainText("2 of 2 selected");
+  await page.getByRole("checkbox", { name: "Select WES-SECOND-0307 for confirmation" }).uncheck();
+  await expect(bulkBar).toContainText("1 of 2 selected");
+
+  await bulkBar.getByRole("button", { name: "Confirm selected (1)" }).click();
+  const dialog = page.getByRole("alertdialog", { name: "Confirm 1 reservation?" });
+  await dialog.getByRole("button", { name: "Confirm eligible reservations" }).click();
+  await expect(page.getByText("1 reservation confirmed.")).toBeVisible();
+  expect(requests.bulkConfirmations).toEqual([["00000000-0000-4000-8000-000000000304"]]);
+  await expect(bulkBar).toContainText("2 pending in view");
   expect(requests.unhandled).toEqual([]);
 });
 

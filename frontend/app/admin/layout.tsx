@@ -1,3 +1,5 @@
+import { StudentAuthProvider } from "@/components/auth/StudentAuthProvider";
+import { RealtimeProvider } from "@/components/realtime/RealtimeProvider";
 import { StaffShell } from "@/components/staff/StaffShell";
 import { adminNav } from "@/lib/data";
 import { requireWorkspaceRole } from "@/lib/server-auth";
@@ -21,5 +23,3 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     </StudentAuthProvider>
   );
 }
-import { StudentAuthProvider } from "@/components/auth/StudentAuthProvider";
-import { RealtimeProvider } from "@/components/realtime/RealtimeProvider";

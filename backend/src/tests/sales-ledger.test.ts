@@ -22,6 +22,7 @@ import {
   buildReportSummaryWorkbook,
   reportSummaryFileName
 } from "../services/report-summary-excel.service.js";
+import { EXCEL_DATETIME_FORMAT } from "../utils/excel-dates.js";
 
 const PESO_NUM_FMT = '"\u20b1"#,##0.00';
 
@@ -316,8 +317,22 @@ test("excel workbook carries print-ready page setup and repeated header rows", (
   assert.equal(main.getCell("A4").isMerged, true, "metadata labels must span columns instead of clipping in the sequence column");
   assert.equal(main.getCell("C4").value, report.range.label);
   assert.equal(main.getCell("A7").value, "Summary");
-  assert.match(String(main.getCell("A8").value), /Transactions/);
-  assert.match(String(main.getCell("E8").value), /Total recognized sales/);
+  const richText = (address: string) => (main.getCell(address).value as { richText: Array<{ text: string }> }).richText.map((part) => part.text).join("");
+  assert.match(richText("A8"), /Transactions/);
+  assert.match(richText("F8"), /Reservation sales/);
+  assert.match(richText("A9"), /Total recognized sales/);
+  assert.match(richText("I9"), /Void amount/);
+
+  // Excel has no time zones: datetimes must be written as Manila wall-clock time.
+  const firstSale = report.sales[0];
+  const saleCell = main.getCell(12, 2); // header row 11: title (1-6), summary (7-9), blank (10)
+  const expectedWallClock = new Date(new Date(firstSale.timestamp).getTime() + 8 * 60 * 60 * 1000);
+  assert.equal((saleCell.value as Date).toISOString(), expectedWallClock.toISOString());
+
+  const products = workbook.getWorksheet("Product Summary")!;
+  const totalRow = 5 + report.productSummary.length;
+  assert.equal(products.getCell(totalRow, 1).value, "Total");
+  assert.equal(products.getCell(totalRow, 5).value, report.productSummary.reduce((sum, row) => sum + row.sales, 0));
 });
 
 test("sales ledger rejects a future snapshot before querying report data", async () => {
@@ -436,7 +451,7 @@ test("excel cells use real numbers, peso formats, and real dates", () => {
   main.eachRow((row) => {
     row.eachCell((cell) => {
       if (cell.numFmt === PESO_NUM_FMT && typeof cell.value === "number") pesoNumberCells += 1;
-      if (cell.value instanceof Date && cell.numFmt === "yyyy-mm-dd h:mm") dateCells += 1;
+      if (cell.value instanceof Date && cell.numFmt === EXCEL_DATETIME_FORMAT) dateCells += 1;
     });
   });
   assert.ok(pesoNumberCells >= 4, `expected peso-formatted numeric cells, found ${pesoNumberCells}`);

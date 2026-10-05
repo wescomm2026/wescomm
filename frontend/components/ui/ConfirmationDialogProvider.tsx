@@ -65,7 +65,7 @@ export function ConfirmationDialogProvider({ children }: { children: ReactNode }
       {children}
       {request ? (
         <div
-          className="fixed inset-0 z-[13000] grid place-items-center overflow-y-auto bg-[#101820]/55 p-4 backdrop-blur-[2px]"
+          className="fixed inset-0 z-[13000] grid place-items-center overflow-y-auto bg-foreground/55 p-4 backdrop-blur-[2px]"
           onMouseDown={(event) => {
             if (event.currentTarget === event.target) settle(false);
           }}
@@ -76,7 +76,7 @@ export function ConfirmationDialogProvider({ children }: { children: ReactNode }
             {...dialog.dialogProps}
             role="alertdialog"
             aria-describedby={descriptionId}
-            className="w-full max-w-md overflow-hidden rounded-2xl border border-[#dce5dd] bg-white shadow-[0_24px_70px_rgba(16,24,32,0.28)] outline-none"
+            className="w-full max-w-md overflow-hidden rounded-2xl border bg-white shadow-[0_24px_70px_rgba(16,24,32,0.28)] outline-none"
           >
             <div className="flex items-start gap-4 p-5 sm:p-6">
               <div
@@ -86,23 +86,23 @@ export function ConfirmationDialogProvider({ children }: { children: ReactNode }
                     ? "bg-red-50 text-red-700"
                     : tone === "warning"
                       ? "bg-amber-50 text-amber-700"
-                      : "bg-[#eef6ef] text-primary"
+                      : "bg-muted text-primary"
                 )}
                 aria-hidden="true"
               >
                 <Icon className="size-5" />
               </div>
               <div className="min-w-0 flex-1">
-                <h2 id={dialog.titleId} className="text-lg font-extrabold leading-6 text-[#17211b]">
+                <h2 id={dialog.titleId} className="text-lg font-extrabold leading-6 text-foreground">
                   {request.options.title}
                 </h2>
-                <p id={descriptionId} className="mt-2 break-words text-sm leading-6 text-[#59655d]">
+                <p id={descriptionId} className="mt-2 break-words text-sm leading-6 text-muted-foreground">
                   {request.options.description}
                 </p>
               </div>
             </div>
 
-            <div className="flex flex-col gap-2 border-t border-[#e1e8e2] bg-[#fbfdfb] p-4 sm:flex-row sm:justify-end">
+            <div className="flex flex-col gap-2 border-t border-border bg-surface-subtle p-4 sm:flex-row sm:justify-end">
               <Button
                 type="button"
                 variant="secondary"

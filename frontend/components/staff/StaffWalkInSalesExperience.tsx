@@ -3,7 +3,7 @@
 import { userFacingErrorMessage } from "@/lib/user-facing-error";
 
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
-import { Check, Minus, Plus, Search, Trash2, X } from "lucide-react";
+import { Check, Circle, Minus, Plus, ReceiptText, RefreshCw, Search, ShoppingCart, Trash2, X } from "lucide-react";
 import { useRealtimeRefresh } from "@/components/realtime/RealtimeProvider";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
@@ -33,6 +33,10 @@ import {
   Toolbar,
   formatStaffReceiptDate
 } from "@/components/staff/StaffOperationsShared";
+import { FeedbackState } from "@/components/ui/FeedbackState";
+import { InlineAlert } from "@/components/ui/InlineAlert";
+import { Skeleton } from "@/components/ui/Skeleton";
+import { cn } from "@/lib/utils";
 
 type CartRow = {
   key: string;
@@ -206,7 +210,7 @@ function ProductSkuPickerModal({
             </label>
           ))}
 
-          <div className="rounded-lg border border-[#dce5dd] bg-[#fbfdfb] p-4 text-sm">
+          <div className="rounded-lg border bg-surface-subtle p-4 text-sm">
             <div className="flex items-center justify-between">
               <span className="text-muted-foreground">Available stock</span>
               <span className="font-extrabold">{matchedSku ? `${availableStock} pc(s)` : "\u2014"}</span>
@@ -231,10 +235,10 @@ function ProductSkuPickerModal({
             />
           </label>
           {matchedSku && availableStock <= 0 ? (
-            <p className="text-xs font-semibold text-red-700">This combination is out of stock.</p>
+            <p className="text-xs font-semibold text-danger">This combination is out of stock.</p>
           ) : null}
           {matchedSku && quantityValue > availableStock ? (
-            <p className="text-xs font-semibold text-red-700">Only {availableStock} pc(s) available for this combination.</p>
+            <p className="text-xs font-semibold text-danger">Only {availableStock} pc(s) available for this combination.</p>
           ) : null}
         </div>
 
@@ -302,7 +306,7 @@ function ProductVariantPickerModal({
             </select>
           </label>
 
-          <div className="rounded-lg border border-[#dce5dd] bg-[#fbfdfb] p-4 text-sm">
+          <div className="rounded-lg border bg-surface-subtle p-4 text-sm">
             <div className="flex items-center justify-between">
               <span className="text-muted-foreground">Available stock</span>
               <span className="font-extrabold">{selectedVariant ? `${availableStock} pc(s)` : "\u2014"}</span>
@@ -327,7 +331,7 @@ function ProductVariantPickerModal({
             />
           </label>
           {selectedVariant && quantityValue > availableStock ? (
-            <p className="text-xs font-semibold text-red-700">Only {availableStock} pc(s) available for this option.</p>
+            <p className="text-xs font-semibold text-danger">Only {availableStock} pc(s) available for this option.</p>
           ) : null}
         </div>
 
@@ -423,7 +427,7 @@ function SaleSuccessModal({
     <div className="fixed inset-0 z-[90] flex items-end justify-center bg-black/50 p-4 sm:items-center">
       <div ref={dialogRef} {...dialogProps} className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-lg bg-white p-6 shadow-xl">
         <div className="flex items-center gap-3">
-          <span className="grid size-11 place-items-center rounded-full bg-emerald-50 text-emerald-700">
+          <span className="grid size-11 place-items-center rounded-full bg-success/10 text-success">
             <Check className="size-6" />
           </span>
           <div>
@@ -431,7 +435,7 @@ function SaleSuccessModal({
             <p className="text-sm text-muted-foreground">Stock has been deducted and the receipt is verified.</p>
           </div>
         </div>
-        <div className="mt-5 rounded-lg border border-[#dce5dd] bg-[#fbfdfb] p-4">
+        <div className="mt-5 rounded-lg border bg-surface-subtle p-4">
           <div className="flex items-center justify-between text-sm">
             <span className="text-muted-foreground">Receipt code</span>
             <span className="font-extrabold">{receipt.receiptCode}</span>
@@ -875,6 +879,16 @@ export function StaffWalkInSalesExperience() {
     }
   };
 
+  const filterChipClass = (active: boolean) => cn(
+    "rounded-full border px-3 py-1.5 text-xs font-bold transition-colors",
+    active ? "border-primary bg-primary text-primary-foreground" : "border-border-strong bg-card text-muted-foreground hover:border-primary hover:text-primary"
+  );
+  const catalogFiltersActive = Boolean(catalogSearch || activeCategoryId || stockFilter !== "ALL");
+  const cartQuantityByProduct = cart.reduce<Record<string, number>>((totals, row) => {
+    totals[row.product.id] = (totals[row.product.id] ?? 0) + (Number.parseInt(row.quantity, 10) || 0);
+    return totals;
+  }, {});
+
   const cartPanel = (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
@@ -883,13 +897,14 @@ export function StaffWalkInSalesExperience() {
           {cart.length ? `${cart.length} line item${cart.length === 1 ? "" : "s"}` : "Cart is empty"}
         </span>
         {cart.length ? (
-          <button type="button" onClick={() => (confirmClear ? clearCart() : setConfirmClear(true))} onBlur={() => setConfirmClear(false)} className={`ml-auto rounded-md border px-2 py-1 text-xs font-bold ${confirmClear ? "border-red-300 bg-red-50 text-red-700" : "border-[#d7e1d8] text-muted-foreground hover:border-red-300 hover:text-red-700"}`}>
+          <button type="button" onClick={() => (confirmClear ? clearCart() : setConfirmClear(true))} onBlur={() => setConfirmClear(false)} className={cn("ml-auto rounded-md border px-2 py-1 text-xs font-bold transition-colors", confirmClear ? "border-danger/40 bg-danger/5 text-danger" : "border-border-strong text-muted-foreground hover:border-danger/40 hover:text-danger")}>
             {confirmClear ? "Confirm clear?" : "Clear"}
           </button>
         ) : null}
       </div>
       {!cart.length ? (
-        <div className="rounded-md border border-dashed border-[#cfd9d0] bg-white px-4 py-5 text-center text-xs font-semibold text-muted-foreground">
+        <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed border-border-strong bg-card px-4 py-5 text-center text-xs font-semibold text-muted-foreground">
+          <ShoppingCart className="size-5 text-muted-foreground" aria-hidden="true" />
           Choose products from the catalog to start the sale.
         </div>
       ) : null}
@@ -902,19 +917,19 @@ export function StaffWalkInSalesExperience() {
             ? row.product.variants.find((variant) => variant.id === row.variantId)?.optionValue
             : null;
         return (
-          <div key={row.key} className="rounded-md border border-[#dce5dd] bg-white p-3">
+          <div key={row.key} className="rounded-lg border bg-card p-3">
             <div className="flex items-start gap-2">
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-extrabold">{row.product.name}</p>
                 <p className="truncate text-xs text-muted-foreground">{optionLabel ?? formatPeso(Number(row.product.price))}</p>
-                {stock !== null ? <p className={`mt-1 text-[11px] font-semibold ${stock <= 0 ? "text-red-700" : "text-muted-foreground"}`}>Available: {stock}</p> : null}
+                {stock !== null ? <p className={`mt-1 text-[11px] font-semibold ${stock <= 0 ? "text-danger" : "text-muted-foreground"}`}>Available: {stock}</p> : null}
               </div>
               <p className="shrink-0 text-sm font-extrabold text-primary">{formatPeso(lineTotal)}</p>
-              <button type="button" onClick={() => removeCartRow(row.key)} aria-label={`Remove ${row.product.name}`} className="rounded-md p-1 text-muted-foreground hover:bg-red-50 hover:text-red-700"><Trash2 className="size-4" /></button>
+              <button type="button" onClick={() => removeCartRow(row.key)} aria-label={`Remove ${row.product.name}`} className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-danger/5 hover:text-danger"><Trash2 className="size-4" /></button>
             </div>
             <div className="mt-3 flex items-center gap-2">
               <Button type="button" variant="secondary" size="icon" className="size-8" aria-label={`Decrease ${row.product.name} quantity`} onClick={() => adjustCartRowQuantity(row, -1)}><Minus className="size-3.5" /></Button>
-              <input type="number" min="1" max={stock ?? 10000000} step="1" inputMode="numeric" aria-label={`${row.product.name} quantity`} value={row.quantity} onChange={(event) => updateCartRow(row.key, { quantity: event.target.value })} className="h-8 w-16 rounded-md border border-[#d7e1d8] bg-white px-2 text-center text-sm outline-none focus:border-primary" />
+              <input type="number" min="1" max={stock ?? 10000000} step="1" inputMode="numeric" aria-label={`${row.product.name} quantity`} value={row.quantity} onChange={(event) => updateCartRow(row.key, { quantity: event.target.value })} className="h-8 w-16 rounded-md border border-border-strong bg-white px-2 text-center text-sm outline-none focus:border-primary" />
               <Button type="button" variant="secondary" size="icon" className="size-8" aria-label={`Increase ${row.product.name} quantity`} disabled={stock !== null && Number.parseInt(row.quantity, 10) >= stock} onClick={() => adjustCartRowQuantity(row, 1)}><Plus className="size-3.5" /></Button>
               <span className="ml-auto text-xs text-muted-foreground">{formatPeso(Number(row.product.price))} each</span>
             </div>
@@ -930,19 +945,31 @@ export function StaffWalkInSalesExperience() {
         eyebrow="Walk-in sales"
         title="Record physical-store purchases"
         detail="Sell products over the counter, deduct stock immediately, and issue a cash receipt."
-        action={<Button variant="secondary" onClick={() => { void loadHistory(); void loadCatalog(); }} disabled={historyLoading}>Refresh</Button>}
+        action={(
+          <Button variant="secondary" onClick={() => { void loadHistory(); void loadCatalog(); }} disabled={historyLoading}>
+            <RefreshCw className={cn("size-4", (historyLoading || catalogLoading) && "animate-spin motion-reduce:animate-none")} aria-hidden="true" />
+            Refresh
+          </Button>
+        )}
       />
 
-      <nav className="flex w-fit rounded-lg border border-[#dce5dd] bg-white p-1 shadow-sm" aria-label="Walk-in sales sections">
-        <button type="button" onClick={() => setActiveView("SALE")} aria-current={activeView === "SALE" ? "page" : undefined} className={`rounded-md px-4 py-2 text-sm font-bold ${activeView === "SALE" ? "bg-primary text-white" : "text-muted-foreground hover:bg-[#eef6ee] hover:text-primary"}`}>
+      <nav className="grid w-full grid-cols-2 gap-1 rounded-xl border bg-card p-1 shadow-soft sm:inline-grid sm:w-auto" aria-label="Walk-in sales sections">
+        <button type="button" onClick={() => setActiveView("SALE")} aria-current={activeView === "SALE" ? "page" : undefined} className={cn("inline-flex h-9 items-center justify-center gap-2 rounded-lg px-4 text-sm font-bold transition-colors sm:min-w-36", activeView === "SALE" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted hover:text-primary")}>
+          <ShoppingCart className="size-4" aria-hidden="true" />
           New sale
+          {cart.length ? (
+            <span className={cn("grid min-w-5 place-items-center rounded-full px-1.5 text-[11px] font-extrabold tabular-nums", activeView === "SALE" ? "bg-primary-foreground text-primary" : "bg-primary text-primary-foreground")}>
+              {cart.length}<span className="sr-only"> in the current sale</span>
+            </span>
+          ) : null}
         </button>
-        <button type="button" onClick={() => setActiveView("HISTORY")} aria-current={activeView === "HISTORY" ? "page" : undefined} className={`rounded-md px-4 py-2 text-sm font-bold ${activeView === "HISTORY" ? "bg-primary text-white" : "text-muted-foreground hover:bg-[#eef6ee] hover:text-primary"}`}>
+        <button type="button" onClick={() => setActiveView("HISTORY")} aria-current={activeView === "HISTORY" ? "page" : undefined} className={cn("inline-flex h-9 items-center justify-center gap-2 rounded-lg px-4 text-sm font-bold transition-colors sm:min-w-36", activeView === "HISTORY" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted hover:text-primary")}>
+          <ReceiptText className="size-4" aria-hidden="true" />
           Sales history
         </button>
       </nav>
 
-      {activeView === "SALE" ? <section className="rounded-lg border border-[#dce5dd] bg-white p-5 shadow-sm">
+      {activeView === "SALE" ? <section className="rounded-xl border bg-card p-4 shadow-soft sm:p-5">
         <h2 className="flex items-center gap-2 text-lg font-extrabold text-foreground">
           <Plus className="size-5 text-primary" /> New walk-in sale
         </h2>
@@ -957,14 +984,14 @@ export function StaffWalkInSalesExperience() {
               ) : null}
             </div>
 
-            <label className="flex h-11 items-center rounded-md border border-[#d7e1d8] bg-white px-3 focus-within:border-primary">
-              <Search className="mr-2 size-5 text-[#68746d]" />
+            <label className="flex h-11 items-center rounded-control border border-border-strong bg-card px-3 transition focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/15">
+              <Search className="mr-2 size-5 text-muted-foreground" />
               <input
                 value={catalogSearch}
                 onChange={(event) => setCatalogSearch(event.target.value)}
                 placeholder="Search name, category, SKU, or option"
                 aria-label="Search products"
-                className="min-w-0 flex-1 bg-transparent text-sm outline-none"
+                className="min-w-0 flex-1 bg-transparent text-sm outline-none focus-visible:outline-none"
               />
             </label>
 
@@ -973,7 +1000,7 @@ export function StaffWalkInSalesExperience() {
                 type="button"
                 onClick={() => setActiveCategoryId("")}
                 aria-pressed={activeCategoryId === ""}
-                className={`rounded-full border px-3 py-1.5 text-xs font-bold ${activeCategoryId === "" ? "border-primary bg-primary text-white" : "border-[#d7e1d8] bg-white text-muted-foreground hover:border-primary"}`}
+                className={filterChipClass(activeCategoryId === "")}
               >
                 All products
               </button>
@@ -983,7 +1010,7 @@ export function StaffWalkInSalesExperience() {
                   type="button"
                   onClick={() => setActiveCategoryId(category.id === activeCategoryId ? "" : category.id)}
                   aria-pressed={activeCategoryId === category.id}
-                  className={`rounded-full border px-3 py-1.5 text-xs font-bold ${activeCategoryId === category.id ? "border-primary bg-primary text-white" : "border-[#d7e1d8] bg-white text-muted-foreground hover:border-primary"}`}
+                  className={filterChipClass(activeCategoryId === category.id)}
                 >
                   {category.name}
                 </button>
@@ -997,27 +1024,33 @@ export function StaffWalkInSalesExperience() {
                   type="button"
                   onClick={() => setStockFilter(filter)}
                   aria-pressed={stockFilter === filter}
-                  className={`rounded-full border px-3 py-1.5 text-xs font-bold ${stockFilter === filter ? "border-primary bg-primary text-white" : "border-[#d7e1d8] bg-white text-muted-foreground hover:border-primary"}`}
+                  className={filterChipClass(stockFilter === filter)}
                 >
                   {filter === "ALL" ? "All stock" : filter === "IN_STOCK" ? "In stock" : filter === "LOW_STOCK" ? "Low stock" : "Out of stock"}
                 </button>
               ))}
             </div>
 
-            {catalogError ? <p className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{catalogError}</p> : null}
+            {catalogError ? <InlineAlert>{catalogError}</InlineAlert> : null}
             {stockConflict ? (
-              <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm">
-                <p className="font-bold text-amber-900">Stock changed while checking out</p>
-                <p className="mt-1 font-semibold text-amber-900">{stockConflict}</p>
-                <p className="mt-1 text-xs text-amber-800">Review the affected item above, correct the quantity, and save again.</p>
-                <Button type="button" variant="secondary" className="mt-3" onClick={() => { void loadCatalog(); void refreshCartInventory(); setStockConflict(""); }}>
-                  Refresh stock & correct
-                </Button>
-              </div>
+              <InlineAlert
+                tone="warning"
+                title="Stock changed while checking out"
+                action={(
+                  <Button type="button" variant="secondary" size="sm" onClick={() => { void loadCatalog(); void refreshCartInventory(); setStockConflict(""); }}>
+                    Refresh stock & correct
+                  </Button>
+                )}
+              >
+                <p className="font-semibold">{stockConflict}</p>
+                <p className="mt-1 text-xs">Review the affected item above, correct the quantity, and save again.</p>
+              </InlineAlert>
             ) : null}
 
             {catalogLoading && !catalog.length ? (
-              <div className="rounded-lg border border-[#dce5dd] bg-[#fbfdfb] p-6 text-sm font-semibold text-muted-foreground">Loading product catalog...</div>
+              <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-3" role="status" aria-label="Loading product catalog...">
+                {Array.from({ length: 6 }, (_, index) => <Skeleton key={index} className="h-[5.5rem] rounded-lg" />)}
+              </div>
             ) : (
               <>
                 {visibleCatalog.length ? (
@@ -1026,9 +1059,13 @@ export function StaffWalkInSalesExperience() {
                     const sellableStock = productSellableStock(product);
                     const outOfStock = sellableStock <= 0;
                     const lowStock = !outOfStock && productIsLowStock(product);
+                    const inCart = cartQuantityByProduct[product.id] ?? 0;
                     return (
-                      <article key={product.id} className={`flex gap-3 rounded-lg border p-3 ${outOfStock ? "border-[#e5ebe6] bg-[#f4f6f4]" : "border-[#dce5dd] bg-[#fbfdfb]"}`}>
-                        <div className="grid size-14 shrink-0 place-items-center overflow-hidden rounded-md border border-[#e5ebe6] bg-white">
+                      <article key={product.id} className={cn(
+                        "flex gap-3 rounded-lg border p-3 transition-colors",
+                        outOfStock ? "bg-surface-subtle opacity-70" : inCart ? "border-primary/40 bg-primary/5" : "bg-card hover:border-primary/40"
+                      )}>
+                        <div className="grid size-14 shrink-0 place-items-center overflow-hidden rounded-md border bg-card">
                           {product.imageUrl ? (
                             // eslint-disable-next-line @next/next/no-img-element
                             <img src={product.imageUrl} alt="" className="size-full object-cover" />
@@ -1041,16 +1078,19 @@ export function StaffWalkInSalesExperience() {
                           <p className="truncate text-xs text-muted-foreground">{product.category?.name ?? "General"}</p>
                           <p className="mt-1 text-sm font-extrabold text-primary">{formatPeso(Number(product.price))}</p>
                           <div className="mt-1 flex flex-wrap items-center gap-2">
-                            <span className={`text-xs font-semibold ${outOfStock ? "text-red-700" : lowStock ? "text-amber-700" : "text-muted-foreground"}`}>
+                            <span className={cn("text-xs font-semibold", outOfStock ? "text-danger" : lowStock ? "text-warning" : "text-muted-foreground")}>
                               {product.skuInventoryEnabled || product.variants?.length
                                 ? `${sellableStock} pc(s) total`
                                 : `${product.stock} pc(s) available`}
                             </span>
                             {outOfStock ? (
-                              <span className="rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-extrabold uppercase text-red-700">Out of stock</span>
+                              <span className="rounded bg-danger/10 px-1.5 py-0.5 text-[10px] font-extrabold uppercase text-danger">Out of stock</span>
                             ) : null}
                             {lowStock ? (
-                              <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-extrabold uppercase text-amber-700">Low stock</span>
+                              <span className="rounded bg-warning/10 px-1.5 py-0.5 text-[10px] font-extrabold uppercase text-warning">Low stock</span>
+                            ) : null}
+                            {inCart ? (
+                              <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-extrabold uppercase text-primary">In sale ×{inCart}</span>
                             ) : null}
                           </div>
                         </div>
@@ -1071,12 +1111,15 @@ export function StaffWalkInSalesExperience() {
                   })}
                   </div>
                 ) : (
-                  <div className="rounded-lg border border-[#dce5dd] bg-[#fbfdfb] p-6 text-center text-sm font-semibold text-muted-foreground">
-                    No products match this view.
-                    {catalogSearch || activeCategoryId || stockFilter !== "ALL"
-                      ? " Clear the search or filters to see the full catalog."
-                      : ""}
-                  </div>
+                  <FeedbackState
+                    kind="empty"
+                    compact
+                    title="No products match this view."
+                    description={catalogFiltersActive ? "Clear the search or filters to see the full catalog." : "Active products will appear here once they are added to inventory."}
+                    action={catalogFiltersActive ? (
+                      <Button type="button" variant="secondary" size="sm" onClick={() => { setCatalogSearch(""); setActiveCategoryId(""); setStockFilter("ALL"); }}>Clear filters</Button>
+                    ) : undefined}
+                  />
                 )}
                 {catalogNextCursor ? (
                   <div className="flex justify-center">
@@ -1094,7 +1137,7 @@ export function StaffWalkInSalesExperience() {
             )}
           </div>
 
-          <aside className="space-y-4 rounded-lg border border-[#dce5dd] bg-[#fbfdfb] p-4 xl:sticky xl:top-4 xl:self-start">
+          <aside className="space-y-4 rounded-xl border bg-surface-subtle p-4 xl:sticky xl:top-[calc(var(--workspace-header)+1rem)] xl:self-start" aria-label="Checkout">
             <div>
               <h3 className="text-base font-extrabold text-foreground">Checkout</h3>
               <p className="mt-1 text-xs text-muted-foreground">Enter any walk-in buyer name. Linking a WESCOMM student account is optional.</p>
@@ -1116,11 +1159,11 @@ export function StaffWalkInSalesExperience() {
                   }}
                   onFocus={() => studentResults.length && setStudentPickerOpen(true)}
                   placeholder="Enter buyer name"
-                  className="h-11 rounded-md border border-[#d7e1d8] bg-white px-3 font-normal outline-none focus:border-primary"
+                  className="h-11 rounded-md border border-border-strong bg-white px-3 font-normal outline-none focus:border-primary"
                 />
               </label>
               {studentPickerOpen && studentResults.length ? (
-                <ul id="walk-in-student-results" role="listbox" className="absolute left-0 right-0 top-full z-30 mt-1 max-h-60 overflow-y-auto rounded-md border border-[#d7e1d8] bg-white shadow-lg">
+                <ul id="walk-in-student-results" role="listbox" className="absolute left-0 right-0 top-full z-30 mt-1 max-h-60 overflow-y-auto rounded-md border border-border-strong bg-white shadow-lg">
                   {studentResults.map((student) => (
                     <li key={student.id}>
                       <button
@@ -1135,7 +1178,7 @@ export function StaffWalkInSalesExperience() {
                           setStudentError("");
                           setSaleError("");
                         }}
-                        className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-[#eef6ee]"
+                        className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-muted"
                       >
                         <span className="min-w-0">
                           <span className="block truncate text-sm font-bold">{student.fullName}</span>
@@ -1151,36 +1194,36 @@ export function StaffWalkInSalesExperience() {
               <div aria-live="polite">
               {studentLoading ? <p className="mt-1 text-xs font-semibold text-muted-foreground">Searching students...</p> : null}
               {!studentLoading && !studentError && buyerNameValid && !selectedStudent ? (
-                <p className="mt-1 text-xs font-semibold text-emerald-700">
+                <p className="mt-1 text-xs font-semibold text-success">
                   This can be saved as a walk-in buyer. Select a result only if you want to link an existing student account.
                 </p>
               ) : null}
-              {studentError ? <p className="mt-1 text-xs font-semibold text-amber-700">Student lookup is unavailable, but you can still save this as a walk-in buyer.</p> : null}
+              {studentError ? <p className="mt-1 text-xs font-semibold text-warning">Student lookup is unavailable, but you can still save this as a walk-in buyer.</p> : null}
               </div>
               {selectedStudent ? (
-                <div className="mt-2 flex items-center gap-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2">
-                  <Check className="size-4 shrink-0 text-emerald-700" />
+                <div className="mt-2 flex items-center gap-3 rounded-md border border-success/30 bg-success/10 px-3 py-2">
+                  <Check className="size-4 shrink-0 text-success" />
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-xs font-extrabold text-emerald-900">Student account linked</p>
-                    <p className="truncate text-xs text-emerald-800">{selectedStudent.fullName}{selectedStudent.studentNumber ? ` — ${selectedStudent.studentNumber}` : ""}</p>
+                    <p className="truncate text-xs font-extrabold text-success">Student account linked</p>
+                    <p className="truncate text-xs text-success">{selectedStudent.fullName}{selectedStudent.studentNumber ? ` — ${selectedStudent.studentNumber}` : ""}</p>
                   </div>
-                  <button type="button" className="text-xs font-bold text-emerald-800 underline" onClick={() => { setSelectedStudent(null); setStudentSearch(""); }}>Change</button>
+                  <button type="button" className="text-xs font-bold text-success underline" onClick={() => { setSelectedStudent(null); setStudentSearch(""); }}>Change</button>
                 </div>
               ) : null}
             </div>
 
             {cartPanel}
 
-            <details className="rounded-md border border-[#dce5dd] bg-white">
+            <details className="rounded-lg border bg-card">
               <summary className="cursor-pointer px-3 py-2.5 text-xs font-bold text-muted-foreground">Optional receipt details</summary>
-              <label className="grid gap-1.5 border-t border-[#e5ebe6] p-3 text-xs font-semibold">
+              <label className="grid gap-1.5 border-t border-border p-3 text-xs font-semibold">
                 Manual receipt code
                 <input
                   value={receiptCode}
                   onChange={(event) => setReceiptCode(event.target.value.toUpperCase())}
                   maxLength={64}
                   placeholder="Auto-generated when blank"
-                  className="h-11 rounded-md border border-[#d7e1d8] bg-white px-3 font-normal uppercase outline-none focus:border-primary"
+                  className="h-11 rounded-md border border-border-strong bg-white px-3 font-normal uppercase outline-none focus:border-primary"
                 />
               </label>
             </details>
@@ -1195,41 +1238,49 @@ export function StaffWalkInSalesExperience() {
                 value={cashReceived}
                 onChange={(event) => { setCashReceived(event.target.value); setSaleError(""); }}
                 placeholder="0.00"
-                className="h-11 rounded-md border border-[#d7e1d8] bg-white px-3 font-normal outline-none focus:border-primary"
+                className="h-11 rounded-md border border-border-strong bg-white px-3 font-normal outline-none focus:border-primary"
               />
             </label>
 
             {quickCashAmounts.length ? (
               <div className="flex flex-wrap gap-2" aria-label="Quick cash amounts">
                 {quickCashAmounts.map((amount) => (
-                  <button key={amount} type="button" onClick={() => { setCashReceived(String(amount)); setSaleError(""); }} className="rounded-md border border-[#d7e1d8] bg-white px-3 py-2 text-xs font-bold text-primary hover:border-primary hover:bg-[#eef6ee]">
+                  <button key={amount} type="button" onClick={() => { setCashReceived(String(amount)); setSaleError(""); }} className="rounded-md border border-border-strong bg-card px-3 py-2 text-xs font-bold text-primary transition-colors hover:border-primary hover:bg-primary/5">
                     {amount === cartTotal ? "Exact" : formatPeso(amount)}
                   </button>
                 ))}
               </div>
             ) : null}
 
-            <dl className="grid grid-cols-[1fr_auto] gap-y-2 border-t border-[#e5ebe6] pt-3 text-sm">
-              <dt className="text-muted-foreground">Total</dt>
-              <dd className="font-extrabold text-foreground">{formatPeso(cartTotal)}</dd>
+            <dl className="grid grid-cols-[1fr_auto] items-baseline gap-y-2 rounded-lg border bg-card px-3 py-3 text-sm">
+              <dt className="font-bold text-muted-foreground">Total</dt>
+              <dd className="text-xl font-extrabold tabular-nums text-foreground">{formatPeso(cartTotal)}</dd>
               {cashValid && changeDue !== null ? (
                 <>
                   <dt className="text-muted-foreground">Change</dt>
-                  <dd className="font-extrabold text-primary">{formatPeso(changeDue)}</dd>
+                  <dd className="font-extrabold tabular-nums text-success">{formatPeso(changeDue)}</dd>
                 </>
               ) : null}
             </dl>
             {!cashValid && cashReceived.trim() ? (
-              <p className="text-xs font-semibold text-red-700">Cash received must cover the total.</p>
+              <p className="text-xs font-semibold text-danger">Cash received must cover the total.</p>
             ) : null}
 
-            {saleError ? <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">{saleError}</p> : null}
+            {saleError ? <p role="alert" className="rounded-md border border-danger/30 bg-danger/5 px-3 py-2 text-xs font-semibold text-danger">{saleError}</p> : null}
 
-            <div className="space-y-2 rounded-md border border-[#dce5dd] bg-white p-3 text-xs font-semibold">
-              <p className={cartValid ? "flex items-center gap-2 text-emerald-700" : "flex items-center gap-2 text-amber-700"}><Check className="size-4" /> Products and stock reviewed</p>
-              <p className={buyerNameValid ? "flex items-center gap-2 text-emerald-700" : "flex items-center gap-2 text-amber-700"}><Check className="size-4" /> Buyer name entered</p>
-              <p className={cashValid ? "flex items-center gap-2 text-emerald-700" : "flex items-center gap-2 text-amber-700"}><Check className="size-4" /> Cash covers total</p>
-            </div>
+            <ul className="space-y-2 rounded-lg border bg-card p-3 text-xs font-semibold" aria-label="Sale checklist">
+              {[
+                { done: cartValid, label: "Products and stock reviewed" },
+                { done: buyerNameValid, label: "Buyer name entered" },
+                { done: cashValid, label: "Cash covers total" }
+              ].map((step) => (
+                <li key={step.label} className={cn("flex items-center gap-2", step.done ? "text-success" : "text-muted-foreground")}>
+                  {step.done ? <Check className="size-4" aria-hidden="true" /> : <Circle className="size-4" aria-hidden="true" />}
+                  {step.label}
+                  <span className="sr-only">{step.done ? " (done)" : " (to do)"}</span>
+                </li>
+              ))}
+            </ul>
 
             <Button
               type="button"
@@ -1255,36 +1306,38 @@ export function StaffWalkInSalesExperience() {
           placeholder="Search receipt code, buyer, or item"
           statuses={["Verified", "Voided"]}
         />
-        {historyError ? <p className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{historyError}</p> : null}
+        {historyError ? <InlineAlert>{historyError}</InlineAlert> : null}
         {historyLoading ? (
-          <div className="rounded-lg border border-[#dce5dd] bg-white p-6 text-sm font-semibold text-[#68746d] shadow-sm">Loading walk-in sales...</div>
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3" role="status" aria-label="Loading walk-in sales...">
+            {Array.from({ length: 3 }, (_, index) => <Skeleton key={index} className="h-56 rounded-xl" />)}
+          </div>
         ) : history.length ? (
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {history.map((receipt) => (
-              <article key={receipt.id} className="rounded-lg border border-[#dce5dd] bg-white p-5 shadow-sm">
+              <article key={receipt.id} className={cn("flex flex-col rounded-xl border bg-card p-5 shadow-soft", receipt.status === "VOIDED" && "opacity-75")}>
                 <div className="flex items-start gap-3">
                   <div>
                     <p className="font-extrabold">{receipt.receiptCode}</p>
-                    <p className="text-xs text-[#68746d]">{formatStaffReceiptDate(receipt.issuedAt)}</p>
+                    <p className="text-xs text-muted-foreground">{formatStaffReceiptDate(receipt.issuedAt)}</p>
                   </div>
                   <span className="ml-auto"><StatusBadge statusKey={receipt.status} /></span>
                 </div>
                 <dl className="mt-5 grid grid-cols-[1fr_auto] gap-y-2 text-sm">
-                  <dt className="text-[#68746d]">Buyer</dt>
+                  <dt className="text-muted-foreground">Buyer</dt>
                   <dd className="font-bold">{receipt.buyerName}</dd>
-                  <dt className="text-[#68746d]">Items</dt>
+                  <dt className="text-muted-foreground">Items</dt>
                   <dd className="text-right font-bold">
                     {receipt.items.length > 1
                       ? `${receipt.items[0].productName} + ${receipt.items.length - 1} more`
                       : receipt.items[0]?.productName ?? "Walk-in item"}
                   </dd>
-                  <dt className="text-[#68746d]">Payment</dt>
+                  <dt className="text-muted-foreground">Payment</dt>
                   <dd className="font-bold">Cash</dd>
-                  <dt className="text-[#68746d]">Total</dt>
+                  <dt className="text-muted-foreground">Total</dt>
                   <dd className="font-extrabold text-primary">{formatPeso(Number(receipt.totalAmount))}</dd>
                 </dl>
                 {receipt.items.length ? (
-                  <div className="mt-4 rounded-md bg-[#fbfdfb] p-3">
+                  <div className="mt-4 rounded-md bg-surface-subtle p-3">
                     {receipt.items.map((item) => (
                       <div key={item.id} className="flex items-center justify-between gap-2 py-1 text-xs">
                         <span className="min-w-0 truncate font-semibold">
@@ -1297,11 +1350,11 @@ export function StaffWalkInSalesExperience() {
                   </div>
                 ) : null}
                 {receipt.status !== "VOIDED" ? (
-                  <div className="mt-5">
+                  <div className="mt-auto pt-5">
                     <Button
                       variant="ghost"
                       disabled={voiding}
-                      className="w-full border border-red-200 bg-red-50 text-red-700 hover:bg-red-100"
+                      className="w-full border border-danger/30 text-danger hover:bg-danger/5"
                       onClick={() => {
                         setVoidReason("");
                         setVoidTarget(receipt);
@@ -1316,9 +1369,14 @@ export function StaffWalkInSalesExperience() {
             ))}
           </div>
         ) : (
-          <div className="rounded-lg border border-[#dce5dd] bg-white p-6 text-sm font-semibold text-[#68746d] shadow-sm">
-            No walk-in sales recorded yet.
-          </div>
+          <FeedbackState
+            kind="empty"
+            title={historySearch.trim() || historyStatus !== "All" ? "No matching walk-in sales." : "No walk-in sales recorded yet."}
+            description={historySearch.trim() || historyStatus !== "All" ? "Try another search or status." : "Sales you save from the New sale tab will appear here."}
+            action={historySearch.trim() || historyStatus !== "All"
+              ? <Button type="button" variant="secondary" size="sm" onClick={() => { setHistorySearch(""); setHistoryStatus("All"); }}>Clear filters</Button>
+              : <Button type="button" size="sm" onClick={() => setActiveView("SALE")}><ShoppingCart className="size-4" /> Start a sale</Button>}
+          />
         )}
         {historyNextCursor ? (
           <div className="flex justify-center">

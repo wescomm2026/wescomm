@@ -17,6 +17,7 @@ import {
   updateFaqFromApi,
   type BackendFaq
 } from "@/lib/api";
+import { InlineAlert } from "@/components/ui/InlineAlert";
 
 type FaqDraft = {
   id?: string;
@@ -216,7 +217,7 @@ export function FaqManagementExperience() {
     return (
       <div className="space-y-5">
         <PageHeader onAdd={() => setEditing({ ...emptyDraft })} onRefresh={() => void loadFaqs()} loading />
-        <section className="rounded-lg border border-[#dce5dd] bg-white p-6 text-sm font-semibold text-[#68746d] shadow-sm">
+        <section className="rounded-lg border bg-white p-6 text-sm font-semibold text-muted-foreground shadow-sm">
           Loading FAQ records...
         </section>
       </div>
@@ -227,9 +228,9 @@ export function FaqManagementExperience() {
     return (
       <div className="space-y-5">
         <PageHeader onAdd={() => setEditing({ ...emptyDraft })} onRefresh={() => void loadFaqs()} showActions={false} />
-        <section className="rounded-lg border border-[#dce5dd] bg-white p-6 shadow-sm">
-          <p className="font-extrabold text-[#17211b]">Sign in required</p>
-          <p className="mt-2 max-w-xl text-sm leading-6 text-[#68746d]">Use a staff or admin account to manage FAQ content.</p>
+        <section className="rounded-lg border bg-white p-6 shadow-sm">
+          <p className="font-extrabold text-foreground">Sign in required</p>
+          <p className="mt-2 max-w-xl text-sm leading-6 text-muted-foreground">Use a staff or admin account to manage FAQ content.</p>
           <Button className="mt-5 h-11" onClick={openAuth}>Sign in</Button>
         </section>
       </div>
@@ -240,17 +241,17 @@ export function FaqManagementExperience() {
     <div className="space-y-5">
       <PageHeader onAdd={() => setEditing({ ...emptyDraft })} onRefresh={() => void loadFaqs()} loading={loading || submitting} />
 
-      <div className="flex flex-col gap-3 rounded-lg border border-[#dce5dd] bg-white p-3 sm:flex-row">
+      <div className="flex flex-col gap-3 rounded-lg border bg-white p-3 sm:flex-row">
         <input
           value={search}
           onChange={(event) => setSearch(event.target.value)}
           placeholder="Search questions, answers, or categories"
-          className="h-11 min-w-0 flex-1 rounded-md border border-[#d7e1d8] px-3 text-sm outline-none focus:border-primary"
+          className="h-11 min-w-0 flex-1 rounded-md border border-border-strong px-3 text-sm outline-none focus:border-primary"
         />
         <select
           value={status}
           onChange={(event) => setStatus(event.target.value)}
-          className="h-11 rounded-md border border-[#d7e1d8] bg-white px-3 text-sm font-semibold outline-none focus:border-primary"
+          className="h-11 rounded-md border border-border-strong bg-white px-3 text-sm font-semibold outline-none focus:border-primary"
         >
           <option value="All">All statuses</option>
           <option value="Published">Published</option>
@@ -258,14 +259,14 @@ export function FaqManagementExperience() {
         </select>
       </div>
 
-      {notice ? <p className="rounded-md border border-[#cfe0d0] bg-[#f3f9f3] px-4 py-3 text-sm font-semibold text-primary">{notice}</p> : null}
-      {error ? <p className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p> : null}
+      {notice ? <p className="rounded-md border border-[#cfe0d0] bg-muted px-4 py-3 text-sm font-semibold text-primary">{notice}</p> : null}
+      {error ? <InlineAlert>{error}</InlineAlert> : null}
 
       <div className="grid gap-4 lg:grid-cols-2">
         {filteredFaqs.length ? filteredFaqs.map((faq) => (
-          <article key={faq.id} className="rounded-lg border border-[#dce5dd] bg-white p-5 shadow-sm">
+          <article key={faq.id} className="rounded-lg border bg-white p-5 shadow-sm">
             <div className="flex items-start gap-3">
-              <span className="grid size-11 shrink-0 place-items-center rounded-md bg-[#eef6ee]">
+              <span className="grid size-11 shrink-0 place-items-center rounded-md bg-muted">
                 <AssetIcon src="/assets/faq.svg" className="size-8" />
               </span>
               <div className="min-w-0 flex-1">
@@ -273,14 +274,14 @@ export function FaqManagementExperience() {
                   {faq.category ? <p className="text-xs font-bold uppercase text-primary">{faq.category}</p> : null}
                   <StatusBadge status={faq.isPublished === false ? "Draft" : "Published"} />
                 </div>
-                <h2 className="mt-2 text-lg font-extrabold text-[#17211b]">{faq.question}</h2>
-                <p className="mt-2 text-sm leading-6 text-[#68746d]">{faq.answer}</p>
-                <p className="mt-3 text-xs font-semibold text-[#7a857e]">
+                <h2 className="mt-2 text-lg font-extrabold text-foreground">{faq.question}</h2>
+                <p className="mt-2 text-sm leading-6 text-muted-foreground">{faq.answer}</p>
+                <p className="mt-3 text-xs font-semibold text-muted-foreground">
                   Updated {formatFaqDate(faq.updatedAt) || "recently"}
                 </p>
               </div>
             </div>
-            <div className="mt-4 flex flex-wrap gap-2 border-t border-[#edf1ed] pt-4">
+            <div className="mt-4 flex flex-wrap gap-2 border-t border-border pt-4">
               <Button variant="secondary" className="h-9" onClick={() => setEditing(mapFaqToDraft(faq))} disabled={submitting}>
                 <Edit3 className="size-4" />
                 Edit
@@ -295,14 +296,14 @@ export function FaqManagementExperience() {
             </div>
           </article>
         )) : (
-          <section className="rounded-lg border border-[#dce5dd] bg-white p-6 text-sm font-semibold text-[#68746d] shadow-sm lg:col-span-2">
+          <section className="rounded-lg border bg-white p-6 text-sm font-semibold text-muted-foreground shadow-sm lg:col-span-2">
             No FAQs found.
           </section>
         )}
       </div>
 
       {editing ? (
-        <div className="fixed inset-0 z-[10000] grid place-items-center overflow-y-auto bg-[#101820]/50 p-4">
+        <div className="fixed inset-0 z-[10000] grid place-items-center overflow-y-auto bg-foreground/50 p-4">
           <form
             ref={dialog.dialogRef}
             {...dialog.dialogProps}
@@ -314,7 +315,7 @@ export function FaqManagementExperience() {
           >
             <div className="flex items-center gap-3">
               <h2 id={dialog.titleId} className="text-xl font-extrabold">{editing.id ? "Edit FAQ" : "Add FAQ"}</h2>
-              <button type="button" data-dialog-autofocus onClick={() => setEditing(null)} aria-label="Close FAQ editor" className="ml-auto grid size-9 place-items-center rounded-md hover:bg-[#eef3ee]">
+              <button type="button" data-dialog-autofocus onClick={() => setEditing(null)} aria-label="Close FAQ editor" className="ml-auto grid size-9 place-items-center rounded-md hover:bg-muted">
                 <X className="size-5" />
               </button>
             </div>
@@ -326,7 +327,7 @@ export function FaqManagementExperience() {
                   value={editing.question}
                   onChange={(event) => setEditing((current) => current ? { ...current, question: event.target.value } : current)}
                   required
-                  className="h-11 rounded-md border border-[#d7e1d8] px-3 font-normal outline-none focus:border-primary"
+                  className="h-11 rounded-md border border-border-strong px-3 font-normal outline-none focus:border-primary"
                 />
               </label>
               <label className="grid gap-1.5 text-sm font-semibold">
@@ -335,7 +336,7 @@ export function FaqManagementExperience() {
                   value={editing.category}
                   onChange={(event) => setEditing((current) => current ? { ...current, category: event.target.value } : current)}
                   placeholder="Reservations, Receipts, Inventory"
-                  className="h-11 rounded-md border border-[#d7e1d8] px-3 font-normal outline-none focus:border-primary"
+                  className="h-11 rounded-md border border-border-strong px-3 font-normal outline-none focus:border-primary"
                 />
               </label>
               <label className="grid gap-1.5 text-sm font-semibold">
@@ -344,10 +345,10 @@ export function FaqManagementExperience() {
                   value={editing.answer}
                   onChange={(event) => setEditing((current) => current ? { ...current, answer: event.target.value } : current)}
                   required
-                  className="min-h-36 rounded-md border border-[#d7e1d8] p-3 font-normal leading-6 outline-none focus:border-primary"
+                  className="min-h-36 rounded-md border border-border-strong p-3 font-normal leading-6 outline-none focus:border-primary"
                 />
               </label>
-              <label className="flex items-center justify-between rounded-md border border-[#dce5dd] p-3 text-sm font-semibold">
+              <label className="flex items-center justify-between rounded-md border p-3 text-sm font-semibold">
                 Published for students
                 <input
                   type="checkbox"
@@ -386,8 +387,8 @@ function PageHeader({
     <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
       <div>
         <p className="text-sm font-bold uppercase text-primary">FAQ Management</p>
-        <h1 className="mt-1 text-3xl font-extrabold text-[#101820]">Maintain student help content</h1>
-        <p className="mt-2 text-sm text-[#68746d]">Publish clear answers for reservations, receipt verification, stock browsing, and support.</p>
+        <h1 className="mt-1 text-3xl font-extrabold text-foreground">Maintain student help content</h1>
+        <p className="mt-2 text-sm text-muted-foreground">Publish clear answers for reservations, receipt verification, stock browsing, and support.</p>
       </div>
       {showActions === false ? null : (
         <div className="flex flex-wrap gap-2">

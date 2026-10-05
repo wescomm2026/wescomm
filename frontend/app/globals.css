@@ -32,6 +32,15 @@
   --radius-feature: 0.875rem;
   --shadow-surface: 0 1px 3px rgb(14 40 24 / 0.08);
   --shadow-overlay: 0 24px 70px rgb(10 28 18 / 0.22);
+  --info: 205 78% 36%;
+  --workspace-header: 4rem;
+  --workspace-sidebar: 16rem;
+}
+
+@media (min-width: 1024px) {
+  :root {
+    --workspace-header: 4.5rem;
+  }
 }
 
 * {
@@ -230,53 +239,457 @@ html:not([data-wescomm-intro="pending"]) .welcome-gate-overlay {
   }
 }
 
+/* Sales report document. One stylesheet for the on-screen preview and the printout;
+   colours, column order, and summary layout mirror the downloadable Excel workbook. */
+.sales-report-doc {
+  --srd-green: #006633;
+  --srd-soft: #eaf5ec;
+  --srd-border: #b8d7bf;
+  --srd-rule: #e2e9e3;
+  --srd-stripe: #f3f8f4;
+  --srd-text: #17211b;
+  --srd-muted: #5f6d66;
+  --srd-red: #b3261e;
+  --srd-note-bg: #fff4d6;
+  --srd-note-text: #8a5a00;
+  overflow: hidden;
+  border: 1px solid var(--srd-border);
+  border-radius: 0.5rem;
+  background: #ffffff;
+  color: var(--srd-text);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.srd-header {
+  display: grid;
+  gap: 1rem;
+  border-bottom: 3px solid var(--srd-green);
+  padding: 1.25rem 1.5rem;
+}
+
+.srd-wordmark {
+  color: var(--srd-green);
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  line-height: 1;
+}
+
+.srd-title {
+  margin-top: 0.4rem;
+  font-size: 17px;
+  font-weight: 800;
+}
+
+.srd-org {
+  margin-top: 0.15rem;
+  color: var(--srd-muted);
+  font-size: 11px;
+}
+
+.srd-period {
+  margin-top: 0.6rem;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.srd-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-self: end;
+  border-top: 1px solid var(--srd-border);
+  border-left: 1px solid var(--srd-border);
+  font-size: 11px;
+}
+
+.srd-meta > div {
+  display: grid;
+  grid-template-columns: 7.25rem minmax(0, 1fr);
+  border-right: 1px solid var(--srd-border);
+  border-bottom: 1px solid var(--srd-border);
+}
+
+.srd-meta > div:last-child:nth-child(odd) {
+  grid-column: span 2;
+}
+
+.srd-meta dt {
+  background: var(--srd-soft);
+  padding: 0.3rem 0.5rem;
+  font-weight: 700;
+}
+
+.srd-meta dd {
+  overflow-wrap: anywhere;
+  padding: 0.3rem 0.5rem;
+}
+
+.srd-section {
+  padding: 1rem 1.5rem;
+}
+
+.srd-section + .srd-section {
+  border-top: 1px solid var(--srd-rule);
+}
+
+.srd-heading {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.6rem;
+  font-size: 13px;
+  font-weight: 800;
+  break-after: avoid;
+}
+
+.srd-heading::before {
+  content: "";
+  width: 4px;
+  height: 1em;
+  border-radius: 2px;
+  background: var(--srd-green);
+}
+
+.srd-heading--void::before {
+  background: var(--srd-red);
+}
+
+.srd-figures {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--srd-border);
+  border-radius: 0.375rem;
+  background: var(--srd-border);
+  break-inside: avoid;
+}
+
+.srd-figure {
+  background: #ffffff;
+  padding: 0.6rem 0.75rem;
+}
+
+.srd-figure dt {
+  color: var(--srd-muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.srd-figure-value {
+  display: block;
+  margin-top: 0.15rem;
+  font-size: 16px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.srd-figure-detail {
+  display: block;
+  color: var(--srd-muted);
+  font-size: 10px;
+}
+
+.srd-figure--total {
+  grid-column: span 2;
+  background: var(--srd-soft);
+}
+
+.srd-figure--total .srd-figure-value {
+  color: var(--srd-green);
+  font-size: 18px;
+}
+
+.srd-figure--void .srd-figure-value {
+  color: var(--srd-red);
+}
+
+.srd-table-wrap {
+  overflow-x: auto;
+}
+
+.srd-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.srd-table--register {
+  min-width: 900px;
+}
+
+.srd-table--products,
+.srd-table--voids {
+  min-width: 680px;
+}
+
+.srd-table th {
+  border: 1px solid var(--srd-border);
+  background: var(--srd-green);
+  color: #ffffff;
+  padding: 0.4rem 0.5rem;
+  font-weight: 700;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.srd-table td {
+  border-bottom: 1px solid var(--srd-rule);
+  padding: 0.35rem 0.5rem;
+  vertical-align: top;
+}
+
+.srd-table tbody tr:nth-child(even) td {
+  background: var(--srd-stripe);
+}
+
+.srd-table tfoot td {
+  border: 1px solid var(--srd-border);
+  background: var(--srd-soft);
+  padding: 0.4rem 0.5rem;
+  font-weight: 800;
+}
+
+.srd-table .num {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.srd-table .nowrap {
+  white-space: nowrap;
+}
+
+.srd-table .strong {
+  font-weight: 700;
+}
+
+.srd-table .lines {
+  white-space: pre-line;
+}
+
+.srd-positive {
+  color: var(--srd-green);
+}
+
+.srd-negative {
+  color: var(--srd-red);
+}
+
+.srd-empty {
+  border-radius: 0.375rem;
+  background: var(--srd-note-bg);
+  color: var(--srd-note-text);
+  padding: 0.75rem 1rem;
+  font-style: italic;
+  font-weight: 700;
+  text-align: center;
+}
+
+.srd-signatures {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1.5rem;
+  border-top: 1px solid var(--srd-rule);
+  padding: 2rem 1.5rem 0.75rem;
+  break-inside: avoid;
+}
+
+.srd-signature {
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.srd-signature-caption {
+  margin-top: 0.15rem;
+  color: var(--srd-muted);
+  font-size: 10px;
+}
+
+.srd-footnote {
+  padding: 0.5rem 1.5rem 1rem;
+  color: var(--srd-muted);
+  font-size: 10px;
+  text-align: center;
+}
+
+@media (min-width: 768px) {
+  .srd-header {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+    align-items: end;
+  }
+}
+
+@media (min-width: 1024px) {
+  .srd-figures {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 639px) {
+  .srd-signatures {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 @media print {
-  body * {
-    visibility: hidden;
+  @page {
+    size: A4 landscape;
+    margin: 10mm 10mm 14mm;
+
+    @bottom-left {
+      content: "WESCOMM Sales Report";
+      color: #5f6d66;
+      font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+      font-size: 8pt;
+    }
+
+    @bottom-right {
+      content: "Page " counter(page) " of " counter(pages);
+      color: #5f6d66;
+      font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+      font-size: 8pt;
+    }
   }
 
-  #sales-report-print-area,
-  #sales-report-print-area * {
-    visibility: visible;
+  html,
+  body {
+    background: #ffffff !important;
   }
 
-  #sales-report-print-area {
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 100%;
-    margin: 0;
-    border: none !important;
-    border-radius: 0 !important;
+  /* Print only the report: drop every branch that does not contain it and flatten the
+     wrappers that do, so the page has no shell chrome and no blank trailing pages. */
+  body *:not(:has(#sales-report-print-area)):not(#sales-report-print-area):not(#sales-report-print-area *) {
+    display: none !important;
+  }
+
+  body *:has(#sales-report-print-area) {
+    display: block !important;
+    position: static !important;
+    width: auto !important;
+    max-width: none !important;
+    height: auto !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    border: 0 !important;
+    background: none !important;
     box-shadow: none !important;
+    transform: none !important;
   }
 
   .no-print {
     display: none !important;
   }
 
-  #sales-report-print-area table {
+  #sales-report-print-area {
+    border: 0;
+    border-radius: 0;
     font-size: 9pt;
-    width: 100%;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
   }
 
-  #sales-report-print-area thead {
+  #sales-report-print-area .srd-header {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+    align-items: end;
+    padding: 0 0 0.6rem;
+  }
+
+  #sales-report-print-area .srd-section {
+    padding: 0.7rem 0 0;
+  }
+
+  #sales-report-print-area .srd-section + .srd-section {
+    border-top: 0;
+  }
+
+  #sales-report-print-area .srd-figures {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  #sales-report-print-area .srd-table-wrap {
+    overflow: visible;
+  }
+
+  #sales-report-print-area .srd-table {
+    min-width: 0;
+    font-size: 8pt;
+  }
+
+  #sales-report-print-area .srd-table thead {
     display: table-header-group;
   }
 
-  #sales-report-print-area tr {
+  #sales-report-print-area .srd-table tfoot {
+    display: table-row-group;
+  }
+
+  #sales-report-print-area .srd-table tr {
     break-inside: avoid;
-    page-break-inside: avoid;
   }
 
-  #sales-report-print-area th,
-  #sales-report-print-area td {
-    white-space: normal;
-    overflow-wrap: anywhere;
+  #sales-report-print-area .srd-table td,
+  #sales-report-print-area .srd-table th {
+    overflow-wrap: break-word;
   }
 
-  @page {
-    size: A4 landscape;
-    margin: 10mm;
+  #sales-report-print-area .srd-signatures {
+    border-top: 0;
+    padding: 1.5rem 0 0.5rem;
+  }
+
+  #sales-report-print-area .srd-footnote {
+    padding: 0.4rem 0 0;
+  }
+}
+
+/* Reservation result badge: the circle pops in, then the mark draws itself. */
+.result-badge-circle {
+  animation: resultBadgePop 420ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+.result-badge-ring {
+  animation: resultBadgeRing 900ms ease-out 200ms both;
+}
+
+.result-badge-mark {
+  stroke-dasharray: 48;
+  stroke-dashoffset: 48;
+  animation: resultBadgeDraw 360ms ease-out 260ms forwards;
+}
+
+@keyframes resultBadgePop {
+  from { opacity: 0; transform: scale(0.6); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes resultBadgeRing {
+  from { opacity: 0.55; transform: scale(0.85); }
+  to { opacity: 0; transform: scale(1.35); }
+}
+
+@keyframes resultBadgeDraw {
+  to { stroke-dashoffset: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .result-badge-circle,
+  .result-badge-ring {
+    animation: none;
+  }
+
+  .result-badge-ring {
+    opacity: 0;
+  }
+
+  .result-badge-mark {
+    animation: none;
+    stroke-dashoffset: 0;
   }
 }

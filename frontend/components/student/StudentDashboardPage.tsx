@@ -5,13 +5,14 @@ import { DashboardProductsProvider } from "@/components/dashboard/DashboardProdu
 import { HeroProductCarousel } from "@/components/dashboard/HeroProductCarousel";
 import { HomeActionCards } from "@/components/dashboard/HomeActionCards";
 import { StockOverview } from "@/components/dashboard/StockOverview";
+import { StudentActivityPanel } from "@/components/student/StudentActivityPanel";
 import { StudentFooter } from "@/components/student/StudentFooter";
 import { AssetIcon } from "@/components/ui/AssetIcon";
 import { Button } from "@/components/ui/button";
 
 function StudentHero() {
   return (
-    <section className="student-hero-surface relative isolate overflow-hidden border p-5 sm:p-7 lg:min-h-[440px] lg:p-9 xl:p-12">
+    <section className="student-hero-surface relative isolate overflow-hidden border p-5 sm:p-7 lg:min-h-[380px] lg:p-9 xl:p-11">
       <span aria-hidden="true" className="student-hero-leaf-top pointer-events-none absolute -right-16 -top-20 size-36 rotate-[-28deg] lg:right-[38%] lg:size-60" />
       <span aria-hidden="true" className="student-hero-leaf-bottom pointer-events-none absolute -bottom-24 right-[18%] size-44 rotate-[22deg] lg:size-64" />
       <div className="relative z-10 grid gap-5 sm:gap-7 md:grid-cols-[minmax(0,1fr)_minmax(0,0.95fr)] md:items-stretch lg:grid-cols-[minmax(0,1fr)_minmax(0,0.93fr)] lg:gap-9">
@@ -19,7 +20,7 @@ function StudentHero() {
           <span className="inline-flex max-w-full items-center rounded-full bg-accent/25 px-3 py-1.5 text-[10px] font-extrabold uppercase tracking-[0.16em] text-primary sm:px-4 sm:text-xs">
             Campus Essentials
           </span>
-          <h1 className="mt-4 max-w-[680px] text-[clamp(2rem,7.6vw,2.75rem)] font-extrabold leading-[1.08] tracking-tight text-foreground sm:mt-6 sm:text-[clamp(2.6rem,5vw,3.25rem)] md:text-[clamp(2.2rem,4.6vw,3rem)] lg:text-[clamp(2.9rem,4.2vw,4.75rem)]">
+          <h1 className="mt-4 max-w-[680px] text-[clamp(2rem,7.6vw,2.75rem)] font-extrabold leading-[1.08] tracking-tight text-foreground sm:mt-6 sm:text-[clamp(2.6rem,5vw,3.25rem)] md:text-[clamp(2.2rem,4.6vw,3rem)] lg:text-[clamp(2.75rem,3.8vw,4.25rem)]">
             Reserve Campus Essentials,
             <span className="block text-primary">Ready for Pickup.</span>
           </h1>
@@ -54,14 +55,15 @@ export function StudentDashboardPage() {
     <DashboardProductsProvider>
       <div className="space-y-5">
         <StudentHero />
+        <StudentActivityPanel />
         <HomeActionCards />
         <div className="grid gap-5 lg:grid-cols-[1.45fr_0.75fr]">
           <StockOverview />
-          <section className="wes-card flex flex-col gap-4 overflow-hidden bg-[#f1f8f1] p-5 sm:flex-row sm:items-center lg:flex-col lg:items-start xl:flex-row xl:items-center">
+          <section className="wes-card flex flex-col gap-4 overflow-hidden bg-primary/5 p-5 sm:flex-row sm:items-center lg:flex-col lg:items-start xl:flex-row xl:items-center">
             <Image src="/assets/chat-with-wesbot.svg" alt="" width={110} height={110} className="mx-auto size-24 shrink-0 object-contain sm:mx-0" />
             <div className="min-w-0 flex-1 text-center sm:text-left">
               <h2 className="text-lg font-bold leading-snug text-primary xl:text-xl">Need help? Chat with WesBot</h2>
-              <p className="mt-1 text-sm leading-5 text-[#3f4a44]">Our virtual assistant is here to help you 24/7.</p>
+              <p className="mt-1 text-sm leading-5 text-muted-foreground">Ask about stock, pickup, or receipts. A staff member can take over when you need a person.</p>
             </div>
             <Link href="/student/support">
               <Button className="w-full shrink-0 sm:w-auto">

@@ -1,6 +1,6 @@
 import { expect, test, type Route } from "@playwright/test";
 import type { BackendReservation } from "../lib/api";
-import { dismissWelcomeGate } from "./helpers";
+import { dismissWelcomeGate, fulfillStudentOverview } from "./helpers";
 
 const reservationCases = [
   { status: "PENDING", filter: "Pending", reference: "QA-PENDING" },
@@ -92,6 +92,7 @@ test("student reservation status filters work on desktop and mobile", async ({ p
 
   await page.route("**/api/backend/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
+    if (await fulfillStudentOverview(route, mockedReservations)) return;
 
     if (path === "/api/backend/auth/me") {
       await json(route, {
@@ -155,14 +156,15 @@ test("student reservation status filters work on desktop and mobile", async ({ p
   const cards = reservationRegion.getByRole("article");
   const allButton = filterGroup.getByRole("button", { name: "All", exact: true });
 
+  // Each tab shows its live count (from /student/overview) after the label.
   await expect(filterGroup.getByRole("button")).toHaveText([
-    "All",
-    "Pending",
-    "Confirmed",
-    "Ready for Pickup",
-    "Completed",
-    "Cancelled",
-    "No-show"
+    /^All\s*6$/,
+    /^Pending\s*1$/,
+    /^Confirmed\s*1$/,
+    /^Ready for Pickup\s*1$/,
+    /^Completed\s*1$/,
+    /^Cancelled\s*1$/,
+    /^No-show\s*1$/
   ]);
   await expect(allButton).toHaveAttribute("aria-pressed", "true");
   await expect(cards).toHaveCount(mockedReservations.length);

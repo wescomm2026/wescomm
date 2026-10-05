@@ -7,13 +7,17 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import { createPortal } from "react-dom";
 import QRCode from "qrcode";
-import { Download, Eye, ShieldCheck, X } from "lucide-react";
+import { Download, Eye, Search, ShieldCheck, X } from "lucide-react";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import { useRealtimeRefresh } from "@/components/realtime/RealtimeProvider";
 import { AssetIcon } from "@/components/ui/AssetIcon";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
-import { getReceiptFromApi, getReceiptPageFromApi, type BackendReceipt, type BackendReceiptStatus } from "@/lib/api";
+import { getReceiptFromApi, getReceiptPageFromApi, isRequestAbortError, type BackendReceipt, type BackendReceiptStatus } from "@/lib/api";
+import { InlineAlert } from "@/components/ui/InlineAlert";
+import { useStudentOverview } from "@/components/student/useStudentOverview";
+import { cn } from "@/lib/utils";
+import { downloadReceiptPng } from "@/components/receipts/receipt-png";
 import { paymentMethodLabel } from "@/lib/payment-method";
 import { collectionChannelLabel } from "@/lib/collection-channel";
 import {
@@ -148,42 +152,6 @@ function mapBackendReceipt(receipt: BackendReceipt): Receipt {
   };
 }
 
-function drawWrappedText(
-  context: CanvasRenderingContext2D,
-  text: string,
-  x: number,
-  y: number,
-  maxWidth: number,
-  lineHeight: number
-) {
-  const words = text.split(" ");
-  let line = "";
-  let currentY = y;
-
-  words.forEach((word) => {
-    const testLine = `${line}${word} `;
-    if (context.measureText(testLine).width > maxWidth && line) {
-      context.fillText(line.trim(), x, currentY);
-      line = `${word} `;
-      currentY += lineHeight;
-    } else {
-      line = testLine;
-    }
-  });
-
-  context.fillText(line.trim(), x, currentY);
-  return currentY;
-}
-
-function loadImage(src: string) {
-  return new Promise<HTMLImageElement>((resolve, reject) => {
-    const image = new window.Image();
-    image.onload = () => resolve(image);
-    image.onerror = reject;
-    image.src = src;
-  });
-}
-
 function ReceiptQrCode({ value, label }: { value: string | null; label: string }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -204,215 +172,6 @@ function ReceiptQrCode({ value, label }: { value: string | null; label: string }
   );
 }
 
-
-async function downloadReceiptPng(receipt: Receipt) {
-  const width = 640;
-  const scratch = document.createElement("canvas");
-  scratch.width = width;
-  scratch.height = 2200;
-  const context = scratch.getContext("2d");
-  if (!context) return;
-
-  const paperX = 42;
-  const paperWidth = width - paperX * 2;
-  const contentX = paperX + 44;
-  const contentRight = paperX + paperWidth - 44;
-  const contentWidth = contentRight - contentX;
-  let y = 52;
-
-  context.fillStyle = "#f3f6f3";
-  context.fillRect(0, 0, scratch.width, scratch.height);
-  context.fillStyle = "#ffffff";
-  context.fillRect(paperX, 28, paperWidth, scratch.height - 56);
-
-  try {
-    const logo = await loadImage("/assets/wescomm-logo.webp");
-    const logoWidth = 190;
-    const logoHeight = 68;
-    context.drawImage(logo, (width - logoWidth) / 2, y, logoWidth, logoHeight);
-    y += logoHeight + 18;
-  } catch {
-    context.fillStyle = "#00652f";
-    context.font = "700 32px Arial";
-    context.textAlign = "center";
-    context.fillText("WESCOMM", width / 2, y + 40);
-    y += 68;
-  }
-
-  context.textAlign = "center";
-  context.fillStyle = "#17211b";
-  context.font = "700 18px Arial";
-  context.fillText("Wesleyan University-Philippines", width / 2, y);
-  y += 25;
-  context.font = "15px Arial";
-  context.fillStyle = "#5c6860";
-  context.fillText("Integrated Commissary Management System", width / 2, y);
-  y += 32;
-
-  context.strokeStyle = "#bfc9c1";
-  context.lineWidth = 1.5;
-  context.setLineDash([7, 7]);
-  context.beginPath();
-  context.moveTo(contentX, y);
-  context.lineTo(contentRight, y);
-  context.stroke();
-  context.setLineDash([]);
-  y += 34;
-
-  context.fillStyle = "#68746d";
-  context.font = "700 14px Arial";
-  context.fillText("DIGITAL RECEIPT", width / 2, y);
-  y += 29;
-  context.font = "700 25px Arial";
-  context.fillStyle = "#00652f";
-  context.fillText(receipt.code, width / 2, y);
-  y += 42;
-
-  const details = [
-    ["Date", receipt.date],
-    ["Time", receipt.time],
-    ["Student", receipt.student],
-    ["Payment method", receipt.paymentMethod],
-    ...(receipt.collectionChannel ? [["Collected by", receipt.collectionChannel]] : []),
-    ...(receipt.officialReceiptNumber ? [["Treasury OR No.", receipt.officialReceiptNumber]] : []),
-    ...(receipt.pickupSchedule ? [["Pickup", receipt.pickupSchedule]] : [])
-  ];
-  details.forEach(([label, value]) => {
-    context.textAlign = "left";
-    context.fillStyle = "#68746d";
-    context.font = "16px Arial";
-    context.fillText(label, contentX, y);
-    context.textAlign = "right";
-    context.fillStyle = "#26322b";
-    context.font = "700 16px Arial";
-    context.fillText(value, contentRight, y);
-    y += 30;
-  });
-
-  y += 5;
-  context.strokeStyle = "#bfc9c1";
-  context.setLineDash([7, 7]);
-  context.beginPath();
-  context.moveTo(contentX, y);
-  context.lineTo(contentRight, y);
-  context.stroke();
-  context.setLineDash([]);
-  y += 34;
-
-  receipt.items.forEach((item) => {
-    context.textAlign = "left";
-    context.fillStyle = "#26322b";
-    context.font = "700 16px Arial";
-    const lastTextY = drawWrappedText(
-      context,
-      `${item.quantity} x ${item.name}`,
-      contentX,
-      y,
-      contentWidth - 155,
-      22
-    );
-    context.textAlign = "right";
-    context.fillStyle = "#26322b";
-    context.font = "700 16px Arial";
-    context.fillText(formatCurrency(item.unitPrice * item.quantity), contentRight, y);
-    context.textAlign = "left";
-    context.fillStyle = "#77817b";
-    context.font = "14px Arial";
-    context.fillText(item.detail, contentX, lastTextY + 22);
-    y = lastTextY + 55;
-  });
-
-  context.strokeStyle = "#bfc9c1";
-  context.setLineDash([7, 7]);
-  context.beginPath();
-  context.moveTo(contentX, y);
-  context.lineTo(contentRight, y);
-  context.stroke();
-  context.setLineDash([]);
-  y += 42;
-
-  context.textAlign = "left";
-  context.fillStyle = "#26322b";
-  context.font = "700 19px Arial";
-  context.fillText("TOTAL", contentX, y);
-  context.textAlign = "right";
-  context.fillStyle = "#00652f";
-  context.font = "700 29px Arial";
-  context.fillText(formatCurrency(receipt.total), contentRight, y);
-  y += 42;
-
-  context.fillStyle = "#f2f7f2";
-  context.fillRect(contentX, y, contentWidth, 54);
-  context.textAlign = "center";
-  const statusDisplay = receiptStatusDisplay(receipt.status);
-  context.fillStyle = statusDisplay.color;
-  context.font = "700 17px Arial";
-  context.fillText(statusDisplay.label, width / 2, y + 34);
-  y += 84;
-
-  context.strokeStyle = "#bfc9c1";
-  context.setLineDash([7, 7]);
-  context.beginPath();
-  context.moveTo(contentX, y);
-  context.lineTo(contentRight, y);
-  context.stroke();
-  context.setLineDash([]);
-  y += 32;
-
-  context.fillStyle = "#68746d";
-  context.font = "700 13px Arial";
-  context.fillText("VERIFICATION REFERENCE", width / 2, y);
-  y += 25;
-  context.fillStyle = "#00652f";
-  context.font = "700 16px Arial";
-  context.fillText(receipt.transactionReference, width / 2, y);
-  y += 24;
-  if (receipt.verifiedBy) {
-    context.fillStyle = "#68746d";
-    context.font = "14px Arial";
-    context.fillText(`Verified by: ${receipt.verifiedBy}`, width / 2, y);
-    y += 22;
-  }
-
-  if (receipt.verificationUrl) {
-    const qrDataUrl = await QRCode.toDataURL(receipt.verificationUrl, { width: 180, margin: 1, errorCorrectionLevel: "M" });
-    const qrImage = await loadImage(qrDataUrl);
-    context.drawImage(qrImage, (width - 150) / 2, y + 6, 150, 150);
-    y += 176;
-  } else {
-    context.fillStyle = "#68746d";
-    context.font = "13px Arial";
-    context.fillText("Secure QR verification is being prepared.", width / 2, y + 25);
-    y += 55;
-  }
-
-  context.fillStyle = "#68746d";
-  context.font = "13px Arial";
-  context.fillText("Keep this digital receipt for verification and record purposes.", width / 2, y);
-  y += 25;
-  context.fillStyle = "#26322b";
-  context.font = "700 14px Arial";
-  context.fillText("Thank you for using WESCOMM.", width / 2, y);
-  y += 34;
-
-  const finalHeight = y + 28;
-  const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = finalHeight;
-  const finalContext = canvas.getContext("2d");
-  if (!finalContext) return;
-  finalContext.drawImage(scratch, 0, 0, width, finalHeight, 0, 0, width, finalHeight);
-
-  canvas.toBlob((blob) => {
-    if (!blob) return;
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `WESCOMM-${receipt.code}.png`;
-    anchor.click();
-    URL.revokeObjectURL(url);
-  }, "image/png");
-}
 
 function ReceiptPaper({
   receipt,
@@ -649,6 +408,17 @@ function ReceiptModal({
   );
 }
 
+const RECEIPT_FILTERS: Array<{ label: string; status: BackendReceiptStatus | null }> = [
+  { label: "All", status: null },
+  { label: "Verified", status: "VERIFIED" },
+  { label: "Pending", status: "PENDING" },
+  { label: "Voided", status: "VOIDED" }
+];
+
+function formatSummaryPeso(value: number) {
+  return `PHP ${value.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
 export function StudentReceiptsExperience() {
   const { user, ready: authReady, openAuth } = useStudentAuth();
   const [loading, setLoading] = useState(true);
@@ -661,10 +431,66 @@ export function StudentReceiptsExperience() {
   const accountId = user?.id ?? "";
   const cacheKey = receiptCacheKey(accountId);
   const receiptPage = useServerState<CursorPage<BackendReceipt>>(cacheKey);
-  const visibleReceipts = useMemo(() => (receiptPage?.items ?? []).map(mapBackendReceipt), [receiptPage]);
+  const { overview } = useStudentOverview();
+  const [statusFilter, setStatusFilter] = useState<BackendReceiptStatus | null>(null);
+  const [searchText, setSearchText] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [filteredPage, setFilteredPage] = useState<{ key: string; items: BackendReceipt[]; nextCursor: string | null; loading: boolean; error: string } | null>(null);
+  const filterAbortRef = useRef<AbortController | null>(null);
+  const filtersActive = Boolean(statusFilter || searchQuery);
+  const filterKey = `${statusFilter ?? ""}|${searchQuery}`;
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setSearchQuery(searchText.trim()), 300);
+    return () => window.clearTimeout(timer);
+  }, [searchText]);
+
+  // Filtered views are queried on the server so older receipts are never missed.
+  const loadFilteredReceipts = useCallback(async (cursor?: string) => {
+    if (!user?.accessToken || !filtersActive) return;
+    filterAbortRef.current?.abort();
+    const controller = new AbortController();
+    filterAbortRef.current = controller;
+    setFilteredPage((current) => current?.key === filterKey ? { ...current, loading: true, error: "" } : { key: filterKey, items: [], nextCursor: null, loading: true, error: "" });
+    try {
+      const page = await getReceiptPageFromApi(user.accessToken, { limit: 20, cursor, status: statusFilter ?? undefined, query: searchQuery || undefined, signal: controller.signal });
+      setFilteredPage((current) => ({
+        key: filterKey,
+        items: cursor && current?.key === filterKey ? [...current.items, ...page.items] : page.items,
+        nextCursor: page.nextCursor,
+        loading: false,
+        error: ""
+      }));
+    } catch (filterError) {
+      if (isRequestAbortError(filterError) || controller.signal.aborted) return;
+      setFilteredPage((current) => ({ key: filterKey, items: current?.key === filterKey ? current.items : [], nextCursor: null, loading: false, error: userFacingErrorMessage(filterError, "Unable to search your receipts.") }));
+    }
+  }, [filterKey, filtersActive, searchQuery, statusFilter, user?.accessToken]);
+
+  useEffect(() => {
+    if (filtersActive) void loadFilteredReceipts();
+    else {
+      filterAbortRef.current?.abort();
+      setFilteredPage(null);
+    }
+  }, [filtersActive, loadFilteredReceipts]);
+
+  const allReceipts = useMemo(() => (receiptPage?.items ?? []).map(mapBackendReceipt), [receiptPage]);
+  const filteredReceipts = useMemo(
+    () => filteredPage?.key === filterKey ? filteredPage.items.map(mapBackendReceipt) : [],
+    [filterKey, filteredPage]
+  );
+  const visibleReceipts = filtersActive ? filteredReceipts : allReceipts;
+  const filterLoading = filtersActive && (filteredPage?.key !== filterKey || (filteredPage.loading && !filteredPage.items.length));
+  const listNextCursor = filtersActive ? filteredPage?.nextCursor ?? null : receiptPage?.nextCursor ?? null;
   const selectedReceipt = selectedReceiptId
-    ? visibleReceipts.find((receipt) => receipt.id === selectedReceiptId) ?? null
+    ? allReceipts.find((receipt) => receipt.id === selectedReceiptId) ?? filteredReceipts.find((receipt) => receipt.id === selectedReceiptId) ?? null
     : null;
+  const clearFilters = () => {
+    setStatusFilter(null);
+    setSearchText("");
+    setSearchQuery("");
+  };
   const closeReceipt = useCallback(() => setSelectedReceiptId(null), []);
 
   const loadReceipts = useCallback(async ({
@@ -705,6 +531,7 @@ export function StudentReceiptsExperience() {
 
   useRealtimeRefresh(["receipts"], () => {
     void loadReceipts({ background: true });
+    if (filtersActive) void loadFilteredReceipts();
   });
 
   useEffect(() => {
@@ -762,26 +589,39 @@ export function StudentReceiptsExperience() {
   return (
     <>
       <div className="space-y-6">
-      <header>
-        <p className="text-sm font-bold uppercase text-primary">Digital Receipts</p>
-        <h1 className="mt-1 text-3xl font-extrabold text-[#101820] sm:text-4xl">My receipt history</h1>
-        <p className="mt-2 text-sm text-[#657169]">View verified transaction details and download official receipt copies.</p>
+      <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <p className="text-xs font-extrabold uppercase tracking-[0.14em] text-primary">Digital Receipts</p>
+          <h1 className="mt-1 text-2xl font-extrabold tracking-tight text-foreground sm:text-3xl">My receipt history</h1>
+          <p className="mt-2 text-sm text-muted-foreground">View verified transaction details and download official receipt copies.</p>
+        </div>
+        <Link href="/verify-receipt" className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-border-strong bg-card px-4 text-sm font-bold text-primary transition hover:bg-primary/5">
+          <AssetIcon src="/assets/verified.svg" className="size-5" />
+          Verify a receipt code
+        </Link>
       </header>
 
-      <section className="rounded-lg border border-[#cfe0d0] bg-[#f3f9f3] p-4">
-        <div className="flex items-start gap-3">
-          <AssetIcon src="/assets/verified.svg" className="size-8" />
-          <div>
-            <p className="font-extrabold text-[#203027]">Verifiable digital copies</p>
-            <p className="mt-1 text-sm leading-6 text-[#5f6d64]">Each receipt includes a unique transaction reference for commissary verification.</p>
+      {user?.accessToken && overview ? (
+        <section aria-label="Receipt summary" className="grid gap-3 sm:grid-cols-3">
+          <div className="rounded-xl border bg-card p-4 shadow-soft">
+            <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Spent this month</p>
+            <p className="mt-1 text-xl font-extrabold tabular-nums text-primary">{formatSummaryPeso(overview.spentThisMonth)}</p>
           </div>
-        </div>
-      </section>
+          <div className="rounded-xl border bg-card p-4 shadow-soft">
+            <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Verified receipts</p>
+            <p className="mt-1 text-xl font-extrabold tabular-nums text-foreground">{overview.receipts.VERIFIED}</p>
+          </div>
+          <div className="rounded-xl border bg-card p-4 shadow-soft">
+            <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Awaiting verification</p>
+            <p className={cn("mt-1 text-xl font-extrabold tabular-nums", overview.receipts.PENDING ? "text-warning" : "text-foreground")}>{overview.receipts.PENDING}</p>
+          </div>
+        </section>
+      ) : null}
 
       {!authReady || loading ? (
-        <section className="rounded-lg border border-[#dce5dd] bg-white p-6 text-sm font-semibold text-[#68746d] shadow-sm">
-          Loading your digital receipts...
-        </section>
+        <div className="grid gap-6 lg:grid-cols-2 xl:grid-cols-3" role="status" aria-label="Loading your digital receipts...">
+          {Array.from({ length: 3 }, (_, index) => <div key={index} className="h-[30rem] animate-pulse rounded-xl border bg-card motion-reduce:animate-none" />)}
+        </div>
       ) : !user?.accessToken ? (
         <section className="rounded-lg border border-[#dce5dd] bg-white p-6 shadow-sm">
           <p className="font-extrabold text-[#17211b]">Log in to view your receipts</p>
@@ -800,15 +640,60 @@ export function StudentReceiptsExperience() {
         </section>
       ) : (
         <>
-          {error ? (
-            <p className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p>
-          ) : null}
+          {error ? <InlineAlert onDismiss={() => setError("")}>{error}</InlineAlert> : null}
 
-          {visibleReceipts.length ? (
+          {allReceipts.length || filtersActive ? (
+            <section aria-label="Find receipts" className="flex flex-col gap-3 rounded-xl border bg-card p-3 shadow-soft md:flex-row md:items-center">
+              <label className="flex h-11 min-w-0 flex-1 items-center gap-2 rounded-control border border-border-strong bg-card px-3 transition focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/15">
+                <Search className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                <input
+                  type="search"
+                  value={searchText}
+                  onChange={(event) => setSearchText(event.target.value)}
+                  placeholder="Search receipt code or reservation reference"
+                  aria-label="Search receipts"
+                  className="min-w-0 flex-1 bg-transparent text-sm outline-none focus-visible:outline-none placeholder:text-muted-foreground"
+                />
+                {searchText ? (
+                  <button type="button" onClick={() => setSearchText("")} aria-label="Clear receipt search" className="grid size-7 place-items-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground">
+                    <X className="size-4" />
+                  </button>
+                ) : null}
+              </label>
+              <div role="group" aria-label="Filter receipts by status" className="flex gap-1 overflow-x-auto rounded-lg bg-surface-subtle p-1">
+                {RECEIPT_FILTERS.map((filter) => {
+                  const selected = statusFilter === filter.status;
+                  const count = overview ? (filter.status ? overview.receipts[filter.status] : overview.receipts.total) : null;
+                  return (
+                    <button
+                      key={filter.label}
+                      type="button"
+                      aria-pressed={selected}
+                      onClick={() => setStatusFilter(filter.status)}
+                      className={cn(
+                        "inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md px-3 text-sm font-bold transition-colors",
+                        selected ? "bg-card text-primary shadow-soft" : "text-muted-foreground hover:text-foreground"
+                      )}
+                    >
+                      {filter.label}
+                      {count !== null ? <span aria-hidden="true" className="text-xs tabular-nums text-muted-foreground">{count}</span> : null}
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+          ) : null}
+          {filtersActive && filteredPage?.error ? <InlineAlert>{filteredPage.error}</InlineAlert> : null}
+
+          {filterLoading ? (
+            <div className="grid gap-6 lg:grid-cols-2 xl:grid-cols-3" role="status" aria-label="Searching receipts">
+              {Array.from({ length: 3 }, (_, index) => <div key={index} className="h-[30rem] animate-pulse rounded-xl border bg-card motion-reduce:animate-none" />)}
+            </div>
+          ) : visibleReceipts.length ? (
             <>
             <div className="grid gap-6 lg:grid-cols-2 xl:grid-cols-3">
               {visibleReceipts.map((receipt) => (
-                <article key={receipt.id} className="content-visibility-auto overflow-hidden rounded-lg border border-[#dce5dd] bg-[#edf2ed] p-3 shadow-sm">
+                <article key={receipt.id} className="content-visibility-auto overflow-hidden rounded-xl border bg-surface-subtle p-3 shadow-soft">
                   <div className="overflow-hidden shadow-[0_8px_24px_rgba(0,0,0,0.09)]">
                     <ReceiptPaper receipt={receipt} compact />
                   </div>
@@ -831,7 +716,7 @@ export function StudentReceiptsExperience() {
                       }}
                     >
                       <Eye className="size-4" />
-                      View Receipt
+                      View receipt
                     </Button>
                     <Button
                       className="h-11"
@@ -845,25 +730,31 @@ export function StudentReceiptsExperience() {
                 </article>
               ))}
             </div>
-            {receiptPage?.nextCursor ? (
+            {listNextCursor ? (
               <div className="mt-5 flex justify-center">
                 <Button
                   type="button"
                   variant="secondary"
-                  disabled={loadingMore}
-                  onClick={() => void loadReceipts({ cursor: receiptPage.nextCursor ?? undefined })}
+                  disabled={filtersActive ? filteredPage?.loading : loadingMore}
+                  onClick={() => filtersActive ? void loadFilteredReceipts(listNextCursor) : void loadReceipts({ cursor: listNextCursor })}
                 >
-                  {loadingMore ? "Loading more..." : "Load more receipts"}
+                  {(filtersActive ? filteredPage?.loading : loadingMore) ? "Loading more..." : "Load more receipts"}
                 </Button>
               </div>
             ) : null}
             </>
           ) : (
-            <section className="rounded-lg border border-[#dce5dd] bg-white p-6 shadow-sm">
-              <p className="font-extrabold text-[#17211b]">No receipts yet</p>
-              <p className="mt-2 max-w-xl text-sm leading-6 text-[#68746d]">
-                Completed reservations will appear here after staff generates or verifies the digital receipt.
+            <section className="flex flex-col items-center rounded-xl border border-dashed border-border-strong bg-card p-8 text-center">
+              <span className="grid size-12 place-items-center rounded-full bg-primary/10"><AssetIcon src="/assets/digital-receipts.svg" className="size-7" /></span>
+              <p className="mt-3 font-extrabold text-foreground">{filtersActive ? "No receipts match your search" : "No receipts yet"}</p>
+              <p className="mt-2 max-w-xl text-sm leading-6 text-muted-foreground">
+                {filtersActive
+                  ? "Try another receipt code or reservation reference, or clear the filters."
+                  : "Completed reservations will appear here after staff generates or verifies the digital receipt."}
               </p>
+              {filtersActive ? <Button type="button" variant="secondary" className="mt-4" onClick={clearFilters}>Clear filters</Button> : (
+                <Link href="/student/shop" className="mt-4 inline-flex h-10 items-center rounded-lg bg-primary px-4 text-sm font-bold text-primary-foreground hover:bg-primary-hover">Browse items</Link>
+              )}
             </section>
           )}
         </>

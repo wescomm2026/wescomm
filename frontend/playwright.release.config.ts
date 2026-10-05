@@ -12,8 +12,12 @@ export default defineConfig({
     "staff-inventory-responsive.spec.ts",
     "staff-message-loading.spec.ts",
     "staff-reservation-confirmations.spec.ts",
+    "staff-settings-and-queues.spec.ts",
     "student-checkout-flow.spec.ts",
-    "student-wesbot-chat.spec.ts"
+    "student-receipts.spec.ts",
+    "student-reservation-filters.spec.ts",
+    "student-wesbot-chat.spec.ts",
+    "team-access-confirmation.spec.ts"
   ],
   fullyParallel: false,
   forbidOnly: true,

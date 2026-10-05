@@ -45,12 +45,12 @@ export function ActionLoadingOverlay({
       aria-busy="true"
     >
       <div className="flex w-full max-w-md items-center gap-3 rounded-lg border border-[#cfe0d1] bg-white px-4 py-3.5 text-left shadow-[0_18px_50px_rgba(0,65,31,0.16)]">
-        <span className="grid size-10 shrink-0 place-items-center rounded-full bg-[#e8f4e9] text-primary">
+        <span className="grid size-10 shrink-0 place-items-center rounded-full bg-muted text-primary">
           <Loader2 className="size-5 motion-safe:animate-spin" aria-hidden="true" />
         </span>
         <div className="min-w-0">
-          <p className="font-extrabold leading-5 text-[#17211b]">{title}</p>
-          <p className="mt-1 text-sm leading-5 text-[#617069]">{detail}</p>
+          <p className="font-extrabold leading-5 text-foreground">{title}</p>
+          <p className="mt-1 text-sm leading-5 text-muted-foreground">{detail}</p>
         </div>
       </div>
     </div>

@@ -466,10 +466,10 @@ export function SkuInventoryDialog({
   };
 
   return (
-    <div className="fixed inset-0 z-[10020] grid place-items-center overflow-hidden bg-[#101820]/50 p-2 sm:p-4">
+    <div className="fixed inset-0 z-[10020] grid place-items-center overflow-hidden bg-foreground/50 p-2 sm:p-4">
       <section ref={dialog.dialogRef} {...dialog.dialogProps} className="flex max-h-[calc(100dvh-1rem)] w-full max-w-5xl flex-col overflow-hidden rounded-xl bg-white shadow-2xl sm:max-h-[calc(100dvh-2rem)]">
-        <header className="flex shrink-0 items-start gap-3 border-b border-[#e1e8e2] p-4 sm:p-5">
-          <div className="relative grid size-16 shrink-0 place-items-center overflow-hidden rounded-lg border border-border bg-[#f8fbf8]">
+        <header className="flex shrink-0 items-start gap-3 border-b border-border p-4 sm:p-5">
+          <div className="relative grid size-16 shrink-0 place-items-center overflow-hidden rounded-lg border bg-surface-subtle">
             <Image src={shopProductCardImage(product.imageUrl)} alt={product.name} fill sizes="64px" unoptimized className="object-contain p-1" />
           </div>
           <div className="min-w-0 flex-1">
@@ -477,7 +477,7 @@ export function SkuInventoryDialog({
             <p className="mt-1 truncate text-sm font-bold text-foreground">{product.name}</p>
             <p className="mt-0.5 text-xs text-muted-foreground">Current available total: {product.stock} items</p>
           </div>
-          <button type="button" data-dialog-autofocus onClick={onClose} disabled={submitting} aria-label="Close inventory dialog" className="grid size-9 place-items-center rounded-md hover:bg-[#eef3ee] disabled:opacity-50"><X /></button>
+          <button type="button" data-dialog-autofocus onClick={onClose} disabled={submitting} aria-label="Close inventory dialog" className="grid size-9 place-items-center rounded-md hover:bg-muted disabled:opacity-50"><X /></button>
         </header>
 
         <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-5">
@@ -489,14 +489,14 @@ export function SkuInventoryDialog({
                 <div className="flex gap-3"><AlertTriangle className="mt-0.5 size-5 shrink-0" /><div><p className="font-extrabold">Atomic option and inventory setup</p><p className="mt-1 text-xs leading-5">Edit the complete option structure, then enter the combinations physically available. The structure, combinations, and totals save together or not at all.</p></div></div>
               </div>
 
-              <section className="mt-5 rounded-lg border border-border bg-[#fbfdfb] p-4">
+              <section className="mt-5 rounded-lg border bg-surface-subtle p-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div><h3 className="font-extrabold text-foreground">Option structure</h3><p className="mt-1 text-xs text-muted-foreground">Add Size, Color, Waist, Length, Clip Type, or another physical attribute.</p></div>
                   <Button type="button" variant="secondary" className="h-9 px-3" onClick={addGroup} disabled={submitting || groups.length >= 12}><Plus className="size-4" /> Add group</Button>
                 </div>
                 <div className="mt-4 grid gap-4 lg:grid-cols-2">
                   {groups.map((group, groupIndex) => (
-                    <div key={group.key} className="rounded-lg border border-border bg-white p-3">
+                    <div key={group.key} className="rounded-lg border bg-white p-3">
                       <div className="flex items-center gap-2">
                         <input value={group.name} onChange={(event) => updateGroup(group.key, (current) => ({ ...current, name: event.target.value }))} placeholder="Option name, e.g. Color" aria-label={`Option group ${groupIndex + 1} name`} className="h-10 min-w-0 flex-1 rounded-md border px-3 text-sm font-bold outline-none focus:border-primary" />
                         <button type="button" onClick={() => removeGroup(group.key)} disabled={groups.length === 1 || submitting} aria-label={`Remove option group ${groupIndex + 1}`} className="grid size-10 place-items-center rounded-md text-red-600 hover:bg-red-50 disabled:opacity-30"><Trash2 className="size-4" /></button>
@@ -520,10 +520,10 @@ export function SkuInventoryDialog({
                   <div><h3 className="font-extrabold text-foreground">Physical inventory combinations</h3><p className="mt-1 text-xs text-muted-foreground">Keep only combinations that can physically exist. Zero-stock combinations are allowed.</p></div>
                   <Button type="button" variant="secondary" className="h-9 px-3" onClick={generateAllCombinations} disabled={submitting}><RefreshCw className="size-4" /> Generate all</Button>
                 </div>
-                <div className="mt-3 overflow-x-auto rounded-lg border border-border">
+                <div className="mt-3 overflow-x-auto rounded-lg border">
                   <table className="w-full min-w-[720px] text-sm">
-                    <thead className="bg-[#f6f9f6] text-left text-xs font-bold text-muted-foreground"><tr>{groups.map((group) => <th key={group.key} className="px-3 py-3">{group.name || "Unnamed option"}</th>)}<th className="px-3 py-3">Exact available</th><th className="px-3 py-3">Auto alert</th><th className="w-12 px-3 py-3" /></tr></thead>
-                    <tbody className="divide-y divide-[#e7ece8]">
+                    <thead className="bg-surface-subtle text-left text-xs font-bold text-muted-foreground"><tr>{groups.map((group) => <th key={group.key} className="px-3 py-3">{group.name || "Unnamed option"}</th>)}<th className="px-3 py-3">Exact available</th><th className="px-3 py-3">Auto alert</th><th className="w-12 px-3 py-3" /></tr></thead>
+                    <tbody className="divide-y divide-border">
                       {rows.map((row, rowIndex) => (
                         <tr key={row.key} className="[content-visibility:auto]">
                           {groups.map((group) => (
@@ -535,7 +535,7 @@ export function SkuInventoryDialog({
                             </td>
                           ))}
                           <td className="px-3 py-3"><input type="number" min="0" max="10000000" step="1" inputMode="numeric" value={row.stock} onChange={(event) => setRows((current) => current.map((entry, index) => index === rowIndex ? { ...entry, stock: event.target.value } : entry))} aria-label={`Combination ${rowIndex + 1} exact available stock`} className="h-10 w-28 rounded-md border px-2 text-center outline-none focus:border-primary" /></td>
-                          <td className="px-3 py-3"><div aria-label={`Combination ${rowIndex + 1} automatic low stock alert`} className="grid h-10 w-20 place-items-center rounded-md border bg-[#f6f9f6] px-2 text-center text-xs font-bold text-muted-foreground">≤ {Math.ceil(displayInventoryInteger(row.stock) * lowStockPercent / 100)}</div></td>
+                          <td className="px-3 py-3"><div aria-label={`Combination ${rowIndex + 1} automatic low stock alert`} className="grid h-10 w-20 place-items-center rounded-md border bg-surface-subtle px-2 text-center text-xs font-bold text-muted-foreground">≤ {Math.ceil(displayInventoryInteger(row.stock) * lowStockPercent / 100)}</div></td>
                           <td className="px-3 py-3"><button type="button" disabled={rows.length === 1 || submitting} onClick={() => setRows((current) => current.filter((_, index) => index !== rowIndex))} aria-label={`Remove combination ${rowIndex + 1}`} className="grid size-8 place-items-center rounded-md text-red-600 hover:bg-red-50 disabled:opacity-30"><X className="size-4" /></button></td>
                         </tr>
                       ))}
@@ -543,7 +543,7 @@ export function SkuInventoryDialog({
                   </table>
                 </div>
                 <button type="button" onClick={() => setRows((current) => [...current, { key: draftKey("row"), selections: Object.fromEntries(groups.map((group) => [group.key, ""])), stock: "0", threshold: "2" }])} disabled={submitting || rows.length >= 500} className="mt-3 inline-flex items-center gap-2 text-sm font-bold text-primary hover:underline disabled:opacity-40"><Plus className="size-4" /> Add combination</button>
-                <div className="mt-5 grid gap-3 rounded-lg border border-border bg-[#fbfdfb] p-4 sm:grid-cols-[220px_1fr] sm:items-end"><label className="grid gap-1.5 text-sm font-semibold">Low-stock warning<select aria-label="Low-stock warning" value={lowStockPercent} onChange={(event) => setLowStockPercent(Number(event.target.value))} className="h-11 rounded-md border bg-white px-3 font-normal outline-none focus:border-primary"><option value={10}>10% — very low</option><option value={20}>20% — low</option><option value={25}>25% — recommended</option><option value={30}>30% — early warning</option><option value={40}>40% — extra early</option><option value={50}>50% — half stock</option></select></label><div><p className="font-extrabold text-foreground">New available total: {exactTotal} items</p><p className="mt-1 text-xs leading-5 text-muted-foreground">Every combination gets the same {lowStockPercent}% policy automatically; staff no longer enters alert quantities manually.</p></div></div>
+                <div className="mt-5 grid gap-3 rounded-lg border bg-surface-subtle p-4 sm:grid-cols-[220px_1fr] sm:items-end"><label className="grid gap-1.5 text-sm font-semibold">Low-stock warning<select aria-label="Low-stock warning" value={lowStockPercent} onChange={(event) => setLowStockPercent(Number(event.target.value))} className="h-11 rounded-md border bg-white px-3 font-normal outline-none focus:border-primary"><option value={10}>10% — very low</option><option value={20}>20% — low</option><option value={25}>25% — recommended</option><option value={30}>30% — early warning</option><option value={40}>40% — extra early</option><option value={50}>50% — half stock</option></select></label><div><p className="font-extrabold text-foreground">New available total: {exactTotal} items</p><p className="mt-1 text-xs leading-5 text-muted-foreground">Every combination gets the same {lowStockPercent}% policy automatically; staff no longer enters alert quantities manually.</p></div></div>
               </section>
             </>
           ) : (
@@ -553,10 +553,10 @@ export function SkuInventoryDialog({
                 <button type="button" onClick={() => changeStockMode(stockMode === "add" ? "set" : "add")} className="text-xs font-bold text-primary hover:underline">{stockMode === "add" ? "Need to correct the count?" : "Back to adding stock"}</button>
               </div>
               {batchResult?.summary.unverifiedQuantity ? <section className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-4"><h3 className="text-sm font-extrabold text-amber-900">Opening costs need verification</h3><p className="mt-1 text-xs text-amber-800">Set each migrated combination’s acquisition cost before it can be released through FIFO.</p><div className="mt-3 space-y-2">{batchResult.batches.filter((batch) => !batch.costVerified).map((batch) => <div key={batch.id} className="grid gap-2 rounded-md bg-white p-3 sm:grid-cols-[1fr_150px_auto] sm:items-center"><div><p className="text-xs font-bold text-foreground">{batch.sku?.optionSnapshot?.map((option) => option.optionValue).join(" · ") || batch.batchCode}</p><p className="text-xs text-muted-foreground">{batch.quantityRemaining} item(s)</p></div><div className="flex h-10 items-center rounded-md border px-2"><span className="mr-1 text-xs font-bold text-muted-foreground">PHP</span><input type="number" min="0" step="0.01" inputMode="decimal" value={openingCostDrafts[batch.id] ?? ""} onChange={(event) => setOpeningCostDrafts((current) => ({ ...current, [batch.id]: event.target.value }))} className="min-w-0 flex-1 outline-none" placeholder="0.00" /></div><Button type="button" className="h-10" disabled={submitting || !openingCostDrafts[batch.id]} onClick={() => void saveOpeningCost(batch.id)}>Verify</Button></div>)}</div></section> : null}
-              {batchResult ? <details className="mt-4 rounded-lg border border-border bg-muted/40 p-4"><summary className="cursor-pointer text-sm font-bold text-primary">View FIFO batch history ({batchResult.batches.length})</summary><div className="mt-3 overflow-x-auto"><table className="w-full min-w-[620px] text-left text-xs"><thead className="text-muted-foreground"><tr><th className="py-2 pr-3">Combination</th><th className="py-2 pr-3">Batch</th><th className="py-2 pr-3">Cost</th><th className="py-2 pr-3">Received</th><th className="py-2">Remaining</th></tr></thead><tbody className="divide-y divide-border">{batchResult.batches.map((batch) => <tr key={batch.id}><td className="py-2 pr-3 font-bold">{batch.sku?.optionSnapshot?.map((option) => option.optionValue).join(" / ") || "Product total"}</td><td className="py-2 pr-3">{batch.batchCode}</td><td className="py-2 pr-3">{batch.costVerified ? `PHP ${Number(batch.unitCost).toFixed(2)}` : "Needs verification"}</td><td className="py-2 pr-3">{batch.quantityReceived}</td><td className="py-2 font-bold">{batch.quantityRemaining}</td></tr>)}</tbody></table></div></details> : null}
-              <div className="mt-5 overflow-hidden rounded-lg border border-border">
-                <div className="hidden grid-cols-[1fr_100px_120px] gap-3 bg-[#f6f9f6] px-4 py-3 text-xs font-bold text-muted-foreground sm:grid"><span>Inventory combination</span><span>Current</span><span>{stockMode === "add" ? "Add" : "Exact available"}</span></div>
-                <div className="divide-y divide-[#e7ece8]">
+              {batchResult ? <details className="mt-4 rounded-lg border bg-muted/40 p-4"><summary className="cursor-pointer text-sm font-bold text-primary">View FIFO batch history ({batchResult.batches.length})</summary><div className="mt-3 overflow-x-auto"><table className="w-full min-w-[620px] text-left text-xs"><thead className="text-muted-foreground"><tr><th className="py-2 pr-3">Combination</th><th className="py-2 pr-3">Batch</th><th className="py-2 pr-3">Cost</th><th className="py-2 pr-3">Received</th><th className="py-2">Remaining</th></tr></thead><tbody className="divide-y divide-border">{batchResult.batches.map((batch) => <tr key={batch.id}><td className="py-2 pr-3 font-bold">{batch.sku?.optionSnapshot?.map((option) => option.optionValue).join(" / ") || "Product total"}</td><td className="py-2 pr-3">{batch.batchCode}</td><td className="py-2 pr-3">{batch.costVerified ? `PHP ${Number(batch.unitCost).toFixed(2)}` : "Needs verification"}</td><td className="py-2 pr-3">{batch.quantityReceived}</td><td className="py-2 font-bold">{batch.quantityRemaining}</td></tr>)}</tbody></table></div></details> : null}
+              <div className="mt-5 overflow-hidden rounded-lg border">
+                <div className="hidden grid-cols-[1fr_100px_120px] gap-3 bg-surface-subtle px-4 py-3 text-xs font-bold text-muted-foreground sm:grid"><span>Inventory combination</span><span>Current</span><span>{stockMode === "add" ? "Add" : "Exact available"}</span></div>
+                <div className="divide-y divide-border">
                   {product.skus.map((sku, index) => (
                     <div key={sku.id} className="grid gap-2 px-4 py-3 [content-visibility:auto] sm:grid-cols-[1fr_100px_120px] sm:items-center">
                       <div><p className="text-sm font-bold text-foreground">{skuLabel(sku)}</p>{sku.stock <= sku.lowStockThreshold ? <p className="mt-0.5 text-xs font-semibold text-amber-700">Low stock · alert at {sku.lowStockThreshold}</p> : null}</div>
@@ -567,18 +567,18 @@ export function SkuInventoryDialog({
                 </div>
               </div>
               {stockMode === "add" ? (
-                <section className="mt-5 rounded-lg border border-border bg-muted/40 p-4">
+                <section className="mt-5 rounded-lg border bg-muted/40 p-4">
                   <div className="grid gap-4 sm:grid-cols-2">
-                    <label className="grid gap-1.5 text-sm font-semibold">Unit acquisition cost<div className="flex h-11 items-center rounded-md border bg-white px-3 focus-within:border-primary"><span className="mr-2 text-xs font-bold text-muted-foreground">PHP</span><input type="number" min="0" max="10000000" step="0.01" inputMode="decimal" value={unitCost} onChange={(event) => setUnitCost(event.target.value)} placeholder="0.00" className="min-w-0 flex-1 bg-transparent outline-none" /></div></label>
-                    <label className="grid gap-1.5 text-sm font-semibold">Selling price<div className="flex h-11 items-center rounded-md border bg-white px-3 focus-within:border-primary"><span className="mr-2 text-xs font-bold text-muted-foreground">PHP</span><input aria-label="Selling price" type="number" min="0" max="10000000" step="0.01" inputMode="decimal" value={sellingPrice} onChange={(event) => setSellingPrice(event.target.value)} placeholder="0.00" className="min-w-0 flex-1 bg-transparent outline-none" /></div><span className="text-xs font-normal leading-4 text-muted-foreground">Applies to the whole product and future sales.</span></label>
+                    <label className="grid gap-1.5 text-sm font-semibold">Unit acquisition cost<div className="flex h-11 items-center rounded-md border bg-white px-3 focus-within:border-primary"><span className="mr-2 text-xs font-bold text-muted-foreground">PHP</span><input type="number" min="0" max="10000000" step="0.01" inputMode="decimal" value={unitCost} onChange={(event) => setUnitCost(event.target.value)} placeholder="0.00" className="min-w-0 flex-1 bg-transparent outline-none focus-visible:outline-none" /></div></label>
+                    <label className="grid gap-1.5 text-sm font-semibold">Selling price<div className="flex h-11 items-center rounded-md border bg-white px-3 focus-within:border-primary"><span className="mr-2 text-xs font-bold text-muted-foreground">PHP</span><input aria-label="Selling price" type="number" min="0" max="10000000" step="0.01" inputMode="decimal" value={sellingPrice} onChange={(event) => setSellingPrice(event.target.value)} placeholder="0.00" className="min-w-0 flex-1 bg-transparent outline-none focus-visible:outline-none" /></div><span className="text-xs font-normal leading-4 text-muted-foreground">Applies to the whole product and future sales.</span></label>
                   </div>
                   <div className="mt-4 grid gap-4 sm:grid-cols-2"><label className="grid gap-1.5 text-sm font-semibold">Date received<input type="date" value={receivedAt} onChange={(event) => setReceivedAt(event.target.value)} className="h-11 rounded-md border bg-white px-3 outline-none focus:border-primary" /></label><label className="grid gap-1.5 text-sm font-semibold">Supplier reference <span className="font-normal text-muted-foreground">(optional)</span><input type="text" maxLength={500} value={supplierNote} onChange={(event) => setSupplierNote(event.target.value)} placeholder="Invoice or delivery receipt" className="h-11 rounded-md border bg-white px-3 font-normal outline-none focus:border-primary" /></label></div>
-                  <div className="mt-4 grid gap-2 rounded-md border border-border bg-white p-3 sm:grid-cols-3"><div><p className="text-xs font-bold text-muted-foreground">Selling price after saving</p><p className="mt-1 font-extrabold">{enteredSellingPrice === null || !Number.isFinite(enteredSellingPrice) ? "Enter price" : `PHP ${enteredSellingPrice.toFixed(2)}`}</p></div><div><p className="text-xs font-bold text-muted-foreground">New unit cost</p><p className="mt-1 font-extrabold">{enteredUnitCost === null || !Number.isFinite(enteredUnitCost) ? "Enter cost" : `PHP ${enteredUnitCost.toFixed(2)}`}</p></div><div><p className="text-xs font-bold text-muted-foreground">Estimated gross profit</p><p className={estimatedUnitProfit !== null && estimatedUnitProfit < 0 ? "mt-1 font-extrabold text-red-700" : "mt-1 font-extrabold text-primary"}>{estimatedUnitProfit === null ? "—" : `PHP ${estimatedUnitProfit.toFixed(2)} / item${estimatedMargin === null ? "" : ` (${estimatedMargin.toFixed(1)}%)`}`}</p></div></div>
+                  <div className="mt-4 grid gap-2 rounded-md border bg-white p-3 sm:grid-cols-3"><div><p className="text-xs font-bold text-muted-foreground">Selling price after saving</p><p className="mt-1 font-extrabold">{enteredSellingPrice === null || !Number.isFinite(enteredSellingPrice) ? "Enter price" : `PHP ${enteredSellingPrice.toFixed(2)}`}</p></div><div><p className="text-xs font-bold text-muted-foreground">New unit cost</p><p className="mt-1 font-extrabold">{enteredUnitCost === null || !Number.isFinite(enteredUnitCost) ? "Enter cost" : `PHP ${enteredUnitCost.toFixed(2)}`}</p></div><div><p className="text-xs font-bold text-muted-foreground">Estimated gross profit</p><p className={estimatedUnitProfit !== null && estimatedUnitProfit < 0 ? "mt-1 font-extrabold text-red-700" : "mt-1 font-extrabold text-primary"}>{estimatedUnitProfit === null ? "—" : `PHP ${estimatedUnitProfit.toFixed(2)} / item${estimatedMargin === null ? "" : ` (${estimatedMargin.toFixed(1)}%)`}`}</p></div></div>
                   {estimatedUnitProfit !== null && estimatedUnitProfit < 0 ? <p className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs font-bold text-red-800">Warning: this acquisition cost is higher than the current selling price.</p> : null}
                   <p className="mt-3 text-xs leading-5 text-muted-foreground">The selling price applies to the whole product and future sales. The same acquisition cost applies to this delivery; completed historical sales keep their original price and FIFO cost allocation.</p>
                 </section>
               ) : null}
-              <section className="mt-5 rounded-lg border border-border bg-[#fbfdfb] p-4">
+              <section className="mt-5 rounded-lg border bg-surface-subtle p-4">
                 <label className="grid gap-1.5 text-sm font-semibold sm:max-w-xs">
                   Low-stock warning
                   <select value={lowStockPercent} onChange={(event) => setLowStockPercent(Number(event.target.value))} className="h-11 rounded-md border bg-white px-3 font-normal outline-none focus:border-primary">
@@ -598,7 +598,7 @@ export function SkuInventoryDialog({
           )}
         </div>
 
-        <footer className="flex shrink-0 justify-end gap-2 border-t border-[#e1e8e2] bg-white p-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+        <footer className="flex shrink-0 justify-end gap-2 border-t border-border bg-white p-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
           <Button type="button" variant="secondary" onClick={onClose} disabled={submitting}>Cancel</Button>
           <Button type="button" onClick={() => void (mode === "reconcile" ? saveReconciliation() : saveRestock())} disabled={submitting}>{submitting ? "Saving..." : mode === "reconcile" ? "Save structure & inventory" : stockMode === "add" ? "Confirm & add" : "Save corrected stock"}</Button>
         </footer>

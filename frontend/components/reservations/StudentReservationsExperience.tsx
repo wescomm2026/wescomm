@@ -11,7 +11,10 @@ import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import { useRealtimeRefresh } from "@/components/realtime/RealtimeProvider";
 import { AssetIcon } from "@/components/ui/AssetIcon";
 import { Button } from "@/components/ui/button";
+import { InlineAlert } from "@/components/ui/InlineAlert";
 import { StatusBadge } from "@/components/ui/StatusBadge";
+import { useStudentOverview } from "@/components/student/useStudentOverview";
+import { cn } from "@/lib/utils";
 import {
   cancelMyReservationFromApi,
   getReservationFromApi,
@@ -73,6 +76,15 @@ const reservationFilters: readonly ReservationFilter[] = [
   "Cancelled",
   "No-show"
 ];
+
+const FILTER_STATUS: Record<Exclude<ReservationFilter, "All">, BackendReservationStatus> = {
+  Pending: "PENDING",
+  Confirmed: "CONFIRMED",
+  "Ready for Pickup": "READY_FOR_PICKUP",
+  Completed: "COMPLETED",
+  Cancelled: "CANCELLED",
+  "No-show": "NO_SHOW"
+};
 
 function formatDate(value: string) {
   const date = new Date(`${value}T00:00:00`);
@@ -263,7 +275,6 @@ function paymentStatusDisplay(status?: BackendPaymentStatus) {
 
 function reservationPreviewAction(reservation: StoredReservation) {
   if (reservation.status === "Ready for Pickup") return "View pickup details";
-  if (reservation.status === "Completed") return "View Details";
   return "View details";
 }
 
@@ -354,11 +365,21 @@ function ReservationProgress({
 
 function ReservationPreviewCard({
   reservation,
+  pickupGuidance,
   onOpen
 }: {
   reservation: StoredReservation;
+  pickupGuidance: string | null;
   onOpen: (trigger: HTMLButtonElement) => void;
 }) {
+  const isReady = reservation.status === "Ready for Pickup";
+  const scheduleClosed = reservation.status === "Cancelled" || reservation.status === "No-show";
+  const scheduleInactive = scheduleClosed || reservation.status === "Completed";
+  const scheduleLabel = scheduleClosed
+    ? "Was scheduled for"
+    : !scheduleInactive && reservation.pickupDate
+      ? getPickupLabel(reservation.pickupDate)
+      : "Pickup schedule";
   const firstItem = reservation.items[0] ?? null;
   const remainingLineItems = Math.max(0, reservation.items.length - 1);
   const totalQuantity = reservation.items.reduce((sum, item) => sum + item.quantity, 0);
@@ -368,8 +389,12 @@ function ReservationPreviewCard({
     <article
       id={`reservation-${reservation.id}`}
       data-testid="reservation-preview-card"
-      className="scroll-mt-24 overflow-hidden rounded-2xl border border-[#dce5dd] bg-white shadow-soft transition hover:border-[#b8cfba] hover:shadow-md target:border-primary target:ring-2 target:ring-primary/30"
+      className={cn(
+        "relative scroll-mt-24 overflow-hidden rounded-2xl border bg-card shadow-soft transition hover:border-primary/40 hover:shadow-md target:border-primary target:ring-2 target:ring-primary/30",
+        isReady && "border-primary/50"
+      )}
     >
+      {isReady ? <span className="absolute inset-x-0 top-0 h-1 bg-primary" aria-hidden="true" /> : null}
       <button
         type="button"
         onClick={(event) => onOpen(event.currentTarget)}
@@ -422,18 +447,28 @@ function ReservationPreviewCard({
           <ReservationProgress status={reservation.status} compact />
         </div>
 
-        <div className="mt-4 flex items-start gap-3 rounded-xl border border-[#dce6dc] bg-[#edf7ee] px-3 py-3 text-sm sm:px-4">
-          <span className="grid size-9 shrink-0 place-items-center rounded-lg border border-[#dce6dc] bg-white text-primary"><CalendarDays className="size-5" aria-hidden="true" /></span>
+        <div className={cn(
+          "mt-4 flex items-start gap-3 rounded-xl border px-3 py-3 text-sm sm:px-4",
+          scheduleInactive ? "border-border bg-surface-subtle" : isReady ? "border-primary/30 bg-primary/10" : "border-primary/15 bg-primary/5"
+        )}>
+          <span className={cn("grid size-9 shrink-0 place-items-center rounded-lg border bg-card", scheduleInactive ? "text-muted-foreground" : "border-primary/15 text-primary")}><CalendarDays className="size-5" aria-hidden="true" /></span>
           <div className="min-w-0">
-            <p className="text-[10px] font-extrabold uppercase tracking-wide text-primary sm:text-xs">Pickup Schedule</p>
+            <p className={cn("text-[10px] font-extrabold uppercase tracking-wide sm:text-xs", scheduleInactive ? "text-muted-foreground" : "text-primary")}>{scheduleLabel}</p>
             {reservation.pickupDate ? (
               <>
-                <p className="mt-0.5 font-extrabold text-[#17211b]">{formatDate(reservation.pickupDate)}</p>
-                <p className="text-xs text-[#526158] sm:text-sm">{reservation.pickupTime ?? "Time to be confirmed"}</p>
+                <p className={cn("mt-0.5 font-extrabold", scheduleClosed ? "text-muted-foreground line-through decoration-1" : "text-foreground")}>{formatDate(reservation.pickupDate)}</p>
+                <p className="text-xs text-muted-foreground sm:text-sm">{reservation.pickupTime ?? "Time to be confirmed"}</p>
               </>
-            ) : <p className="mt-1 font-semibold text-[#526158]">Awaiting staff confirmation</p>}
+            ) : <p className="mt-1 font-semibold text-muted-foreground">Awaiting staff confirmation</p>}
           </div>
         </div>
+
+        {isReady && pickupGuidance ? (
+          <p className="mt-3 flex items-start gap-2 rounded-lg bg-primary/5 px-3 py-2 text-xs leading-5 text-foreground">
+            <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
+            <span><span className="font-bold text-primary">Before you go: </span>{pickupGuidance}</span>
+          </p>
+        ) : null}
 
         {isOnlineGcash ? (
           <div className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-[#dce7dd] px-3 py-2">
@@ -863,6 +898,44 @@ export function StudentReservationsExperience() {
   const accountId = user?.id ?? "";
   const cacheKey = reservationCacheKey(accountId);
   const reservationPage = useServerState<CursorPage<BackendReservation>>(cacheKey);
+  const { overview, reload: reloadOverview } = useStudentOverview();
+  const [serverFilter, setServerFilter] = useState<{
+    filter: ReservationFilter;
+    items: BackendReservation[];
+    nextCursor: string | null;
+    loading: boolean;
+    error: string;
+  } | null>(null);
+  // Only the first page is cached. When older pages exist, ask the server for the status
+  // so a filter never hides matching reservations that simply haven't been loaded yet.
+  const needsServerFilter = activeFilter !== "All" && Boolean(reservationPage?.nextCursor);
+
+  const loadFilteredPage = useCallback(async (filter: ReservationFilter, cursor?: string) => {
+    if (filter === "All" || !user?.accessToken) return;
+    setServerFilter((current) => current?.filter === filter
+      ? { ...current, loading: true, error: "" }
+      : { filter, items: [], nextCursor: null, loading: true, error: "" });
+    try {
+      const page = await getReservationPageFromApi(user.accessToken, { limit: 20, cursor, status: FILTER_STATUS[filter] });
+      setServerFilter((current) => current?.filter !== filter ? current : {
+        filter,
+        items: cursor ? [...current.items, ...page.items] : page.items,
+        nextCursor: page.nextCursor,
+        loading: false,
+        error: ""
+      });
+    } catch (filterError) {
+      setServerFilter((current) => current?.filter !== filter ? current : {
+        ...current,
+        loading: false,
+        error: userFacingErrorMessage(filterError, "Unable to load these reservations.")
+      });
+    }
+  }, [user?.accessToken]);
+
+  useEffect(() => {
+    if (needsServerFilter) void loadFilteredPage(activeFilter);
+  }, [activeFilter, loadFilteredPage, needsServerFilter]);
 
   const loadReservations = useCallback(async ({
     background = false,
@@ -899,6 +972,7 @@ export function StudentReservationsExperience() {
   }, [accountId, authReady, cacheKey, user?.accessToken]);
 
   useRealtimeRefresh(["reservations"], (update) => {
+    if (needsServerFilter) void loadFilteredPage(activeFilter);
     if (!user?.accessToken || !update.entityId) {
       void loadReservations({ background: true });
       return;
@@ -952,15 +1026,27 @@ export function StudentReservationsExperience() {
     return () => window.cancelAnimationFrame(frame);
   }, [ready, reservations]);
 
+  const serverFilteredReservations = useMemo(
+    () => needsServerFilter && serverFilter?.filter === activeFilter ? mapBackendReservations(serverFilter.items) : null,
+    [activeFilter, needsServerFilter, serverFilter]
+  );
   const filteredReservations = useMemo(
     () => activeFilter === "All"
       ? reservations
-      : reservations.filter((reservation) => reservation.status === activeFilter),
-    [activeFilter, reservations]
+      : (serverFilteredReservations ?? reservations).filter((reservation) => reservation.status === activeFilter),
+    [activeFilter, reservations, serverFilteredReservations]
   );
+  const filterLoading = needsServerFilter && (serverFilter?.filter !== activeFilter || (serverFilter.loading && !serverFilter.items.length));
+  const listNextCursor = needsServerFilter ? serverFilter?.nextCursor ?? null : reservationPage?.nextCursor ?? null;
+  const totalReservations = overview?.reservations.total ?? reservations.length;
+  const filterCount = (filter: ReservationFilter) => overview
+    ? filter === "All" ? overview.reservations.total : overview.reservations[FILTER_STATUS[filter]]
+    : null;
 
   const selectedReservation = selectedReservationId
-    ? reservations.find((reservation) => reservation.id === selectedReservationId) ?? null
+    ? reservations.find((reservation) => reservation.id === selectedReservationId)
+      ?? serverFilteredReservations?.find((reservation) => reservation.id === selectedReservationId)
+      ?? null
     : null;
 
   const openReservationDetails = useCallback((reservationId: string, trigger: HTMLButtonElement) => {
@@ -974,16 +1060,18 @@ export function StudentReservationsExperience() {
     const mappedReservation = mapBackendReservations([updatedReservation])[0];
     if (!mappedReservation) return;
     upsertCursorItem(cacheKey, updatedReservation);
-  }, [cacheKey]);
+    setServerFilter((current) => current ? { ...current, items: current.items.map((item) => item.id === updatedReservation.id ? updatedReservation : item) } : current);
+    void reloadOverview();
+  }, [cacheKey, reloadOverview]);
 
   return (
     <>
       <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="text-sm font-semibold uppercase text-primary">Reservations</p>
-          <h1 className="mt-1 text-2xl font-semibold sm:text-3xl">My item reservations</h1>
-          <p className="mt-2 text-sm text-[#657169]">Track confirmation status and see exactly when each item is ready for pickup.</p>
+          <p className="text-xs font-extrabold uppercase tracking-[0.14em] text-primary">Reservations</p>
+          <h1 className="mt-1 text-2xl font-extrabold tracking-tight text-foreground sm:text-3xl">My item reservations</h1>
+          <p className="mt-2 text-sm text-muted-foreground">Track confirmation status and see exactly when each item is ready for pickup.</p>
         </div>
         <Link href="/student/shop">
           <Button className="h-11 w-full sm:w-auto">
@@ -994,7 +1082,9 @@ export function StudentReservationsExperience() {
       </div>
 
       {!authReady || !ready ? (
-        <div className="h-64 animate-pulse rounded-lg border border-[#e0e7e1] bg-white" />
+        <div className="grid gap-5 xl:grid-cols-2" role="status" aria-label="Loading your reservations">
+          {Array.from({ length: 2 }, (_, index) => <div key={index} className="h-80 animate-pulse rounded-2xl border bg-card motion-reduce:animate-none" />)}
+        </div>
       ) : !user?.accessToken ? (
         <section className="rounded-lg border border-[#dce5dd] bg-white p-4 shadow-sm">
           <p className="text-sm leading-6 text-[#657169]">Log in with your Wesleyan account to view live reservation status from the commissary.</p>
@@ -1002,22 +1092,25 @@ export function StudentReservationsExperience() {
         </section>
       ) : reservations.length ? (
         <>
-          {error ? <p className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p> : null}
-          <section className="rounded-lg border border-[#cfe0d0] bg-[#f3f9f3] p-4">
+          {error ? <InlineAlert>{error}</InlineAlert> : null}
+          <section className="rounded-xl border border-primary/20 bg-primary/5 p-4">
             <div className="flex items-start gap-3">
-              <CalendarDays className="mt-0.5 size-6 shrink-0 text-primary" />
+              <CalendarDays className="mt-0.5 size-6 shrink-0 text-primary" aria-hidden="true" />
               <div>
-                <p className="font-bold text-[#203027]">Pickup information</p>
-                <p className="mt-1 text-sm leading-6 text-[#5f6d64]">
+                <p className="font-bold text-foreground">Pickup information</p>
+                <p className="mt-1 text-sm leading-6 text-muted-foreground">
                   Wait for staff confirmation before visiting the commissary. Ready reservations will show their approved pickup schedule.
                 </p>
+                {overview?.pickupGuidance ? (
+                  <p className="mt-2 text-sm leading-6 text-foreground"><span className="font-bold text-primary">When you pick up: </span>{overview.pickupGuidance}</p>
+                ) : null}
               </div>
             </div>
           </section>
 
           <section aria-labelledby="reservation-list-heading" className="space-y-4">
             <h2 id="reservation-list-heading" className="sr-only">Your reservations</h2>
-            <div className="rounded-lg border border-[#dce5dd] bg-white p-2 shadow-sm sm:p-3">
+            <div className="rounded-xl border bg-card p-2 shadow-soft sm:p-3">
               <div
                 role="group"
                 aria-label="Filter reservations by status"
@@ -1025,6 +1118,7 @@ export function StudentReservationsExperience() {
               >
                 {reservationFilters.map((filter) => {
                   const selected = filter === activeFilter;
+                  const count = filterCount(filter);
 
                   return (
                     <button
@@ -1032,37 +1126,55 @@ export function StudentReservationsExperience() {
                       type="button"
                       aria-pressed={selected}
                       onClick={() => setActiveFilter(filter)}
-                      className={`min-h-10 shrink-0 rounded-md px-4 text-sm font-bold transition focus:outline-none focus:ring-2 focus:ring-primary/30 ${
+                      className={cn(
+                        "inline-flex min-h-10 shrink-0 items-center gap-1.5 rounded-lg px-4 text-sm font-bold transition focus:outline-none focus:ring-2 focus:ring-primary/30",
                         selected
-                          ? "bg-primary text-white shadow-[0_6px_14px_rgba(0,91,43,0.18)]"
-                          : "border border-[#d6e2d7] bg-white text-[#506057] hover:border-[#a9c6ac] hover:bg-[#f3f8f3]"
-                      }`}
+                          ? "bg-primary text-primary-foreground shadow-soft"
+                          : "border bg-card text-muted-foreground hover:border-primary/40 hover:bg-primary/5 hover:text-primary"
+                      )}
                     >
                       {filter}
+                      {count !== null ? (
+                        <span
+                          aria-hidden="true"
+                          className={cn(
+                            "min-w-5 rounded-full px-1.5 text-center text-[11px] font-extrabold tabular-nums",
+                            selected ? "bg-primary-foreground/20 text-primary-foreground" : count ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"
+                          )}
+                        >
+                          {count}
+                        </span>
+                      ) : null}
                     </button>
                   );
                 })}
               </div>
             </div>
 
-            <p aria-live="polite" className="text-sm font-semibold text-[#657169]">
-              Showing {filteredReservations.length} of {reservations.length} reservation{reservations.length === 1 ? "" : "s"}
+            <p aria-live="polite" className="text-sm font-semibold text-muted-foreground">
+              Showing {filteredReservations.length} of {totalReservations} reservation{totalReservations === 1 ? "" : "s"}
             </p>
+            {needsServerFilter && serverFilter?.error ? <InlineAlert>{serverFilter.error}</InlineAlert> : null}
 
-            {filteredReservations.length ? (
+            {filterLoading ? (
+              <div className="grid gap-5 xl:grid-cols-2" role="status" aria-label={`Loading ${activeFilter.toLowerCase()} reservations`}>
+                {Array.from({ length: 2 }, (_, index) => <div key={index} className="h-72 animate-pulse rounded-2xl border bg-card motion-reduce:animate-none" />)}
+              </div>
+            ) : filteredReservations.length ? (
               <div className="grid gap-5 xl:grid-cols-2">
                 {filteredReservations.map((reservation) => (
                   <ReservationPreviewCard
                     key={reservation.id}
                     reservation={reservation}
+                    pickupGuidance={overview?.pickupGuidance ?? null}
                     onOpen={(trigger) => openReservationDetails(reservation.id, trigger)}
                   />
                 ))}
               </div>
             ) : (
-              <div className="flex min-h-48 flex-col items-center justify-center rounded-lg border border-dashed border-[#cbd9cd] bg-white px-6 text-center">
-                <h3 className="text-lg font-extrabold text-[#17211b]">No {activeFilter.toLowerCase()} reservations</h3>
-                <p className="mt-2 max-w-md text-sm leading-6 text-[#657169]">
+              <div className="flex min-h-48 flex-col items-center justify-center rounded-xl border border-dashed border-border-strong bg-card px-6 text-center">
+                <h3 className="text-lg font-extrabold text-foreground">No {activeFilter.toLowerCase()} reservations</h3>
+                <p className="mt-2 max-w-md text-sm leading-6 text-muted-foreground">
                   None of your reservations currently match this status. Choose another filter to see more.
                 </p>
                 <Button type="button" variant="secondary" className="mt-4" onClick={() => setActiveFilter("All")}>
@@ -1070,15 +1182,17 @@ export function StudentReservationsExperience() {
                 </Button>
               </div>
             )}
-            {reservationPage?.nextCursor ? (
+            {listNextCursor && !filterLoading ? (
               <div className="flex justify-center pt-2">
                 <Button
                   type="button"
                   variant="secondary"
-                  disabled={loadingMore}
-                  onClick={() => void loadReservations({ cursor: reservationPage.nextCursor ?? undefined })}
+                  disabled={needsServerFilter ? serverFilter?.loading : loadingMore}
+                  onClick={() => needsServerFilter
+                    ? void loadFilteredPage(activeFilter, listNextCursor)
+                    : void loadReservations({ cursor: listNextCursor })}
                 >
-                  {loadingMore ? "Loading more..." : "Load more reservations"}
+                  {(needsServerFilter ? serverFilter?.loading : loadingMore) ? "Loading more..." : "Load more reservations"}
                 </Button>
               </div>
             ) : null}
@@ -1086,13 +1200,13 @@ export function StudentReservationsExperience() {
         </>
       ) : (
         <>
-          {error ? <p className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p> : null}
-          <section className="flex min-h-72 flex-col items-center justify-center rounded-lg border border-[#dce5dd] bg-white px-6 text-center shadow-sm">
-            <span className="grid size-14 place-items-center rounded-full bg-[#e8f4e8] text-primary">
+          {error ? <InlineAlert>{error}</InlineAlert> : null}
+          <section className="flex min-h-72 flex-col items-center justify-center rounded-xl border bg-card px-6 text-center shadow-soft">
+            <span className="grid size-14 place-items-center rounded-full bg-primary/10 text-primary">
               <AssetIcon src="/assets/my-reservations.svg" className="size-10" />
             </span>
-            <h2 className="mt-4 text-xl font-extrabold text-[#17211b]">No reservations yet</h2>
-            <p className="mt-2 max-w-md text-sm leading-6 text-[#657169]">
+            <h2 className="mt-4 text-xl font-extrabold text-foreground">No reservations yet</h2>
+            <p className="mt-2 max-w-md text-sm leading-6 text-muted-foreground">
               Browse available campus essentials and use Reserve Now to choose your item details and pickup schedule.
             </p>
             <Link href="/student/shop" className="mt-5">

@@ -4,7 +4,7 @@ import type {
   BackendConversation,
   BackendConversationPurgePreview
 } from "../lib/api";
-import { authorizeMockedWorkspace, dismissWelcomeGate } from "./helpers";
+import { authorizeMockedWorkspace, dismissWelcomeGate, fulfillWorkspaceShellExtras } from "./helpers";
 
 const adminId = "95000000-0000-4000-8000-000000000001";
 const staffId = "95000000-0000-4000-8000-000000000002";
@@ -107,6 +107,7 @@ async function handleShellRequest(route: Route, profile: BackendAuthProfile) {
     await json(route, { notifications: [], nextCursor: null });
     return true;
   }
+  if (await fulfillWorkspaceShellExtras(route)) return true;
   if (path === "/api/backend/notifications/unread-count" && request.method() === "GET") {
     await json(route, { unreadCount: 0 });
     return true;

@@ -30,7 +30,7 @@ export function SalesByCategory({
   const visibleCategories = showAll ? sortedCategories : sortedCategories.slice(0, 3);
 
   return (
-    <section className="overflow-hidden rounded-lg border border-border bg-white shadow-sm">
+    <section className="overflow-hidden rounded-lg border bg-white shadow-sm">
       <div className="flex flex-col gap-3 border-b border-border px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
         <div>
           <h2 className="font-extrabold text-foreground">Sales by category</h2>
@@ -82,7 +82,7 @@ export function SalesByCategory({
                   <div className="border-t border-border bg-muted/30 p-3 sm:p-4">
                     <div className="space-y-2 md:hidden">
                       {categoryItems.map((item) => (
-                        <article key={item.productId} className="rounded-md border border-border bg-white p-3 text-sm">
+                        <article key={item.productId} className="rounded-md border bg-white p-3 text-sm">
                           <p className="font-extrabold text-foreground">{item.item}</p>
                           <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
                             <p><span className="text-muted-foreground">Qty:</span> {formatNumber(item.quantity)}</p>

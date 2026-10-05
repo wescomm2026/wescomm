@@ -4,7 +4,7 @@ import type {
   BackendConversation,
   BackendConversationMessage
 } from "../lib/api";
-import { authorizeMockedWorkspace, dismissWelcomeGate } from "./helpers";
+import { authorizeMockedWorkspace, dismissWelcomeGate, fulfillWorkspaceShellExtras } from "./helpers";
 
 const staffId = "00000000-0000-4000-8000-000000000011";
 const studentId = "00000000-0000-4000-8000-000000000012";
@@ -94,6 +94,7 @@ test("staff send and resolve actions show immediate progress instead of appearin
       return;
     }
 
+    if (await fulfillWorkspaceShellExtras(route)) return;
     if (path === "/api/backend/notifications/unread-count" && request.method() === "GET") {
       await json(route, { unreadCount: 0 });
       return;

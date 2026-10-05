@@ -1007,61 +1007,6 @@ export type BackendReportReconciliationType =
   | "PAID_NOT_COMPLETED"
   | "POST_CUTOVER_NON_CASH";
 
-export type BackendWesbotUsageSummary = {
-  model: string;
-  aiEnabled: boolean;
-  semanticMode: "off" | "shadow" | "active";
-  budgetEnforced: boolean;
-  budgetUsd: number;
-  estimatedSpendUsd: number;
-  reservedSpendUsd: number;
-  committedSpendUsd: number;
-  remainingUsd: number;
-  budgetPercent: number;
-  budgetHealth: "HEALTHY" | "WATCH" | "CRITICAL" | "PAUSED" | "DISABLED";
-  monthStart: string;
-  monthEnd: string;
-  totalCalls: number;
-  successfulCalls: number;
-  fallbackCalls: number;
-  budgetBlockedCalls: number;
-  rateLimitedCalls: number;
-  timeoutCalls: number;
-  activeReservations: number;
-  inputTokens: number;
-  cachedInputTokens: number;
-  outputTokens: number;
-  reasoningOutputTokens: number;
-  totalTokens: number;
-  averageLatencyMs: number;
-  lastSuccessAt: string | null;
-  lastUpdatedAt: string | null;
-  pricingVersion: string;
-  inputRateUsdPer1MTokens: number;
-  cachedRateUsdPer1MTokens: number;
-  outputRateUsdPer1MTokens: number;
-  operationBreakdown: Array<{
-    operation: string;
-    calls: number;
-    inputTokens: number;
-    outputTokens: number;
-    totalTokens: number;
-    estimatedSpendUsd: number;
-  }>;
-  today: BackendWesbotUsageDay;
-  daily: BackendWesbotUsageDay[];
-};
-
-export type BackendWesbotUsageDay = {
-  day: string;
-  calls: number;
-  successfulCalls: number;
-  fallbackCalls: number;
-  inputTokens: number;
-  outputTokens: number;
-  estimatedSpendUsd: number;
-};
-
 export type ReportRangePreset = "TODAY" | "LAST_7_DAYS" | "LAST_30_DAYS" | "THIS_MONTH" | "LAST_MONTH" | "CUSTOM" | "ALL_TIME";
 export type ReportRangeOptions = {
   preset?: ReportRangePreset;
@@ -2193,11 +2138,6 @@ export async function getAdminReportSummaryFromApi(token: string, options: Repor
   return data.summary;
 }
 
-export async function getAdminWesbotUsageFromApi(token: string, signal?: AbortSignal) {
-  const data = await authApiFetch<{ usage: BackendWesbotUsageSummary }>("/admin/wesbot/usage", token, { signal });
-  return data.usage;
-}
-
 export async function getStaffReportSummaryFromApi(token: string, options: ReportRangeOptions = {}, signal?: AbortSignal, fresh = false) {
   const data = await authApiFetch<{ summary: BackendReportSummary }>(`/staff/reports/summary${reportQuery(options, fresh)}`, token, { signal });
   return data.summary;
@@ -2368,6 +2308,47 @@ export async function getStaffUsersFromApi(token: string, signal?: AbortSignal) 
   return data.users;
 }
 
+export type StaffNotificationPreferences = {
+  lowStock: boolean;
+  reservations: boolean;
+  receipts: boolean;
+};
+
+export type StaffPickupGuidance = {
+  text: string;
+  updatedAt: string | null;
+  updatedBy: string | null;
+};
+
+export async function getStaffNotificationPreferencesFromApi(token: string, signal?: AbortSignal) {
+  return authApiFetch<{ preferences: StaffNotificationPreferences; updatedAt: string | null }>(
+    "/staff/settings/notification-preferences",
+    token,
+    { signal }
+  );
+}
+
+export async function updateStaffNotificationPreferencesFromApi(token: string, preferences: StaffNotificationPreferences) {
+  return authApiFetch<{ preferences: StaffNotificationPreferences; updatedAt: string | null }>(
+    "/staff/settings/notification-preferences",
+    token,
+    { method: "PUT", body: JSON.stringify(preferences) }
+  );
+}
+
+export async function getStaffPickupGuidanceFromApi(token: string, signal?: AbortSignal) {
+  const data = await authApiFetch<{ guidance: StaffPickupGuidance }>("/staff/settings/pickup-guidance", token, { signal });
+  return data.guidance;
+}
+
+export async function updateStaffPickupGuidanceFromApi(token: string, text: string) {
+  const data = await authApiFetch<{ guidance: StaffPickupGuidance }>("/staff/settings/pickup-guidance", token, {
+    method: "PUT",
+    body: JSON.stringify({ text })
+  });
+  return data.guidance;
+}
+
 export async function updateAdminUserRoleFromApi(token: string, userId: string, role: BackendAppRole) {
   const data = await authApiFetch<{ user: BackendAdminUser }>(`/admin/users/${userId}/role`, token, {
     method: "PATCH",
@@ -2396,4 +2377,29 @@ export async function getAdminAuditLogsFromApi(
     items: Array.isArray(data.items) ? data.items : data.auditLogs ?? [],
     nextCursor: data.nextCursor ?? null
   };
+}
+
+export type StudentOverview = {
+  generatedAt: string;
+  reservations: Record<BackendReservationStatus, number> & { total: number; active: number };
+  receipts: Record<BackendReceiptStatus, number> & { total: number };
+  spentThisMonth: number;
+  nextPickup: {
+    id: string;
+    referenceCode: string;
+    status: BackendReservationStatus;
+    pickupStart: string | null;
+    pickupEnd: string | null;
+    needsScheduleReview: boolean;
+    slotLabel: string | null;
+    totalAmount: number;
+    itemCount: number;
+    items: Array<{ name: string; quantity: number }>;
+  } | null;
+  pickupGuidance: string | null;
+};
+
+export async function getStudentOverviewFromApi(token: string, signal?: AbortSignal) {
+  const data = await authApiFetch<{ overview: StudentOverview }>("/student/overview", token, { signal });
+  return data.overview;
 }

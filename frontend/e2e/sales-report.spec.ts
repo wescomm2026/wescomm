@@ -1,7 +1,7 @@
 import { expect, test, type Route } from "@playwright/test";
 import type { BackendAuthProfile } from "../lib/api";
 import { EMPTY_REPORT_SUMMARY } from "../lib/report-summary";
-import { authorizeMockedWorkspace, dismissWelcomeGate } from "./helpers";
+import { authorizeMockedWorkspace, dismissWelcomeGate, fulfillWorkspaceShellExtras } from "./helpers";
 
 const staffProfile: BackendAuthProfile = {
   id: "00000000-0000-4000-8000-000000000801",
@@ -35,6 +35,7 @@ async function handleShellRequest(route: Route) {
     await json(route, { notifications: [], nextCursor: null });
     return true;
   }
+  if (await fulfillWorkspaceShellExtras(route)) return true;
   if (path === "/api/backend/notifications/unread-count") {
     await json(route, { unreadCount: 0 });
     return true;
