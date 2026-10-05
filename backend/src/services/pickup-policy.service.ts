@@ -7,6 +7,7 @@ import {
   pickupInstant,
   pickupWeekday,
   resolvePickupBookingWindow,
+  pickupBookingClosesAt,
   validatePickupDate,
   validatePickupSelection,
   type PickupBookingWindow,
@@ -209,11 +210,17 @@ export async function getPickupSlotAvailability(input: {
     serverTime: validatedDate.now.toISOString(),
     slots: windows.map(({ slot, pickupStart, pickupEnd }) => {
       const capacity = pickupCapacitySnapshot(slot.capacity, bookedByWindow.get(pickupWindowKey(pickupStart, pickupEnd)) ?? 0);
-      const isExpired = pickupStart.getTime() <= validatedDate.now.getTime();
+      const now = validatedDate.now.getTime();
+      const bookingClosesAt = pickupBookingClosesAt(pickupStart, pickupEnd);
+      const isExpired = bookingClosesAt.getTime() <= now;
       return {
         slotId: slot.id,
         ...capacity,
         isExpired,
+        // In progress: the window has started but can still be booked until bookingClosesAt.
+        inProgress: !isExpired && pickupStart.getTime() <= now,
+        hasEnded: pickupEnd.getTime() <= now,
+        bookingClosesAt: bookingClosesAt.toISOString(),
         isUnavailable: isExpired || capacity.isFull,
         unavailableReason: isExpired ? "PICKUP_SLOT_EXPIRED" : capacity.isFull ? "PICKUP_SLOT_FULL" : null
       };

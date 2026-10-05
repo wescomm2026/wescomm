@@ -19,7 +19,7 @@ export function isPickupRecoveryError(error: unknown): error is BackendApiError 
 
 export function pickupRecoveryMessage(error: BackendApiError) {
   if (error.code === "PICKUP_SLOT_EXPIRED") {
-    return "That pickup time has already started. Please choose a later time.";
+    return "Booking for that pickup time has closed. Please choose a later time.";
   }
   if (error.code === "PICKUP_POLICY_UNAVAILABLE") {
     return "Pickup scheduling is temporarily unavailable. Please try again later.";

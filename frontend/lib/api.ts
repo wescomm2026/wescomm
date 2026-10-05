@@ -341,6 +341,10 @@ export type BackendPickupSlotAvailability = {
     remaining: number | null;
     isFull: boolean;
     isExpired: boolean;
+    /** The window has started and can still be booked until bookingClosesAt. */
+    inProgress?: boolean;
+    hasEnded?: boolean;
+    bookingClosesAt?: string;
     isUnavailable: boolean;
     unavailableReason: "PICKUP_SLOT_EXPIRED" | "PICKUP_SLOT_FULL" | null;
   }>;

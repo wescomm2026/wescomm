@@ -93,18 +93,31 @@ function pickupSlotStartMs(pickupDate: string, startMinute: number) {
 function nextSlotBoundaryDelayMs(
   policy: BackendPickupPolicy,
   pickupDate: string,
-  serverTime: string | undefined,
+  availability: BackendPickupSlotAvailability,
   localNow = Date.now()
 ) {
-  const parsedServerTime = serverTime ? Date.parse(serverTime) : Number.NaN;
+  const parsedServerTime = availability.serverTime ? Date.parse(availability.serverTime) : Number.NaN;
   const serverNow = Number.isFinite(parsedServerTime) ? parsedServerTime : localNow;
-  const nextStart = policy.timeSlots
+  // Refresh when a window starts (it becomes "in progress") and when its booking closes.
+  const closesBySlot = new Map(availability.slots.map((slot) => [slot.slotId, slot.bookingClosesAt ? Date.parse(slot.bookingClosesAt) : Number.NaN]));
+  const boundaries = policy.timeSlots
     .filter((slot) => slot.isActive)
-    .map((slot) => pickupSlotStartMs(pickupDate, slot.startMinute))
-    .filter((start) => Number.isFinite(start) && start > serverNow)
-    .sort((left, right) => left - right)[0];
-  if (nextStart === undefined) return null;
-  return Math.max(0, nextStart - serverNow) + 250;
+    .flatMap((slot) => {
+      const start = pickupSlotStartMs(pickupDate, slot.startMinute);
+      const closes = closesBySlot.get(slot.id);
+      return [start, Number.isFinite(closes) ? closes as number : start];
+    })
+    .filter((boundary) => Number.isFinite(boundary) && boundary > serverNow)
+    .sort((left, right) => left - right);
+  const next = boundaries[0];
+  if (next === undefined) return null;
+  return Math.max(0, next - serverNow) + 250;
+}
+
+function manilaTimeLabel(value: string | undefined) {
+  if (!value) return "";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "" : date.toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit", timeZone: "Asia/Manila" });
 }
 
 export function PickupSchedulePicker({
@@ -230,7 +243,7 @@ export function PickupSchedulePicker({
       .then((availability) => {
         if (!active) return;
         setSlotAvailability(availability);
-        const boundaryDelay = nextSlotBoundaryDelayMs(policy, selectedDate, availability.serverTime);
+        const boundaryDelay = nextSlotBoundaryDelayMs(policy, selectedDate, availability);
         setSlotBoundaryRefreshAt(boundaryDelay === null ? null : Date.now() + boundaryDelay);
         const availabilityBySlot = new Map(availability.slots.map((slot) => [slot.slotId, slot]));
         const selectableSlots = policy.timeSlots.filter((slot) => {
@@ -363,21 +376,27 @@ export function PickupSchedulePicker({
             const isFull = availability?.isFull === true;
             const isExpired = availability?.isExpired === true;
             const isUnavailable = availability?.isUnavailable ?? (isExpired || isFull);
+            const closesAtLabel = manilaTimeLabel(availability?.bookingClosesAt);
+            const inProgressLabel = !policyOverride && availability?.inProgress && !isExpired
+              ? `Happening now · book by ${closesAtLabel || "the cutoff"}`
+              : null;
             const capacityLabel = policyOverride
               ? slot.capacity == null ? "Unlimited" : `Limit: ${slot.capacity}`
               : isExpired
-                ? "Time passed"
+                // Distinguish a window that is over from one still running but too close to its end.
+                ? availability?.hasEnded === false ? "Booking closed" : "Time passed"
                 : availability?.capacity == null
                   ? "Unlimited"
                   : isFull
                     ? "Full"
                     : `${availability.remaining} spot${availability.remaining === 1 ? "" : "s"} left`;
+            const statusLabel = inProgressLabel ? `${inProgressLabel} · ${capacityLabel}` : capacityLabel;
             return (
               <button
                 key={slot.id}
                 type="button"
                 disabled={disabled || !selectedDate || slotLoading || slotAvailabilityPending || isUnavailable}
-                aria-label={`${slot.label}, ${capacityLabel}`}
+                aria-label={`${slot.label}, ${statusLabel}`}
                 aria-pressed={selection?.pickupSlotId === slot.id}
                 onClick={() => {
                   const nextSelection = {
@@ -397,7 +416,7 @@ export function PickupSchedulePicker({
                 )}
               >
                 <span className="block">{slot.label}</span>
-                <span className="mt-0.5 block text-[11px] font-semibold opacity-75">{slotLoading || slotAvailabilityPending ? "Checking availability..." : capacityLabel}</span>
+                <span className="mt-0.5 block text-[11px] font-semibold opacity-75">{slotLoading || slotAvailabilityPending ? "Checking availability..." : statusLabel}</span>
               </button>
             );
           })}
