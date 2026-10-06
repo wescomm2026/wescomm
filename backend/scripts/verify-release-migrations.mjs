@@ -155,6 +155,19 @@ const releaseMigrations = [
       /ADD COLUMN "buyer_name_snapshot" TEXT/,
       /walk_in_sales_buyer_name_check/
     ]
+  },
+  {
+    directory: "20261006000000_add_walk_in_treasury_collection",
+    required: [
+      /ADD COLUMN "collection_channel" "collection_channel" NOT NULL DEFAULT 'COMMISSARY'/,
+      /ALTER COLUMN "cash_tendered" DROP NOT NULL/,
+      /walk_in_sales_collection_details_check/,
+      /CREATE TABLE "treasury_official_receipts"/,
+      /PRIMARY KEY \("normalized_official_receipt_number"\)/,
+      /walk_in_sales_register_treasury_or/,
+      /payments_register_treasury_or/,
+      /treasury_official_receipts" ENABLE ROW LEVEL SECURITY/
+    ]
   }
 ];
 

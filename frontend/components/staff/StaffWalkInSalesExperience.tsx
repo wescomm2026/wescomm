@@ -3,7 +3,7 @@
 import { userFacingErrorMessage } from "@/lib/user-facing-error";
 
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
-import { Check, Circle, Minus, Plus, ReceiptText, RefreshCw, Search, ShoppingCart, Trash2, X } from "lucide-react";
+import { Check, Circle, Minus, Plus, Printer, ReceiptText, RefreshCw, Search, ShoppingCart, Trash2, X } from "lucide-react";
 import { useRealtimeRefresh } from "@/components/realtime/RealtimeProvider";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
@@ -23,8 +23,28 @@ import {
   voidWalkInSale,
   type StaffCategory,
   type StaffProduct,
-  type WalkInReceipt
+  type WalkInCollectionChannel,
+  type WalkInReceipt,
+  type WalkInSalePayload
 } from "@/lib/staff-api";
+import {
+  buildThermalReceiptDocument,
+  DEFAULT_THERMAL_PRINTER_SETTINGS,
+  defaultPrintableWidthMm,
+  loadThermalPrinterSettings,
+  normalizeThermalPrinterSettings,
+  printThermalDocument,
+  printThermalReceipt,
+  sampleThermalReceipt,
+  saveThermalPrinterSettings,
+  THERMAL_CUSTOM_PAPER_WIDTH,
+  THERMAL_MIN_PRINTABLE_WIDTH,
+  THERMAL_PAPER_PRESETS,
+  thermalReceiptFromWalkIn,
+  thermalReceiptLogoUrl,
+  type ThermalPaperPreset,
+  type ThermalPrinterSettings
+} from "@/lib/thermal-receipt";
 import {
   backendReceiptStatusFilter,
   mergeUniqueById,
@@ -381,6 +401,14 @@ function VoidWalkInSaleModal({
           Voiding <span className="font-bold text-foreground">{receipt.receiptCode}</span> returns every item back to inventory
           and marks the receipt voided. This cannot be undone.
         </p>
+        {receipt.collectionChannel === "TREASURER" ? (
+          <InlineAlert tone="warning" title="Treasury payment is not refunded here" className="mt-3">
+            <p>
+              This sale was paid at the Treasury (OR {receipt.officialReceiptNumber}). Voiding restores stock only.
+              Coordinate any refund with the Treasury; admins will be notified to reconcile it.
+            </p>
+          </InlineAlert>
+        ) : null}
         <label className="mt-4 grid gap-1.5 text-sm font-semibold">
           Reason (required)
           <textarea
@@ -410,19 +438,29 @@ function VoidWalkInSaleModal({
   );
 }
 
+function collectionLabel(receipt: WalkInReceipt) {
+  return receipt.collectionChannel === "TREASURER" ? "Treasury" : "Commissary cash";
+}
+
 function SaleSuccessModal({
   receipt,
-  cashReceived,
+  printing,
+  printed,
+  printError,
+  onPrint,
   onClose
 }: {
   receipt: WalkInReceipt | null;
-  cashReceived: number | null;
+  printing: boolean;
+  printed: boolean;
+  printError: string;
+  onPrint: () => void;
   onClose: () => void;
 }) {
   const { dialogRef, titleId, dialogProps } = useAccessibleDialog<HTMLDivElement>(Boolean(receipt), onClose);
   if (!receipt) return null;
   const total = Number(receipt.totalAmount);
-  const change = cashReceived !== null ? Math.round((cashReceived - total) * 100) / 100 : null;
+  const treasury = receipt.collectionChannel === "TREASURER";
   return (
     <div className="fixed inset-0 z-[90] flex items-end justify-center bg-black/50 p-4 sm:items-center">
       <div ref={dialogRef} {...dialogProps} className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-lg bg-white p-6 shadow-xl">
@@ -448,22 +486,239 @@ function SaleSuccessModal({
             <span className="text-muted-foreground">Total</span>
             <span className="font-extrabold text-primary">{formatPeso(total)}</span>
           </div>
-          {cashReceived !== null ? (
+          <div className="mt-2 flex items-center justify-between text-sm">
+            <span className="text-muted-foreground">Paid at</span>
+            <span className="font-bold">{collectionLabel(receipt)}</span>
+          </div>
+          {treasury ? (
+            <div className="mt-2 flex items-center justify-between gap-3 text-sm">
+              <span className="text-muted-foreground">Treasury OR No.</span>
+              <span className="break-all text-right font-extrabold">{receipt.officialReceiptNumber}</span>
+            </div>
+          ) : (
             <>
               <div className="mt-2 flex items-center justify-between text-sm">
                 <span className="text-muted-foreground">Cash received</span>
-                <span className="font-bold">{formatPeso(cashReceived)}</span>
+                <span className="font-bold">{formatPeso(Number(receipt.sale?.cashTendered ?? 0))}</span>
               </div>
               <div className="mt-2 flex items-center justify-between text-sm">
                 <span className="text-muted-foreground">Change</span>
-                <span className="font-extrabold">{formatPeso(change ?? 0)}</span>
+                <span className="font-extrabold">{formatPeso(Number(receipt.sale?.changeDue ?? 0))}</span>
               </div>
             </>
-          ) : null}
+          )}
         </div>
-        <div className="mt-5">
-          <Button type="button" className="w-full" data-dialog-autofocus onClick={onClose}>
+        {printError ? <InlineAlert className="mt-4">{printError}</InlineAlert> : null}
+        <div className="mt-5 grid gap-2 sm:grid-cols-2">
+          <Button type="button" size="lg" data-dialog-autofocus disabled={printing} loading={printing} onClick={onPrint}>
+            <Printer className="size-4" aria-hidden="true" />
+            {printed ? "Print again" : "Print receipt"}
+          </Button>
+          <Button type="button" size="lg" variant="secondary" onClick={onClose}>
             Done
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ThermalPrinterSettingsModal({
+  open,
+  settings,
+  onClose,
+  onSave
+}: {
+  open: boolean;
+  settings: ThermalPrinterSettings;
+  onClose: () => void;
+  onSave: (settings: ThermalPrinterSettings) => void;
+}) {
+  const { dialogRef, titleId, dialogProps } = useAccessibleDialog<HTMLDivElement>(open, onClose);
+  const [preset, setPreset] = useState<ThermalPaperPreset>(settings.preset);
+  const [customPaper, setCustomPaper] = useState(String(settings.paperWidthMm));
+  const [customPrintable, setCustomPrintable] = useState(String(settings.printableWidthMm));
+  const [previewHtml, setPreviewHtml] = useState("");
+  const [testPrinting, setTestPrinting] = useState(false);
+  const [testError, setTestError] = useState("");
+
+  useEffect(() => {
+    if (!open) return;
+    setPreset(settings.preset);
+    setCustomPaper(String(settings.paperWidthMm));
+    setCustomPrintable(String(settings.printableWidthMm));
+    setTestError("");
+  }, [open, settings]);
+
+  const customPaperValue = Number.parseFloat(customPaper);
+  const customPrintableValue = Number.parseFloat(customPrintable);
+  const customValid = Number.isFinite(customPaperValue)
+    && customPaperValue >= THERMAL_CUSTOM_PAPER_WIDTH.min
+    && customPaperValue <= THERMAL_CUSTOM_PAPER_WIDTH.max
+    && Number.isFinite(customPrintableValue)
+    && customPrintableValue >= THERMAL_MIN_PRINTABLE_WIDTH
+    && customPrintableValue <= customPaperValue;
+  const draft = normalizeThermalPrinterSettings(preset === "CUSTOM"
+    ? { preset, paperWidthMm: customPaperValue, printableWidthMm: customPrintableValue }
+    : { preset });
+  const draftValid = preset !== "CUSTOM" || customValid;
+
+  useEffect(() => {
+    if (!open || !draftValid) return;
+    let cancelled = false;
+    void buildThermalReceiptDocument(sampleThermalReceipt(window.location.origin), {
+      settings: draft,
+      copy: "TEST",
+      logoUrl: thermalReceiptLogoUrl()
+    }).then((html) => {
+      if (!cancelled) setPreviewHtml(html);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, draftValid, draft.paperWidthMm, draft.printableWidthMm]);
+
+  if (!open) return null;
+
+  const printTest = async () => {
+    if (!draftValid) return;
+    setTestPrinting(true);
+    setTestError("");
+    try {
+      const html = await buildThermalReceiptDocument(sampleThermalReceipt(window.location.origin), {
+        settings: draft,
+        copy: "TEST",
+        logoUrl: thermalReceiptLogoUrl()
+      });
+      await printThermalDocument(html, draft);
+    } catch {
+      setTestError("The test receipt could not be opened for printing. Try again.");
+    } finally {
+      setTestPrinting(false);
+    }
+  };
+
+  const presetOptions: Array<{ value: ThermalPaperPreset; label: string; detail: string }> = [
+    { value: "58", label: "58 mm", detail: `Prints ${THERMAL_PAPER_PRESETS["58"].printableWidthMm} mm wide. Safe default.` },
+    { value: "80", label: "80 mm", detail: `Prints ${THERMAL_PAPER_PRESETS["80"].printableWidthMm} mm wide.` },
+    { value: "CUSTOM", label: "Custom", detail: `${THERMAL_CUSTOM_PAPER_WIDTH.min} to ${THERMAL_CUSTOM_PAPER_WIDTH.max} mm paper.` }
+  ];
+
+  return (
+    <div className="fixed inset-0 z-[90] flex items-end justify-center bg-black/50 p-4 sm:items-center">
+      <div ref={dialogRef} {...dialogProps} className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-lg bg-white p-6 shadow-xl">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 id={titleId} className="text-xl font-extrabold text-foreground">Receipt printer</h2>
+            <p className="mt-1 text-sm text-muted-foreground">Saved on this computer only. Match the paper roll in this printer.</p>
+          </div>
+          <button type="button" onClick={onClose} aria-label="Close" className="rounded-md p-1 text-muted-foreground hover:bg-surface-subtle">
+            <X className="size-5" />
+          </button>
+        </div>
+
+        <div className="mt-5 grid gap-6 md:grid-cols-[minmax(0,1fr)_auto]">
+          <div className="space-y-4">
+            <fieldset className="grid gap-2">
+              <legend className="mb-1 text-sm font-semibold">Paper width</legend>
+              {presetOptions.map((option) => (
+                <label key={option.value} className={cn("flex cursor-pointer items-start gap-3 rounded-lg border p-3 text-sm transition-colors", preset === option.value ? "border-primary bg-primary/5" : "hover:border-primary/40")}>
+                  <input
+                    type="radio"
+                    name="thermal-paper-width"
+                    value={option.value}
+                    checked={preset === option.value}
+                    onChange={() => setPreset(option.value)}
+                    className="mt-1 accent-primary"
+                  />
+                  <span>
+                    <span className="block font-bold">{option.label}</span>
+                    <span className="block text-xs text-muted-foreground">{option.detail}</span>
+                  </span>
+                </label>
+              ))}
+            </fieldset>
+
+            {preset === "CUSTOM" ? (
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="grid gap-1.5 text-xs font-semibold">
+                  Paper width (mm)
+                  <input
+                    type="number"
+                    min={THERMAL_CUSTOM_PAPER_WIDTH.min}
+                    max={THERMAL_CUSTOM_PAPER_WIDTH.max}
+                    step="0.5"
+                    inputMode="decimal"
+                    value={customPaper}
+                    onChange={(event) => {
+                      setCustomPaper(event.target.value);
+                      const paper = Number.parseFloat(event.target.value);
+                      if (Number.isFinite(paper)) setCustomPrintable(String(defaultPrintableWidthMm(paper)));
+                    }}
+                    className="h-11 rounded-md border border-border-strong bg-white px-3 font-normal outline-none focus:border-primary"
+                  />
+                </label>
+                <label className="grid gap-1.5 text-xs font-semibold">
+                  Printable width (mm)
+                  <input
+                    type="number"
+                    min={THERMAL_MIN_PRINTABLE_WIDTH}
+                    max={Number.isFinite(customPaperValue) ? customPaperValue : THERMAL_CUSTOM_PAPER_WIDTH.max}
+                    step="0.5"
+                    inputMode="decimal"
+                    value={customPrintable}
+                    onChange={(event) => setCustomPrintable(event.target.value)}
+                    className="h-11 rounded-md border border-border-strong bg-white px-3 font-normal outline-none focus:border-primary"
+                  />
+                </label>
+                {!customValid ? (
+                  <p className="text-xs font-semibold text-danger sm:col-span-2">
+                    Use {THERMAL_CUSTOM_PAPER_WIDTH.min} to {THERMAL_CUSTOM_PAPER_WIDTH.max} mm paper, with a printable width of at least {THERMAL_MIN_PRINTABLE_WIDTH} mm and no wider than the paper.
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+
+            <div className="rounded-lg border bg-surface-subtle p-3 text-xs leading-5 text-muted-foreground">
+              <p className="font-bold text-foreground">In the print dialog, set once per computer:</p>
+              <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                <li>Printer: the thermal receipt printer</li>
+                <li>Paper size in the printer driver: the same roll width</li>
+                <li>Margins: None. Headers and footers: off</li>
+                <li>Scale: 100% (Default), not &quot;Fit to page&quot;</li>
+              </ul>
+              <p className="mt-2">Print a test receipt and check that both edge marks and the QR code print fully.</p>
+            </div>
+
+            {testError ? <InlineAlert>{testError}</InlineAlert> : null}
+          </div>
+
+          <div className="flex flex-col items-center gap-2">
+            <span className="text-xs font-semibold text-muted-foreground">Preview</span>
+            <div className="max-h-[28rem] overflow-y-auto rounded-md border bg-surface-subtle p-2">
+              {previewHtml && draftValid ? (
+                <iframe
+                  title="Test receipt preview"
+                  srcDoc={previewHtml}
+                  className="block border-0 bg-white"
+                  style={{ width: `${draft.paperWidthMm}mm`, height: "150mm" }}
+                />
+              ) : (
+                <div className="grid h-40 w-48 place-items-center text-xs text-muted-foreground">No preview</div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button type="button" variant="secondary" disabled={!draftValid || testPrinting} loading={testPrinting} onClick={() => void printTest()}>
+            <Printer className="size-4" aria-hidden="true" />
+            Print test receipt
+          </Button>
+          <Button type="button" disabled={!draftValid} onClick={() => onSave(draft)}>
+            Save printer setting
           </Button>
         </div>
       </div>
@@ -496,11 +751,18 @@ export function StaffWalkInSalesExperience() {
   const [studentError, setStudentError] = useState("");
   const [selectedStudent, setSelectedStudent] = useState<BackendOperationalStudent | null>(null);
   const [receiptCode, setReceiptCode] = useState("");
+  const [collectionChannel, setCollectionChannel] = useState<WalkInCollectionChannel>("COMMISSARY");
   const [cashReceived, setCashReceived] = useState("");
+  const [officialReceiptNumber, setOfficialReceiptNumber] = useState("");
+  const [treasuryInspected, setTreasuryInspected] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [saleError, setSaleError] = useState("");
   const [successReceipt, setSuccessReceipt] = useState<WalkInReceipt | null>(null);
-  const [successCashReceived, setSuccessCashReceived] = useState<number | null>(null);
+  const [printerSettings, setPrinterSettings] = useState<ThermalPrinterSettings>(DEFAULT_THERMAL_PRINTER_SETTINGS);
+  const [printerSettingsOpen, setPrinterSettingsOpen] = useState(false);
+  const [printingReceiptId, setPrintingReceiptId] = useState<string | null>(null);
+  const [printError, setPrintError] = useState("");
+  const [printedReceiptIds, setPrintedReceiptIds] = useState<ReadonlySet<string>>(() => new Set());
 
   const [history, setHistory] = useState<WalkInReceipt[]>([]);
   const [historySearch, setHistorySearch] = useState("");
@@ -525,6 +787,26 @@ export function StaffWalkInSalesExperience() {
   const studentAbortRef = useRef<AbortController | null>(null);
   const clientSaleIdRef = useRef(createClientSaleId());
   const { ready, user } = useStudentAuth();
+
+  useEffect(() => {
+    setPrinterSettings(loadThermalPrinterSettings());
+  }, []);
+
+  const printReceipt = async (receipt: WalkInReceipt, options: { reprint: boolean }) => {
+    setPrintingReceiptId(receipt.id);
+    setPrintError("");
+    try {
+      await printThermalReceipt(thermalReceiptFromWalkIn(receipt), {
+        settings: printerSettings,
+        copy: options.reprint ? "REPRINT" : "ORIGINAL"
+      });
+      setPrintedReceiptIds((current) => new Set(current).add(receipt.id));
+    } catch {
+      setPrintError("The receipt could not be opened for printing. Try again, or check the receipt printer setting.");
+    } finally {
+      setPrintingReceiptId(null);
+    }
+  };
 
   useEffect(() => {
     if (!ready) return;
@@ -779,11 +1061,15 @@ export function StaffWalkInSalesExperience() {
   const cartTotal = Math.round(cart.reduce((total, row) => total + rowLineTotal(row), 0) * 100) / 100;
   const buyerName = selectedStudent?.fullName ?? studentSearch.trim().replace(/\s+/g, " ");
   const buyerNameValid = buyerName.length >= 2 && buyerName.length <= 120;
+  const treasurySale = collectionChannel === "TREASURER";
   const cashReceivedValue = parsePeso(cashReceived);
   const cashValid = cashReceivedValue !== null && cashReceivedValue >= cartTotal;
   const changeDue = cashReceivedValue !== null && cashValid
     ? Math.round((cashReceivedValue - cartTotal) * 100) / 100
     : null;
+  const officialReceiptNumberValue = officialReceiptNumber.trim().replace(/\s+/g, " ");
+  const treasuryValid = officialReceiptNumberValue.length > 0 && treasuryInspected;
+  const paymentValid = treasurySale ? treasuryValid : cashValid;
   const quickCashAmounts = Array.from(new Set([
     cartTotal,
     Math.ceil(cartTotal / 100) * 100,
@@ -804,7 +1090,15 @@ export function StaffWalkInSalesExperience() {
       setSaleError("Enter the walk-in buyer's name before saving.");
       return;
     }
-    if (!cashValid) {
+    if (treasurySale && !officialReceiptNumberValue) {
+      setSaleError("Enter the Treasury OR number before saving.");
+      return;
+    }
+    if (treasurySale && !treasuryInspected) {
+      setSaleError("Confirm that you inspected the Treasury official receipt before releasing items.");
+      return;
+    }
+    if (!treasurySale && !cashValid) {
       setSaleError("Enter a cash amount that covers the sale total.");
       return;
     }
@@ -818,7 +1112,7 @@ export function StaffWalkInSalesExperience() {
       return;
     }
     try {
-      const receipt = await recordWalkInSale(sessionToken, {
+      const sale = {
         items: cart.map((row) => ({
           productId: row.product.id,
           skuId: row.skuId || undefined,
@@ -828,16 +1122,22 @@ export function StaffWalkInSalesExperience() {
         buyerName,
         studentId: selectedStudent?.id,
         receiptCode: receiptCode.trim() || undefined,
-        cashReceived: cashReceivedValue ?? 0,
         clientSaleId: clientSaleIdRef.current
-      });
-      setSuccessCashReceived(cashReceivedValue);
+      };
+      const payload: WalkInSalePayload = treasurySale
+        ? { ...sale, collectionChannel: "TREASURER", officialReceiptNumber: officialReceiptNumberValue, treasuryReceiptInspected: true }
+        : { ...sale, collectionChannel: "COMMISSARY", cashReceived: cashReceivedValue ?? 0 };
+      const receipt = await recordWalkInSale(sessionToken, payload);
+      setPrintError("");
       setSuccessReceipt(receipt);
       setCart([]);
       setSelectedStudent(null);
       setStudentSearch("");
       setReceiptCode("");
       setCashReceived("");
+      setCollectionChannel("COMMISSARY");
+      setOfficialReceiptNumber("");
+      setTreasuryInspected(false);
       clientSaleIdRef.current = createClientSaleId();
       setNotice(`${receipt.receiptCode} recorded for ${receipt.buyerName}.`);
       void loadHistory({ background: true });
@@ -868,7 +1168,9 @@ export function StaffWalkInSalesExperience() {
     try {
       const updated = await voidWalkInSale(sessionToken, voidTarget.id, voidReason);
       setHistory((current) => current.map((receipt) => receipt.id === updated.id ? updated : receipt));
-      setNotice(`${updated.receiptCode} voided and stock restored.`);
+      setNotice(updated.treasuryReconciliationRequired
+        ? `${updated.receiptCode} voided and stock restored. Settle the Treasury refund separately.`
+        : `${updated.receiptCode} voided and stock restored.`);
       setVoidTarget(null);
       setVoidReason("");
       void loadCatalog({ background: true });
@@ -944,12 +1246,18 @@ export function StaffWalkInSalesExperience() {
       <PageHeading
         eyebrow="Walk-in sales"
         title="Record physical-store purchases"
-        detail="Sell products over the counter, deduct stock immediately, and issue a cash receipt."
+        detail="Sell products over the counter, deduct stock immediately, and print a sales receipt."
         action={(
-          <Button variant="secondary" onClick={() => { void loadHistory(); void loadCatalog(); }} disabled={historyLoading}>
-            <RefreshCw className={cn("size-4", (historyLoading || catalogLoading) && "animate-spin motion-reduce:animate-none")} aria-hidden="true" />
-            Refresh
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="secondary" onClick={() => setPrinterSettingsOpen(true)}>
+              <Printer className="size-4" aria-hidden="true" />
+              Printer: {printerSettings.paperWidthMm} mm
+            </Button>
+            <Button variant="secondary" onClick={() => { void loadHistory(); void loadCatalog(); }} disabled={historyLoading}>
+              <RefreshCw className={cn("size-4", (historyLoading || catalogLoading) && "animate-spin motion-reduce:animate-none")} aria-hidden="true" />
+              Refresh
+            </Button>
+          </div>
         )}
       />
 
@@ -973,7 +1281,7 @@ export function StaffWalkInSalesExperience() {
         <h2 className="flex items-center gap-2 text-lg font-extrabold text-foreground">
           <Plus className="size-5 text-primary" /> New walk-in sale
         </h2>
-        <p className="mt-1 text-sm text-muted-foreground">Cash payments only. Every item below is deducted from inventory when the sale is saved.</p>
+        <p className="mt-1 text-sm text-muted-foreground">Collect cash here, or release items already paid at the Treasury after checking the official receipt. Every item below is deducted from inventory when the sale is saved.</p>
 
         <div className="mt-5 grid gap-6 xl:grid-cols-[minmax(0,1fr)_430px]">
           <div className="space-y-3">
@@ -1228,41 +1536,97 @@ export function StaffWalkInSalesExperience() {
               </label>
             </details>
 
-            <label className="grid gap-1.5 text-xs font-semibold">
-              Cash received (PHP)
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                inputMode="decimal"
-                value={cashReceived}
-                onChange={(event) => { setCashReceived(event.target.value); setSaleError(""); }}
-                placeholder="0.00"
-                className="h-11 rounded-md border border-border-strong bg-white px-3 font-normal outline-none focus:border-primary"
-              />
-            </label>
-
-            {quickCashAmounts.length ? (
-              <div className="flex flex-wrap gap-2" aria-label="Quick cash amounts">
-                {quickCashAmounts.map((amount) => (
-                  <button key={amount} type="button" onClick={() => { setCashReceived(String(amount)); setSaleError(""); }} className="rounded-md border border-border-strong bg-card px-3 py-2 text-xs font-bold text-primary transition-colors hover:border-primary hover:bg-primary/5">
-                    {amount === cartTotal ? "Exact" : formatPeso(amount)}
-                  </button>
+            <fieldset className="grid gap-1.5">
+              <legend className="mb-1.5 text-xs font-semibold">Payment collected at</legend>
+              <div className="grid grid-cols-2 gap-1 rounded-lg border bg-card p-1">
+                {([
+                  { value: "COMMISSARY", label: "Commissary cash" },
+                  { value: "TREASURER", label: "Treasury" }
+                ] as const).map((option) => (
+                  <label
+                    key={option.value}
+                    className={cn(
+                      "flex h-9 cursor-pointer items-center justify-center rounded-md px-2 text-xs font-bold transition-colors focus-within:ring-2 focus-within:ring-primary/30",
+                      collectionChannel === option.value ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted hover:text-primary"
+                    )}
+                  >
+                    <input
+                      type="radio"
+                      name="walk-in-collection-channel"
+                      value={option.value}
+                      checked={collectionChannel === option.value}
+                      onChange={() => { setCollectionChannel(option.value); setSaleError(""); }}
+                      className="sr-only"
+                    />
+                    {option.label}
+                  </label>
                 ))}
               </div>
-            ) : null}
+            </fieldset>
+
+            {treasurySale ? (
+              <div className="space-y-3 rounded-lg border border-primary/30 bg-card p-3">
+                <label className="grid gap-1.5 text-xs font-semibold">
+                  Treasury OR number
+                  <input
+                    value={officialReceiptNumber}
+                    onChange={(event) => { setOfficialReceiptNumber(event.target.value.toUpperCase()); setSaleError(""); }}
+                    maxLength={100}
+                    autoComplete="off"
+                    placeholder="Example: OR-102938"
+                    className="h-11 rounded-md border border-border-strong bg-white px-3 font-normal uppercase outline-none focus:border-primary"
+                  />
+                </label>
+                <label className="flex cursor-pointer items-start gap-2 text-xs font-semibold">
+                  <input
+                    type="checkbox"
+                    checked={treasuryInspected}
+                    onChange={(event) => { setTreasuryInspected(event.target.checked); setSaleError(""); }}
+                    className="mt-0.5 size-4 accent-primary"
+                  />
+                  <span>I inspected the Treasury official receipt. It matches this buyer and the {formatPeso(cartTotal)} total.</span>
+                </label>
+                <p className="text-xs text-muted-foreground">Do not collect cash here. Stock is deducted only after you confirm the official receipt.</p>
+              </div>
+            ) : (
+              <>
+                <label className="grid gap-1.5 text-xs font-semibold">
+                  Cash received (PHP)
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    inputMode="decimal"
+                    value={cashReceived}
+                    onChange={(event) => { setCashReceived(event.target.value); setSaleError(""); }}
+                    placeholder="0.00"
+                    className="h-11 rounded-md border border-border-strong bg-white px-3 font-normal outline-none focus:border-primary"
+                  />
+                </label>
+
+                {quickCashAmounts.length ? (
+                  <div className="flex flex-wrap gap-2" aria-label="Quick cash amounts">
+                    {quickCashAmounts.map((amount) => (
+                      <button key={amount} type="button" onClick={() => { setCashReceived(String(amount)); setSaleError(""); }} className="rounded-md border border-border-strong bg-card px-3 py-2 text-xs font-bold text-primary transition-colors hover:border-primary hover:bg-primary/5">
+                        {amount === cartTotal ? "Exact" : formatPeso(amount)}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </>
+            )}
 
             <dl className="grid grid-cols-[1fr_auto] items-baseline gap-y-2 rounded-lg border bg-card px-3 py-3 text-sm">
               <dt className="font-bold text-muted-foreground">Total</dt>
               <dd className="text-xl font-extrabold tabular-nums text-foreground">{formatPeso(cartTotal)}</dd>
-              {cashValid && changeDue !== null ? (
+              {!treasurySale && cashValid && changeDue !== null ? (
                 <>
                   <dt className="text-muted-foreground">Change</dt>
                   <dd className="font-extrabold tabular-nums text-success">{formatPeso(changeDue)}</dd>
                 </>
               ) : null}
             </dl>
-            {!cashValid && cashReceived.trim() ? (
+            {!treasurySale && !cashValid && cashReceived.trim() ? (
               <p className="text-xs font-semibold text-danger">Cash received must cover the total.</p>
             ) : null}
 
@@ -1272,7 +1636,9 @@ export function StaffWalkInSalesExperience() {
               {[
                 { done: cartValid, label: "Products and stock reviewed" },
                 { done: buyerNameValid, label: "Buyer name entered" },
-                { done: cashValid, label: "Cash covers total" }
+                treasurySale
+                  ? { done: treasuryValid, label: "Treasury OR entered and inspected" }
+                  : { done: cashValid, label: "Cash covers total" }
               ].map((step) => (
                 <li key={step.label} className={cn("flex items-center gap-2", step.done ? "text-success" : "text-muted-foreground")}>
                   {step.done ? <Check className="size-4" aria-hidden="true" /> : <Circle className="size-4" aria-hidden="true" />}
@@ -1307,6 +1673,7 @@ export function StaffWalkInSalesExperience() {
           statuses={["Verified", "Voided"]}
         />
         {historyError ? <InlineAlert>{historyError}</InlineAlert> : null}
+        {printError && !successReceipt ? <InlineAlert>{printError}</InlineAlert> : null}
         {historyLoading ? (
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3" role="status" aria-label="Loading walk-in sales...">
             {Array.from({ length: 3 }, (_, index) => <Skeleton key={index} className="h-56 rounded-xl" />)}
@@ -1331,8 +1698,14 @@ export function StaffWalkInSalesExperience() {
                       ? `${receipt.items[0].productName} + ${receipt.items.length - 1} more`
                       : receipt.items[0]?.productName ?? "Walk-in item"}
                   </dd>
-                  <dt className="text-muted-foreground">Payment</dt>
-                  <dd className="font-bold">Cash</dd>
+                  <dt className="text-muted-foreground">Paid at</dt>
+                  <dd className="text-right font-bold">{collectionLabel(receipt)}</dd>
+                  {receipt.collectionChannel === "TREASURER" ? (
+                    <>
+                      <dt className="text-muted-foreground">Treasury OR</dt>
+                      <dd className="break-all text-right font-bold">{receipt.officialReceiptNumber}</dd>
+                    </>
+                  ) : null}
                   <dt className="text-muted-foreground">Total</dt>
                   <dd className="font-extrabold text-primary">{formatPeso(Number(receipt.totalAmount))}</dd>
                 </dl>
@@ -1349,8 +1722,24 @@ export function StaffWalkInSalesExperience() {
                     ))}
                   </div>
                 ) : null}
-                {receipt.status !== "VOIDED" ? (
-                  <div className="mt-auto pt-5">
+                {receipt.treasuryReconciliationRequired ? (
+                  <p className="mt-3 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs font-semibold text-warning">
+                    Treasury refund or reconciliation required.
+                  </p>
+                ) : null}
+                <div className="mt-auto grid gap-2 pt-5">
+                  <Button
+                    variant="secondary"
+                    disabled={printingReceiptId === receipt.id}
+                    loading={printingReceiptId === receipt.id}
+                    className="w-full"
+                    aria-label={`Reprint receipt ${receipt.receiptCode}`}
+                    onClick={() => void printReceipt(receipt, { reprint: true })}
+                  >
+                    <Printer className="size-4" aria-hidden="true" />
+                    Reprint
+                  </Button>
+                  {receipt.status !== "VOIDED" ? (
                     <Button
                       variant="ghost"
                       disabled={voiding}
@@ -1363,8 +1752,8 @@ export function StaffWalkInSalesExperience() {
                       <Trash2 className="size-4" />
                       Void & restore stock
                     </Button>
-                  </div>
-                ) : null}
+                  ) : null}
+                </div>
               </article>
             ))}
           </div>
@@ -1395,10 +1784,27 @@ export function StaffWalkInSalesExperience() {
       {notice ? <Notice text={notice} onClose={() => setNotice("")} /> : null}
       <SaleSuccessModal
         receipt={successReceipt}
-        cashReceived={successCashReceived}
+        printing={Boolean(successReceipt && printingReceiptId === successReceipt.id)}
+        printed={Boolean(successReceipt && printedReceiptIds.has(successReceipt.id))}
+        printError={printError}
+        onPrint={() => {
+          if (successReceipt) void printReceipt(successReceipt, { reprint: printedReceiptIds.has(successReceipt.id) });
+        }}
         onClose={() => {
           setSuccessReceipt(null);
-          setSuccessCashReceived(null);
+          setPrintError("");
+        }}
+      />
+      <ThermalPrinterSettingsModal
+        open={printerSettingsOpen}
+        settings={printerSettings}
+        onClose={() => setPrinterSettingsOpen(false)}
+        onSave={(next) => {
+          setPrinterSettings(next);
+          setPrinterSettingsOpen(false);
+          setNotice(saveThermalPrinterSettings(next)
+            ? `Receipt printer set to ${next.paperWidthMm} mm paper on this computer.`
+            : `Receipt printer set to ${next.paperWidthMm} mm paper for this session. This browser could not remember it.`);
         }}
       />
       <VoidWalkInSaleModal

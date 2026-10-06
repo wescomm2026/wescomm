@@ -158,7 +158,7 @@ const receiptInclude = {
       }
     }
   },
-  walkInSale: { select: { cashierNameSnapshot: true, buyerNameSnapshot: true } },
+  walkInSale: { select: { cashierNameSnapshot: true, buyerNameSnapshot: true, collectionChannel: true } },
   walkInSaleItems: {
     select: {
       productId: true,
@@ -186,7 +186,7 @@ function buildSalesBranches(
   const branches: Prisma.ReceiptWhereInput[] = [];
   const salesUpperBound = snapshotAt < range.toExclusive ? snapshotAt : range.toExclusive;
   const includeReservation = filters.channel !== "WALK_IN";
-  const includeWalkIn = filters.channel !== "RESERVATION" && filters.collectionLocation !== "TREASURER";
+  const includeWalkIn = filters.channel !== "RESERVATION";
 
   if (includeReservation) {
     const reservationBranch: Prisma.ReceiptWhereInput = {
@@ -216,7 +216,10 @@ function buildSalesBranches(
         OR: [
           { voidedAt: null },
           { voidedAt: { gt: snapshotAt } }
-        ]
+        ],
+        ...(filters.collectionLocation === "ALL"
+          ? {}
+          : { collectionChannel: filters.collectionLocation })
       },
       issuedAt: { gte: range.fromInclusive, lt: salesUpperBound }
     };
@@ -280,7 +283,7 @@ export function mapSaleRows(receipts: ReceiptWithSalesData[]): SalesLedgerSaleRo
       itemLines: items.map((item) => formatItemLine(item)),
       quantity: items.reduce((total, item) => total + item.quantity, 0),
       collectionPoint: isWalkIn
-        ? ("COMMISSARY" as const)
+        ? receipt.walkInSale?.collectionChannel ?? "COMMISSARY"
         : receipt.reservation?.collectionPayment?.collectionChannel ?? "COMMISSARY",
       cashierName: isWalkIn ? receipt.walkInSale?.cashierNameSnapshot ?? null : receipt.issuedBy?.fullName ?? null,
       amount: toNumber(receipt.totalAmount)
@@ -398,9 +401,12 @@ async function loadVoids(
     }
   }
 
-  if (filters.channel !== "RESERVATION" && filters.collectionLocation !== "TREASURER") {
+  if (filters.channel !== "RESERVATION") {
     const walkIns = await prisma.walkInSale.findMany({
-      where: { voidedAt: { gte: range.fromInclusive, lt: voidUpperBound } },
+      where: {
+        voidedAt: { gte: range.fromInclusive, lt: voidUpperBound },
+        ...(filters.collectionLocation === "ALL" ? {} : { collectionChannel: filters.collectionLocation })
+      },
       select: {
         voidedAt: true,
         voidReason: true,
