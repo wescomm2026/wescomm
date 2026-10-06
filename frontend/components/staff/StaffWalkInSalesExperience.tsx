@@ -56,6 +56,7 @@ import {
 import { FeedbackState } from "@/components/ui/FeedbackState";
 import { InlineAlert } from "@/components/ui/InlineAlert";
 import { Skeleton } from "@/components/ui/Skeleton";
+import { resolveShopProductAsset, shopProductCardImage } from "@/lib/shop-assets";
 import { cn } from "@/lib/utils";
 
 type CartRow = {
@@ -1013,7 +1014,7 @@ export function StaffWalkInSalesExperience() {
   };
 
   const handleProductClick = (product: StaffProduct) => {
-    if (productIsOutOfStock(product)) return;
+    if (productIsOutOfStock(product) || Number(product.price) <= 0) return;
     if (product.skuInventoryEnabled) {
       setSkuPickerProduct(product);
       return;
@@ -1366,6 +1367,7 @@ export function StaffWalkInSalesExperience() {
                   {visibleCatalog.map((product) => {
                     const sellableStock = productSellableStock(product);
                     const outOfStock = sellableStock <= 0;
+                    const unpriced = Number(product.price) <= 0;
                     const lowStock = !outOfStock && productIsLowStock(product);
                     const inCart = cartQuantityByProduct[product.id] ?? 0;
                     return (
@@ -1374,12 +1376,8 @@ export function StaffWalkInSalesExperience() {
                         outOfStock ? "bg-surface-subtle opacity-70" : inCart ? "border-primary/40 bg-primary/5" : "bg-card hover:border-primary/40"
                       )}>
                         <div className="grid size-14 shrink-0 place-items-center overflow-hidden rounded-md border bg-card">
-                          {product.imageUrl ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img src={product.imageUrl} alt="" className="size-full object-cover" />
-                          ) : (
-                            <span className="text-lg font-extrabold text-primary">{product.name.charAt(0)}</span>
-                          )}
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={shopProductCardImage(resolveShopProductAsset(product.name, product.imageUrl).image)} alt="" className="size-full object-cover" />
                         </div>
                         <div className="min-w-0 flex-1">
                           <p className="truncate text-sm font-extrabold">{product.name}</p>
@@ -1394,6 +1392,9 @@ export function StaffWalkInSalesExperience() {
                             {outOfStock ? (
                               <span className="rounded bg-danger/10 px-1.5 py-0.5 text-[10px] font-extrabold uppercase text-danger">Out of stock</span>
                             ) : null}
+                            {unpriced ? (
+                              <span title="Set a selling price in Inventory before selling this item." className="rounded bg-danger/10 px-1.5 py-0.5 text-[10px] font-extrabold uppercase text-danger">Needs price</span>
+                            ) : null}
                             {lowStock ? (
                               <span className="rounded bg-warning/10 px-1.5 py-0.5 text-[10px] font-extrabold uppercase text-warning">Low stock</span>
                             ) : null}
@@ -1407,7 +1408,7 @@ export function StaffWalkInSalesExperience() {
                           variant="secondary"
                           size="sm"
                           className="self-end"
-                          disabled={outOfStock}
+                          disabled={outOfStock || unpriced}
                           aria-label={`Add ${product.name} to sale`}
                           onClick={() => handleProductClick(product)}
                         >

@@ -30,6 +30,7 @@ import {
   uploadStaffProductImage,
   type ProductSaleMode,
   type StaffCategory,
+  type StaffInventoryAttention,
   type StaffProductVisibility
 } from "@/lib/staff-api";
 import { getStaffInventoryBatches, verifyStaffOpeningBatchCost, type StaffInventoryBatchResult } from "@/lib/inventory-batch-api";
@@ -69,6 +70,19 @@ const SkuInventoryDialog = dynamic(
 
 function inventoryVisibilityFromQuery(value: string | null): StaffProductVisibility {
   return value?.trim().toUpperCase() === "ARCHIVED" ? "ARCHIVED" : "ACTIVE";
+}
+
+// Count-sheet follow-up: items imported or counted without a price, cost, or photo.
+const ATTENTION_FILTERS: Record<string, StaffInventoryAttention | undefined> = {
+  "Needs price": "PRICE",
+  "Needs cost": "COST",
+  "No photo": "PHOTO"
+};
+
+function needsAttention(product: Product, attention: StaffInventoryAttention) {
+  if (attention === "PRICE") return Boolean(product.needsPrice);
+  if (attention === "COST") return Boolean(product.unverifiedCostQuantity);
+  return product.hasPhoto === false;
 }
 
 export function StaffInventoryExperience() {
@@ -157,12 +171,14 @@ export function StaffInventoryExperience() {
     setError("");
 
     try {
+      const selectedStatus = options.status ?? status;
       const productPage = await getStaffProductsPage(authToken, {
         limit: 25,
         cursor: options.cursor,
         query: options.query ?? deferredInventorySearch,
         productId: options.productId,
-        status: stockStatusForApi(options.status ?? status),
+        status: stockStatusForApi(selectedStatus),
+        needs: ATTENTION_FILTERS[selectedStatus],
         visibility: options.visibility ?? visibility,
         includeCategories: !append,
         signal: requestController.signal
@@ -245,7 +261,7 @@ export function StaffInventoryExperience() {
 
   const filtered = products.filter((product) =>
     `${product.name} ${product.category}`.toLowerCase().includes(search.toLowerCase()) &&
-    (status === "All" || (status === "On Sale" ? product.isOnSale : product.status === status))
+    (status === "All" || (ATTENTION_FILTERS[status] ? needsAttention(product, ATTENTION_FILTERS[status]) : status === "On Sale" ? product.isOnSale : product.status === status))
   );
   const selectedTemplate = WUP_DEFAULT_PRODUCT_TEMPLATES.find((item) => item.id === selectedTemplateId) ?? null;
   const assetTemplates = WUP_DEFAULT_PRODUCT_TEMPLATES.filter((item) => item.source === "asset");
@@ -855,7 +871,7 @@ export function StaffInventoryExperience() {
           <Archive className="size-4" aria-hidden="true" /> Archived items
         </Button>
       </div>
-      <Toolbar search={search} onSearch={setSearch} status={status} onStatus={setStatus} placeholder="Search product or category" statuses={stockStatusOptions} />
+      <Toolbar search={search} onSearch={setSearch} status={status} onStatus={setStatus} placeholder="Search product, category, or count-sheet name" statuses={[...stockStatusOptions, ...Object.keys(ATTENTION_FILTERS)]} />
       {error ? <InlineAlert>{error}</InlineAlert> : null}
       <section id="inventory-product-list" aria-label={visibility === "ARCHIVED" ? "Archived inventory products" : "Active inventory products"} className="overflow-hidden rounded-xl border bg-card shadow-soft">
         <div className="hidden grid-cols-12 gap-4 border-b bg-surface-subtle px-4 py-3 text-[11px] font-extrabold uppercase tracking-wide text-muted-foreground xl:grid">
@@ -895,6 +911,9 @@ export function StaffInventoryExperience() {
                       {visibility === "ARCHIVED" ? <span className="inline-flex rounded bg-muted px-2 py-0.5 text-[10px] font-extrabold text-muted-foreground">Archived</span> : null}
                       {product.isOnSale ? <span className="inline-flex rounded bg-danger/10 px-2 py-0.5 text-[10px] font-extrabold text-danger">On Sale</span> : null}
                       {product.saleMode === "OPTIONS" && !product.skuInventoryEnabled ? <span className="inline-flex rounded bg-amber-50 px-2 py-0.5 text-[10px] font-extrabold text-amber-800">Inventory setup needed</span> : null}
+                      {visibility === "ACTIVE" && product.needsPrice ? <span title="Hidden from students and not sellable until a selling price is set." className="inline-flex rounded bg-danger/10 px-2 py-0.5 text-[10px] font-extrabold text-danger">Needs price</span> : null}
+                      {visibility === "ACTIVE" && product.unverifiedCostQuantity ? <span title={`${product.unverifiedCostQuantity} counted item(s) cannot be sold until their unit cost is verified.`} className="inline-flex rounded bg-amber-50 px-2 py-0.5 text-[10px] font-extrabold text-amber-800">Needs cost · {product.unverifiedCostQuantity}</span> : null}
+                      {visibility === "ACTIVE" && product.hasPhoto === false ? <span className="inline-flex rounded bg-muted px-2 py-0.5 text-[10px] font-extrabold text-muted-foreground">No photo</span> : null}
                     </div>
                     <p className="mt-1 text-xs text-muted-foreground xl:hidden">{product.category} · Selling price PHP {product.price.toLocaleString("en-PH", { minimumFractionDigits: 2 })}</p>
                     <div className="mt-2 flex flex-wrap gap-1 xl:hidden">

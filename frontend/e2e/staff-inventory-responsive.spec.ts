@@ -469,3 +469,52 @@ for (const viewport of viewports) {
     expect(unhandled).toEqual([]);
   });
 }
+
+test("count-sheet items show what staff still need to set and can be filtered", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "One attention-filter contract is sufficient.");
+  const importedCloth: StaffProduct = {
+    ...clothProduct,
+    id: "00000000-0000-4000-8000-000000000206",
+    name: "HS Male Uniform Cloth",
+    price: "0.00",
+    stock: 457,
+    imageUrl: null,
+    needsPrice: true,
+    unverifiedCostQuantity: 457,
+    hasPhoto: false
+  };
+  const needsRequested: Array<string | null> = [];
+  await authorizeMockedWorkspace(page, "STAFF");
+  await page.route("**/api/backend/**", async (route) => {
+    const request = route.request();
+    const requestUrl = new URL(request.url());
+    const path = requestUrl.pathname;
+    if (path === "/api/backend/auth/me") return json(route, { profile: staffProfile });
+    if (path === "/api/backend/auth/departments") return json(route, { departments: [] });
+    if (path === "/api/backend/notifications") return json(route, { notifications: [], nextCursor: null });
+    if (await fulfillWorkspaceShellExtras(route)) return;
+    if (path === "/api/backend/notifications/unread-count") return json(route, { unreadCount: 0 });
+    if (path === "/api/backend/realtime/updates") return json(route, { cursor: "0", hasMore: false, events: [] });
+    if (path === "/api/backend/staff/products" && request.method() === "GET") {
+      const needs = requestUrl.searchParams.get("needs");
+      needsRequested.push(needs);
+      return json(route, { products: needs === "PRICE" ? [importedCloth] : [importedCloth, clothProduct], categories: [category], nextCursor: null });
+    }
+    return json(route, { error: "Unexpected API request in attention-filter test." }, 500);
+  });
+
+  await page.goto("/staff/inventory");
+  await dismissWelcomeGate(page);
+  const importedRow = page.locator("article").filter({ hasText: importedCloth.name }).first();
+  await expect(importedRow.getByText("Needs price", { exact: true })).toBeVisible();
+  await expect(importedRow.getByText("Needs cost · 457")).toBeVisible();
+  await expect(importedRow.getByText("No photo", { exact: true })).toBeVisible();
+  await expect(importedRow.locator("img").first()).toHaveAttribute("src", /product-placeholder\.svg/);
+  const pricedRow = page.locator("article").filter({ hasText: clothProduct.name }).first();
+  await expect(pricedRow.getByText("Needs price", { exact: true })).toHaveCount(0);
+
+  await page.getByLabel("Filter by status").selectOption("Needs price");
+  await expect.poll(() => needsRequested.at(-1)).toBe("PRICE");
+  await expect(page.locator("article").filter({ hasText: clothProduct.name })).toHaveCount(0);
+  await expect(importedRow).toBeVisible();
+});

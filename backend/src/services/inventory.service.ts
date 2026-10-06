@@ -105,6 +105,10 @@ const inventoryRecordSelect = Prisma.validator<Prisma.ProductSelect>()({
   category: {
     select: { id: true, name: true, slug: true, iconUrl: true }
   },
+  inventoryBatches: {
+    where: { costVerified: false, quantityRemaining: { gt: 0 } },
+    select: { quantityRemaining: true }
+  },
   variants: {
     select: { id: true, optionName: true, optionValue: true, stock: true, stockTarget: true, lowStockPercent: true, lowStockThreshold: true },
     orderBy: [{ optionName: "asc" }, { optionValue: "asc" }]
@@ -136,6 +140,9 @@ const inventoryRecordSelect = Prisma.validator<Prisma.ProductSelect>()({
 
 type InventoryRecord = Prisma.ProductGetPayload<{ select: typeof inventoryRecordSelect }>;
 
+export const INVENTORY_ATTENTION_FILTERS = ["PRICE", "COST", "PHOTO"] as const;
+export type InventoryAttentionFilter = (typeof INVENTORY_ATTENTION_FILTERS)[number];
+
 export type InventoryListOptions = {
   limit?: number;
   cursor?: string;
@@ -144,7 +151,30 @@ export type InventoryListOptions = {
   productId?: string;
   status?: ProductStatus;
   visibility?: "ACTIVE" | "ARCHIVED";
+  /** PRICE: still PHP 0. COST: counted stock awaiting a verified unit cost. PHOTO: no product photo. */
+  needs?: InventoryAttentionFilter;
 };
+
+// Category icons (/assets/<name>.svg) were stored as images when a product had no photo.
+const MISSING_PHOTO_WHERE: Prisma.ProductWhereInput = {
+  OR: [
+    { imageUrl: null },
+    { imageUrl: "" },
+    { AND: [{ imageUrl: { startsWith: "/assets/" } }, { imageUrl: { endsWith: ".svg" } }] }
+  ]
+};
+
+function attentionWhere(needs: InventoryAttentionFilter | undefined): Prisma.ProductWhereInput {
+  if (needs === "PRICE") return { price: { lte: 0 } };
+  if (needs === "COST") return { inventoryBatches: { some: { costVerified: false, quantityRemaining: { gt: 0 } } } };
+  if (needs === "PHOTO") return MISSING_PHOTO_WHERE;
+  return {};
+}
+
+function hasProductPhoto(imageUrl: string | null) {
+  const value = imageUrl?.trim();
+  return Boolean(value) && !/^\/assets\/[a-z0-9-]+\.svg$/i.test(value!);
+}
 
 function mapCategory(row: RawCategory) {
   return {
@@ -178,6 +208,9 @@ function mapInventoryRecord(row: InventoryRecord) {
     isActive: row.isActive,
     saleMode: row.saleMode,
     audienceScope: row.audienceScope,
+    needsPrice: Number(row.price) <= 0,
+    unverifiedCostQuantity: row.inventoryBatches.reduce((total, batch) => total + batch.quantityRemaining, 0),
+    hasPhoto: hasProductPhoto(row.imageUrl),
     targetDepartments: row.targetDepartments.map((target) => target.department),
     skuInventoryEnabled: row.skuInventoryEnabled,
     inventoryReconciledAt: row.inventoryReconciledAt,
@@ -417,6 +450,7 @@ export async function listInventory(input: InventoryListOptions = {}) {
       ...(input.productId ? { id: input.productId } : {}),
       ...(input.categoryId ? { categoryId: input.categoryId } : {}),
       ...(input.status === "ON_SALE" ? { oldPrice: { not: null } } : input.status ? { status: input.status } : {}),
+      ...attentionWhere(input.needs),
       ...(query ? {
         OR: [
           { name: { contains: query, mode: "insensitive" } },

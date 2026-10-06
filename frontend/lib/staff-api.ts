@@ -57,10 +57,17 @@ export type StaffProduct = {
   targetDepartments?: Array<{ id: string; code: string; displayName: string }>;
   skuInventoryEnabled?: boolean;
   inventoryReconciledAt?: string | null;
+  /** Still PHP 0: hidden from students and not sellable until staff set a price. */
+  needsPrice?: boolean;
+  /** Counted stock whose unit cost staff have not verified yet; it cannot be sold. */
+  unverifiedCostQuantity?: number;
+  hasPhoto?: boolean;
   category?: StaffCategory | null;
   variants?: StaffProductVariant[];
   skus?: StaffProductSku[];
 };
+
+export type StaffInventoryAttention = "PRICE" | "COST" | "PHOTO";
 
 export type StaffProductPayload = {
   name: string;
@@ -114,6 +121,7 @@ export type StaffProductListOptions = {
   productId?: string;
   status?: StaffProduct["status"];
   visibility?: StaffProductVisibility;
+  needs?: StaffInventoryAttention;
   includeCategories?: boolean;
   signal?: AbortSignal;
 };
@@ -242,6 +250,7 @@ export async function getStaffProductsPage(token: string, options: StaffProductL
   if (options.productId) params.set("productId", options.productId);
   if (options.status) params.set("status", options.status);
   if (options.visibility) params.set("visibility", options.visibility);
+  if (options.needs) params.set("needs", options.needs);
   if (options.includeCategories) params.set("includeCategories", "1");
   const suffix = params.size ? `?${params.toString()}` : "";
   const data = await staffFetch<{

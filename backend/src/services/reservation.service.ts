@@ -1049,6 +1049,9 @@ export async function createReservation(input: {
         products.forEach((product) => {
           const requestedQuantity = requestedQuantityByProduct.get(product.id) ?? 0;
           if (!product.isActive) throw new HttpError(400, `${product.name} is not available for reservation.`);
+          if (Number(product.price) <= 0) {
+            throw new HttpError(400, `${product.name} is not available for reservation yet.`, "PRODUCT_PRICE_REQUIRED");
+          }
           if (product.status === "OUT_OF_STOCK" || product.stock <= 0) throw new HttpError(400, `${product.name} is out of stock.`);
           if (requestedQuantity > product.stock) {
             throw new HttpError(400, `${product.name} only has ${product.stock} item${product.stock === 1 ? "" : "s"} available.`);

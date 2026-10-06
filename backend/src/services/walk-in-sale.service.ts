@@ -453,6 +453,9 @@ export async function recordWalkInSale(input: WalkInSaleInput) {
         const product = productById.get(item.productId);
         if (!product) throw new HttpError(404, "One of the selected products was not found.");
         if (!product.isActive) throw new HttpError(400, `${product.name} is no longer available.`, "PRODUCT_UNAVAILABLE");
+        if (Number(product.price) <= 0) {
+          throw new HttpError(400, `Set a selling price for ${product.name} in Inventory before selling it.`, "PRODUCT_PRICE_REQUIRED");
+        }
 
         let sku: typeof skus[number] | undefined;
         let variant: typeof variants[number] | undefined;

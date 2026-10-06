@@ -140,7 +140,9 @@ function isDefaultPublicCatalog(filters: ProductFilters) {
 }
 
 async function queryProducts(filters: ProductFilters) {
-  const where: Prisma.ProductWhereInput = { isActive: true };
+  // Imported or newly counted items start at PHP 0 until staff set a price; they stay
+  // out of the student shop until then.
+  const where: Prisma.ProductWhereInput = { isActive: true, price: { gt: 0 } };
   const query = filters.query?.trim();
   const candidateTerms = (filters.candidateTerms ?? [])
     .map((term) => term.trim())
