@@ -270,6 +270,38 @@ export async function getStaffProducts(token: string) {
   return page.products;
 }
 
+export type InventoryReportItem = {
+  productId: string;
+  name: string;
+  saleMode: ProductSaleMode;
+  unitPrice: number;
+  total: number;
+  lines: Array<{ label: string; stock: number }>;
+  needsPrice: boolean;
+  unverifiedCostQuantity: number;
+  setupRequired: boolean;
+};
+
+export type InventoryReport = {
+  generatedAt: string;
+  generatedBy: string | null;
+  filters: { categorySlug: string | null; includeZeroStock: boolean };
+  categories: Array<{ name: string; slug: string; total: number; items: InventoryReportItem[] }>;
+  totals: { products: number; lines: number; units: number; needsPrice: number; unverifiedCostUnits: number };
+};
+
+export async function getInventoryReport(
+  token: string,
+  options: { categorySlug?: string; includeZeroStock?: boolean; signal?: AbortSignal } = {}
+) {
+  const params = new URLSearchParams();
+  if (options.categorySlug) params.set("category", options.categorySlug);
+  if (options.includeZeroStock === false) params.set("includeZero", "0");
+  const suffix = params.size ? `?${params.toString()}` : "";
+  const data = await staffFetch<{ report: InventoryReport }>(`/staff/products/inventory-report${suffix}`, token, { signal: options.signal });
+  return data.report;
+}
+
 export async function getStaffCategories(token: string) {
   const data = await staffFetch<{ categories: StaffCategory[] }>("/staff/products/categories", token);
   return data.categories;

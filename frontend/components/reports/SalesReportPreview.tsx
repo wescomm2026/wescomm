@@ -335,7 +335,7 @@ export function SalesReportPreview({ role, onClose, onOptionsChange }: SalesRepo
               You may still print or download this zero-activity report for the official record.
             </InlineAlert>
           ) : null}
-          <article ref={printAreaRef} id="sales-report-print-area" className="sales-report-doc" aria-label={`${PERIOD_TITLES[report.range.period]} for ${report.range.label}`}>
+          <article ref={printAreaRef} id="sales-report-print-area" data-print-document className="sales-report-doc" aria-label={`${PERIOD_TITLES[report.range.period]} for ${report.range.label}`}>
             <header className="srd-header">
               <div>
                 <p className="srd-wordmark">WESCOMM</p>

@@ -5,7 +5,8 @@ import { userFacingErrorMessage } from "@/lib/user-facing-error";
 import Image from "next/image";
 import dynamic from "next/dynamic";
 import { useDeferredValue, useEffect, useRef, useState } from "react";
-import { Archive, ArrowLeft, ChevronRight, Edit3, Filter, Package, Plus, RefreshCw, RotateCcw, Trash2, Upload, X } from "lucide-react";
+import { Archive, ArrowLeft, ChevronRight, Edit3, Filter, Package, Plus, Printer, RefreshCw, RotateCcw, Trash2, Upload, X } from "lucide-react";
+import { InventoryReportPreview } from "@/components/staff/InventoryReportPreview";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import { useRealtimeRefresh } from "@/components/realtime/RealtimeProvider";
 import { ActionLoadingOverlay } from "@/components/ui/ActionLoadingOverlay";
@@ -89,6 +90,7 @@ export function StaffInventoryExperience() {
   const confirm = useConfirmationDialog();
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<StaffCategory[]>([]);
+  const [showInventoryReport, setShowInventoryReport] = useState(false);
   const [departments, setDepartments] = useState<BackendDepartment[]>([]);
   const [token, setToken] = useState("");
   const [staffEmail, setStaffEmail] = useState("");
@@ -842,13 +844,19 @@ export function StaffInventoryExperience() {
           ? `Connected as ${staffEmail || "staff"}. Restore archived products without losing their stock, options, or reservation history.`
           : `Connected as ${staffEmail || "staff"}. Track products in one place and keep stock levels up to date.`}
         action={visibility === "ACTIVE" ? (
-          <Button onClick={openAddProduct} disabled={loading || submitting}><Plus className="size-5" /> Add product</Button>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="secondary" onClick={() => setShowInventoryReport(true)} aria-pressed={showInventoryReport}><Printer className="size-4" /> Print inventory</Button>
+            <Button onClick={openAddProduct} disabled={loading || submitting}><Plus className="size-5" /> Add product</Button>
+          </div>
         ) : (
           <Button type="button" variant="secondary" onClick={() => changeVisibility("ACTIVE")} disabled={loading || submitting}>
             <ArrowLeft className="size-4" /> Active inventory
           </Button>
         )}
       />
+      {showInventoryReport && visibility === "ACTIVE" ? (
+        <InventoryReportPreview token={token} categories={categories} onClose={() => setShowInventoryReport(false)} />
+      ) : null}
       <div className="grid w-full grid-cols-2 gap-1 rounded-xl border bg-card p-1 shadow-soft sm:inline-grid sm:w-auto" role="group" aria-label="Inventory view">
         <Button
           type="button"
