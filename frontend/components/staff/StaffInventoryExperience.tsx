@@ -5,8 +5,9 @@ import { userFacingErrorMessage } from "@/lib/user-facing-error";
 import Image from "next/image";
 import dynamic from "next/dynamic";
 import { useDeferredValue, useEffect, useRef, useState } from "react";
-import { Archive, ArrowLeft, ChevronRight, Edit3, Filter, Package, Plus, Printer, RefreshCw, RotateCcw, Trash2, Upload, X } from "lucide-react";
+import { Archive, ArrowLeft, ChevronRight, ClipboardCheck, Edit3, Filter, Package, Plus, Printer, RefreshCw, RotateCcw, Trash2, Upload, X } from "lucide-react";
 import { InventoryReportPreview } from "@/components/staff/InventoryReportPreview";
+import { StockCountWorkspace } from "@/components/staff/StockCountWorkspace";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import { useRealtimeRefresh } from "@/components/realtime/RealtimeProvider";
 import { ActionLoadingOverlay } from "@/components/ui/ActionLoadingOverlay";
@@ -56,6 +57,26 @@ import {
   Toolbar,
   Notice
 } from "@/components/staff/StaffOperationsShared";
+import {
+  ADJUSTMENT_REASONS,
+  AdjustmentReasonFields,
+  CostHistory,
+  MarginNote,
+  MoneyInput,
+  ReorderAlertSelect,
+  SellingPriceFields,
+  StockActionIntro,
+  StockActionTabs,
+  SubmitHint,
+  SummaryPanel,
+  UnitCostNeeded,
+  Variance,
+  adjustmentNote,
+  formatPhp,
+  isMoneyInput,
+  todayInManila,
+  type StockAction
+} from "@/components/staff/stock-dialog-parts";
 import { FeedbackState } from "@/components/ui/FeedbackState";
 import { InlineAlert } from "@/components/ui/InlineAlert";
 import { SkeletonList } from "@/components/ui/Skeleton";
@@ -80,6 +101,13 @@ const ATTENTION_FILTERS: Record<string, StaffInventoryAttention | undefined> = {
   "No photo": "PHOTO"
 };
 
+// Size runs used on the WUP count sheets; one click replaces the size list in Add product.
+const SIZE_PRESETS = [
+  { label: "Kids #8–#20", sizes: ["#8", "#10", "#12", "#14", "#16", "#18", "#20"] },
+  { label: "XS–3XL", sizes: ["XS", "S", "M", "L", "XL", "2XL", "3XL"] },
+  { label: "S–5XL", sizes: ["S", "M", "L", "XL", "2XL", "3XL", "4XL", "5XL"] }
+];
+
 function needsAttention(product: Product, attention: StaffInventoryAttention) {
   if (attention === "PRICE") return Boolean(product.needsPrice);
   if (attention === "COST") return Boolean(product.unverifiedCostQuantity);
@@ -91,6 +119,7 @@ export function StaffInventoryExperience() {
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<StaffCategory[]>([]);
   const [showInventoryReport, setShowInventoryReport] = useState(false);
+  const [showStockCount, setShowStockCount] = useState(false);
   const [departments, setDepartments] = useState<BackendDepartment[]>([]);
   const [token, setToken] = useState("");
   const [staffEmail, setStaffEmail] = useState("");
@@ -115,14 +144,16 @@ export function StaffInventoryExperience() {
   const [manageSection, setManageSection] = useState<ManageSection>("menu");
   const [restockingProduct, setRestockingProduct] = useState<Product | null>(null);
   const [skuInventoryProduct, setSkuInventoryProduct] = useState<Product | null>(null);
+  const [skuInventoryInitialAction, setSkuInventoryInitialAction] = useState<StockAction>("receive");
   const [activeRestockOptionName, setActiveRestockOptionName] = useState("");
-  const [restockMode, setRestockMode] = useState<"add" | "set">("add");
+  const [stockAction, setStockAction] = useState<StockAction>("receive");
   const [restockQuantity, setRestockQuantity] = useState("");
   const [restockUnitCost, setRestockUnitCost] = useState("");
-  const [restockSellingPrice, setRestockSellingPrice] = useState("");
-  const [restockReceivedAt, setRestockReceivedAt] = useState(() => new Date().toISOString().slice(0, 10));
+  const [restockNewPrice, setRestockNewPrice] = useState("");
+  const [restockReceivedAt, setRestockReceivedAt] = useState(() => todayInManila());
   const [restockSupplierNote, setRestockSupplierNote] = useState("");
-  const [restockLowStockPercent, setRestockLowStockPercent] = useState(25);
+  const [adjustmentReason, setAdjustmentReason] = useState<string>(ADJUSTMENT_REASONS[0]);
+  const [adjustmentRemarks, setAdjustmentRemarks] = useState("");
   const [batchResult, setBatchResult] = useState<StaffInventoryBatchResult | null>(null);
   const [openingCostDrafts, setOpeningCostDrafts] = useState<Record<string, string>>({});
   const [restockVariantQuantities, setRestockVariantQuantities] = useState<Record<string, string>>({});
@@ -453,7 +484,7 @@ export function StaffInventoryExperience() {
     setEditImagePreview(file ? URL.createObjectURL(file) : editingProduct?.imageUrl ?? "");
   };
 
-  const openRestock = (product: Product) => {
+  const openRestock = (product: Product, initialAction: StockAction = "receive") => {
     setError("");
     if (product.saleMode === "OPTIONS") {
       if (product.variants.length === 0) {
@@ -464,6 +495,7 @@ export function StaffInventoryExperience() {
       skuInventoryReturnFocusRef.current = document.activeElement instanceof HTMLElement
         ? document.activeElement
         : null;
+      setSkuInventoryInitialAction(initialAction);
       setSkuInventoryProduct(product);
       return;
     }
@@ -471,27 +503,31 @@ export function StaffInventoryExperience() {
     const optionNames = Array.from(new Set(product.variants.map((variant) => variant.optionName)));
     setActiveRestockOptionName(optionNames.includes(preferredOption) ? preferredOption : optionNames[0] ?? "");
     setRestockingProduct(product);
-    setRestockMode("add");
-    setRestockQuantity("");
+    setStockAction(initialAction);
+    setRestockQuantity(initialAction === "adjust" ? String(product.stock) : "");
     setRestockUnitCost("");
-    setRestockSellingPrice(product.price.toFixed(2));
-    setRestockReceivedAt(new Date().toISOString().slice(0, 10));
+    setRestockNewPrice(product.price > 0 ? product.price.toFixed(2) : "");
+    setRestockReceivedAt(todayInManila());
     setRestockSupplierNote("");
-    setRestockLowStockPercent(product.lowStockPercent);
+    setAdjustmentReason(ADJUSTMENT_REASONS[0]);
+    setAdjustmentRemarks("");
     setBatchResult(null);
     setOpeningCostDrafts({});
     void getStaffInventoryBatches(token, product.id).then((result) => {
       setBatchResult(result);
       setOpeningCostDrafts(Object.fromEntries(result.batches.filter((batch) => !batch.costVerified).map((batch) => [batch.id, ""])));
     }).catch(() => undefined);
-    setRestockVariantQuantities(Object.fromEntries(product.variants.map((variant) => [variant.id, "0"])));
+    setRestockVariantQuantities(Object.fromEntries(product.variants.map((variant) => [
+      variant.id,
+      initialAction === "adjust" ? String(variant.stock) : "0"
+    ])));
   };
 
   const saveOpeningBatchCost = async (batchId: string) => {
     if (!restockingProduct) return;
     const unitCost = Number(openingCostDrafts[batchId]);
-    if (!Number.isFinite(unitCost) || unitCost < 0 || Math.round(unitCost * 100) !== unitCost * 100) {
-      setError("Enter a valid opening unit cost with up to two decimal places.");
+    if (!isMoneyInput(openingCostDrafts[batchId] ?? "")) {
+      setError("Enter the unit cost with up to two decimal places.");
       return;
     }
     setSubmitting(true);
@@ -499,27 +535,74 @@ export function StaffInventoryExperience() {
     try {
       const result = await verifyStaffOpeningBatchCost(token, restockingProduct.id, batchId, unitCost);
       setBatchResult(result);
-      setNotice("Opening inventory cost verified. Future FIFO sales can now use this batch.");
+      const productId = restockingProduct.id;
+      setProducts((current) => current.map((product) => product.id === productId
+        ? { ...product, unverifiedCostQuantity: result.summary.unverifiedQuantity }
+        : product));
+      setNotice("Unit cost saved. These units can now be sold.");
     } catch (batchError) {
-      setError(userFacingErrorMessage(batchError, "Unable to verify the opening batch cost."));
+      setError(userFacingErrorMessage(batchError, "Unable to save the unit cost."));
     } finally {
       setSubmitting(false);
     }
   };
 
-  const changeRestockMode = (mode: "add" | "set") => {
+  const changeStockAction = (action: StockAction) => {
     if (!restockingProduct) return;
     setError("");
-    setRestockMode(mode);
-    setRestockQuantity(mode === "set" ? String(restockingProduct.stock) : "");
+    setStockAction(action);
+    setRestockQuantity(action === "adjust" ? String(restockingProduct.stock) : "");
     setRestockVariantQuantities(Object.fromEntries(restockingProduct.variants.map((variant) => [
       variant.id,
-      mode === "set" ? String(variant.stock) : "0"
+      action === "adjust" ? String(variant.stock) : "0"
     ])));
+  };
+
+  const saveSellingPrice = async () => {
+    if (!restockingProduct) return;
+    if (!isMoneyInput(restockNewPrice) || Number(restockNewPrice) <= 0) {
+      setError("Enter a selling price above PHP 0.00 with up to two decimal places.");
+      return;
+    }
+    const price = Number(restockNewPrice);
+    if (price === restockingProduct.price) {
+      setError("The new selling price is the same as the current price.");
+      return;
+    }
+    const confirmed = await confirm({
+      title: "Update the selling price?",
+      description: `${restockingProduct.name}: ${restockingProduct.price > 0 ? formatPhp(restockingProduct.price) : "no price"} → ${formatPhp(price)}. Applies to all future reservations and walk-in sales.`,
+      confirmLabel: "Update price",
+      tone: "warning"
+    });
+    if (!confirmed) return;
+
+    setSubmitting(true);
+    setError("");
+    try {
+      const updatedProduct = await updateStaffProduct(token, restockingProduct.id, {
+        price,
+        notes: "Selling price updated from Update stock."
+      });
+      const mappedProduct = mapStaffProduct(updatedProduct);
+      setProducts((current) => current.map((product) => product.id === mappedProduct.id ? mappedProduct : product));
+      setRestockingProduct(null);
+      setActiveRestockOptionName("");
+      setNotice(`${mappedProduct.name} selling price updated to ${formatPhp(mappedProduct.price)}.`);
+    } catch (priceError) {
+      setError(userFacingErrorMessage(priceError, "Unable to update the selling price."));
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const saveRestock = async () => {
     if (!restockingProduct) return;
+    if (stockAction === "price") {
+      await saveSellingPrice();
+      return;
+    }
+    const restockMode = stockAction === "receive" ? "add" : "set";
 
     const restockVariants = restockingProduct.saleMode === "OPTIONS" ? restockingProduct.variants : [];
     const variantGroups = Array.from(restockVariants.reduce((groups, variant) => {
@@ -550,18 +633,13 @@ export function StaffInventoryExperience() {
 
     if (!Number.isSafeInteger(quantity) || quantity < 0 || quantity > 10_000_000 || (restockMode === "add" && quantity === 0)) {
       setError(restockMode === "add"
-        ? "Enter a whole-number quantity from 1 to 10,000,000."
-        : "Enter a whole-number available stock count from 0 to 10,000,000.");
+        ? "Enter a quantity received from 1 to 10,000,000."
+        : "Enter a physical count from 0 to 10,000,000.");
       return;
     }
     const unitCost = Number(restockUnitCost);
-    if (restockMode === "add" && (!restockUnitCost.trim() || !Number.isFinite(unitCost) || unitCost < 0 || Math.round(unitCost * 100) !== unitCost * 100)) {
-      setError("Enter the unit acquisition cost with up to two decimal places.");
-      return;
-    }
-    const sellingPrice = Number(restockSellingPrice);
-    if (restockMode === "add" && (!restockSellingPrice.trim() || !Number.isFinite(sellingPrice) || sellingPrice < 0 || sellingPrice > 10_000_000 || Math.round(sellingPrice * 100) !== sellingPrice * 100)) {
-      setError("Enter a selling price from PHP 0.00 to PHP 10,000,000.00 with up to two decimal places.");
+    if (restockMode === "add" && !isMoneyInput(restockUnitCost)) {
+      setError("Enter the unit cost with up to two decimal places.");
       return;
     }
     if (restockMode === "add" && !restockReceivedAt) {
@@ -576,19 +654,23 @@ export function StaffInventoryExperience() {
     if (hasInvalidVariantAllocation) {
       setError(
         restockMode === "add"
-          ? "The saved size totals do not match the product total. Use Correct stock count first so the size counts and total stock match."
-          : "Every option group must have the same total before saving the corrected stock count."
+          ? "The size totals do not match the product total. Use Adjust stock count first so they match."
+          : "Every option group must have the same total before saving the count."
       );
       return;
     }
 
-    const sellingPriceChanged = restockMode === "add" && sellingPrice !== restockingProduct.price;
+    const variance = quantity - restockingProduct.stock;
+    if (restockMode === "set" && variance === 0) {
+      setError("The physical count matches the system stock. There is nothing to adjust.");
+      return;
+    }
     const confirmed = await confirm({
-      title: restockMode === "add" ? "Add this inventory stock?" : "Save this corrected stock count?",
+      title: restockMode === "add" ? "Receive this stock?" : "Post this stock adjustment?",
       description: restockMode === "add"
-        ? `${quantity} new item${quantity === 1 ? "" : "s"} will be added to ${restockingProduct.name}, bringing its available total to ${restockingProduct.stock + quantity}.${sellingPriceChanged ? ` Its selling price will change from PHP ${restockingProduct.price.toFixed(2)} to PHP ${sellingPrice.toFixed(2)} for future sales.` : ""}`
-        : `${restockingProduct.name}'s available stock will be replaced with the exact count of ${quantity}.`,
-      confirmLabel: restockMode === "add" ? "Add stock" : "Save corrected count",
+        ? `Receive ${quantity} unit${quantity === 1 ? "" : "s"} of ${restockingProduct.name} at ${formatPhp(unitCost)} per unit. Stock on hand: ${restockingProduct.stock} → ${restockingProduct.stock + quantity}.`
+        : `${restockingProduct.name}: system stock ${restockingProduct.stock} → physical count ${quantity} (variance ${variance > 0 ? "+" : "−"}${Math.abs(variance)}). Reason: ${adjustmentReason}.`,
+      confirmLabel: restockMode === "add" ? "Receive stock" : "Post adjustment",
       tone: restockMode === "add" ? "default" : "warning"
     });
     if (!confirmed) return;
@@ -606,11 +688,10 @@ export function StaffInventoryExperience() {
             quantity: enteredVariantQuantities.get(variant.id)!
           }))
         } : {}),
-        notes: restockMode === "add" ? "Stock added from staff inventory page." : "Exact stock set from staff inventory page.",
-        lowStockPercent: restockLowStockPercent,
+        notes: restockMode === "add" ? "Stock received from staff inventory page." : adjustmentNote(adjustmentReason, adjustmentRemarks),
+        lowStockPercent: restockingProduct.lowStockPercent,
         ...(restockMode === "add" ? {
           unitCost,
-          sellingPrice,
           receivedAt: `${restockReceivedAt}T00:00:00+08:00`,
           supplierNote: restockSupplierNote.trim() || undefined
         } : {})
@@ -621,13 +702,12 @@ export function StaffInventoryExperience() {
       setActiveRestockOptionName("");
       setRestockQuantity("");
       setRestockUnitCost("");
-      setRestockSellingPrice("");
       setRestockSupplierNote("");
       setRestockVariantQuantities({});
       setNotice(
         restockMode === "add"
-          ? `${quantity} pcs added to ${mappedProduct.name}.`
-          : `${mappedProduct.name} stock corrected to ${mappedProduct.stock} pcs.`
+          ? `Received ${quantity} units of ${mappedProduct.name}. Stock on hand: ${mappedProduct.stock}.`
+          : `${mappedProduct.name} adjusted to ${mappedProduct.stock} units (${adjustmentReason.toLowerCase()}).`
       );
     } catch (restockError) {
       setError(userFacingErrorMessage(restockError, "Unable to update stock."));
@@ -756,46 +836,41 @@ export function StaffInventoryExperience() {
     ? (restockEnteredTotals[effectivePrimaryRestockGroupIndex] ?? 0)
     : Math.max(0, Number(restockQuantity) || 0);
   const resultingStock = restockingProduct
-    ? restockMode === "add"
+    ? stockAction === "receive"
       ? restockingProduct.stock + restockEnteredQuantity
       : restockEnteredQuantity
     : 0;
-  const resultingStockTarget = restockingProduct
-    ? Math.max(restockingProduct.stockTarget, resultingStock)
-    : 0;
-  const resultingLowStockThreshold = Math.ceil(resultingStockTarget * restockLowStockPercent / 100);
-  const enteredRestockUnitCost = restockUnitCost.trim() ? Number(restockUnitCost) : null;
-  const enteredRestockSellingPrice = restockSellingPrice.trim() ? Number(restockSellingPrice) : null;
-  const estimatedUnitGrossProfit = enteredRestockSellingPrice !== null && Number.isFinite(enteredRestockSellingPrice) && enteredRestockUnitCost !== null && Number.isFinite(enteredRestockUnitCost)
-    ? enteredRestockSellingPrice - enteredRestockUnitCost
-    : null;
-  const estimatedGrossMargin = estimatedUnitGrossProfit !== null && enteredRestockSellingPrice !== null && enteredRestockSellingPrice > 0
-    ? estimatedUnitGrossProfit / enteredRestockSellingPrice * 100
-    : null;
+  const restockVariance = restockingProduct ? resultingStock - restockingProduct.stock : 0;
+  const enteredRestockUnitCost = isMoneyInput(restockUnitCost) ? Number(restockUnitCost) : null;
   const variantAllocationValid = automaticallySynchronizedVariants || restockVariantGroups.every(([, variants], index) => {
     const currentTotal = variants.reduce((total, variant) => total + variant.stock, 0);
     return restockEnteredTotals[index] === restockEnteredQuantity
-      && (restockMode === "set" || currentTotal === restockingProduct?.stock);
+      && (stockAction === "adjust" || currentTotal === restockingProduct?.stock);
   });
-  const restockHasLegacyMismatch = Boolean(restockingProduct && restockMode === "add" && restockVariantGroups.some(([, variants]) =>
+  const restockHasLegacyMismatch = Boolean(restockingProduct && stockAction === "receive" && restockVariantGroups.some(([, variants]) =>
     variants.reduce((total, variant) => total + variant.stock, 0) !== restockingProduct.stock
   ));
-  const restockCanSubmit = restockingProduct
-    ? variantAllocationValid
-      && Number.isInteger(restockEnteredQuantity)
-      && restockEnteredQuantity >= 0
-      && (restockMode === "set" || restockEnteredQuantity > 0)
-      && (usesVariantRestockEntry || Boolean(restockQuantity))
-      && (restockMode === "set" || (
-        Boolean(restockUnitCost.trim())
-        && Boolean(restockSellingPrice.trim())
-        && Boolean(restockReceivedAt)
-        && enteredRestockUnitCost !== null
-        && Number.isFinite(enteredRestockUnitCost)
-        && enteredRestockSellingPrice !== null
-        && Number.isFinite(enteredRestockSellingPrice)
-      ))
-    : false;
+  // The first missing input, shown beside the disabled save button so staff know what is left.
+  const restockMissingInput = !restockingProduct
+    ? ""
+    : stockAction === "price"
+      ? (!isMoneyInput(restockNewPrice) || Number(restockNewPrice) <= 0
+        ? "Enter the new selling price."
+        : Number(restockNewPrice) === restockingProduct.price ? "Enter a price different from the current one." : "")
+      : restockHasLegacyMismatch
+        ? "Adjust the stock count first so the size totals match."
+        : !usesVariantRestockEntry && !restockQuantity.trim()
+          ? (stockAction === "receive" ? "Enter the quantity received." : "Enter the physical count.")
+          : !variantAllocationValid
+            ? "Every option group must have the same total."
+            : stockAction === "receive"
+              ? (restockEnteredQuantity <= 0
+                ? "Enter the quantity received."
+                : enteredRestockUnitCost === null
+                  ? "Enter the unit cost."
+                  : !restockReceivedAt ? "Choose the date received." : "")
+              : restockVariance === 0 ? "No variance yet — the count matches the system." : "";
+  const restockCanSubmit = Boolean(restockingProduct) && !restockMissingInput;
   const closeRestockDialog = () => {
     setRestockingProduct(null);
     setActiveRestockOptionName("");
@@ -845,7 +920,8 @@ export function StaffInventoryExperience() {
           : `Connected as ${staffEmail || "staff"}. Track products in one place and keep stock levels up to date.`}
         action={visibility === "ACTIVE" ? (
           <div className="flex flex-wrap gap-2">
-            <Button variant="secondary" onClick={() => setShowInventoryReport(true)} aria-pressed={showInventoryReport}><Printer className="size-4" /> Print inventory</Button>
+            <Button variant="secondary" onClick={() => { setShowInventoryReport(false); setShowStockCount(true); }} aria-pressed={showStockCount} disabled={loading || submitting}><ClipboardCheck className="size-4" /> Stock count</Button>
+            <Button variant="secondary" onClick={() => { setShowStockCount(false); setShowInventoryReport(true); }} aria-pressed={showInventoryReport}><Printer className="size-4" /> Print inventory</Button>
             <Button onClick={openAddProduct} disabled={loading || submitting}><Plus className="size-5" /> Add product</Button>
           </div>
         ) : (
@@ -857,6 +933,18 @@ export function StaffInventoryExperience() {
       {showInventoryReport && visibility === "ACTIVE" ? (
         <InventoryReportPreview token={token} categories={categories} onClose={() => setShowInventoryReport(false)} />
       ) : null}
+      {showStockCount && visibility === "ACTIVE" ? (
+        <StockCountWorkspace
+          token={token}
+          categories={categories}
+          onClose={() => setShowStockCount(false)}
+          onProductUpdated={(updated) => {
+            const mapped = mapStaffProduct(updated);
+            setProducts((current) => current.map((product) => product.id === mapped.id ? mapped : product));
+          }}
+        />
+      ) : null}
+      {showStockCount ? null : <>
       <div className="grid w-full grid-cols-2 gap-1 rounded-xl border bg-card p-1 shadow-soft sm:inline-grid sm:w-auto" role="group" aria-label="Inventory view">
         <Button
           type="button"
@@ -883,7 +971,7 @@ export function StaffInventoryExperience() {
       {error ? <InlineAlert>{error}</InlineAlert> : null}
       <section id="inventory-product-list" aria-label={visibility === "ARCHIVED" ? "Archived inventory products" : "Active inventory products"} className="overflow-hidden rounded-xl border bg-card shadow-soft">
         <div className="hidden grid-cols-12 gap-4 border-b bg-surface-subtle px-4 py-3 text-[11px] font-extrabold uppercase tracking-wide text-muted-foreground xl:grid">
-          <span className="col-span-3">Product</span><span>Category</span><span>Total stock</span><span>Selling price</span><span>Low-stock alert</span><span className="col-span-2">Stock breakdown</span><span>Status</span><span className="col-span-2">Actions</span>
+          <span className="col-span-3">Product</span><span>Category</span><span>Total stock</span><span>Selling price</span><span>Reorder alert</span><span className="col-span-2">Stock breakdown</span><span>Status</span><span className="col-span-2">Actions</span>
         </div>
         <div className="divide-y divide-border">
           {loading ? (
@@ -940,13 +1028,13 @@ export function StaffInventoryExperience() {
                     "text-lg font-extrabold tabular-nums",
                     product.status === "Out of Stock" ? "text-danger" : product.status === "Needs Restock" ? "text-warning" : "text-primary"
                   )}>{product.stock}</span>
-                  <span className="ml-1 text-xs text-muted-foreground">items</span>
+                  <span className="ml-1 text-xs text-muted-foreground">units</span>
                 </div>
                 <div className="hidden text-sm xl:block"><span className="font-extrabold text-primary">PHP {product.price.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
                 <div className="text-sm">
-                  <span className="text-muted-foreground xl:hidden">Low-stock alert: </span>
-                  <span className="font-bold">{product.lowStockPercent}%</span>
-                  <span className="ml-1 text-xs text-muted-foreground">(≤ {product.minimum} items)</span>
+                  <span className="text-muted-foreground xl:hidden">Reorder alert: </span>
+                  <span className="font-bold">≤ {product.minimum} units</span>
+                  <span className="ml-1 text-xs text-muted-foreground">({product.lowStockPercent}%)</span>
                 </div>
                 <div className="hidden flex-wrap gap-1 xl:col-span-2 xl:flex">
                   {product.saleMode === "OPTIONS" && product.skuInventoryEnabled ? (
@@ -1017,6 +1105,7 @@ export function StaffInventoryExperience() {
           </Button>
         </div>
       ) : null}
+      </>}
       {adding ? (
         <div className="fixed inset-0 z-[10000] grid place-items-center bg-foreground/55 p-0 backdrop-blur-[1px] sm:p-4">
           <form ref={addDialog.dialogRef} {...addDialog.dialogProps} key={selectedTemplateId || "blank-product-form"} className="relative my-auto max-h-[100dvh] w-full max-w-2xl overflow-x-hidden overflow-y-auto bg-surface-subtle shadow-2xl sm:max-h-[calc(100vh-2rem)] sm:rounded-xl" onSubmit={async (event) => {
@@ -1111,7 +1200,7 @@ export function StaffInventoryExperience() {
               title="Saving new product"
               detail="We are saving the product and uploading its image if needed."
             />
-            <div key="add-product-heading" className="sticky top-0 z-20 flex items-start gap-3 border-b border-border bg-white/95 px-5 py-4 backdrop-blur"><div><p className="text-[11px] font-bold uppercase tracking-[0.16em] text-primary">Inventory setup</p><h2 id={addDialog.titleId} className="mt-1 text-xl font-extrabold">Add inventory item</h2><p className="mt-1 text-sm text-muted-foreground">Set the product details, stock policy, and opening cost.</p></div><button type="button" data-dialog-autofocus onClick={closeAddProduct} disabled={submitting} aria-label="Close product form" className="ml-auto grid size-9 shrink-0 place-items-center rounded-md hover:bg-muted disabled:opacity-50"><X /></button></div>
+            <div key="add-product-heading" className="sticky top-0 z-20 flex items-start gap-3 border-b border-border bg-white/95 px-5 py-4 backdrop-blur"><div><p className="text-[11px] font-bold uppercase tracking-[0.16em] text-primary">Inventory setup</p><h2 id={addDialog.titleId} className="mt-1 text-xl font-extrabold">Add inventory item</h2><p className="mt-1 text-sm text-muted-foreground">Enter the product details, selling price, and opening stock.</p></div><button type="button" data-dialog-autofocus onClick={closeAddProduct} disabled={submitting} aria-label="Close product form" className="ml-auto grid size-9 shrink-0 place-items-center rounded-md hover:bg-muted disabled:opacity-50"><X /></button></div>
             <div key="add-product-fields" className="grid min-w-0 gap-4 p-4 pb-5 sm:p-5">
               <section key="add-product-details" className="grid min-w-0 gap-3 overflow-hidden rounded-xl border bg-white p-4 shadow-sm">
                 <div>
@@ -1150,17 +1239,17 @@ export function StaffInventoryExperience() {
                 </div>
                 <div className="grid gap-3 rounded-lg border border-primary/25 bg-primary/5 p-3 sm:grid-cols-2">
                   <div className="sm:col-span-2">
-                    <p className="text-sm font-extrabold text-primary">Opening-stock cost</p>
-                    <p className="mt-1 text-xs leading-5 text-muted-foreground">Required only when starting stock is above zero. This creates the first FIFO batch; it is not saved as a permanent product cost.</p>
+                    <p className="text-sm font-extrabold text-primary">Opening stock cost</p>
+                    <p className="mt-1 text-xs leading-5 text-muted-foreground">Required only if you enter opening stock below. Recorded as the cost of the first delivery and used for profit reporting.</p>
                   </div>
-                  <label className="grid gap-1.5 text-sm font-semibold">Unit acquisition cost
+                  <label className="grid gap-1.5 text-sm font-semibold">Unit cost
                     <input name="initialUnitCost" type="number" min="0" step="0.01" placeholder="0.00" className="h-11 w-full min-w-0 rounded-md border bg-white px-3 font-normal" />
                   </label>
                   <label className="grid gap-1.5 text-sm font-semibold">Date received
-                    <input name="receivedAt" type="date" defaultValue={new Date().toISOString().slice(0, 10)} className="h-11 w-full min-w-0 rounded-md border bg-white px-3 font-normal" />
+                    <input name="receivedAt" type="date" defaultValue={todayInManila()} className="h-11 w-full min-w-0 rounded-md border bg-white px-3 font-normal" />
                   </label>
-                  <label className="grid gap-1.5 text-sm font-semibold sm:col-span-2">Supplier / reference <span className="font-normal text-muted-foreground">(optional)</span>
-                    <input name="supplierNote" maxLength={500} placeholder="Example: Supplier invoice SI-1024" className="h-11 w-full min-w-0 rounded-md border bg-white px-3 font-normal" />
+                  <label className="grid gap-1.5 text-sm font-semibold sm:col-span-2">Supplier / Reference no. <span className="font-normal text-muted-foreground">(optional)</span>
+                    <input name="supplierNote" maxLength={500} placeholder="e.g. Supplier invoice SI-1024" className="h-11 w-full min-w-0 rounded-md border bg-white px-3 font-normal" />
                   </label>
                 </div>
                 <label className="grid gap-1.5 text-sm font-semibold">
@@ -1203,15 +1292,15 @@ export function StaffInventoryExperience() {
               <section key="add-product-inventory" className="grid min-w-0 gap-4 overflow-hidden rounded-xl border bg-white p-4 shadow-sm">
                 <div>
                   <div className="flex items-center gap-2"><span className="grid size-6 place-items-center rounded-full bg-primary text-xs font-extrabold text-white">4</span><h3 className="font-extrabold text-foreground">Stock setup</h3></div>
-                  <p className="mt-1 text-xs leading-5 text-muted-foreground">Choose how staff will track this product. Uniforms normally use sizes.</p>
+                  <p className="mt-1 text-xs leading-5 text-muted-foreground">Choose how this item is stocked and sold. Ready-made garments are usually tracked per size.</p>
                 </div>
                 <div className="grid gap-2">
                   <p className="text-sm font-semibold">How is this item sold?</p>
                   <div className="grid gap-2">
                     {[
-                      { value: "SIMPLE", title: "Simple item", detail: "One total stock count. Students do not choose a size or option." },
-                      { value: "CLOTH_ONLY", title: "Cloth only", detail: "Uniform material only. The product image is a finished-uniform preview; no sizes are shown to students." },
-                      { value: "OPTIONS", title: "With sizes/options", detail: "Ready-made items such as PE uniforms. Students choose a size or another configured option." }
+                      { value: "SIMPLE", title: "Simple item", detail: "One stock count. Students do not choose a size. Example: ID lace, pin, sash." },
+                      { value: "CLOTH_ONLY", title: "Cloth only", detail: "Uniform fabric sold by quantity. The photo shows the finished uniform; students do not choose a size." },
+                      { value: "OPTIONS", title: "With sizes/options", detail: "Ready-made garments such as PE uniforms. Stock is tracked per size and students choose one." }
                     ].map((mode) => (
                       <label key={mode.value} className={`flex cursor-pointer gap-3 rounded-lg border p-3 ${addSaleMode === mode.value ? "border-primary bg-[#eef7ef]" : "border-border bg-white"}`}>
                         <input type="radio" name="saleModeChoice" value={mode.value} checked={addSaleMode === mode.value} onChange={() => setAddSaleMode(mode.value as ProductSaleMode)} className="mt-1" />
@@ -1229,8 +1318,21 @@ export function StaffInventoryExperience() {
 
                 {addHasSizeVariants ? (
                   <div className="space-y-2">
+                    <div className="flex flex-wrap items-center gap-2 pb-1" role="group" aria-label="Size presets">
+                      <span className="text-xs font-bold text-muted-foreground">Quick fill:</span>
+                      {SIZE_PRESETS.map((preset) => (
+                        <button
+                          key={preset.label}
+                          type="button"
+                          onClick={() => setAddSizeVariants(preset.sizes.map((value) => ({ key: variantDraftKey(value), value, stock: "0", lowStockThreshold: "2" })))}
+                          className="rounded-full border border-border-strong bg-white px-3 py-1 text-xs font-bold text-primary hover:bg-primary/10"
+                        >
+                          {preset.label}
+                        </button>
+                      ))}
+                    </div>
                     <div className="grid grid-cols-[1fr_110px_36px] gap-2 px-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
-                      <span>Size</span><span>Starting stock</span><span />
+                      <span>Size</span><span>Opening stock</span><span />
                     </div>
                     {addSizeVariants.map((variant, index) => (
                       <div key={variant.key} className="grid grid-cols-[1fr_110px_36px] gap-2">
@@ -1272,28 +1374,18 @@ export function StaffInventoryExperience() {
                       </Button>
                       <p className="text-sm"><span className="text-muted-foreground">Total stock: </span><span className="font-extrabold text-primary">{addSizeStockTotal} pcs</span></p>
                     </div>
-                    <p className="text-xs leading-5 text-muted-foreground">The selected percentage below is applied automatically to every size.</p>
+                    <p className="text-xs leading-5 text-muted-foreground">The reorder alert below is applied automatically to every size.</p>
                   </div>
                 ) : (
                   <label className="grid gap-1.5 text-sm font-semibold">
-                    Starting stock
+                    Opening stock
                     <input name="stock" required type="number" min="0" step="1" value={addSimpleStock} onChange={(event) => setAddSimpleStock(Number(event.target.value))} placeholder="0" className="h-11 w-full min-w-0 rounded-md border px-3 font-normal" />
                   </label>
                 )}
 
-                <div className="grid gap-3 rounded-md border bg-white p-3 sm:grid-cols-[220px_1fr] sm:items-end">
-                  <label className="grid gap-1.5 text-sm font-semibold">
-                    Low-stock warning
-                    <select aria-label="Low-stock warning" value={addLowStockPercent} onChange={(event) => setAddLowStockPercent(Number(event.target.value))} className="h-11 w-full min-w-0 rounded-md border bg-white px-3 font-normal outline-none focus:border-primary">
-                      <option value={10}>10% — very low</option>
-                      <option value={20}>20% — low</option>
-                      <option value={25}>25% — recommended</option>
-                      <option value={30}>30% — early warning</option>
-                      <option value={40}>40% — extra early</option>
-                      <option value={50}>50% — half stock</option>
-                    </select>
-                  </label>
-                  <p className="text-xs leading-5 text-muted-foreground">Based on {addOpeningStock} starting item{addOpeningStock === 1 ? "" : "s"}, staff will be warned at <strong className="text-foreground">{addLowStockThreshold} or fewer</strong>. This is calculated automatically for every size.</p>
+                <div className="grid gap-3 rounded-md border bg-white p-3 sm:grid-cols-[minmax(0,280px)_1fr] sm:items-end">
+                  <ReorderAlertSelect value={addLowStockPercent} onChange={setAddLowStockPercent} stockLevel={addOpeningStock} />
+                  <p className="text-xs leading-5 text-muted-foreground">With {addOpeningStock} unit{addOpeningStock === 1 ? "" : "s"} of opening stock, staff are alerted at <strong className="text-foreground">{addLowStockThreshold} units or fewer</strong>. The same percentage applies to each size.</p>
                 </div>
 
               </section>
@@ -1391,7 +1483,7 @@ export function StaffInventoryExperience() {
                   <div className="overflow-hidden rounded-lg border bg-white">
                     <button type="button" onClick={() => { setError(""); setManageSection("details"); }} className="flex w-full items-center gap-3 border-b border-border px-4 py-4 text-left hover:bg-surface-subtle">
                       <span className="grid size-9 shrink-0 place-items-center rounded-md bg-primary/10 text-primary"><Edit3 className="size-4" /></span>
-                      <span className="min-w-0 flex-1"><span className="block text-sm font-extrabold text-foreground">Edit details</span><span className="mt-0.5 block text-xs text-muted-foreground">Name, category, description, price, and total-stock warning.</span></span>
+                      <span className="min-w-0 flex-1"><span className="block text-sm font-extrabold text-foreground">Edit details</span><span className="mt-0.5 block text-xs text-muted-foreground">Name, category, description, selling price, and reorder alert.</span></span>
                       <ChevronRight className="size-4 text-muted-foreground" />
                     </button>
                     <button type="button" onClick={() => { setError(""); setEditImageFile(null); setEditImagePreview(editingProduct.imageUrl); setManageSection("image"); }} className="flex w-full items-center gap-3 border-b border-border px-4 py-4 text-left hover:bg-surface-subtle">
@@ -1410,7 +1502,7 @@ export function StaffInventoryExperience() {
                       <ChevronRight className="size-4 text-muted-foreground" />
                     </button>
                     {editingProduct.saleMode === "OPTIONS" ? <>
-                    <button type="button" onClick={(event) => { setError(""); skuInventoryReturnFocusRef.current = event.currentTarget; setSkuInventoryProduct(editingProduct); }} className="flex w-full items-center gap-3 border-b border-border px-4 py-4 text-left hover:bg-surface-subtle">
+                    <button type="button" onClick={(event) => { setError(""); skuInventoryReturnFocusRef.current = event.currentTarget; setSkuInventoryInitialAction("receive"); setSkuInventoryProduct(editingProduct); }} className="flex w-full items-center gap-3 border-b border-border px-4 py-4 text-left hover:bg-surface-subtle">
                       <span className="grid size-9 shrink-0 place-items-center rounded-md bg-primary/10 text-primary"><RefreshCw className="size-4" /></span>
                       <span className="min-w-0 flex-1"><span className="block text-sm font-extrabold text-foreground">Inventory combinations</span><span className="mt-0.5 block text-xs text-muted-foreground">{editingProduct.skuInventoryEnabled ? `${editingProduct.skus.length} physical combinations configured` : "Setup required before reliable size/waist/length stock tracking"}.</span></span>
                       <ChevronRight className="size-4 text-muted-foreground" />
@@ -1545,12 +1637,12 @@ export function StaffInventoryExperience() {
                   <section className="rounded-lg border bg-muted/40 p-4">
                     <div className="grid gap-3">
                       <div><p className="text-xs font-bold uppercase text-muted-foreground">Selling price</p><p className="mt-1 text-lg font-extrabold text-primary">PHP {editingProduct.price.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p></div>
-                      <div><p className="text-xs font-bold uppercase text-muted-foreground">Latest batch cost</p><p className="mt-1 text-lg font-extrabold">{batchResult?.summary.latestCost === null || !batchResult ? "Loading / not set" : `PHP ${batchResult.summary.latestCost.toFixed(2)}`}</p></div>
-                      <div><p className="text-xs font-bold uppercase text-muted-foreground">Reference gross profit</p><p className="mt-1 text-lg font-extrabold text-primary">{batchResult?.summary.latestCost === null || !batchResult ? "Not available" : `PHP ${(editingProduct.price - batchResult.summary.latestCost).toFixed(2)} / item`}</p></div>
+                      <div><p className="text-xs font-bold uppercase text-muted-foreground">Latest unit cost</p><p className="mt-1 text-lg font-extrabold">{!batchResult ? "Loading..." : batchResult.summary.latestCost === null ? "Not recorded" : formatPhp(batchResult.summary.latestCost)}</p></div>
+                      <div><p className="text-xs font-bold uppercase text-muted-foreground">Margin per unit</p><p className="mt-1 text-lg font-extrabold text-primary">{!batchResult || batchResult.summary.latestCost === null ? "Not available" : `${formatPhp(editingProduct.price - batchResult.summary.latestCost)} per unit`}</p></div>
                     </div>
-                    <p className="mt-3 text-xs leading-5 text-muted-foreground">Profit shown here uses the latest batch only. Final COGS and Gross Profit still use the actual FIFO batches consumed by each completed sale.</p>
-                    {batchResult?.summary.unverifiedQuantity ? <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-900">{batchResult.summary.unverifiedQuantity} item(s) still need an opening unit cost before release.</p> : null}
-                    {batchResult ? <details className="mt-3 border-t border-border pt-3"><summary className="cursor-pointer text-sm font-bold text-primary">View cost batches ({batchResult.batches.length})</summary><div className="mt-3 overflow-x-auto"><table className="w-full min-w-[650px] text-left text-xs"><thead className="text-muted-foreground"><tr><th className="py-2 pr-3">Batch / variant</th><th className="py-2 pr-3">Date</th><th className="py-2 pr-3">Unit cost</th><th className="py-2 pr-3">Received</th><th className="py-2 pr-3">Remaining</th><th className="py-2">Potential profit/item</th></tr></thead><tbody className="divide-y divide-border">{batchResult.batches.map((batch) => <tr key={batch.id}><td className="py-2 pr-3 font-bold">{batch.sku?.optionSnapshot?.map((option) => option.optionValue).join(" / ") || batch.batchCode}</td><td className="py-2 pr-3">{new Date(batch.receivedAt).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" })}</td><td className="py-2 pr-3">{batch.costVerified ? `PHP ${Number(batch.unitCost).toFixed(2)}` : "Needs verification"}</td><td className="py-2 pr-3">{batch.quantityReceived}</td><td className="py-2 pr-3 font-bold">{batch.quantityRemaining}</td><td className="py-2 font-bold text-primary">{batch.costVerified ? `PHP ${(editingProduct.price - Number(batch.unitCost)).toFixed(2)}` : "—"}</td></tr>)}</tbody></table></div></details> : null}
+                    <p className="mt-3 text-xs leading-5 text-muted-foreground">Margin uses the latest unit cost. Sales reports use the cost of the actual delivery each unit came from.</p>
+                    {batchResult?.summary.unverifiedQuantity ? <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-900">{batchResult.summary.unverifiedQuantity} unit(s) need a unit cost before they can be sold. Enter it from Update stock.</p> : null}
+                    <CostHistory batchResult={batchResult} sellingPrice={editingProduct.price} />
                   </section>
                   <label className="grid gap-1.5 text-sm font-semibold">Product name<input name="name" required defaultValue={editingProduct.name} className="h-11 rounded-md border px-3 font-normal outline-none focus:border-primary" /></label>
                   <label className="grid gap-1.5 text-sm font-semibold">Category<input name="category" required list="staff-edit-category-options" defaultValue={editingProduct.category} className="h-11 rounded-md border px-3 font-normal outline-none focus:border-primary" /></label>
@@ -1560,8 +1652,8 @@ export function StaffInventoryExperience() {
                     <label className="grid min-w-0 gap-1.5 text-sm font-semibold"><span>Old price <span className="text-xs font-normal text-muted-foreground">(optional)</span></span><input name="oldPrice" type="number" min="0" step="0.01" defaultValue={editingProduct.oldPrice ?? ""} className="h-11 w-full min-w-0 rounded-md border px-3 font-normal outline-none focus:border-primary" /></label>
                   </div>
                   <div className="grid gap-3 rounded-md border bg-surface-subtle p-3">
-                    <label className="grid gap-1.5 text-sm font-semibold">Low-stock warning<select aria-label="Low-stock warning" value={editLowStockPercent} onChange={(event) => setEditLowStockPercent(Number(event.target.value))} className="h-11 rounded-md border bg-white px-3 font-normal outline-none focus:border-primary"><option value={10}>10% — very low</option><option value={20}>20% — low</option><option value={25}>25% — recommended</option><option value={30}>30% — early warning</option><option value={40}>40% — extra early</option><option value={50}>50% — half stock</option></select></label>
-                    <p className="text-xs leading-5 text-muted-foreground">Using the stable stock target of {editingProduct.stockTarget}, WESCOMM will warn at <strong className="text-foreground">{editLowStockThreshold} items or fewer</strong>. The same percentage is applied automatically to sizes and inventory combinations.</p>
+                    <ReorderAlertSelect value={editLowStockPercent} onChange={setEditLowStockPercent} stockLevel={editingProduct.stockTarget} />
+                    <p className="text-xs leading-5 text-muted-foreground">Staff are alerted when stock falls to <strong className="text-foreground">{editLowStockThreshold} units or fewer</strong>. The stock level ({editingProduct.stockTarget}) is the highest recent stock on hand; it grows with larger deliveries and does not drop as units sell. The same percentage applies to each size.</p>
                   </div>
                   <datalist id="staff-edit-category-options">{categoryOptions.map((category) => <option key={category} value={category} />)}</datalist>
                   <div className="sticky bottom-0 -mx-5 -mb-5 flex justify-end gap-2 border-t border-border bg-white px-5 py-4"><Button type="button" variant="secondary" onClick={() => setManageSection("menu")} disabled={submitting}>Cancel</Button><Button type="submit" disabled={submitting}>{submitting ? "Saving..." : "Save details"}</Button></div>
@@ -1672,6 +1764,7 @@ export function StaffInventoryExperience() {
         <SkuInventoryDialog
           token={token}
           product={skuInventoryProduct}
+          initialAction={skuInventoryInitialAction}
           returnFocus={skuInventoryReturnFocusRef.current}
           onClose={closeSkuInventoryDialog}
           onSaved={(updated) => {
@@ -1689,9 +1782,9 @@ export function StaffInventoryExperience() {
             ref={restockDialog.dialogRef}
             {...restockDialog.dialogProps}
             className="relative my-auto flex max-h-[calc(100dvh-1rem)] w-full max-w-2xl flex-col overflow-hidden rounded-xl bg-white shadow-2xl sm:max-h-[calc(100dvh-2rem)]"
-            onSubmit={(event) => { event.preventDefault(); saveRestock(); }}
+            onSubmit={(event) => { event.preventDefault(); void saveRestock(); }}
           >
-            <ActionLoadingOverlay active={submitting} title="Updating stock" detail="We are saving the stock count and refreshing its status." />
+            <ActionLoadingOverlay active={submitting} title={stockAction === "price" ? "Updating price" : "Updating stock"} detail="Saving the change and refreshing the inventory." />
             <header className="shrink-0 border-b border-border p-4 sm:p-5">
               <div className="flex items-start gap-3">
                 <div className="relative grid size-16 shrink-0 place-items-center overflow-hidden rounded-lg border bg-surface-subtle">
@@ -1700,7 +1793,7 @@ export function StaffInventoryExperience() {
                 <div className="min-w-0 flex-1">
                   <h2 id={restockDialog.titleId} className="text-xl font-extrabold text-foreground">Update stock</h2>
                   <p className="mt-1 truncate text-sm font-bold text-foreground">{restockingProduct.name}</p>
-                  <p className="mt-0.5 text-xs text-muted-foreground">Current total: {restockingProduct.stock} items</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">Stock on hand: <strong className="text-foreground">{restockingProduct.stock}</strong> units · Selling price: <strong className="text-foreground">{restockingProduct.price > 0 ? formatPhp(restockingProduct.price) : "not set"}</strong></p>
                 </div>
                 <button type="button" data-dialog-autofocus onClick={closeRestockDialog} disabled={submitting} aria-label="Close stock editor" className="grid size-9 shrink-0 place-items-center rounded-md hover:bg-muted disabled:opacity-50"><X /></button>
               </div>
@@ -1709,184 +1802,161 @@ export function StaffInventoryExperience() {
             <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-5">
               {error ? <p role="alert" className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold leading-5 text-red-700">{error}</p> : null}
 
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <p className="text-sm font-extrabold text-foreground">{restockMode === "add" ? "Add newly received stock" : "Correct stock count"}</p>
-                  <p className="mt-1 text-xs text-muted-foreground">{restockMode === "add" ? "Enter only the new items that arrived." : "Enter the exact stock still available for new reservations. Exact correction is blocked while this product has active reservations."}</p>
-                </div>
-                <button type="button" onClick={() => changeRestockMode(restockMode === "add" ? "set" : "add")} className="text-xs font-bold text-primary hover:underline">
-                  {restockMode === "add" ? "Need to correct the count?" : "Back to adding stock"}
-                </button>
-              </div>
+              <StockActionTabs value={stockAction} onChange={changeStockAction} disabled={submitting} />
+              <StockActionIntro action={stockAction} />
 
-              {batchResult ? (
-                <section className="mt-4 rounded-lg border bg-muted/40 p-4">
-                  <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
-                    <div><p className="text-xs font-bold uppercase text-muted-foreground">Latest cost</p><p className="mt-1 font-extrabold text-foreground">{batchResult.summary.latestCost === null ? "Not set" : `PHP ${batchResult.summary.latestCost.toFixed(2)}`}</p></div>
-                    <div><p className="text-xs font-bold uppercase text-muted-foreground">Average cost</p><p className="mt-1 font-extrabold text-foreground">{batchResult.summary.averageInventoryCost === null ? "—" : `PHP ${batchResult.summary.averageInventoryCost.toFixed(2)}`}</p></div>
-                    <div><p className="text-xs font-bold uppercase text-muted-foreground">Inventory value</p><p className="mt-1 font-extrabold text-primary">PHP {batchResult.summary.inventoryValue.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p></div>
-                  </div>
-                  {batchResult.batches.filter((batch) => !batch.costVerified).map((batch) => (
-                    <div key={batch.id} className="mt-4 rounded-md border border-amber-200 bg-amber-50 p-3">
-                      <p className="text-sm font-extrabold text-amber-900">Opening cost required · {batch.quantityRemaining} item(s)</p>
-                      <p className="mt-1 text-xs text-amber-800">Set this once before these items can be released through FIFO.</p>
-                      <div className="mt-3 flex gap-2"><div className="flex h-10 flex-1 items-center rounded-md border border-amber-300 bg-white px-3"><span className="mr-2 text-xs font-bold text-muted-foreground">PHP</span><input type="number" min="0" step="0.01" inputMode="decimal" value={openingCostDrafts[batch.id] ?? ""} onChange={(event) => setOpeningCostDrafts((current) => ({ ...current, [batch.id]: event.target.value }))} placeholder="Opening unit cost" className="min-w-0 flex-1 bg-transparent outline-none" /></div><Button type="button" className="h-10" onClick={() => void saveOpeningBatchCost(batch.id)} disabled={submitting || !openingCostDrafts[batch.id]}>Verify cost</Button></div>
-                    </div>
-                  ))}
-                  <details className="mt-4 border-t border-border pt-3">
-                    <summary className="cursor-pointer text-sm font-bold text-primary">View FIFO batch history ({batchResult.batches.length})</summary>
-                    <div className="mt-3 overflow-x-auto"><table className="w-full min-w-[560px] text-left text-xs"><thead className="text-muted-foreground"><tr><th className="py-2 pr-3">Batch</th><th className="py-2 pr-3">Received</th><th className="py-2 pr-3">Cost</th><th className="py-2 pr-3">Received qty</th><th className="py-2">Remaining</th></tr></thead><tbody className="divide-y divide-border">{batchResult.batches.map((batch) => <tr key={batch.id}><td className="py-2 pr-3 font-bold">{batch.batchCode}</td><td className="py-2 pr-3">{new Date(batch.receivedAt).toLocaleDateString("en-PH", { timeZone: "Asia/Manila" })}</td><td className="py-2 pr-3">{batch.costVerified ? `PHP ${Number(batch.unitCost).toFixed(2)}` : "Needs verification"}</td><td className="py-2 pr-3">{batch.quantityReceived}</td><td className="py-2 font-bold">{batch.quantityRemaining}</td></tr>)}</tbody></table></div>
-                  </details>
-                </section>
+              {stockAction !== "price" && batchResult ? (
+                <UnitCostNeeded
+                  batches={batchResult.batches}
+                  drafts={openingCostDrafts}
+                  onDraft={(batchId, value) => setOpeningCostDrafts((current) => ({ ...current, [batchId]: value }))}
+                  onSave={(batchId) => void saveOpeningBatchCost(batchId)}
+                  submitting={submitting}
+                />
               ) : null}
 
-              {restockHasLegacyMismatch ? (
-                <p className="mt-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold leading-5 text-amber-800">
-                  Some saved option totals do not match the product total of {restockingProduct.stock}. Use “Need to correct the count?” once before adding new stock.
-                </p>
-              ) : null}
-
-              {usesVariantRestockEntry ? (
-                <section className="mt-5">
-                  {restockVariantGroups.length > 1 ? (
-                    <div className="mb-4 flex gap-2 overflow-x-auto pb-1" aria-label="Stock option groups">
-                      {restockVariantGroups.map(([optionName, variants], index) => {
-                        const enteredTotal = restockEnteredTotals[index] ?? 0;
-                        const currentTotal = variants.reduce((total, variant) => total + variant.stock, 0);
-                        const targetMatches = enteredTotal === restockEnteredQuantity && (restockMode === "set" || currentTotal === restockingProduct.stock);
-                        const active = activeRestockGroup?.[0] === optionName;
-                        return (
-                          <button
-                            key={optionName}
-                            type="button"
-                            onClick={() => setActiveRestockOptionName(optionName)}
-                            className={cn(
-                              "shrink-0 rounded-md border px-3 py-2 text-left text-xs font-bold transition",
-                              active ? "border-primary bg-primary/10 text-primary" : "border-border bg-white text-muted-foreground hover:bg-surface-subtle"
-                            )}
-                          >
-                            <span>{optionName}</span>
-                            <span className={cn("ml-2", targetMatches && restockEnteredQuantity > 0 ? "text-primary" : "text-muted-foreground")}>{targetMatches && restockEnteredQuantity > 0 ? "✓" : enteredTotal}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  ) : null}
-
-                  {activeRestockGroup ? (
-                    <div className="rounded-lg border bg-surface-subtle p-4">
-                      <div className="flex items-center justify-between gap-3">
-                        <div>
-                          <h3 className="font-extrabold text-foreground">{activeRestockGroup[0]}</h3>
-                          <p className="mt-1 text-xs text-muted-foreground">{restockMode === "add" ? "How many new pieces arrived for each option?" : "What is the exact count for each option?"}</p>
-                        </div>
-                        <span className="rounded-md bg-primary/10 px-2 py-1 text-xs font-extrabold text-primary">Total: {restockEnteredTotals[activeRestockGroupIndex] ?? 0}</span>
-                      </div>
-                      <div className={cn("mt-4 grid gap-3", activeRestockGroup[1].length <= 5 ? "grid-cols-2 sm:grid-cols-5" : "grid-cols-2 sm:grid-cols-3")}>
-                        {sortSizeVariants(activeRestockGroup[1]).map((variant) => (
-                          <label key={variant.id} className="grid gap-1.5 text-xs font-bold text-muted-foreground">
-                            <span className="truncate text-center">{variant.optionValue}</span>
-                            <input
-                              type="number"
-                              min="0"
-                              step="1"
-                              inputMode="numeric"
-                              value={restockVariantQuantities[variant.id] ?? "0"}
-                              onChange={(event) => setRestockVariantQuantities((current) => ({ ...current, [variant.id]: event.target.value }))}
-                              aria-label={`${activeRestockGroup[0]} ${variant.optionValue} ${restockMode === "add" ? "new quantity" : "exact quantity"}`}
-                              className="h-11 min-w-0 rounded-md border px-2 text-center text-base font-normal outline-none focus:border-primary"
-                            />
-                            <span className="text-center text-[10px] font-normal text-muted-foreground">Current {variant.stock}</span>
-                          </label>
-                        ))}
-                      </div>
-                    </div>
-                  ) : null}
-
-                  {restockVariantGroups.length > 1 ? (
-                    <p className="mt-3 text-xs leading-5 text-muted-foreground">Each option group represents the same physical items. Complete every tab with the same total before confirming.</p>
-                  ) : null}
-                </section>
+              {stockAction === "price" ? (
+                <SellingPriceFields
+                  currentPrice={restockingProduct.price}
+                  oldPrice={restockingProduct.oldPrice}
+                  value={restockNewPrice}
+                  onChange={setRestockNewPrice}
+                  latestCost={batchResult?.summary.latestCost ?? null}
+                />
               ) : (
-                <label className="mt-5 grid gap-1.5 text-sm font-semibold">
-                  {restockMode === "add" ? "New items received" : "Exact available stock"}
-                  <input autoFocus required type="number" min={restockMode === "add" ? 1 : 0} step="1" inputMode="numeric" value={restockQuantity} onChange={(event) => setRestockQuantity(event.target.value)} placeholder={restockMode === "add" ? "Example: 12" : "Enter exact count"} className="h-12 rounded-md border px-3 text-base font-normal outline-none focus:border-primary" />
-                </label>
+                <>
+                  {restockHasLegacyMismatch ? (
+                    <p className="mt-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold leading-5 text-amber-800">
+                      The size totals do not match the product total of {restockingProduct.stock}. Post a stock count adjustment once before receiving new stock.
+                    </p>
+                  ) : null}
+
+                  {usesVariantRestockEntry ? (
+                    <section className="mt-5">
+                      {restockVariantGroups.length > 1 ? (
+                        <div className="mb-4 flex gap-2 overflow-x-auto pb-1" aria-label="Stock option groups">
+                          {restockVariantGroups.map(([optionName, variants], index) => {
+                            const enteredTotal = restockEnteredTotals[index] ?? 0;
+                            const currentTotal = variants.reduce((total, variant) => total + variant.stock, 0);
+                            const targetMatches = enteredTotal === restockEnteredQuantity && (stockAction === "adjust" || currentTotal === restockingProduct.stock);
+                            const active = activeRestockGroup?.[0] === optionName;
+                            return (
+                              <button
+                                key={optionName}
+                                type="button"
+                                onClick={() => setActiveRestockOptionName(optionName)}
+                                className={cn(
+                                  "shrink-0 rounded-md border px-3 py-2 text-left text-xs font-bold transition",
+                                  active ? "border-primary bg-primary/10 text-primary" : "border-border bg-white text-muted-foreground hover:bg-surface-subtle"
+                                )}
+                              >
+                                <span>{optionName}</span>
+                                <span className={cn("ml-2", targetMatches && restockEnteredQuantity > 0 ? "text-primary" : "text-muted-foreground")}>{targetMatches && restockEnteredQuantity > 0 ? "✓" : enteredTotal}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ) : null}
+
+                      {activeRestockGroup ? (
+                        <div className="overflow-hidden rounded-lg border">
+                          <div className="grid grid-cols-[1fr_80px_110px_64px] items-center gap-2 bg-surface-subtle px-3 py-2 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+                            <span>{activeRestockGroup[0]}</span><span className="text-right">System</span><span className="text-center">{stockAction === "receive" ? "Qty received" : "Physical count"}</span><span className="text-center">{stockAction === "receive" ? "New total" : "Variance"}</span>
+                          </div>
+                          <div className="divide-y divide-border">
+                            {sortSizeVariants(activeRestockGroup[1]).map((variant) => {
+                              const entered = Math.max(0, Number(restockVariantQuantities[variant.id]) || 0);
+                              return (
+                                <div key={variant.id} className="grid grid-cols-[1fr_80px_110px_64px] items-center gap-2 px-3 py-2">
+                                  <span className="truncate text-sm font-bold text-foreground">{variant.optionValue}</span>
+                                  <span className="text-right text-sm tabular-nums text-muted-foreground">{variant.stock}</span>
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    step="1"
+                                    inputMode="numeric"
+                                    value={restockVariantQuantities[variant.id] ?? "0"}
+                                    onFocus={(event) => event.currentTarget.select()}
+                                    onChange={(event) => setRestockVariantQuantities((current) => ({ ...current, [variant.id]: event.target.value }))}
+                                    aria-label={`${activeRestockGroup[0]} ${variant.optionValue} ${stockAction === "receive" ? "quantity received" : "physical count"}`}
+                                    className="h-10 min-w-0 rounded-md border px-2 text-center text-base outline-none focus:border-primary"
+                                  />
+                                  <span className="text-center">
+                                    {stockAction === "receive"
+                                      ? <span className="text-sm font-bold tabular-nums">{variant.stock + entered}</span>
+                                      : <Variance value={entered - variant.stock} />}
+                                  </span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                          <div className="flex justify-end bg-surface-subtle px-3 py-2 text-xs font-extrabold text-primary">Total entered: {restockEnteredTotals[activeRestockGroupIndex] ?? 0}</div>
+                        </div>
+                      ) : null}
+
+                      {restockVariantGroups.length > 1 ? (
+                        <p className="mt-3 text-xs leading-5 text-muted-foreground">Each option group describes the same physical units. Every tab must reach the same total before saving.</p>
+                      ) : null}
+                    </section>
+                  ) : (
+                    <div className="mt-5 grid items-start gap-4 sm:grid-cols-2">
+                      <label className="grid gap-1.5 text-sm font-semibold">
+                        {stockAction === "receive" ? "Quantity received" : "Physical count"}
+                        <input autoFocus required type="number" min={stockAction === "receive" ? 1 : 0} step="1" inputMode="numeric" value={restockQuantity} onFocus={(event) => event.currentTarget.select()} onChange={(event) => setRestockQuantity(event.target.value)} placeholder={stockAction === "receive" ? "e.g. 12" : "Units on hand"} className="h-12 rounded-md border px-3 text-base font-normal outline-none focus:border-primary" />
+                      </label>
+                      {stockAction === "receive" ? (
+                        <MoneyInput label="Unit cost" value={restockUnitCost} onChange={setRestockUnitCost} hint="Amount paid per unit on the invoice or delivery receipt." />
+                      ) : null}
+                    </div>
+                  )}
+
+                  {stockAction === "receive" ? (
+                    <>
+                      {usesVariantRestockEntry ? (
+                        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                          <MoneyInput label="Unit cost" value={restockUnitCost} onChange={setRestockUnitCost} hint="Amount paid per unit on the invoice or delivery receipt." />
+                        </div>
+                      ) : null}
+                      <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                        <label className="grid gap-1.5 text-sm font-semibold">
+                          Date received
+                          <input required type="date" value={restockReceivedAt} onChange={(event) => setRestockReceivedAt(event.target.value)} className="h-12 rounded-md border bg-white px-3 text-base outline-none focus:border-primary" />
+                        </label>
+                        <label className="grid gap-1.5 text-sm font-semibold">
+                          Supplier / Reference no. <span className="sr-only">(optional)</span>
+                          <input type="text" maxLength={500} value={restockSupplierNote} onChange={(event) => setRestockSupplierNote(event.target.value)} placeholder="Optional, e.g. DR-1024" className="h-12 rounded-md border bg-white px-3 font-normal outline-none focus:border-primary" />
+                        </label>
+                      </div>
+                      <MarginNote price={restockingProduct.price} unitCost={enteredRestockUnitCost} />
+                    </>
+                  ) : (
+                    <div className="mt-5">
+                      <AdjustmentReasonFields reason={adjustmentReason} remarks={adjustmentRemarks} onReason={setAdjustmentReason} onRemarks={setAdjustmentRemarks} />
+                      {restockVariance > 0 ? <p className="mt-3 text-xs leading-5 text-muted-foreground">The {restockVariance} extra unit{restockVariance === 1 ? "" : "s"} will need a unit cost before they can be sold.</p> : null}
+                    </div>
+                  )}
+
+                  <SummaryPanel rows={stockAction === "receive" ? [
+                    { label: "Stock on hand", value: restockingProduct.stock },
+                    { label: "Quantity received", value: `+${restockEnteredQuantity}` },
+                    { label: "New stock on hand", value: resultingStock, emphasis: true }
+                  ] : [
+                    { label: "System stock", value: restockingProduct.stock },
+                    { label: "Physical count", value: restockEnteredQuantity },
+                    { label: "Variance", value: <Variance value={restockVariance} className="text-base" />, emphasis: true }
+                  ]} />
+                  <p className="mt-3 text-xs text-muted-foreground">Reorder alert: {restockingProduct.minimum} units or fewer ({restockingProduct.lowStockPercent}% of stock level). Change it under Manage &gt; Edit details.</p>
+                </>
               )}
 
-              {restockMode === "add" ? (
-                <section className="mt-5 rounded-lg border bg-muted/40 p-4">
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <label className="grid gap-1.5 text-sm font-semibold">
-                      Unit acquisition cost
-                      <div className="flex h-12 items-center rounded-md border bg-white px-3 focus-within:border-primary">
-                        <span className="mr-2 text-sm font-bold text-muted-foreground">PHP</span>
-                        <input required type="number" min="0" max="10000000" step="0.01" inputMode="decimal" value={restockUnitCost} onChange={(event) => setRestockUnitCost(event.target.value)} placeholder="0.00" className="min-w-0 flex-1 bg-transparent text-base outline-none focus-visible:outline-none" />
-                      </div>
-                    </label>
-                    <label className="grid gap-1.5 text-sm font-semibold">
-                      Selling price
-                      <div className="flex h-12 items-center rounded-md border bg-white px-3 focus-within:border-primary">
-                        <span className="mr-2 text-sm font-bold text-muted-foreground">PHP</span>
-                        <input required aria-label="Selling price" type="number" min="0" max="10000000" step="0.01" inputMode="decimal" value={restockSellingPrice} onChange={(event) => setRestockSellingPrice(event.target.value)} placeholder="0.00" className="min-w-0 flex-1 bg-transparent text-base outline-none focus-visible:outline-none" />
-                      </div>
-                      <span className="text-xs font-normal leading-4 text-muted-foreground">Applies to the whole product and future sales.</span>
-                    </label>
-                  </div>
-                  <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                    <label className="grid gap-1.5 text-sm font-semibold">
-                      Date received
-                      <input required type="date" value={restockReceivedAt} onChange={(event) => setRestockReceivedAt(event.target.value)} className="h-12 rounded-md border bg-white px-3 text-base outline-none focus:border-primary" />
-                    </label>
-                    <label className="grid gap-1.5 text-sm font-semibold">
-                      Supplier reference <span className="font-normal text-muted-foreground">(optional)</span>
-                      <input type="text" maxLength={500} value={restockSupplierNote} onChange={(event) => setRestockSupplierNote(event.target.value)} placeholder="Invoice, delivery receipt, or supplier note" className="h-12 rounded-md border bg-white px-3 font-normal outline-none focus:border-primary" />
-                    </label>
-                  </div>
-                  <div className="mt-4 grid gap-2 rounded-md border bg-white p-3 sm:grid-cols-3">
-                    <div><p className="text-xs font-bold text-muted-foreground">Selling price after saving</p><p className="mt-1 font-extrabold">{enteredRestockSellingPrice === null || !Number.isFinite(enteredRestockSellingPrice) ? "Enter price" : `PHP ${enteredRestockSellingPrice.toFixed(2)}`}</p></div>
-                    <div><p className="text-xs font-bold text-muted-foreground">New unit cost</p><p className="mt-1 font-extrabold">{enteredRestockUnitCost === null || !Number.isFinite(enteredRestockUnitCost) ? "Enter cost" : `PHP ${enteredRestockUnitCost.toFixed(2)}`}</p></div>
-                    <div><p className="text-xs font-bold text-muted-foreground">Estimated gross profit</p><p className={cn("mt-1 font-extrabold", estimatedUnitGrossProfit !== null && estimatedUnitGrossProfit < 0 ? "text-red-700" : "text-primary")}>{estimatedUnitGrossProfit === null ? "—" : `PHP ${estimatedUnitGrossProfit.toFixed(2)} / item${estimatedGrossMargin === null ? "" : ` (${estimatedGrossMargin.toFixed(1)}%)`}`}</p></div>
-                  </div>
-                  {estimatedUnitGrossProfit !== null && estimatedUnitGrossProfit < 0 ? <p className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs font-bold text-red-800">Warning: this acquisition cost is higher than the current selling price.</p> : null}
-                  <p className="mt-3 text-xs leading-5 text-muted-foreground">The selling price applies to the whole product and future sales. A new immutable FIFO cost batch will be created; completed historical sales keep their original price and cost allocation.</p>
-                </section>
-              ) : null}
-
-              <section className="mt-5 rounded-lg border bg-surface-subtle p-4">
-                <label className="grid gap-1.5 text-sm font-semibold sm:max-w-xs">
-                  Low-stock warning
-                  <select
-                    value={restockLowStockPercent}
-                    onChange={(event) => setRestockLowStockPercent(Number(event.target.value))}
-                    className="h-11 rounded-md border bg-white px-3 font-normal outline-none focus:border-primary"
-                  >
-                    <option value={10}>10% — very low</option>
-                    <option value={20}>20% — low</option>
-                    <option value={25}>25% — recommended</option>
-                    <option value={30}>30% — early warning</option>
-                    <option value={40}>40% — extra early</option>
-                    <option value={50}>50% — half stock</option>
-                  </select>
-                </label>
-                <p className="mt-3 text-xs leading-5 text-muted-foreground">
-                  Staff will be warned at <strong className="text-foreground">{resultingLowStockThreshold} items or fewer</strong>, based on a stable target of {resultingStockTarget} items. The target can grow after a larger delivery, but it will not shrink as items are sold.
-                </p>
-              </section>
-
-              <div className="mt-5 flex items-center gap-3 rounded-lg bg-primary/10 px-4 py-3">
-                <Plus className="size-6 shrink-0 text-primary" />
-                <div className="min-w-0 flex-1">
-                  <p className="font-extrabold text-foreground">{restockMode === "add" ? `Total items to add: ${restockEnteredQuantity}` : `Corrected total: ${restockEnteredQuantity}`}</p>
-                  <p className="mt-0.5 text-xs text-muted-foreground">{restockMode === "add" ? `After saving: ${resultingStock} items` : "This will replace the current stock count."}</p>
-                </div>
-              </div>
+              <CostHistory batchResult={batchResult} sellingPrice={restockingProduct.price} />
             </div>
 
-            <footer className="flex shrink-0 items-center justify-end gap-2 border-t border-border bg-white p-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+            <footer className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-t border-border bg-white p-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+              <SubmitHint text={submitting ? "" : restockMissingInput} />
               <Button type="button" variant="secondary" onClick={closeRestockDialog} disabled={submitting}>Cancel</Button>
-              <Button type="submit" disabled={submitting || !restockCanSubmit || restockHasLegacyMismatch}>
-                {submitting ? "Saving..." : restockMode === "add" ? "Confirm & add" : "Save corrected stock"}
+              <Button type="submit" disabled={submitting || !restockCanSubmit}>
+                {submitting ? "Saving..." : stockAction === "receive" ? "Receive stock" : stockAction === "adjust" ? "Post adjustment" : "Update price"}
               </Button>
             </footer>
           </form>

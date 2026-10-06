@@ -135,6 +135,8 @@ async function mockInventory(page: Page) {
   const unhandled: string[] = [];
   const restoredRequests: string[] = [];
   const createdRequests: Array<Record<string, unknown>> = [];
+  const restockRequests: Array<{ productId: string; body: Record<string, unknown> }> = [];
+  const priceRequests: Array<{ productId: string; body: Record<string, unknown> }> = [];
   let archivedProducts = [archivedProduct];
   await page.route("**/api/backend/**", async (route) => {
     const request = route.request();
@@ -256,6 +258,31 @@ async function mockInventory(page: Page) {
       });
       return;
     }
+    const restockMatch = path.match(/^\/api\/backend\/staff\/products\/([^/]+)\/(skus\/)?restock$/);
+    if (restockMatch && request.method() === "POST") {
+      const product = [clothProduct, optionProduct].find((entry) => entry.id === restockMatch[1])!;
+      const body = request.postDataJSON() as Record<string, unknown>;
+      restockRequests.push({ productId: product.id, body });
+      if (restockMatch[2]) {
+        const quantities = body.quantities as Array<{ skuId: string; quantity: number }>;
+        const skus = (product.skus ?? []).map((sku) => {
+          const entered = quantities.find((entry) => entry.skuId === sku.id)?.quantity ?? 0;
+          return { ...sku, stock: body.mode === "set" ? entered : sku.stock + entered };
+        });
+        await json(route, { product: { ...product, skus, stock: skus.reduce((total, sku) => total + sku.stock, 0) } });
+      } else {
+        const quantity = body.quantity as number;
+        await json(route, { product: { ...product, stock: body.mode === "set" ? quantity : product.stock + quantity } });
+      }
+      return;
+    }
+    const priceProduct = [clothProduct, optionProduct].find((product) => path === `/api/backend/staff/products/${product.id}`);
+    if (priceProduct && request.method() === "PATCH") {
+      const body = request.postDataJSON() as Record<string, unknown>;
+      priceRequests.push({ productId: priceProduct.id, body });
+      await json(route, { product: { ...priceProduct, price: String(body.price) } });
+      return;
+    }
     if (path === `/api/backend/staff/products/${archivedProduct.id}/restore` && request.method() === "POST") {
       restoredRequests.push(archivedProduct.id);
       archivedProducts = [];
@@ -266,7 +293,7 @@ async function mockInventory(page: Page) {
     unhandled.push(`${request.method()} ${path}`);
     await json(route, { error: "Unexpected API request in inventory test." }, 500);
   });
-  return { restoredRequests, createdRequests, unhandled };
+  return { restoredRequests, createdRequests, restockRequests, priceRequests, unhandled };
 }
 
 const viewports = [
@@ -295,19 +322,23 @@ test("add-product dialog uses percentage alerts without React key warnings", asy
   await expect(dialog).toBeVisible();
   const productDetails = dialog.locator("section").filter({ has: page.getByRole("heading", { name: "Product details" }) });
   await expect(productDetails.getByText("Selling price", { exact: true })).toBeVisible();
-  await expect(productDetails.getByText("Opening-stock cost", { exact: true })).toBeVisible();
-  await expect(productDetails.getByLabel("Unit acquisition cost")).toBeVisible();
+  await expect(productDetails.getByText("Opening stock cost", { exact: true })).toBeVisible();
+  await expect(productDetails.getByLabel("Unit cost")).toBeVisible();
   const stockSetup = dialog.locator("section").filter({ has: page.getByRole("heading", { name: "Stock setup" }) });
-  await expect(stockSetup.getByText("Opening-stock cost", { exact: true })).toHaveCount(0);
-  await expect(dialog.getByLabel("Low-stock warning")).toHaveValue("25");
-  await expect(dialog.getByText(/staff will be warned at 0 or fewer/i)).toBeVisible();
+  await expect(stockSetup.getByText("Opening stock cost", { exact: true })).toHaveCount(0);
+  await expect(dialog.getByLabel("Reorder alert")).toHaveValue("25");
+  await expect(dialog.getByText(/alerted at 0 units or fewer/i)).toBeVisible();
   await dialog.getByLabel(/Start from a WUP template/).selectOption("elem-pe-shirt");
-  await expect(dialog.getByText(/applied automatically to every size/i)).toBeVisible();
+  await expect(dialog.getByText(/reorder alert below is applied automatically to every size/i)).toBeVisible();
+  await dialog.getByRole("group", { name: "Size presets" }).getByRole("button", { name: "XS\u20133XL" }).click();
+  await expect(dialog.getByLabel("Size 1 name")).toHaveValue("XS");
+  await expect(dialog.getByLabel("Size 7 name")).toHaveValue("3XL");
   await dialog.getByRole("button", { name: "Save product" }).click();
   await expect(dialog).toBeHidden();
   await expect(page.locator("article").filter({ hasText: "Elementary PE Shirt" })).toBeVisible();
   expect(createdRequests).toHaveLength(1);
   expect(createdRequests[0]).toMatchObject({ lowStockPercent: 25, saleMode: "OPTIONS" });
+  expect((createdRequests[0].variants as Array<{ optionValue: string }>).map((variant) => variant.optionValue)).toEqual(["XS", "S", "M", "L", "XL", "2XL", "3XL"]);
   expect(createdRequests[0]).not.toHaveProperty("lowStockThreshold");
 
   await page.setViewportSize({ width: 390, height: 844 });
@@ -356,23 +387,24 @@ for (const viewport of viewports) {
     await clothUpdateButton.click();
     const clothDialog = page.getByRole("dialog", { name: "Update stock" });
     await expect(clothDialog).toBeVisible();
-    await expect(clothDialog.getByText("New items received")).toBeVisible();
+    await expect(clothDialog.getByRole("tab", { name: "Receive stock" })).toHaveAttribute("aria-selected", "true");
     await expect(clothDialog.getByText("PHP 125.00", { exact: true })).toBeVisible();
-    await clothDialog.getByLabel("New items received").fill("2");
-    await expect(clothDialog.getByLabel("Low-stock warning")).toHaveValue("25");
-    await expect(clothDialog.getByText(/warned at 5 items or fewer/)).toBeVisible();
-    await clothDialog.getByLabel("Unit acquisition cost").fill("80");
-    await expect(clothDialog.getByText(/PHP 45\.00 \/ item/)).toBeVisible();
-    await clothDialog.getByLabel("Selling price", { exact: true }).fill("150");
-    await expect(clothDialog.getByText(/PHP 70\.00 \/ item/)).toBeVisible();
-    const clothSaveButton = clothDialog.getByRole("button", { name: "Confirm & add" });
+    const clothSaveButton = clothDialog.getByRole("button", { name: "Receive stock" });
+    await expect(clothSaveButton).toBeDisabled();
+    await expect(clothDialog.getByText("Enter the quantity received.")).toBeVisible();
+    await clothDialog.getByLabel("Quantity received").fill("2");
+    await expect(clothDialog.getByText("Enter the unit cost.")).toBeVisible();
+    await clothDialog.getByLabel("Unit cost").fill("80");
+    await expect(clothDialog.getByText(/PHP 45\.00 per unit \(36\.0%\)/)).toBeVisible();
+    await expect(clothDialog.getByLabel("Summary")).toContainText("New stock on hand20");
+    await expect(clothDialog.getByLabel(/selling price/i)).toHaveCount(0);
     const saveButtonBox = await clothSaveButton.boundingBox();
     expect(saveButtonBox).not.toBeNull();
     expect((saveButtonBox?.y ?? 0) + (saveButtonBox?.height ?? 0)).toBeLessThanOrEqual(viewport.height);
     await clothSaveButton.click();
-    const clothConfirmation = page.getByRole("alertdialog", { name: "Add this inventory stock?" });
-    await expect(clothConfirmation).toContainText("2 new items");
-    await expect(clothConfirmation).toContainText("selling price will change from PHP 125.00 to PHP 150.00");
+    const clothConfirmation = page.getByRole("alertdialog", { name: "Receive this stock?" });
+    await expect(clothConfirmation).toContainText("Receive 2 units of Premium Cotton Cloth at PHP 80.00 per unit");
+    await expect(clothConfirmation).toContainText("18 \u2192 20");
     await expect(clothConfirmation.getByRole("button", { name: "Cancel" })).toBeFocused();
     await page.keyboard.press("Escape");
     await expect(clothDialog).toBeVisible();
@@ -389,7 +421,7 @@ for (const viewport of viewports) {
     const detailsDialog = page.getByRole("dialog", { name: "Edit details" });
     await expect(detailsDialog.getByText("PHP 350.00", { exact: true }).first()).toBeVisible();
     await expect(detailsDialog.getByText("PHP 200.00", { exact: true }).first()).toBeVisible();
-    await expect(detailsDialog.getByText("PHP 150.00 / item", { exact: true })).toBeVisible();
+    await expect(detailsDialog.getByText("PHP 150.00 per unit", { exact: true })).toBeVisible();
     const sellingPriceInput = detailsDialog.getByLabel("Selling price", { exact: true });
     const oldPriceInput = detailsDialog.getByLabel(/Old price/);
     const [sellingPriceBox, oldPriceBox] = await Promise.all([sellingPriceInput.boundingBox(), oldPriceInput.boundingBox()]);
@@ -402,20 +434,17 @@ for (const viewport of viewports) {
 
     const skuDialog = page.getByRole("dialog", { name: "Update stock" });
     await expect(skuDialog).toBeVisible();
-    await expect(skuDialog.getByText("Size: M · Color: Red", { exact: true })).toBeVisible();
-    await expect(skuDialog.getByText("Size: L · Color: Blue", { exact: true })).toBeVisible();
-    await skuDialog.getByLabel("Combination 1 new quantity").fill("1");
-    await expect(skuDialog.getByLabel("Low-stock warning")).toHaveValue("25");
-    await expect(skuDialog.getByText(/product warning will be 2 items or fewer/)).toBeVisible();
-    await skuDialog.getByLabel("Unit acquisition cost").fill("200");
-    await expect(skuDialog.getByText(/PHP 150\.00 \/ item/)).toBeVisible();
-    await skuDialog.getByLabel("Selling price", { exact: true }).fill("400");
-    await expect(skuDialog.getByText(/PHP 200\.00 \/ item/)).toBeVisible();
-    const skuSaveButton = skuDialog.getByRole("button", { name: "Confirm & add" });
+    await expect(skuDialog.getByText("Size \u00b7 Color", { exact: true })).toBeVisible();
+    await expect(skuDialog.getByText("M \u00b7 Red", { exact: true })).toBeVisible();
+    await expect(skuDialog.getByText("L \u00b7 Blue", { exact: true })).toBeVisible();
+    await skuDialog.getByLabel("Size: M \u00b7 Color: Red quantity received").fill("1");
+    await skuDialog.getByLabel("Unit cost").fill("200");
+    await expect(skuDialog.getByText(/PHP 150\.00 per unit/)).toBeVisible();
+    await expect(skuDialog.getByLabel("Summary")).toContainText("New stock on hand8");
+    const skuSaveButton = skuDialog.getByRole("button", { name: "Receive stock" });
     await skuSaveButton.click();
-    const skuConfirmation = page.getByRole("alertdialog", { name: "Add this inventory stock?" });
-    await expect(skuConfirmation).toContainText("1 new item");
-    await expect(skuConfirmation).toContainText("selling price will change from PHP 350.00 to PHP 400.00");
+    const skuConfirmation = page.getByRole("alertdialog", { name: "Receive this stock?" });
+    await expect(skuConfirmation).toContainText("Receive 1 unit of PE Shirt With Variants at PHP 200.00 per unit");
     await page.keyboard.press("Escape");
     await expect(skuDialog).toBeVisible();
     await expect(skuSaveButton).toBeFocused();
@@ -517,4 +546,89 @@ test("count-sheet items show what staff still need to set and can be filtered", 
   await expect.poll(() => needsRequested.at(-1)).toBe("PRICE");
   await expect(page.locator("article").filter({ hasText: clothProduct.name })).toHaveCount(0);
   await expect(importedRow).toBeVisible();
+});
+
+test("stock adjustments record the variance and reason, and price changes are a separate action", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "One adjustment contract is sufficient.");
+  const { restockRequests, priceRequests, unhandled } = await mockInventory(page);
+
+  await page.goto("/staff/inventory");
+  await dismissWelcomeGate(page);
+  const clothRow = page.locator("article").filter({ hasText: clothProduct.name }).first();
+  await clothRow.getByRole("button", { name: "Update stock" }).click();
+  const dialog = page.getByRole("dialog", { name: "Update stock" });
+
+  await dialog.getByRole("tab", { name: "Adjust stock count" }).click();
+  const physicalCount = dialog.getByLabel("Physical count");
+  await expect(physicalCount).toHaveValue("18");
+  const postButton = dialog.getByRole("button", { name: "Post adjustment" });
+  await expect(postButton).toBeDisabled();
+  await expect(dialog.getByText(/No variance yet/)).toBeVisible();
+  await physicalCount.fill("15");
+  await expect(dialog.getByLabel("Summary")).toContainText("Variance−3");
+  await dialog.getByLabel("Adjustment reason").selectOption("Damaged / defective");
+  await dialog.getByLabel("Remarks").fill("water damage");
+  await postButton.click();
+  const confirmation = page.getByRole("alertdialog", { name: "Post this stock adjustment?" });
+  await expect(confirmation).toContainText("system stock 18 → physical count 15 (variance −3)");
+  await confirmation.getByRole("button", { name: "Post adjustment" }).click();
+  await expect(dialog).toBeHidden();
+  await expect(page.getByText(/Premium Cotton Cloth adjusted to 15 units/)).toBeVisible();
+  expect(restockRequests).toHaveLength(1);
+  expect(restockRequests[0].body).toMatchObject({
+    mode: "set",
+    quantity: 15,
+    notes: "Stock count adjustment - Damaged / defective: water damage"
+  });
+  expect(restockRequests[0].body).not.toHaveProperty("unitCost");
+  expect(restockRequests[0].body).not.toHaveProperty("sellingPrice");
+
+  await clothRow.getByRole("button", { name: "Update stock" }).click();
+  await dialog.getByRole("tab", { name: "Update selling price" }).click();
+  await dialog.getByLabel("New selling price").fill("150");
+  await expect(dialog.getByText(/Margin at the new price of PHP 150\.00: PHP 70\.00 per unit/)).toBeVisible();
+  await dialog.getByRole("button", { name: "Update price" }).click();
+  await page.getByRole("alertdialog", { name: "Update the selling price?" }).getByRole("button", { name: "Update price" }).click();
+  await expect(dialog).toBeHidden();
+  expect(priceRequests).toEqual([{ productId: clothProduct.id, body: { price: 150, notes: "Selling price updated from Update stock." } }]);
+  expect(restockRequests).toHaveLength(1);
+  expect(unhandled).toEqual([]);
+});
+
+test("stock count posts only the items with a variance", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "One stock-count contract is sufficient.");
+  const { restockRequests, unhandled } = await mockInventory(page);
+
+  await page.goto("/staff/inventory");
+  await dismissWelcomeGate(page);
+  await page.getByRole("button", { name: "Stock count" }).click();
+  const workspace = page.getByRole("region", { name: "Stock count" });
+  await expect(workspace).toBeVisible();
+  await expect(page.locator("#inventory-product-list")).toHaveCount(0);
+
+  const postButton = workspace.getByRole("button", { name: /^Post/ });
+  await expect(postButton).toBeDisabled();
+  await workspace.getByLabel("Premium Cotton Cloth All units physical count").fill("20");
+  await workspace.getByLabel("PE Shirt With Variants M · Red physical count").fill("4");
+  await workspace.getByLabel("PE Shirt With Variants L · Blue physical count").fill("1");
+  await expect(workspace).toContainText("2 items with variance");
+  await expect(workspace).toContainText("Over +2");
+  await expect(workspace).toContainText("Short −2");
+
+  await workspace.getByLabel("Only items with variance").check();
+  await expect(postButton).toHaveText("Post 2 adjustments");
+  await postButton.click();
+  await page.getByRole("alertdialog", { name: "Post 2 stock adjustments?" }).getByRole("button", { name: "Post adjustments" }).click();
+  await expect(workspace.getByRole("status")).toContainText("2 adjustments posted.");
+
+  expect(restockRequests).toHaveLength(2);
+  expect(restockRequests.find((entry) => entry.productId === clothProduct.id)?.body).toMatchObject({ mode: "set", quantity: 20, notes: "Stock count adjustment - Physical inventory count" });
+  const skuBody = restockRequests.find((entry) => entry.productId === optionProduct.id)?.body as { mode: string; quantities: Array<{ skuId: string; quantity: number }> };
+  expect(skuBody.mode).toBe("set");
+  expect([...skuBody.quantities].sort((left, right) => left.skuId.localeCompare(right.skuId))).toEqual([{ skuId: "sku-l-blue", quantity: 1 }, { skuId: "sku-m-red", quantity: 4 }]);
+  await expect(workspace.getByLabel("Only items with variance")).not.toBeChecked();
+  await expect(workspace.getByLabel("Premium Cotton Cloth All units physical count")).toHaveValue("");
+  await expect(workspace.getByText("Posted", { exact: true })).toHaveCount(2);
+  await expect(postButton).toBeDisabled();
+  expect(unhandled).toEqual([]);
 });
