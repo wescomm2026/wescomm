@@ -137,7 +137,7 @@ test("staff and FAQ confirmations use one accessible responsive dialog", () => {
   assert.match(confirmationDialog, /data-dialog-autofocus/);
   assert.match(confirmationDialog, /sm:flex-row/);
   assert.match(confirmationFlows, /useConfirmationDialog/);
-  assert.match(confirmationFlows, /Save these corrected stock counts\?/);
+  assert.match(confirmationFlows, /Post this stock adjustment\?/);
   assert.match(confirmationFlows, /Cancel this reservation\?/);
   assert.match(confirmationFlows, /Return this conversation to WesBot\?/);
   assert.doesNotMatch(confirmationFlows, /\bwindow\.(?:confirm|alert|prompt)\s*\(/);
