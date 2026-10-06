@@ -57,10 +57,17 @@ export type StaffProduct = {
   targetDepartments?: Array<{ id: string; code: string; displayName: string }>;
   skuInventoryEnabled?: boolean;
   inventoryReconciledAt?: string | null;
+  /** Still PHP 0: hidden from students and not sellable until staff set a price. */
+  needsPrice?: boolean;
+  /** Counted stock whose unit cost staff have not verified yet; it cannot be sold. */
+  unverifiedCostQuantity?: number;
+  hasPhoto?: boolean;
   category?: StaffCategory | null;
   variants?: StaffProductVariant[];
   skus?: StaffProductSku[];
 };
+
+export type StaffInventoryAttention = "PRICE" | "COST" | "PHOTO";
 
 export type StaffProductPayload = {
   name: string;
@@ -114,6 +121,7 @@ export type StaffProductListOptions = {
   productId?: string;
   status?: StaffProduct["status"];
   visibility?: StaffProductVisibility;
+  needs?: StaffInventoryAttention;
   includeCategories?: boolean;
   signal?: AbortSignal;
 };
@@ -242,6 +250,7 @@ export async function getStaffProductsPage(token: string, options: StaffProductL
   if (options.productId) params.set("productId", options.productId);
   if (options.status) params.set("status", options.status);
   if (options.visibility) params.set("visibility", options.visibility);
+  if (options.needs) params.set("needs", options.needs);
   if (options.includeCategories) params.set("includeCategories", "1");
   const suffix = params.size ? `?${params.toString()}` : "";
   const data = await staffFetch<{
@@ -259,6 +268,38 @@ export async function getStaffProductsPage(token: string, options: StaffProductL
 export async function getStaffProducts(token: string) {
   const page = await getStaffProductsPage(token);
   return page.products;
+}
+
+export type InventoryReportItem = {
+  productId: string;
+  name: string;
+  saleMode: ProductSaleMode;
+  unitPrice: number;
+  total: number;
+  lines: Array<{ label: string; stock: number }>;
+  needsPrice: boolean;
+  unverifiedCostQuantity: number;
+  setupRequired: boolean;
+};
+
+export type InventoryReport = {
+  generatedAt: string;
+  generatedBy: string | null;
+  filters: { categorySlug: string | null; includeZeroStock: boolean };
+  categories: Array<{ name: string; slug: string; total: number; items: InventoryReportItem[] }>;
+  totals: { products: number; lines: number; units: number; needsPrice: number; unverifiedCostUnits: number };
+};
+
+export async function getInventoryReport(
+  token: string,
+  options: { categorySlug?: string; includeZeroStock?: boolean; signal?: AbortSignal } = {}
+) {
+  const params = new URLSearchParams();
+  if (options.categorySlug) params.set("category", options.categorySlug);
+  if (options.includeZeroStock === false) params.set("includeZero", "0");
+  const suffix = params.size ? `?${params.toString()}` : "";
+  const data = await staffFetch<{ report: InventoryReport }>(`/staff/products/inventory-report${suffix}`, token, { signal: options.signal });
+  return data.report;
 }
 
 export async function getStaffCategories(token: string) {
@@ -465,11 +506,18 @@ export type WalkInReceiptItem = {
   subtotal: string;
 };
 
+export type WalkInCollectionChannel = "COMMISSARY" | "TREASURER";
+
 export type WalkInReceipt = {
   id: string;
   receiptCode: string;
   studentId: string | null;
   buyerName: string;
+  collectionChannel: WalkInCollectionChannel;
+  officialReceiptNumber: string | null;
+  /** Voided Treasury sale: stock is back, but the Treasury refund is settled outside WESCOMM. */
+  treasuryReconciliationRequired: boolean;
+  publicVerificationUrl: string | null;
   totalAmount: string;
   paymentMethod: string;
   status: "PENDING" | "VERIFIED" | "VOIDED";
@@ -486,8 +534,13 @@ export type WalkInReceipt = {
   } | null;
   issuedBy: { id: string; fullName: string } | null;
   sale: {
-    cashTendered: string;
-    changeDue: string;
+    collectionChannel: WalkInCollectionChannel;
+    officialReceiptNumber: string | null;
+    treasuryVerifiedById: string | null;
+    treasuryVerifiedAt: string | null;
+    /** Null for Treasury sales: the Commissary cashier handles no cash. */
+    cashTendered: string | null;
+    changeDue: string | null;
     cashierId: string | null;
     cashierName: string;
     clientSaleId: string;
@@ -498,16 +551,25 @@ export type WalkInReceipt = {
   items: WalkInReceiptItem[];
 };
 
+type WalkInSaleBasePayload = {
+  items: WalkInSaleItemPayload[];
+  buyerName: string;
+  studentId?: string;
+  receiptCode?: string;
+  clientSaleId: string;
+};
+
+export type WalkInSalePayload =
+  | (WalkInSaleBasePayload & { collectionChannel: "COMMISSARY"; cashReceived: number })
+  | (WalkInSaleBasePayload & {
+      collectionChannel: "TREASURER";
+      officialReceiptNumber: string;
+      treasuryReceiptInspected: true;
+    });
+
 export async function recordWalkInSale(
   token: string,
-  payload: {
-    items: WalkInSaleItemPayload[];
-    buyerName: string;
-    studentId?: string;
-    receiptCode?: string;
-    cashReceived: number;
-    clientSaleId: string;
-  }
+  payload: WalkInSalePayload
 ) {
   const data = await staffFetch<{ receipt: WalkInReceipt }>("/staff/walk-in-sales", token, {
     method: "POST",

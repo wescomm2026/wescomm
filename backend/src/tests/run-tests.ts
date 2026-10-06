@@ -107,6 +107,8 @@ await import("./wesbot-ai-usage.test.js");
 await import("./public-receipt.test.js");
 await import("./receipt-integrity.test.js");
 await import("./walk-in-sale.test.js");
+await import("./inventory-count-import.test.js");
+await import("./inventory-report.test.js");
 await import("./report-range.test.js");
 await import("./report-insights.test.js");
 await import("./sales-ledger.test.js");
@@ -136,6 +138,7 @@ if (process.env.RUN_DATABASE_INTEGRATION_TESTS === "true") {
   await import("./rate-limit-postgres.integration.test.js");
   await import("./receipt-postgres.integration.test.js");
   await import("./walk-in-sale-postgres.integration.test.js");
+  await import("./inventory-count-import-postgres.integration.test.js");
   await import("./wishlist-postgres.integration.test.js");
   await import("./conversation-archive-postgres.integration.test.js");
   await import("./conversation-message-edit-postgres.integration.test.js");

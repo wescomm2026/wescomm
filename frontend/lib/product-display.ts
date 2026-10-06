@@ -54,13 +54,20 @@ function normalizeOptionValue(value: string) {
   return value.trim().toLowerCase().replace(/[._-]+/g, " ").replace(/\s+/g, " ");
 }
 
+// Children's numbered sizes (#8, #10, ... #20) come before letter sizes, smallest first.
+function sizeRank(key: string) {
+  const numbered = key.match(/^#?\s*(\d{1,3})$/);
+  if (numbered) return Number(numbered[1]) - 1000;
+  return SIZE_RANK.get(key);
+}
+
 export function sortProductOptionValues(optionName: string, values: string[]) {
   if (!/size/i.test(optionName)) return [...values];
   return [...values].sort((left, right) => {
     const leftKey = normalizeOptionValue(left);
     const rightKey = normalizeOptionValue(right);
-    const leftRank = SIZE_RANK.get(leftKey);
-    const rightRank = SIZE_RANK.get(rightKey);
+    const leftRank = sizeRank(leftKey);
+    const rightRank = sizeRank(rightKey);
     if (leftRank !== undefined || rightRank !== undefined) {
       if (leftRank === undefined) return 1;
       if (rightRank === undefined) return -1;

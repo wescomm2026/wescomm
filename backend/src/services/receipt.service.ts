@@ -103,7 +103,7 @@ export function createPublicVerificationToken() {
   };
 }
 
-function publicVerificationUrl(encryptedToken: string | null) {
+export function publicVerificationUrl(encryptedToken: string | null) {
   if (!encryptedToken) return null;
   const token = decryptSensitiveText(encryptedToken, RECEIPT_TOKEN_CONTEXT);
   if (!token) return null;
@@ -160,7 +160,7 @@ const receiptRecordSelect = Prisma.validator<Prisma.ReceiptSelect>()({
   updatedAt: true,
   student: { select: { id: true, fullName: true, email: true, studentNumber: true } },
   issuedBy: { select: { id: true, fullName: true, email: true, studentNumber: true } },
-  walkInSale: { select: { buyerNameSnapshot: true } },
+  walkInSale: { select: { buyerNameSnapshot: true, collectionChannel: true, officialReceiptNumber: true } },
   walkInSaleItems: {
     select: {
       id: true,
@@ -214,8 +214,12 @@ function mapPrismaReceipt(receipt: ReceiptRecord) {
     reservationId: receipt.reservationId,
     totalAmount: receipt.totalAmount.toString(),
     paymentMethod: receipt.paymentMethod,
-    collectionChannel: receipt.reservation?.collectionPayment?.collectionChannel ?? null,
-    officialReceiptNumber: receipt.reservation?.collectionPayment?.officialReceiptNumber ?? null,
+    collectionChannel: receipt.reservation?.collectionPayment?.collectionChannel
+      ?? receipt.walkInSale?.collectionChannel
+      ?? null,
+    officialReceiptNumber: receipt.reservation?.collectionPayment?.officialReceiptNumber
+      ?? receipt.walkInSale?.officialReceiptNumber
+      ?? null,
     status: receipt.status,
     publicVerificationUrl: publicVerificationUrl(receipt.publicVerificationTokenEncrypted),
     receiptImageUrl: receipt.receiptImageUrl,

@@ -58,15 +58,32 @@ const REGISTER_COLUMNS: Array<{ label: string; width: string; numeric?: boolean 
   { label: "#", width: "3%", numeric: true },
   { label: "Date/Time", width: "10%" },
   { label: "Receipt No.", width: "9.5%" },
-  { label: "Type", width: "7.5%" },
-  { label: "Student/Buyer", width: "13%" },
-  { label: "Order Ref.", width: "8.5%" },
-  { label: "Items", width: "19%" },
+  { label: "Type", width: "6%" },
+  { label: "Student/Buyer", width: "11%" },
+  { label: "Order Ref.", width: "8%" },
+  { label: "Items", width: "19.5%" },
   { label: "Qty", width: "4%", numeric: true },
   { label: "Collection Point", width: "8%" },
-  { label: "Cashier", width: "9.5%" },
+  // Wide enough for a typical full name on one line, so register rows stay one line tall.
+  { label: "Cashier", width: "13%" },
   { label: "Amount", width: "8%", numeric: true }
 ];
+
+// A4 landscape (210 mm tall) minus the 8 mm top and 12 mm bottom @page margins in
+// globals.css, less a small buffer for rounding between screen and print layout.
+const PRINT_PAGE_HEIGHT_MM = 210 - 8 - 12 - 3;
+const MM_PER_CSS_PIXEL = 25.4 / 96;
+// Shrink to one page only when the report barely overflows it; longer reports
+// paginate at full size rather than becoming unreadably small.
+const MIN_FIT_SCALE = 0.8;
+// A void list this short prints together with the sign-off block.
+const COMPACT_CLOSING_MAX_VOIDS = 10;
+
+export function salesReportPrintScale(contentHeightMm: number) {
+  if (!Number.isFinite(contentHeightMm) || contentHeightMm <= PRINT_PAGE_HEIGHT_MM) return 1;
+  const scale = Math.floor((PRINT_PAGE_HEIGHT_MM / contentHeightMm) * 100) / 100;
+  return scale >= MIN_FIT_SCALE ? scale : 1;
+}
 
 function transactionCount(count: number) {
   return `${count.toLocaleString("en-PH")} transaction${count === 1 ? "" : "s"}`;
@@ -130,10 +147,39 @@ export function SalesReportPreview({ role, onClose, onOptionsChange }: SalesRepo
   const [downloading, setDownloading] = useState(false);
   const requestAbortRef = useRef<AbortController | null>(null);
   const requestSequenceRef = useRef(0);
+  const printAreaRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     return () => requestAbortRef.current?.abort();
   }, []);
+
+  // Browsers fire beforeprint for both the Print button and Ctrl+P. Switch the report to
+  // its print layout, measure it at the printed width, and fit it to one page if needed.
+  useEffect(() => {
+    if (!report) return;
+    const applyPrintLayout = () => {
+      const printArea = printAreaRef.current;
+      if (!printArea) return;
+      printArea.style.removeProperty("--srd-print-scale");
+      printArea.classList.add("srd-print-layout");
+      const heightMm = printArea.getBoundingClientRect().height * MM_PER_CSS_PIXEL;
+      const scale = salesReportPrintScale(heightMm);
+      if (scale < 1) printArea.style.setProperty("--srd-print-scale", String(scale));
+    };
+    const restoreScreenLayout = () => {
+      const printArea = printAreaRef.current;
+      if (!printArea) return;
+      printArea.classList.remove("srd-print-layout");
+      printArea.style.removeProperty("--srd-print-scale");
+    };
+    window.addEventListener("beforeprint", applyPrintLayout);
+    window.addEventListener("afterprint", restoreScreenLayout);
+    return () => {
+      window.removeEventListener("beforeprint", applyPrintLayout);
+      window.removeEventListener("afterprint", restoreScreenLayout);
+      restoreScreenLayout();
+    };
+  }, [report]);
 
   const options = useMemo<SalesLedgerOptions>(() => ({
     period,
@@ -289,7 +335,7 @@ export function SalesReportPreview({ role, onClose, onOptionsChange }: SalesRepo
               You may still print or download this zero-activity report for the official record.
             </InlineAlert>
           ) : null}
-          <article id="sales-report-print-area" className="sales-report-doc" aria-label={`${PERIOD_TITLES[report.range.period]} for ${report.range.label}`}>
+          <article ref={printAreaRef} id="sales-report-print-area" data-print-document className="sales-report-doc" aria-label={`${PERIOD_TITLES[report.range.period]} for ${report.range.label}`}>
             <header className="srd-header">
               <div>
                 <p className="srd-wordmark">WESCOMM</p>
@@ -408,55 +454,59 @@ export function SalesReportPreview({ role, onClose, onOptionsChange }: SalesRepo
               )}
             </section>
 
-            <section className="srd-section" aria-labelledby="srd-voids-heading">
-              <h3 id="srd-voids-heading" className="srd-heading srd-heading--void">Voided Transactions</h3>
-              {report.voids.length ? (
-                <div className="srd-table-wrap">
-                  <table className="srd-table srd-table--voids">
-                    <thead>
-                      <tr>
-                        {["Receipt", "Original Sale Date", "Void Date", "Type"].map((heading) => <th key={heading} scope="col">{heading}</th>)}
-                        <th scope="col" className="num">Amount</th>
-                        {["Reason", "Cashier", "Voided By"].map((heading) => <th key={heading} scope="col">{heading}</th>)}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {report.voids.map((voidRow) => (
-                        <tr key={`${voidRow.receiptCode}-${voidRow.voidedAt}`}>
-                          <td className="strong">{voidRow.receiptCode}</td>
-                          <td className="nowrap">{voidRow.originalSaleAt ? formatDateTime(voidRow.originalSaleAt) : "—"}</td>
-                          <td className="nowrap">{formatDateTime(voidRow.voidedAt)}</td>
-                          <td>{voidRow.type === "WALK_IN" ? "Walk-in" : "Reservation"}</td>
-                          <td className="num strong srd-negative">{formatPeso(voidRow.amount)}</td>
-                          <td>{voidRow.reason ?? "—"}</td>
-                          <td>{voidRow.cashierName ?? "—"}</td>
-                          <td>{voidRow.voidedBy ?? "—"}</td>
+            <div className={report.voids.length <= COMPACT_CLOSING_MAX_VOIDS ? "srd-closing srd-closing--compact" : "srd-closing"}>
+              <section className="srd-section" aria-labelledby="srd-voids-heading">
+                <h3 id="srd-voids-heading" className="srd-heading srd-heading--void">Voided Transactions</h3>
+                {report.voids.length ? (
+                  <div className="srd-table-wrap">
+                    <table className="srd-table srd-table--voids">
+                      <thead>
+                        <tr>
+                          {["Receipt", "Original Sale Date", "Void Date", "Type"].map((heading) => <th key={heading} scope="col">{heading}</th>)}
+                          <th scope="col" className="num">Amount</th>
+                          {["Reason", "Cashier", "Voided By"].map((heading) => <th key={heading} scope="col">{heading}</th>)}
                         </tr>
-                      ))}
-                    </tbody>
-                    <tfoot>
-                      <tr>
-                        <td colSpan={4} className="num">Total void amount (not part of recognized sales)</td>
-                        <td className="num srd-negative">{formatPeso(summary.voidsProcessed.amount)}</td>
-                        <td colSpan={3} />
-                      </tr>
-                    </tfoot>
-                  </table>
-                </div>
-              ) : (
-                <p className="srd-empty">No voids processed in this period.</p>
-              )}
-            </section>
+                      </thead>
+                      <tbody>
+                        {report.voids.map((voidRow) => (
+                          <tr key={`${voidRow.receiptCode}-${voidRow.voidedAt}`}>
+                            <td className="strong">{voidRow.receiptCode}</td>
+                            <td className="nowrap">{voidRow.originalSaleAt ? formatDateTime(voidRow.originalSaleAt) : "—"}</td>
+                            <td className="nowrap">{formatDateTime(voidRow.voidedAt)}</td>
+                            <td>{voidRow.type === "WALK_IN" ? "Walk-in" : "Reservation"}</td>
+                            <td className="num strong srd-negative">{formatPeso(voidRow.amount)}</td>
+                            <td>{voidRow.reason ?? "—"}</td>
+                            <td>{voidRow.cashierName ?? "—"}</td>
+                            <td>{voidRow.voidedBy ?? "—"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr>
+                          <td colSpan={4} className="num">Total void amount (not part of recognized sales)</td>
+                          <td className="num srd-negative">{formatPeso(summary.voidsProcessed.amount)}</td>
+                          <td colSpan={3} />
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="srd-empty">No voids processed in this period.</p>
+                )}
+              </section>
 
-            <footer className="srd-signatures">
-              {["Prepared by", "Reviewed by", "Approved by"].map((label) => (
-                <div key={label}>
-                  <p className="srd-signature">{label}: ______________________</p>
-                  <p className="srd-signature-caption">Signature over printed name / Date</p>
-                </div>
-              ))}
-            </footer>
-            <p className="srd-footnote">System-generated by WESCOMM. Amounts are in Philippine pesos (₱). Voided transactions are excluded from recognized sales.</p>
+              <div className="srd-signoff">
+                <footer className="srd-signatures">
+                  {["Prepared by", "Reviewed by", "Approved by"].map((label) => (
+                    <div key={label}>
+                      <p className="srd-signature">{label}: ______________________</p>
+                      <p className="srd-signature-caption">Signature over printed name / Date</p>
+                    </div>
+                  ))}
+                </footer>
+                <p className="srd-footnote">System-generated by WESCOMM. Amounts are in Philippine pesos (₱). Voided transactions are excluded from recognized sales.</p>
+              </div>
+            </div>
           </article>
 
           <div className="mt-4 flex flex-wrap gap-2 no-print">

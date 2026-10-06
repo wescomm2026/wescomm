@@ -18,19 +18,119 @@ test("walk-in POS catalog search covers inventory names, aliases, options, and S
 });
 
 test("walk-in sale records require cash received server-side and persist tendered cash", () => {
-  const routes = source("src/routes/walk-in-sales.routes.ts");
+  const schemas = source("src/domain/walk-in-sale-schemas.ts");
   const service = source("src/services/walk-in-sale.service.ts");
 
-  assert.match(routes, /cashReceived: z\.coerce\.number\(\)\.nonnegative\(\)\.max\(10_000_000\)\.multipleOf\(0\.01\)/);
-  assert.doesNotMatch(routes, /cashReceived:[^\n]*optional\(\)/);
+  assert.match(schemas, /collectionChannel: z\.literal\("COMMISSARY"\),\s*cashReceived: z\.coerce\.number\(\)\.nonnegative\(\)\.max\(10_000_000\)\.multipleOf\(0\.01\)/);
+  assert.doesNotMatch(schemas, /cashReceived:[^\n]*optional\(\)/);
   assert.match(service, /INVALID_CASH_RECEIVED/);
-  assert.match(service, /input\.cashReceived < totalAmount/);
-  assert.match(service, /cashTendered: new Prisma\.Decimal\(input\.cashReceived\)/);
-  assert.match(service, /changeDue: new Prisma\.Decimal\(changeDue\)/);
+  assert.match(service, /cashReceived < totalAmount/);
+  assert.match(service, /cashTendered: cashReceived === null \? null : new Prisma\.Decimal\(cashReceived\)/);
+  assert.match(service, /changeDue: changeDue === null \? null : new Prisma\.Decimal\(changeDue\)/);
+});
+
+test("walk-in request schema keeps Commissary cash and Treasury OR details mutually exclusive", async () => {
+  const { parseRecordWalkInSale } = await import("../domain/walk-in-sale-schemas.js");
+  const base = {
+    items: [{ productId: "00000000-0000-4000-8000-000000000001", quantity: 1 }],
+    buyerName: "Walk-in Buyer",
+    clientSaleId: "sale-key-0001"
+  };
+
+  const legacy = parseRecordWalkInSale({ ...base, cashReceived: 100 });
+  assert.equal(legacy.collectionChannel, "COMMISSARY");
+
+  const treasury = parseRecordWalkInSale({
+    ...base,
+    collectionChannel: "TREASURER",
+    officialReceiptNumber: " or-0012 ",
+    treasuryReceiptInspected: true
+  });
+  assert.equal(treasury.collectionChannel, "TREASURER");
+
+  assert.throws(() => parseRecordWalkInSale({ ...base, collectionChannel: "COMMISSARY" }));
+  assert.throws(() => parseRecordWalkInSale({ ...base, cashReceived: 100, officialReceiptNumber: "OR-1" }));
+  assert.throws(() => parseRecordWalkInSale({
+    ...base,
+    collectionChannel: "TREASURER",
+    officialReceiptNumber: "OR-1",
+    treasuryReceiptInspected: true,
+    cashReceived: 100
+  }));
+  assert.throws(() => parseRecordWalkInSale({
+    ...base,
+    collectionChannel: "TREASURER",
+    officialReceiptNumber: "OR-1",
+    treasuryReceiptInspected: false
+  }));
+  assert.throws(() => parseRecordWalkInSale({
+    ...base,
+    collectionChannel: "TREASURER",
+    officialReceiptNumber: "   ",
+    treasuryReceiptInspected: true
+  }));
+});
+
+test("Treasury OR numbers normalize the same way in TypeScript and PostgreSQL", async () => {
+  const { cleanTreasuryOrNumber, normalizeTreasuryOrNumber, isTreasuryOrUniqueViolationTarget } = await import("../domain/treasury-official-receipt.js");
+  const migration = source("prisma/migrations/20261006000000_add_walk_in_treasury_collection/migration.sql");
+
+  assert.equal(normalizeTreasuryOrNumber(" or-0012 345 "), "OR0012345");
+  assert.equal(normalizeTreasuryOrNumber("OR\t0012-345"), "OR0012345");
+  assert.equal(normalizeTreasuryOrNumber(" - "), null);
+  assert.equal(cleanTreasuryOrNumber("  or-0012   345 "), "OR-0012 345");
+  assert.equal(cleanTreasuryOrNumber(""), null);
+  assert.equal(isTreasuryOrUniqueViolationTarget(["normalized_official_receipt_number"]), true);
+  assert.equal(isTreasuryOrUniqueViolationTarget("treasury_official_receipts_official_receipt_number_pkey"), true);
+  assert.equal(isTreasuryOrUniqueViolationTarget(["client_sale_id"]), false);
+  assert.match(migration, /UPPER\(REGEXP_REPLACE\(COALESCE\(value, ''\), '\[\[:space:\]-\]\+', '', 'g'\)\)/);
+});
+
+test("Treasury walk-in sales require an inspected OR, never record cash, and register the OR across channels", () => {
+  const service = source("src/services/walk-in-sale.service.ts");
+  const migration = source("prisma/migrations/20261006000000_add_walk_in_treasury_collection/migration.sql");
+  const schema = source("prisma/schema.prisma");
+
+  assert.match(service, /TREASURER_OR_REQUIRED/);
+  assert.match(service, /TREASURER_OR_NOT_INSPECTED/);
+  assert.match(service, /TREASURER_CASH_NOT_ALLOWED/);
+  assert.match(service, /COMMISSARY_OR_NOT_ALLOWED/);
+  assert.match(service, /TREASURER_OR_DUPLICATE/);
+  assert.match(service, /tx\.treasuryOfficialReceipt\.findUnique/);
+  assert.match(service, /treasuryVerifiedById: collection\.officialReceiptNumber \? input\.performedById : null/);
+  // The OR check runs before any product row is locked or stock is deducted.
+  assert.ok(service.indexOf("tx.treasuryOfficialReceipt.findUnique") < service.indexOf("lockProductForUpdate(tx, productId)"));
+  assert.match(service, /collectionChannel,\s*officialReceiptNumber: normalizeTreasuryOrNumber\(input\.officialReceiptNumber\)/);
+  assert.match(service, /treasuryReconciliationRequired: collectionChannel === "TREASURER" && row\.status === "VOIDED"/);
+  assert.match(service, /publicVerificationUrl: publicVerificationUrl\(row\.publicVerificationTokenEncrypted\)/);
+
+  assert.match(schema, /collectionChannel\s+CollectionChannel @default\(COMMISSARY\) @map\("collection_channel"\)/);
+  assert.match(schema, /model TreasuryOfficialReceipt \{/);
+  assert.match(migration, /walk_in_sales_collection_details_check/);
+  assert.match(migration, /"collection_channel" = 'COMMISSARY'::"collection_channel"\s+AND "official_receipt_number" IS NULL/);
+  assert.match(migration, /"collection_channel" = 'TREASURER'::"collection_channel"\s+AND NULLIF\(BTRIM\("official_receipt_number"\), ''\) IS NOT NULL/);
+  assert.match(migration, /AND "cash_tendered" IS NULL\s+AND "change_due" IS NULL/);
+  assert.match(migration, /AFTER INSERT OR UPDATE OF "official_receipt_number", "collection_channel" ON "payments"/);
+  assert.match(migration, /AFTER INSERT OR UPDATE OF "official_receipt_number", "collection_channel" ON "walk_in_sales"/);
+  assert.match(migration, /INSERT INTO "treasury_official_receipts"[\s\S]*FROM "payments" payment/);
+});
+
+test("reports and the sales ledger use each walk-in sale's own collection channel", () => {
+  const report = source("src/services/report.service.ts");
+  const ledger = source("src/services/sales-ledger.service.ts");
+
+  assert.doesNotMatch(report, /'COMMISSARY'::text = \$\{options\.collectionChannel/);
+  assert.match(report, /walk_sale\.collection_channel::text = \$\{options\.collectionChannel/);
+  assert.match(report, /AS "walkInChannelGroups"/);
+  assert.match(report, /AS "walkInTreasuryRows"/);
+  assert.match(report, /cashChannelGroups: \[\.\.\.payload\.cashChannelGroups, \.\.\.payload\.walkInChannelGroups\]/);
+  assert.match(report, /mergeChannelGroups\(payload\.collectionGroups, payload\.walkInChannelGroups\)/);
+  assert.match(ledger, /receipt\.walkInSale\?\.collectionChannel \?\? "COMMISSARY"/);
+  assert.doesNotMatch(ledger, /collectionLocation !== "TREASURER"/);
 });
 
 test("walk-in sale creation is idempotent per client sale key and cashier", () => {
-  const routes = source("src/routes/walk-in-sales.routes.ts");
+  const routes = source("src/domain/walk-in-sale-schemas.ts");
   const service = source("src/services/walk-in-sale.service.ts");
 
   assert.match(routes, /clientSaleId:[^\n]+regex[^\n]+\n/);
@@ -46,7 +146,7 @@ test("walk-in sale creation is idempotent per client sale key and cashier", () =
 });
 
 test("walk-in buyers may use a typed name without a WESCOMM student account", () => {
-  const routes = source("src/routes/walk-in-sales.routes.ts");
+  const routes = source("src/domain/walk-in-sale-schemas.ts");
   const service = source("src/services/walk-in-sale.service.ts");
   const schema = source("prisma/schema.prisma");
   const migration = source("prisma/migrations/20261004000000_allow_guest_walk_in_buyers/migration.sql");
@@ -130,7 +230,7 @@ test("walk-in sale schema persists cashier, cash, idempotency, and void metadata
   assert.match(schema, /cashierNameSnapshot String\s+@map\("cashier_name_snapshot"\)/);
   assert.match(schema, /clientSaleId\s+String\s+@unique/);
   assert.match(schema, /requestFingerprint\s+String\s+@map\("request_fingerprint"\)/);
-  assert.match(schema, /cashTendered\s+Decimal\s+@map\("cash_tendered"\)/);
+  assert.match(schema, /cashTendered\s+Decimal\?\s+@map\("cash_tendered"\)/);
   assert.match(schema, /voidReason\s+String\?\s+@map\("void_reason"\)/);
   assert.match(schema, /model WalkInSaleCostAllocation \{/);
   assert.match(migration, /CREATE TABLE "walk_in_sales"/);

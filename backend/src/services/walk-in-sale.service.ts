@@ -3,6 +3,11 @@ import {
   type ProductStatus as PrismaProductStatus
 } from "@prisma/client";
 import { createHash } from "node:crypto";
+import {
+  cleanTreasuryOrNumber,
+  isTreasuryOrUniqueViolationTarget,
+  normalizeTreasuryOrNumber
+} from "../domain/treasury-official-receipt.js";
 import { prisma } from "../lib/prisma.js";
 import { type ProductStatus } from "../types/app.js";
 import { HttpError } from "../utils/http-error.js";
@@ -16,7 +21,12 @@ import {
 import { INVENTORY_WRITE_TRANSACTION_OPTIONS, deriveProductStatus } from "./inventory.service.js";
 import { createNotificationBestEffort, createNotificationsForRolesBestEffort } from "./notification.service.js";
 import { OUTBOX_EVENT_TYPES } from "./outbox.service.js";
-import { createPublicVerificationToken, createReceiptCode, createVerificationHash } from "./receipt.service.js";
+import {
+  createPublicVerificationToken,
+  createReceiptCode,
+  createVerificationHash,
+  publicVerificationUrl
+} from "./receipt.service.js";
 import { publishRealtimeEvents, REALTIME_TOPICS } from "./realtime-event.service.js";
 
 export type WalkInSaleItemInput = {
@@ -26,12 +36,21 @@ export type WalkInSaleItemInput = {
   quantity: number;
 };
 
+export type WalkInCollectionChannel = "COMMISSARY" | "TREASURER";
+
 export type WalkInSaleInput = {
   items: WalkInSaleItemInput[];
   buyerName: string;
   studentId?: string | null;
   receiptCode?: string | null;
-  cashReceived: number;
+  /** Defaults to COMMISSARY. */
+  collectionChannel?: WalkInCollectionChannel;
+  /** Required for COMMISSARY; must be omitted for TREASURER. */
+  cashReceived?: number | null;
+  /** Required for TREASURER; must be omitted for COMMISSARY. */
+  officialReceiptNumber?: string | null;
+  /** The cashier confirmed they inspected the Treasury official receipt. */
+  treasuryReceiptInspected?: boolean;
   clientSaleId: string;
   performedById: string;
 };
@@ -63,10 +82,15 @@ const walkInReceiptSelect = Prisma.validator<Prisma.ReceiptSelect>()({
   voidedAt: true,
   createdAt: true,
   updatedAt: true,
+  publicVerificationTokenEncrypted: true,
   student: { select: { id: true, fullName: true, email: true, studentNumber: true } },
   issuedBy: { select: { id: true, fullName: true } },
   walkInSale: {
     select: {
+      collectionChannel: true,
+      officialReceiptNumber: true,
+      treasuryVerifiedById: true,
+      treasuryVerifiedAt: true,
       cashTendered: true,
       changeDue: true,
       cashierId: true,
@@ -92,6 +116,7 @@ function roundToCentavos(value: number) {
 
 function mapWalkInReceipt(row: WalkInReceiptRecord) {
   const buyerName = row.walkInSale?.buyerNameSnapshot ?? row.student?.fullName ?? "Walk-in buyer";
+  const collectionChannel = row.walkInSale?.collectionChannel ?? "COMMISSARY";
   return {
     id: row.id,
     receiptCode: row.receiptCode,
@@ -105,6 +130,12 @@ function mapWalkInReceipt(row: WalkInReceiptRecord) {
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
     buyerName,
+    collectionChannel,
+    officialReceiptNumber: row.walkInSale?.officialReceiptNumber ?? null,
+    // A void restores stock but does not refund money already collected by the
+    // Treasury; that settlement happens outside WESCOMM and must be followed up.
+    treasuryReconciliationRequired: collectionChannel === "TREASURER" && row.status === "VOIDED",
+    publicVerificationUrl: publicVerificationUrl(row.publicVerificationTokenEncrypted),
     student: row.student
       ? {
           id: row.student.id,
@@ -118,8 +149,12 @@ function mapWalkInReceipt(row: WalkInReceiptRecord) {
       : null,
     sale: row.walkInSale
       ? {
-          cashTendered: row.walkInSale.cashTendered.toString(),
-          changeDue: row.walkInSale.changeDue.toString(),
+          collectionChannel: row.walkInSale.collectionChannel,
+          officialReceiptNumber: row.walkInSale.officialReceiptNumber,
+          treasuryVerifiedById: row.walkInSale.treasuryVerifiedById,
+          treasuryVerifiedAt: row.walkInSale.treasuryVerifiedAt?.toISOString() ?? null,
+          cashTendered: row.walkInSale.cashTendered?.toString() ?? null,
+          changeDue: row.walkInSale.changeDue?.toString() ?? null,
           cashierId: row.walkInSale.cashierId,
           cashierName: row.walkInSale.cashierNameSnapshot,
           clientSaleId: row.walkInSale.clientSaleId,
@@ -147,6 +182,9 @@ export type WalkInReceipt = ReturnType<typeof mapWalkInReceipt>;
 function mapTransactionError(error: unknown) {
   if (error instanceof HttpError) return error;
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
+    if (error.code === "P2002" && isTreasuryOrUniqueViolationTarget(error.meta?.target)) {
+      return treasuryOrDuplicateError();
+    }
     if (error.code === "P2002") {
       return new HttpError(409, "This receipt code has already been used.", "RECEIPT_CODE_TAKEN", { retryable: false });
     }
@@ -158,6 +196,15 @@ function mapTransactionError(error: unknown) {
     }
   }
   return error;
+}
+
+function treasuryOrDuplicateError() {
+  return new HttpError(
+    409,
+    "That Treasury OR number is already recorded on another transaction.",
+    "TREASURER_OR_DUPLICATE",
+    { retryable: false }
+  );
 }
 
 function isUniqueViolation(error: unknown) {
@@ -186,16 +233,59 @@ function normalizeSaleItems(items: WalkInSaleItemInput[]) {
 }
 
 function saleRequestFingerprint(input: WalkInSaleInput, items: WalkInSaleItemInput[]) {
-  const cashReceived = Number.isFinite(input.cashReceived)
-    ? roundToCentavos(input.cashReceived).toFixed(2)
-    : String(input.cashReceived);
+  const collectionChannel = input.collectionChannel ?? "COMMISSARY";
+  // Commissary keeps the original payload shape so fingerprints recorded
+  // before Treasury support still match their in-flight retries.
+  const payment = collectionChannel === "TREASURER"
+    ? {
+        collectionChannel,
+        officialReceiptNumber: normalizeTreasuryOrNumber(input.officialReceiptNumber)
+      }
+    : {
+        cashReceived: typeof input.cashReceived === "number" && Number.isFinite(input.cashReceived)
+          ? roundToCentavos(input.cashReceived).toFixed(2)
+          : String(input.cashReceived)
+      };
   return createHash("sha256").update(JSON.stringify({
     buyerName: normalizeBuyerName(input.buyerName),
     studentId: input.studentId ?? null,
     receiptCode: input.receiptCode?.trim().toUpperCase() || null,
-    cashReceived,
+    ...payment,
     items
   })).digest("hex");
+}
+
+function resolveCollectionDetails(input: WalkInSaleInput) {
+  const collectionChannel = input.collectionChannel ?? "COMMISSARY";
+  if (collectionChannel === "TREASURER") {
+    const officialReceiptNumber = cleanTreasuryOrNumber(input.officialReceiptNumber);
+    if (!officialReceiptNumber) {
+      throw new HttpError(400, "Treasury official receipt number is required.", "TREASURER_OR_REQUIRED");
+    }
+    if (!input.treasuryReceiptInspected) {
+      throw new HttpError(
+        400,
+        "Confirm that you inspected the Treasury official receipt before releasing items.",
+        "TREASURER_OR_NOT_INSPECTED"
+      );
+    }
+    if (input.cashReceived !== undefined && input.cashReceived !== null) {
+      throw new HttpError(
+        400,
+        "Treasury sales are paid at the Treasury. Do not enter Commissary cash received.",
+        "TREASURER_CASH_NOT_ALLOWED"
+      );
+    }
+    return { collectionChannel, officialReceiptNumber, cashReceived: null };
+  }
+  if (input.officialReceiptNumber?.trim()) {
+    throw new HttpError(
+      400,
+      "A Treasury OR number can only be recorded on a Treasury sale.",
+      "COMMISSARY_OR_NOT_ALLOWED"
+    );
+  }
+  return { collectionChannel, officialReceiptNumber: null, cashReceived: input.cashReceived ?? null };
 }
 
 function normalizeBuyerName(value: string) {
@@ -255,6 +345,7 @@ export async function recordWalkInSale(input: WalkInSaleInput) {
   if (requestedBuyerName.length < 2 || requestedBuyerName.length > 120) {
     throw new HttpError(400, "Enter a buyer name between 2 and 120 characters.", "INVALID_BUYER_NAME");
   }
+  const collection = resolveCollectionDetails(input);
   const receiptCode = input.receiptCode?.trim().toUpperCase() || createReceiptCode();
   const items = normalizeSaleItems(input.items);
   const clientSaleId = input.clientSaleId.trim();
@@ -301,6 +392,15 @@ export async function recordWalkInSale(input: WalkInSaleInput) {
         : null;
       if (input.studentId && !student) throw new HttpError(404, "The selected student account was not found.");
       const buyerName = student?.fullName || requestedBuyerName;
+
+      if (collection.officialReceiptNumber) {
+        // Friendly early answer; the registry trigger is the race-safe guard.
+        const registered = await tx.treasuryOfficialReceipt.findUnique({
+          where: { normalizedOfficialReceiptNumber: normalizeTreasuryOrNumber(collection.officialReceiptNumber)! },
+          select: { sourceType: true }
+        });
+        if (registered) throw treasuryOrDuplicateError();
+      }
 
       const productIds = Array.from(new Set(items.map((item) => item.productId))).sort();
       for (const productId of productIds) {
@@ -353,6 +453,9 @@ export async function recordWalkInSale(input: WalkInSaleInput) {
         const product = productById.get(item.productId);
         if (!product) throw new HttpError(404, "One of the selected products was not found.");
         if (!product.isActive) throw new HttpError(400, `${product.name} is no longer available.`, "PRODUCT_UNAVAILABLE");
+        if (Number(product.price) <= 0) {
+          throw new HttpError(400, `Set a selling price for ${product.name} in Inventory before selling it.`, "PRODUCT_PRICE_REQUIRED");
+        }
 
         let sku: typeof skus[number] | undefined;
         let variant: typeof variants[number] | undefined;
@@ -424,14 +527,18 @@ export async function recordWalkInSale(input: WalkInSaleInput) {
       }
 
       const totalAmount = sumTotals(itemPlans);
-      if (!Number.isFinite(input.cashReceived) || input.cashReceived < totalAmount) {
+      const cashReceived = collection.cashReceived;
+      if (
+        collection.collectionChannel === "COMMISSARY"
+        && (cashReceived === null || !Number.isFinite(cashReceived) || cashReceived < totalAmount)
+      ) {
         throw new HttpError(
           400,
           `Cash received must cover the PHP ${totalAmount.toFixed(2)} total.`,
           "INVALID_CASH_RECEIVED"
         );
       }
-      const changeDue = roundToCentavos(input.cashReceived - totalAmount);
+      const changeDue = cashReceived === null ? null : roundToCentavos(cashReceived - totalAmount);
 
       const now = new Date();
       const updatedProductStates = new Map<string, RecordWalkInSaleProductState>();
@@ -514,8 +621,12 @@ export async function recordWalkInSale(input: WalkInSaleInput) {
           cashierNameSnapshot: cashier?.fullName ?? "Staff",
           clientSaleId,
           requestFingerprint,
-          cashTendered: new Prisma.Decimal(input.cashReceived),
-          changeDue: new Prisma.Decimal(changeDue)
+          collectionChannel: collection.collectionChannel,
+          officialReceiptNumber: collection.officialReceiptNumber,
+          treasuryVerifiedById: collection.officialReceiptNumber ? input.performedById : null,
+          treasuryVerifiedAt: collection.officialReceiptNumber ? now : null,
+          cashTendered: cashReceived === null ? null : new Prisma.Decimal(cashReceived),
+          changeDue: changeDue === null ? null : new Prisma.Decimal(changeDue)
         },
         select: { id: true }
       });
@@ -655,7 +766,9 @@ export async function recordWalkInSale(input: WalkInSaleInput) {
         studentId: input.studentId ?? null,
         totalAmount: mappedReceipt.totalAmount,
         itemCount: mappedReceipt.items.length,
-        cashReceived: input.cashReceived,
+        collectionChannel: collection.collectionChannel,
+        officialReceiptNumber: collection.officialReceiptNumber,
+        cashReceived: collection.cashReceived,
         clientSaleId,
         performedById: input.performedById
       }
@@ -938,6 +1051,8 @@ export async function voidWalkInSale(input: { receiptId: string; reason: string;
       throw mapTransactionError(error);
     });
 
+  const mappedReceipt = mapWalkInReceipt(result.receipt);
+
   if (result.changed) {
     await safelyRecordAuditLog({
       actorId: input.voidedById,
@@ -950,10 +1065,22 @@ export async function voidWalkInSale(input: { receiptId: string; reason: string;
         studentId: result.receipt.studentId,
         totalAmount: result.receipt.totalAmount,
         reason,
-        previousStatus: result.previousStatus
+        previousStatus: result.previousStatus,
+        collectionChannel: mappedReceipt.collectionChannel,
+        officialReceiptNumber: mappedReceipt.officialReceiptNumber,
+        treasuryReconciliationRequired: mappedReceipt.treasuryReconciliationRequired
       }
     });
+
+    if (mappedReceipt.treasuryReconciliationRequired) {
+      await createNotificationsForRolesBestEffort(["ADMIN"], {
+        type: "PAYMENT",
+        title: "Treasury reconciliation required",
+        message: `Walk-in sale ${mappedReceipt.receiptCode} (Treasury OR ${mappedReceipt.officialReceiptNumber}) was voided. Stock was restored, but any refund must be settled with the Treasury.`,
+        actionUrl: "/staff/walk-in-sales"
+      });
+    }
   }
 
-  return { receipt: mapWalkInReceipt(result.receipt), changed: result.changed };
+  return { receipt: mappedReceipt, changed: result.changed };
 }

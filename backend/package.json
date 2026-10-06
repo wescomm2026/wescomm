@@ -43,7 +43,8 @@
     "staging:verify:target": "tsx src/scripts/verify-staging-environment.ts --target-only",
     "staging:reset": "tsx src/scripts/reset-testing-data.ts",
     "staging:seed": "tsx src/scripts/seed-staging-data.ts",
-    "seed:wup-catalog": "tsx src/scripts/seed-new-uniform-products.ts"
+    "seed:wup-catalog": "tsx src/scripts/seed-new-uniform-products.ts",
+    "inventory:import": "tsx src/scripts/import-inventory-count.ts"
   },
   "dependencies": {
     "@ai-sdk/google": "^4.0.57",

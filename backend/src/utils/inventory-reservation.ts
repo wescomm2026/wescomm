@@ -1,7 +1,7 @@
 import { type Prisma } from "@prisma/client";
 import { HttpError } from "./http-error.js";
 
-const ACTIVE_INVENTORY_RESERVATION_STATUSES = [
+export const ACTIVE_INVENTORY_RESERVATION_STATUSES = [
   "PENDING",
   "CONFIRMED",
   "READY_FOR_PICKUP"
