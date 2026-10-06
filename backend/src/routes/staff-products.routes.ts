@@ -9,6 +9,7 @@ import {
   createProductVariant,
   deleteProductVariant,
   getInventoryProduct,
+  INVENTORY_ATTENTION_FILTERS,
   listCategories,
   listInventory,
   restockProduct,
@@ -287,6 +288,7 @@ const inventoryListQuerySchema = z.object({
   productId: z.string().uuid().optional(),
   status: z.enum(PRODUCT_STATUSES).optional(),
   visibility: z.enum(["ACTIVE", "ARCHIVED"]).default("ACTIVE"),
+  needs: z.enum(INVENTORY_ATTENTION_FILTERS).optional(),
   includeCategories: z.literal("1").optional()
 });
 const permanentDeleteSchema = z.object({

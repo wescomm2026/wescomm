@@ -19,7 +19,7 @@ import {
   type BackendReservationStatus
 } from "@/lib/api";
 import { type ProductSaleMode, type StaffProduct } from "@/lib/staff-api";
-import { resolveShopProductAsset } from "@/lib/shop-assets";
+import { isMissingProductPhoto, resolveShopProductAsset } from "@/lib/shop-assets";
 import { cn } from "@/lib/utils";
 import { paymentMethodLabel } from "@/lib/payment-method";
 import { type CollectionChannel } from "@/lib/collection-channel";
@@ -38,6 +38,9 @@ export type Product = {
   category: string;
   description: string;
   imageUrl: string;
+  needsPrice?: boolean;
+  unverifiedCostQuantity?: number;
+  hasPhoto?: boolean;
   imageStoragePath: string | null;
   stock: number;
   stockTarget: number;
@@ -187,7 +190,7 @@ export function stockStatusForApi(value: string): StaffProduct["status"] | undef
 
 export function mapStaffProduct(product: StaffProduct): Product {
   const categoryName = product.category?.name ?? "Uncategorized";
-  const asset = resolveShopProductAsset(product.name, product.imageUrl, categoryName);
+  const asset = resolveShopProductAsset(product.name, product.imageUrl);
 
   return {
     id: product.id,
@@ -195,6 +198,9 @@ export function mapStaffProduct(product: StaffProduct): Product {
     category: categoryName,
     description: product.description ?? "",
     imageUrl: asset.image,
+    needsPrice: product.needsPrice ?? numericValue(product.price) <= 0,
+    unverifiedCostQuantity: product.unverifiedCostQuantity ?? 0,
+    hasPhoto: product.hasPhoto ?? !isMissingProductPhoto(product.imageUrl),
     imageStoragePath: product.imageStoragePath ?? null,
     stock: product.stock,
     stockTarget: product.stockTarget ?? product.stock,

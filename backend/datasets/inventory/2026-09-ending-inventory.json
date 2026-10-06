@@ -1,0 +1,195 @@
+{
+  "version": "2026-09",
+  "title": "Ending inventory, September 1-30, 2026",
+  "countedAt": "2026-09-30",
+  "sources": [
+    "INVENTORY UNIFORMS, SEPTEMBER 1-31, 2026 (pages 1-3)",
+    "ENDING INVENTORY PARAPHERNALIAS & OTHERS, September 1-31, 2026"
+  ],
+  "notes": [
+    "Transcribed from photos of the printed count sheets. The sheet header says 1-31; September has 30 days.",
+    "Section headers on the sheet (1 set per pack NEW, PE Uniforms Elementary/HS/College) are not products and are omitted.",
+    "Elementary Cloth had no count on the sheet and is imported with 0 stock.",
+    "Counts carry no unit cost: stock is recorded as unverified opening batches, so items cannot be sold until staff confirm the cost.",
+    "New items start at PHP 0 (Needs price) and stay out of the student shop until staff set a price."
+  ],
+  "categories": [
+    { "name": "Uniforms", "slug": "uniforms", "iconUrl": "/assets/uniforms.svg" },
+    { "name": "ID Accessories", "slug": "id-accessories", "iconUrl": "/assets/id-accessories.svg" },
+    { "name": "Paraphernalia", "slug": "paraphernalia", "iconUrl": "/assets/others.svg" }
+  ],
+  "products": [
+    {
+      "key": "pe-tshirt-elementary",
+      "name": "PE T-shirt (Elementary)",
+      "category": "uniforms",
+      "saleMode": "OPTIONS",
+      "optionName": "Size",
+      "description": "Elementary PE T-shirt.",
+      "imageUrl": "/assets/wup shop assets/elem pe shirt.webp",
+      "matchExisting": ["Elementary PE Shirt"],
+      "lines": [
+        { "sheet": "PE T-shirt, Elem, #8", "option": "#8", "count": 9 },
+        { "sheet": "PE T-shirt, Elem, #12", "option": "#12", "count": 1 },
+        { "sheet": "PE T-shirt, Elem, #16", "option": "#16", "count": 10 },
+        { "sheet": "PE T-shirt, Elem, #18", "option": "#18", "count": 4 },
+        { "sheet": "PE T-shirt, Elem, #20", "option": "#20", "count": 2 },
+        { "sheet": "PE T-shirt, Elem, XS", "option": "XS", "count": 1 },
+        { "sheet": "PE T-shirt, Elem, S", "option": "S", "count": 2 },
+        { "sheet": "PE T-shirt, Elem, M", "option": "M", "count": 1 }
+      ]
+    },
+    {
+      "key": "jogging-pants-elementary",
+      "name": "Jogging Pants (Elementary)",
+      "category": "uniforms",
+      "saleMode": "OPTIONS",
+      "optionName": "Size",
+      "description": "Elementary PE jogging pants.",
+      "imageUrl": "/assets/wup shop assets/elem pe pants.webp",
+      "matchExisting": ["Elementary PE Jogging Pants"],
+      "lines": [
+        { "sheet": "Jogging Pants, Elem, #8", "option": "#8", "count": 2 },
+        { "sheet": "Jogging Pants, Elem, #10", "option": "#10", "count": 4 },
+        { "sheet": "Jogging Pants, Elem, #12", "option": "#12", "count": 1 },
+        { "sheet": "Jogging Pants, Elem, #16", "option": "#16", "count": 2 },
+        { "sheet": "Jogging Pants, Elem, XS", "option": "XS", "count": 37 },
+        { "sheet": "Jogging Pants, Elem, S", "option": "S", "count": 20 },
+        { "sheet": "Jogging Pants, Elem, M", "option": "M", "count": 30 },
+        { "sheet": "Jogging Pants, Elem, L", "option": "L", "count": 9 }
+      ]
+    },
+    {
+      "key": "pe-tshirt-hs-shs",
+      "name": "PE T-shirt (HS/SHS)",
+      "category": "uniforms",
+      "saleMode": "OPTIONS",
+      "optionName": "Size",
+      "description": "High School and Senior High School PE T-shirt.",
+      "lines": [
+        { "sheet": "PE T-shirt, HS, SHS, S", "option": "S", "count": 94 },
+        { "sheet": "PE T-shirt, HS, SHS, M", "option": "M", "count": 154 },
+        { "sheet": "PE T-shirt, HS, SHS, L", "option": "L", "count": 131 },
+        { "sheet": "PE T-shirt, HS, SHS, XL", "option": "XL", "count": 74 },
+        { "sheet": "PE T-shirt, HS, SHS, 2XL", "option": "2XL", "count": 55 },
+        { "sheet": "PE T-shirt, HS, SHS, 3XL", "option": "3XL", "count": 20 }
+      ]
+    },
+    {
+      "key": "jogging-pants-hs-shs",
+      "name": "Jogging Pants (HS/SHS)",
+      "category": "uniforms",
+      "saleMode": "OPTIONS",
+      "optionName": "Size",
+      "description": "High School and Senior High School PE jogging pants.",
+      "lines": [
+        { "sheet": "Jogging Pants, HS, SHS, XS", "option": "XS", "count": 49 },
+        { "sheet": "Jogging Pants, HS, SHS, S", "option": "S", "count": 126 },
+        { "sheet": "Jogging Pants, HS, SHS, M", "option": "M", "count": 100 },
+        { "sheet": "Jogging Pants, HS, SHS, L", "option": "L", "count": 100 },
+        { "sheet": "Jogging Pants, HS, SHS, XL", "option": "XL", "count": 72 },
+        { "sheet": "Jogging Pants, HS, SHS, 2XL", "option": "2XL", "count": 51 },
+        { "sheet": "Jogging Pants, HS, SHS, 4XL", "option": "4XL", "count": 1 },
+        { "sheet": "Jogging Pants, HS, SHS, 5XL", "option": "5XL", "count": 1 }
+      ]
+    },
+    {
+      "key": "pe-tshirt-college",
+      "name": "PE T-shirt (College)",
+      "category": "uniforms",
+      "saleMode": "OPTIONS",
+      "optionName": "Size",
+      "description": "College PE T-shirt.",
+      "imageUrl": "/assets/wup shop assets/pe-uniform-top.webp",
+      "matchExisting": ["PE Uniform Shirt", "PE Shirt"],
+      "reviewCandidates": ["PE Uniform top", "PE Uniform Top"],
+      "lines": [
+        { "sheet": "PE T-shirt, College, S", "option": "S", "count": 51 },
+        { "sheet": "PE T-shirt, College, M", "option": "M", "count": 109 },
+        { "sheet": "PE T-shirt, College, L", "option": "L", "count": 108 },
+        { "sheet": "PE T-shirt, College, XL", "option": "XL", "count": 156 },
+        { "sheet": "PE T-shirt, College, 2XL", "option": "2XL", "count": 92 },
+        { "sheet": "PE T-shirt, College, 3XL", "option": "3XL", "count": 27 },
+        { "sheet": "PE T-shirt, College, 4XL", "option": "4XL", "count": 4 },
+        { "sheet": "PE T-shirt, College, 5XL", "option": "5XL", "count": 4 }
+      ]
+    },
+    {
+      "key": "jogging-pants-college",
+      "name": "Jogging Pants (College)",
+      "category": "uniforms",
+      "saleMode": "OPTIONS",
+      "optionName": "Size",
+      "description": "College PE jogging pants.",
+      "imageUrl": "/assets/wup shop assets/pe-uniform-pants.webp",
+      "matchExisting": ["PE Uniform Pants"],
+      "lines": [
+        { "sheet": "Jogging Pants, College, Small", "option": "S", "count": 70 },
+        { "sheet": "Jogging Pants, College, Medium", "option": "M", "count": 204 },
+        { "sheet": "Jogging Pants, College, Large", "option": "L", "count": 217 },
+        { "sheet": "Jogging Pants, College, XL", "option": "XL", "count": 103 },
+        { "sheet": "Jogging Pants, College, 2XL", "option": "2XL", "count": 75 },
+        { "sheet": "Jogging Pants, College, 3XL", "option": "3XL", "count": 30 },
+        { "sheet": "Jogging Pants, College, 5XL", "option": "5XL", "count": 1 }
+      ]
+    },
+    {
+      "key": "pe-shorts-college",
+      "name": "PE Shorts (College)",
+      "category": "uniforms",
+      "saleMode": "OPTIONS",
+      "optionName": "Size",
+      "description": "College PE shorts.",
+      "lines": [
+        { "sheet": "Shorts, College Medium", "option": "M", "count": 1 },
+        { "sheet": "Shorts, College Large", "option": "L", "count": 7 },
+        { "sheet": "Shorts, College XL", "option": "XL", "count": 22 },
+        { "sheet": "Shorts, College 2XL", "option": "2XL", "count": 1 }
+      ]
+    },
+    {
+      "key": "moss-green-polo-shirt",
+      "name": "Moss Green Polo Shirt",
+      "category": "uniforms",
+      "saleMode": "OPTIONS",
+      "optionName": "Size",
+      "description": "Moss green polo shirt.",
+      "lines": [
+        { "sheet": "Moss Green Polo Shirt (XS)", "option": "XS", "count": 24 },
+        { "sheet": "Moss Green Polo Shirt (S)", "option": "S", "count": 16 },
+        { "sheet": "Moss Green Polo Shirt (M)", "option": "M", "count": 57 },
+        { "sheet": "Moss Green Polo Shirt (L)", "option": "L", "count": 133 },
+        { "sheet": "Moss Green Polo Shirt (XL)", "option": "XL", "count": 73 },
+        { "sheet": "Moss Green Polo Shirt (XXL)", "option": "2XL", "count": 33 },
+        { "sheet": "Moss Green Polo Shirt (3XL)", "option": "3XL", "count": 12 }
+      ]
+    },
+    { "key": "cloth-elementary", "name": "Elementary Uniform Cloth", "category": "uniforms", "saleMode": "CLOTH_ONLY", "description": "Elementary uniform cloth, 1 set per pack.", "countMissingOnSheet": true, "lines": [{ "sheet": "Elementary Cloth", "count": 0 }] },
+    { "key": "cloth-hs-male", "name": "HS Male Uniform Cloth", "category": "uniforms", "saleMode": "CLOTH_ONLY", "description": "High School male uniform cloth, 1 set per pack.", "lines": [{ "sheet": "HS Male Cloth", "count": 457 }] },
+    { "key": "cloth-hs-female", "name": "HS Female Uniform Cloth", "category": "uniforms", "saleMode": "CLOTH_ONLY", "description": "High School female uniform cloth, 1 set per pack.", "lines": [{ "sheet": "HS Female Cloth", "count": 375 }] },
+    { "key": "cloth-shs-female", "name": "SHS Female Uniform Cloth", "category": "uniforms", "saleMode": "CLOTH_ONLY", "description": "Senior High School female uniform cloth, 1 set per pack.", "reviewCandidates": ["Senior High Girls Uniform Set"], "lines": [{ "sheet": "SHS FEMALE CLOTH", "count": 506 }] },
+    { "key": "cloth-college-male", "name": "College Male Uniform Cloth", "category": "uniforms", "saleMode": "CLOTH_ONLY", "description": "College male uniform cloth, 1 set per pack.", "reviewCandidates": ["Men's WUP Uniform Set", "Wesleyan Men's Uniform Set"], "lines": [{ "sheet": "COLLEGE MALE CLOTH", "count": 1490 }] },
+    { "key": "cloth-college-female", "name": "College Female Uniform Cloth", "category": "uniforms", "saleMode": "CLOTH_ONLY", "description": "College female uniform cloth, 1 set per pack.", "reviewCandidates": ["Wesleyan Women's Uniform Set"], "lines": [{ "sheet": "COLLEGE FEMALE CLOTH", "count": 726 }] },
+    { "key": "cloth-nursing-female", "name": "Nursing Female Uniform Cloth", "category": "uniforms", "saleMode": "CLOTH_ONLY", "description": "Nursing female uniform cloth, 1 set per pack.", "reviewCandidates": ["Nursing Women's Uniform"], "lines": [{ "sheet": "Cloth Nursing Female", "count": 169 }] },
+    { "key": "cloth-nursing-male", "name": "Nursing Male Uniform Cloth", "category": "uniforms", "saleMode": "CLOTH_ONLY", "description": "Nursing male uniform cloth, 1 set per pack.", "reviewCandidates": ["Nursing Men's Uniform Set"], "lines": [{ "sheet": "Cloth Nursing Male", "count": 43 }] },
+    { "key": "cloth-cba-corporate-male", "name": "CBA Corporate Male Uniform Cloth", "category": "uniforms", "saleMode": "CLOTH_ONLY", "description": "CBA corporate male uniform cloth, 1 set per pack.", "lines": [{ "sheet": "Cloth CBA Corpo Male", "count": 39 }] },
+    { "key": "cloth-cba-corporate-female", "name": "CBA Corporate Female Uniform Cloth", "category": "uniforms", "saleMode": "CLOTH_ONLY", "description": "CBA corporate female uniform cloth, 1 set per pack.", "reviewCandidates": ["CBA Women's Uniform", "CBA Women's Uniform Set"], "lines": [{ "sheet": "Cloth CBA Corpo Female", "count": 35 }] },
+    { "key": "cloth-cams", "name": "CAMS Uniform Cloth", "category": "uniforms", "saleMode": "CLOTH_ONLY", "description": "CAMS uniform cloth, 1 set per pack.", "lines": [{ "sheet": "CAMS Uniform", "count": 110 }] },
+    { "key": "cloth-wup-ptwill-150", "name": "WUP P.Twill Cloth (1.50 yds)", "category": "uniforms", "saleMode": "CLOTH_ONLY", "description": "WUP P.Twill cloth, 1.50 yards per pack.", "lines": [{ "sheet": "WUP P.Twill (Cloth) 1.50yrds", "count": 627 }] },
+    { "key": "cloth-wup-ptwill-175", "name": "WUP P.Twill Cloth (1.75 yds)", "category": "uniforms", "saleMode": "CLOTH_ONLY", "description": "WUP P.Twill cloth, 1.75 yards per pack.", "lines": [{ "sheet": "WUP P.Twill (Cloth) 1.75yrds", "count": 531 }] },
+    { "key": "cloth-hrm-cko-corporate-male", "name": "HRM/CKO Corporate Male Uniform Cloth", "category": "uniforms", "saleMode": "CLOTH_ONLY", "description": "HRM/CKO corporate male uniform cloth, 1 set per pack.", "lines": [{ "sheet": "HRM/CKO Corpo Male", "count": 20 }] },
+    {
+      "key": "id-lace",
+      "name": "ID Lace",
+      "category": "id-accessories",
+      "saleMode": "SIMPLE",
+      "description": "University ID lace.",
+      "imageUrl": "/assets/wup shop assets/wesleyan-id-lace-new.webp",
+      "matchExisting": ["Wesleyan ID Lace"],
+      "reviewCandidates": ["WUP Black ID Lace"],
+      "lines": [{ "sheet": "ID Lace", "count": 1500 }]
+    },
+    { "key": "college-gs-sash", "name": "College/G.S. Sash", "category": "paraphernalia", "saleMode": "SIMPLE", "description": "College / Graduate School sash (new design).", "lines": [{ "sheet": "COLLEGE/G.S SASH NEW", "count": 575 }] },
+    { "key": "wup-pin", "name": "WUP Pin", "category": "paraphernalia", "saleMode": "SIMPLE", "description": "WUP pin (new design).", "lines": [{ "sheet": "WUP PIN (NEW)", "count": 200 }] }
+  ]
+}

@@ -1196,7 +1196,7 @@ function groupOptions(variants: BackendVariant[] = []) {
 }
 
 export function mapBackendProduct(product: BackendProduct): CartProduct {
-  const asset = resolveShopProductAsset(product.name, product.imageUrl, product.category?.name);
+  const asset = resolveShopProductAsset(product.name, product.imageUrl);
   const categoryName = product.category?.name ?? "Others";
   const saleMode: ProductSaleMode = product.saleMode
     ?? (isUniformClothOnly({ name: product.name, category: categoryName })
