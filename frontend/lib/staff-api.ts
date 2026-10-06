@@ -465,11 +465,18 @@ export type WalkInReceiptItem = {
   subtotal: string;
 };
 
+export type WalkInCollectionChannel = "COMMISSARY" | "TREASURER";
+
 export type WalkInReceipt = {
   id: string;
   receiptCode: string;
   studentId: string | null;
   buyerName: string;
+  collectionChannel: WalkInCollectionChannel;
+  officialReceiptNumber: string | null;
+  /** Voided Treasury sale: stock is back, but the Treasury refund is settled outside WESCOMM. */
+  treasuryReconciliationRequired: boolean;
+  publicVerificationUrl: string | null;
   totalAmount: string;
   paymentMethod: string;
   status: "PENDING" | "VERIFIED" | "VOIDED";
@@ -486,8 +493,13 @@ export type WalkInReceipt = {
   } | null;
   issuedBy: { id: string; fullName: string } | null;
   sale: {
-    cashTendered: string;
-    changeDue: string;
+    collectionChannel: WalkInCollectionChannel;
+    officialReceiptNumber: string | null;
+    treasuryVerifiedById: string | null;
+    treasuryVerifiedAt: string | null;
+    /** Null for Treasury sales: the Commissary cashier handles no cash. */
+    cashTendered: string | null;
+    changeDue: string | null;
     cashierId: string | null;
     cashierName: string;
     clientSaleId: string;
@@ -498,16 +510,25 @@ export type WalkInReceipt = {
   items: WalkInReceiptItem[];
 };
 
+type WalkInSaleBasePayload = {
+  items: WalkInSaleItemPayload[];
+  buyerName: string;
+  studentId?: string;
+  receiptCode?: string;
+  clientSaleId: string;
+};
+
+export type WalkInSalePayload =
+  | (WalkInSaleBasePayload & { collectionChannel: "COMMISSARY"; cashReceived: number })
+  | (WalkInSaleBasePayload & {
+      collectionChannel: "TREASURER";
+      officialReceiptNumber: string;
+      treasuryReceiptInspected: true;
+    });
+
 export async function recordWalkInSale(
   token: string,
-  payload: {
-    items: WalkInSaleItemPayload[];
-    buyerName: string;
-    studentId?: string;
-    receiptCode?: string;
-    cashReceived: number;
-    clientSaleId: string;
-  }
+  payload: WalkInSalePayload
 ) {
   const data = await staffFetch<{ receipt: WalkInReceipt }>("/staff/walk-in-sales", token, {
     method: "POST",

@@ -128,6 +128,17 @@ function reportObservationDays(range: ResolvedReportRange) {
   return Math.max(1, Math.round((range.toExclusive.getTime() - range.fromInclusive.getTime()) / 86_400_000));
 }
 
+function mergeChannelGroups(...sources: Array<Array<{ channel: string; amount: string; count: number }>>) {
+  const merged = new Map<string, { channel: string; amount: string; count: number }>();
+  for (const group of sources.flat()) {
+    const current = merged.get(group.channel);
+    merged.set(group.channel, current
+      ? { channel: group.channel, amount: String(toNumber(current.amount) + toNumber(group.amount)), count: current.count + group.count }
+      : group);
+  }
+  return [...merged.values()];
+}
+
 async function buildReportSummary(options: FinancialReportInput = {}) {
   const range = resolveReportRange(options);
   type Row = {
@@ -151,6 +162,8 @@ async function buildReportSummary(options: FinancialReportInput = {}) {
     walkInCategorySalesRows: Array<{ category: string; sales: string; cogs: string; quantity: number }>;
     walkInItemSalesRows: Array<{ productId: string; item: string; category: string; quantity: number; sales: string; cogs: string }>;
     walkInCashierRows: Array<{ cashierId: string | null; cashierName: string; saleCount: number; sales: string; voidCount: number; voids: string }>;
+    walkInChannelGroups: Array<{ channel: string; amount: string; count: number }>;
+    walkInTreasuryRows: Array<{ paymentId: string; paidAt: string; officialReceiptNumber: string | null; orderReference: string; items: string; amount: string }>;
   };
 
   type ComparisonRow = {
@@ -343,7 +356,7 @@ async function buildReportSummary(options: FinancialReportInput = {}) {
         WHERE receipt.status = 'VERIFIED'::receipt_status
           AND (${range.fromInclusive}::timestamptz IS NULL OR COALESCE(receipt.verified_at, receipt.issued_at) >= ${range.fromInclusive})
           AND COALESCE(receipt.verified_at, receipt.issued_at) < ${range.toExclusive}
-          AND (${options.collectionChannel ?? null}::text IS NULL OR 'COMMISSARY'::text = ${options.collectionChannel ?? null}::text)
+          AND (${options.collectionChannel ?? null}::text IS NULL OR sale.collection_channel::text = ${options.collectionChannel ?? null}::text)
           AND (${options.categoryId ?? null}::uuid IS NULL OR (SELECT category_id FROM products WHERE id = item.product_id) = ${options.categoryId ?? null}::uuid)
       ) AS "walkInSaleAggregate",
       (SELECT jsonb_build_object(
@@ -354,7 +367,7 @@ async function buildReportSummary(options: FinancialReportInput = {}) {
         WHERE receipt.status = 'VOIDED'::receipt_status
           AND (${range.fromInclusive}::timestamptz IS NULL OR COALESCE(receipt.voided_at, receipt.updated_at) >= ${range.fromInclusive})
           AND COALESCE(receipt.voided_at, receipt.updated_at) < ${range.toExclusive}
-          AND (${options.collectionChannel ?? null}::text IS NULL OR 'COMMISSARY'::text = ${options.collectionChannel ?? null}::text)
+          AND (${options.collectionChannel ?? null}::text IS NULL OR sale.collection_channel::text = ${options.collectionChannel ?? null}::text)
       ) AS "walkInVoidAggregate",
       COALESCE((SELECT jsonb_agg(to_jsonb(grouped)) FROM (
         SELECT CASE WHEN ${range.granularity}::text = 'MONTHLY'
@@ -367,7 +380,7 @@ async function buildReportSummary(options: FinancialReportInput = {}) {
         WHERE receipt.status = 'VERIFIED'::receipt_status
           AND (${range.fromInclusive}::timestamptz IS NULL OR COALESCE(receipt.verified_at, receipt.issued_at) >= ${range.fromInclusive})
           AND COALESCE(receipt.verified_at, receipt.issued_at) < ${range.toExclusive}
-          AND (${options.collectionChannel ?? null}::text IS NULL OR 'COMMISSARY'::text = ${options.collectionChannel ?? null}::text)
+          AND (${options.collectionChannel ?? null}::text IS NULL OR sale.collection_channel::text = ${options.collectionChannel ?? null}::text)
           AND (${options.categoryId ?? null}::uuid IS NULL OR (SELECT category_id FROM products WHERE id = item.product_id) = ${options.categoryId ?? null}::uuid)
         GROUP BY key ORDER BY key
       ) grouped), '[]'::jsonb) AS "walkInSalesTrendRows",
@@ -383,7 +396,7 @@ async function buildReportSummary(options: FinancialReportInput = {}) {
         WHERE receipt.status = 'VERIFIED'::receipt_status
           AND (${range.fromInclusive}::timestamptz IS NULL OR COALESCE(receipt.verified_at, receipt.issued_at) >= ${range.fromInclusive})
           AND COALESCE(receipt.verified_at, receipt.issued_at) < ${range.toExclusive}
-          AND (${options.collectionChannel ?? null}::text IS NULL OR 'COMMISSARY'::text = ${options.collectionChannel ?? null}::text)
+          AND (${options.collectionChannel ?? null}::text IS NULL OR sale.collection_channel::text = ${options.collectionChannel ?? null}::text)
           AND (${options.categoryId ?? null}::uuid IS NULL OR product.category_id = ${options.categoryId ?? null}::uuid)
         GROUP BY category.name ORDER BY SUM(item.subtotal) DESC
       ) grouped), '[]'::jsonb) AS "walkInCategorySalesRows",
@@ -400,7 +413,7 @@ async function buildReportSummary(options: FinancialReportInput = {}) {
         WHERE receipt.status = 'VERIFIED'::receipt_status
           AND (${range.fromInclusive}::timestamptz IS NULL OR COALESCE(receipt.verified_at, receipt.issued_at) >= ${range.fromInclusive})
           AND COALESCE(receipt.verified_at, receipt.issued_at) < ${range.toExclusive}
-          AND (${options.collectionChannel ?? null}::text IS NULL OR 'COMMISSARY'::text = ${options.collectionChannel ?? null}::text)
+          AND (${options.collectionChannel ?? null}::text IS NULL OR sale.collection_channel::text = ${options.collectionChannel ?? null}::text)
           AND (${options.categoryId ?? null}::uuid IS NULL OR product.category_id = ${options.categoryId ?? null}::uuid)
         GROUP BY item.product_id, item.product_name_snapshot, category.name ORDER BY SUM(item.subtotal) DESC
       ) grouped), '[]'::jsonb) AS "walkInItemSalesRows",
@@ -419,7 +432,7 @@ async function buildReportSummary(options: FinancialReportInput = {}) {
           WHERE receipt.status IN ('VERIFIED'::receipt_status, 'VOIDED'::receipt_status)
             AND (${range.fromInclusive}::timestamptz IS NULL OR COALESCE(receipt.verified_at, receipt.issued_at) >= ${range.fromInclusive})
             AND COALESCE(receipt.verified_at, receipt.issued_at) < ${range.toExclusive}
-            AND (${options.collectionChannel ?? null}::text IS NULL OR 'COMMISSARY'::text = ${options.collectionChannel ?? null}::text)
+            AND (${options.collectionChannel ?? null}::text IS NULL OR sale.collection_channel::text = ${options.collectionChannel ?? null}::text)
           UNION ALL
           SELECT sale.cashier_id AS "cashierId", sale.cashier_name_snapshot AS "cashierName",
             0::integer AS "saleCount", 0::numeric AS sales,
@@ -429,10 +442,37 @@ async function buildReportSummary(options: FinancialReportInput = {}) {
           WHERE receipt.status = 'VOIDED'::receipt_status
             AND (${range.fromInclusive}::timestamptz IS NULL OR COALESCE(sale.voided_at, receipt.voided_at, receipt.updated_at) >= ${range.fromInclusive})
             AND COALESCE(sale.voided_at, receipt.voided_at, receipt.updated_at) < ${range.toExclusive}
-            AND (${options.collectionChannel ?? null}::text IS NULL OR 'COMMISSARY'::text = ${options.collectionChannel ?? null}::text)
+            AND (${options.collectionChannel ?? null}::text IS NULL OR sale.collection_channel::text = ${options.collectionChannel ?? null}::text)
         ) events
         GROUP BY events."cashierId", events."cashierName"
-      ) grouped), '[]'::jsonb) AS "walkInCashierRows"
+      ) grouped), '[]'::jsonb) AS "walkInCashierRows",
+      COALESCE((SELECT jsonb_agg(to_jsonb(grouped)) FROM (
+        SELECT sale.collection_channel::text AS channel,
+          COALESCE(SUM(item.subtotal), 0)::text AS amount, COUNT(DISTINCT sale.receipt_id)::integer AS count
+        FROM walk_in_sale_items item
+        INNER JOIN walk_in_sales sale ON sale.id = item.sale_id
+        INNER JOIN receipts receipt ON receipt.id = sale.receipt_id
+        WHERE receipt.status = 'VERIFIED'::receipt_status
+          AND (${range.fromInclusive}::timestamptz IS NULL OR COALESCE(receipt.verified_at, receipt.issued_at) >= ${range.fromInclusive})
+          AND COALESCE(receipt.verified_at, receipt.issued_at) < ${range.toExclusive}
+          AND (${options.collectionChannel ?? null}::text IS NULL OR sale.collection_channel::text = ${options.collectionChannel ?? null}::text)
+          AND (${options.categoryId ?? null}::uuid IS NULL OR (SELECT category_id FROM products WHERE id = item.product_id) = ${options.categoryId ?? null}::uuid)
+        GROUP BY sale.collection_channel ORDER BY sale.collection_channel
+      ) grouped), '[]'::jsonb) AS "walkInChannelGroups",
+      COALESCE((SELECT jsonb_agg(to_jsonb(grouped) ORDER BY grouped."paidAt" DESC) FROM (
+        SELECT sale.id AS "paymentId", COALESCE(receipt.verified_at, receipt.issued_at) AS "paidAt",
+          sale.official_receipt_number AS "officialReceiptNumber",
+          receipt.receipt_code AS "orderReference", receipt.total_amount::text AS amount,
+          COALESCE((SELECT STRING_AGG(item.product_name_snapshot || ' x' || item.quantity::text, ', ' ORDER BY item.created_at)
+            FROM walk_in_sale_items item WHERE item.sale_id = sale.id), 'No items') AS items
+        FROM walk_in_sales sale
+        INNER JOIN receipts receipt ON receipt.id = sale.receipt_id
+        WHERE receipt.status = 'VERIFIED'::receipt_status
+          AND sale.collection_channel = 'TREASURER'::collection_channel
+          AND (${range.fromInclusive}::timestamptz IS NULL OR COALESCE(receipt.verified_at, receipt.issued_at) >= ${range.fromInclusive})
+          AND COALESCE(receipt.verified_at, receipt.issued_at) < ${range.toExclusive}
+          AND (${options.collectionChannel ?? null}::text IS NULL OR sale.collection_channel::text = ${options.collectionChannel ?? null}::text)
+      ) grouped), '[]'::jsonb) AS "walkInTreasuryRows"
   `),
     prisma.$queryRaw<ComparisonRow[]>(Prisma.sql`
       SELECT
@@ -492,7 +532,7 @@ async function buildReportSummary(options: FinancialReportInput = {}) {
             AND receipt.status = 'VERIFIED'::receipt_status
             AND COALESCE(receipt.verified_at, receipt.issued_at) >= ${comparisonWindow.fromInclusive}
             AND COALESCE(receipt.verified_at, receipt.issued_at) < ${comparisonWindow.toExclusive}
-            AND (${options.collectionChannel ?? null}::text IS NULL OR 'COMMISSARY'::text = ${options.collectionChannel ?? null}::text)
+            AND (${options.collectionChannel ?? null}::text IS NULL OR sale.collection_channel::text = ${options.collectionChannel ?? null}::text)
             AND (${options.categoryId ?? null}::uuid IS NULL OR (SELECT category_id FROM products WHERE id = item.product_id) = ${options.categoryId ?? null}::uuid)
         ) walk_in_item), 0)::text AS "walkInSales",
         COALESCE((SELECT SUM(allocation.quantity * allocation.unit_cost)
@@ -505,7 +545,7 @@ async function buildReportSummary(options: FinancialReportInput = {}) {
             AND receipt.status = 'VERIFIED'::receipt_status
             AND COALESCE(receipt.verified_at, receipt.issued_at) >= ${comparisonWindow.fromInclusive}
             AND COALESCE(receipt.verified_at, receipt.issued_at) < ${comparisonWindow.toExclusive}
-            AND (${options.collectionChannel ?? null}::text IS NULL OR 'COMMISSARY'::text = ${options.collectionChannel ?? null}::text)
+            AND (${options.collectionChannel ?? null}::text IS NULL OR sale.collection_channel::text = ${options.collectionChannel ?? null}::text)
             AND (${options.categoryId ?? null}::uuid IS NULL OR (SELECT category_id FROM products WHERE id = item.product_id) = ${options.categoryId ?? null}::uuid)
         ), 0)::text AS "walkInCogs"
     `),
@@ -614,7 +654,7 @@ async function buildReportSummary(options: FinancialReportInput = {}) {
             AND walk_receipt.status = 'VERIFIED'::receipt_status
             AND (${range.fromInclusive}::timestamptz IS NULL OR COALESCE(walk_receipt.verified_at, walk_receipt.issued_at) >= ${range.fromInclusive})
             AND COALESCE(walk_receipt.verified_at, walk_receipt.issued_at) < ${range.toExclusive}
-            AND (${options.collectionChannel ?? null}::text IS NULL OR 'COMMISSARY'::text = ${options.collectionChannel ?? null}::text)
+            AND (${options.collectionChannel ?? null}::text IS NULL OR walk_sale.collection_channel::text = ${options.collectionChannel ?? null}::text)
         ) combined
       ) sale ON TRUE
       WHERE product.is_active = true
@@ -640,21 +680,22 @@ async function buildReportSummary(options: FinancialReportInput = {}) {
     reservationGroups: [], saleAggregate: { totalSales: "0", cogs: "0", count: 0, uncostedQuantity: 0 }, collectionGroups: [], cashChannelGroups: [], methodGroups: [], commissaryMethodGroups: [], treasurerPaymentRows: [], pendingReceiptCount: 0,
     userGroups: [], activeConversations: 0, salesTrendRows: [], categorySalesRows: [], itemSalesRows: [],
     walkInSaleAggregate: { totalSales: "0", cogs: "0", count: 0, uncostedQuantity: 0 }, walkInVoidAggregate: { count: 0, amount: "0" },
-    walkInSalesTrendRows: [], walkInCategorySalesRows: [], walkInItemSalesRows: [], walkInCashierRows: []
+    walkInSalesTrendRows: [], walkInCategorySalesRows: [], walkInItemSalesRows: [], walkInCashierRows: [],
+    walkInChannelGroups: [], walkInTreasuryRows: []
   };
   const walkInSalesAmount = toNumber(payload.walkInSaleAggregate.totalSales);
   const walkInCogsAmount = toNumber(payload.walkInSaleAggregate.cogs);
   const totalSales = toNumber(payload.saleAggregate.totalSales) + walkInSalesAmount;
   const cogs = toNumber(payload.saleAggregate.cogs) + walkInCogsAmount;
-  const channels = Object.fromEntries(payload.collectionGroups.map((group) => [group.channel, group]));
+  const channels = Object.fromEntries(
+    mergeChannelGroups(payload.collectionGroups, payload.walkInChannelGroups).map((group) => [group.channel, group])
+  );
   const commissaryMethods = Object.fromEntries(payload.commissaryMethodGroups.map((group) => [group.method, group]));
   const paymentRevenue = classifyReportPaymentRevenue({
     methodGroups: payload.walkInSaleAggregate.count
       ? [...payload.methodGroups, { method: "CASH", amount: payload.walkInSaleAggregate.totalSales, count: payload.walkInSaleAggregate.count }]
       : payload.methodGroups,
-    cashChannelGroups: payload.walkInSaleAggregate.count
-      ? [...payload.cashChannelGroups, { channel: "COMMISSARY", amount: payload.walkInSaleAggregate.totalSales, count: payload.walkInSaleAggregate.count }]
-      : payload.cashChannelGroups
+    cashChannelGroups: [...payload.cashChannelGroups, ...payload.walkInChannelGroups]
   });
   const roles = Object.fromEntries(payload.userGroups.map((group) => [group.role, group.count]));
   const totalReservations = payload.reservationGroups.reduce((sum, group) => sum + group.count, 0);
@@ -732,7 +773,9 @@ async function buildReportSummary(options: FinancialReportInput = {}) {
       gcash: { amount: toNumber(commissaryMethods.GCASH?.amount), payments: commissaryMethods.GCASH?.count ?? 0 },
       other: { amount: toNumber(commissaryMethods.OTHER?.amount), payments: commissaryMethods.OTHER?.count ?? 0 }
     },
-    treasurerCollections: payload.treasurerPaymentRows.map((payment) => ({
+    treasurerCollections: [...payload.treasurerPaymentRows, ...payload.walkInTreasuryRows]
+      .sort((left, right) => new Date(right.paidAt).getTime() - new Date(left.paidAt).getTime())
+      .map((payment) => ({
       paymentId: payment.paymentId,
       paidAt: new Date(payment.paidAt).toISOString(),
       officialReceiptNumber: payment.officialReceiptNumber,

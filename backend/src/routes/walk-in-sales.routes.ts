@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
+import { parseRecordWalkInSale } from "../domain/walk-in-sale-schemas.js";
 import { requireAuth, type AuthenticatedRequest } from "../middleware/auth.js";
 import { createRateLimiter, userRateLimitKey } from "../middleware/rate-limit.js";
 import { requireRole } from "../middleware/require-role.js";
@@ -14,24 +15,6 @@ import {
 import { asyncHandler } from "../utils/async-handler.js";
 
 export const walkInSalesRoutes = Router();
-
-const walkInSaleItemSchema = z.object({
-  productId: z.string().uuid(),
-  skuId: z.string().uuid().optional(),
-  variantId: z.string().uuid().optional(),
-  quantity: z.coerce.number().int().min(1).max(10_000_000)
-}).refine((item) => !(item.skuId && item.variantId), {
-  message: "Choose either a SKU combination or a variant, not both."
-});
-
-const recordWalkInSaleSchema = z.object({
-  items: z.array(walkInSaleItemSchema).min(1).max(50),
-  buyerName: z.string().trim().min(2).max(120),
-  studentId: z.string().uuid().nullish(),
-  receiptCode: z.string().trim().min(5).max(64).regex(/^[A-Za-z0-9-]+$/, "Invalid receipt code.").optional(),
-  cashReceived: z.coerce.number().nonnegative().max(10_000_000).multipleOf(0.01),
-  clientSaleId: z.string().trim().min(8).max(64).regex(/^[A-Za-z0-9_-]+$/, "Invalid sale key.")
-});
 
 const walkInSaleListSchema = z.object({
   limit: z.coerce.number().int().min(1).max(50).optional(),
@@ -67,15 +50,21 @@ walkInSalesRoutes.post(
   "/",
   walkInSaleWriteLimiter,
   asyncHandler(async (request: AuthenticatedRequest, response) => {
-    const input = recordWalkInSaleSchema.parse(request.body);
+    const input = parseRecordWalkInSale(request.body);
     const result = await recordWalkInSale({
       items: input.items,
       buyerName: input.buyerName,
       studentId: input.studentId ?? null,
       receiptCode: input.receiptCode ?? null,
-      cashReceived: input.cashReceived,
       clientSaleId: input.clientSaleId,
-      performedById: request.auth!.id
+      performedById: request.auth!.id,
+      ...(input.collectionChannel === "TREASURER"
+        ? {
+            collectionChannel: "TREASURER" as const,
+            officialReceiptNumber: input.officialReceiptNumber,
+            treasuryReceiptInspected: input.treasuryReceiptInspected
+          }
+        : { collectionChannel: "COMMISSARY" as const, cashReceived: input.cashReceived })
     });
     if (result.created) {
       await invalidateOperationalReadCaches();
