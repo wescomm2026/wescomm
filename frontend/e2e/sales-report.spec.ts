@@ -1,4 +1,4 @@
-import { expect, test, type Route } from "@playwright/test";
+import { expect, test, type Page, type Route } from "@playwright/test";
 import type { BackendAuthProfile } from "../lib/api";
 import { EMPTY_REPORT_SUMMARY } from "../lib/report-summary";
 import { authorizeMockedWorkspace, dismissWelcomeGate, fulfillWorkspaceShellExtras } from "./helpers";
@@ -137,6 +137,100 @@ const ledgerFixture = {
     { item: "ID Lace", category: "Accessories", skuOrOption: "Blue", quantity: 1, sales: 450, cogs: 250, grossProfit: 200 }
   ]
 };
+
+function makeSale(sequence: number) {
+  const quantity = (sequence % 2) + 1;
+  const option = sequence % 2 ? "Small" : "Medium";
+  return {
+    sequence,
+    timestamp: new Date(Date.UTC(2026, 9, 6, 1, sequence)).toISOString(),
+    receiptCode: `RCT-2026-${String(sequence).padStart(4, "0")}A8C4E`,
+    type: "WALK_IN",
+    studentName: "jm",
+    studentNumber: null,
+    orderReference: null,
+    items: [{
+      productId: "qa-sku",
+      productName: "[QA] SKU Uniform Set",
+      skuCode: null,
+      variant: option,
+      category: "QA Fixtures",
+      quantity,
+      unitPrice: 700,
+      subtotal: 700 * quantity,
+      cogs: 410 * quantity
+    }],
+    itemLines: [`${quantity}× [QA] SKU Uniform Set — ${option}`],
+    quantity,
+    collectionPoint: "COMMISSARY",
+    cashierName: "QA System Administrator",
+    amount: 700 * quantity
+  };
+}
+
+function makeLedger(saleCount: number, voidCount = 0, productCount = 2) {
+  const sales = Array.from({ length: saleCount }, (_, index) => makeSale(index + 1));
+  const amount = sales.reduce((total, sale) => total + sale.amount, 0);
+  return {
+    ...ledgerFixture,
+    generatedBy: "QA System Administrator",
+    range: { ...ledgerFixture.range, label: "October 6, 2026" },
+    summary: {
+      validSalesTransactions: saleCount,
+      totalUnitsSold: sales.reduce((total, sale) => total + sale.quantity, 0),
+      reservationSales: { count: 0, amount: 0 },
+      walkInSales: { count: saleCount, amount },
+      totalRecognizedSales: amount,
+      voidsProcessed: { count: voidCount, amount: voidCount * 700 }
+    },
+    sales,
+    voids: Array.from({ length: voidCount }, (_, index) => ({
+      ...ledgerFixture.voids[0],
+      receiptCode: `RCT-2026-V${String(index + 1).padStart(3, "0")}`,
+      amount: 700
+    })),
+    productSummary: Array.from({ length: productCount }, (_, index) => ({
+      item: `[QA] SKU Uniform Set ${index + 1}`,
+      category: "QA Fixtures",
+      skuOrOption: index % 2 ? "Small" : "Medium",
+      quantity: 2,
+      sales: 1400,
+      cogs: 820,
+      grossProfit: 580
+    }))
+  };
+}
+
+// Counts pages in a Chromium-generated PDF, which writes plain page objects.
+function pdfPageCount(pdf: Buffer) {
+  return (pdf.toString("latin1").match(/\/Type\s*\/Page(?!s)/g) ?? []).length;
+}
+
+async function printReportPdf(page: Page) {
+  // page.pdf() does not fire print events, so dispatch them as the print dialog does.
+  await page.evaluate(() => window.dispatchEvent(new Event("beforeprint")));
+  const pdf = await page.pdf({ preferCSSPageSize: true, printBackground: true });
+  await page.evaluate(() => window.dispatchEvent(new Event("afterprint")));
+  return pdf;
+}
+
+async function openPrintableLedger(page: Page, ledger: unknown) {
+  await authorizeMockedWorkspace(page, "STAFF");
+  await page.route("**/api/backend/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (await handleShellRequest(route)) return;
+    if (path === "/api/backend/staff/reports/summary") return json(route, { summary: EMPTY_REPORT_SUMMARY });
+    if (path === "/api/backend/staff/reports/sales-ledger" && request.method() === "GET") return json(route, ledger);
+    return json(route, { error: "Unexpected API request in sales report print-fit test." }, 500);
+  });
+  await page.goto("/staff/reports");
+  await dismissWelcomeGate(page);
+  await page.getByRole("button", { name: "Sales register", exact: true }).click();
+  await page.getByLabel("Date").fill("2026-10-06");
+  await page.getByRole("button", { name: "Preview Report" }).click();
+  await expect(page.locator("#sales-report-print-area")).toBeVisible();
+}
 
 test.describe("sales report preview", () => {
   test("staff preview daily ledger with matching totals and void audit trail", async ({ page }, testInfo) => {
@@ -291,5 +385,27 @@ test.describe("sales report preview", () => {
     await expect(page.getByText("Daily Sales Report", { exact: true })).toBeVisible();
     await page.emulateMedia({ media: "screen" });
     await expect(page.getByRole("button", { name: "Preview Report" })).toBeVisible();
+  });
+
+  for (const [label, ledger] of [
+    ["3 sales, no voids", makeLedger(3)],
+    ["12 sales, 2 voids, 6 products", makeLedger(12, 2, 6)]
+  ] as const) {
+    test(`a normal day prints on one page with voids and sign-off (${label})`, async ({ page }, testInfo) => {
+      test.skip(testInfo.project.name !== "desktop-chromium", "PDF output is Chromium-only.");
+      await openPrintableLedger(page, ledger);
+      const pdf = await printReportPdf(page);
+      await testInfo.attach("sales-report.pdf", { body: pdf, contentType: "application/pdf" });
+      expect(pdfPageCount(pdf)).toBe(1);
+      await expect(page.locator("#sales-report-print-area")).not.toHaveClass(/srd-print-layout/);
+    });
+  }
+
+  test("a long period paginates at normal size instead of shrinking", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "desktop-chromium", "PDF output is Chromium-only.");
+    await openPrintableLedger(page, makeLedger(60, 3, 8));
+    const pdf = await printReportPdf(page);
+    await testInfo.attach("sales-report-long.pdf", { body: pdf, contentType: "application/pdf" });
+    expect(pdfPageCount(pdf)).toBeGreaterThan(1);
   });
 });
