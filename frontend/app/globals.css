@@ -561,13 +561,14 @@ html:not([data-wescomm-intro="pending"]) .welcome-gate-overlay {
     background: #ffffff !important;
   }
 
-  /* Print only the report: drop every branch that does not contain it and flatten the
-     wrappers that do, so the page has no shell chrome and no blank trailing pages. */
-  body *:not(:has(#sales-report-print-area)):not(#sales-report-print-area):not(#sales-report-print-area *) {
+  /* When a printable document ([data-print-document]) is on the page, print only it:
+     drop every branch that does not contain it and flatten the wrappers that do, so the
+     page has no shell chrome and no blank trailing pages. Other pages print normally. */
+  body:has([data-print-document]) *:not(:has([data-print-document])):not([data-print-document]):not([data-print-document] *) {
     display: none !important;
   }
 
-  body *:has(#sales-report-print-area) {
+  body *:has([data-print-document]) {
     display: block !important;
     position: static !important;
     width: auto !important;
@@ -593,6 +594,315 @@ html:not([data-wescomm-intro="pending"]) .welcome-gate-overlay {
     width: auto !important;
     zoom: var(--srd-print-scale, 1);
   }
+
+  /* The inventory report prints on A4 portrait, like the paper count sheets. */
+  @page inventory-report {
+    size: A4 portrait;
+    margin: 12mm 12mm 14mm;
+
+    @bottom-left {
+      content: "WESCOMM Inventory Report";
+      color: #5f6d66;
+      font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+      font-size: 8pt;
+    }
+
+    @bottom-right {
+      content: "Page " counter(page) " of " counter(pages);
+      color: #5f6d66;
+      font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+      font-size: 8pt;
+    }
+  }
+
+  #inventory-report-print-area {
+    page: inventory-report;
+    min-width: 0;
+    border: 0;
+    border-radius: 0;
+    padding: 0;
+    font-size: 8.5pt;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  #inventory-report-print-area .ird-header {
+    padding: 0 0 0.5rem;
+  }
+
+  #inventory-report-print-area .ird-table {
+    margin-top: 0.6rem;
+    font-size: 8pt;
+  }
+
+  #inventory-report-print-area .ird-table thead {
+    display: table-header-group;
+  }
+
+  /* The subtotal prints once, at the end of its category, not on every page. */
+  #inventory-report-print-area .ird-table tfoot {
+    display: table-row-group;
+  }
+
+  #inventory-report-print-area .ird-item,
+  #inventory-report-print-area .ird-table tr,
+  #inventory-report-print-area .ird-closing {
+    break-inside: avoid;
+  }
+
+  #inventory-report-print-area .ird-table th,
+  #inventory-report-print-area .ird-table td {
+    padding: 0.18rem 0.4rem;
+  }
+
+  #inventory-report-print-area .ird-closing {
+    padding: 0.8rem 0 0;
+  }
+}
+
+/* Printable inventory report (Inventory > Print inventory). */
+.inventory-report-doc {
+  --ird-green: #006633;
+  --ird-soft: #eaf5ec;
+  --ird-border: #b8d7bf;
+  --ird-rule: #e2e9e3;
+  --ird-text: #17211b;
+  --ird-muted: #5f6d66;
+  min-width: 640px;
+  border: 1px solid var(--ird-border);
+  border-radius: 0.5rem;
+  background: #ffffff;
+  color: var(--ird-text);
+  padding: 1.25rem 1.5rem 1rem;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.ird-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: end;
+  gap: 1rem;
+  border-bottom: 3px solid var(--ird-green);
+  padding-bottom: 0.75rem;
+}
+
+.ird-wordmark {
+  color: var(--ird-green);
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  line-height: 1;
+}
+
+.ird-title {
+  margin-top: 0.3rem;
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.ird-org {
+  color: var(--ird-muted);
+  font-size: 10px;
+}
+
+.ird-asof {
+  margin-top: 0.35rem;
+  font-weight: 700;
+}
+
+.ird-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border-top: 1px solid var(--ird-border);
+  border-left: 1px solid var(--ird-border);
+  font-size: 10.5px;
+}
+
+.ird-meta > div {
+  display: grid;
+  grid-template-columns: 5.5rem minmax(0, 1fr);
+  border-right: 1px solid var(--ird-border);
+  border-bottom: 1px solid var(--ird-border);
+}
+
+.ird-meta dt {
+  background: var(--ird-soft);
+  padding: 0.25rem 0.45rem;
+  font-weight: 700;
+}
+
+.ird-meta dd {
+  overflow-wrap: anywhere;
+  padding: 0.25rem 0.45rem;
+}
+
+.ird-table {
+  width: 100%;
+  margin-top: 1rem;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-variant-numeric: tabular-nums;
+}
+
+.ird-col-item {
+  width: 46%;
+}
+
+.ird-col-size {
+  width: 34%;
+}
+
+.ird-col-qty {
+  width: 20%;
+}
+
+.ird-table--count .ird-col-item {
+  width: 31%;
+}
+
+.ird-table--count .ird-col-size {
+  width: 14%;
+}
+
+.ird-table--count .ird-col-qty,
+.ird-table--count .ird-col-count {
+  width: 12%;
+}
+
+.ird-table--count .ird-col-remarks {
+  width: 19%;
+}
+
+.ird-table th {
+  border: 1px solid var(--ird-border);
+  background: var(--ird-green);
+  color: #ffffff;
+  padding: 0.3rem 0.5rem;
+  font-weight: 700;
+  text-align: left;
+}
+
+.ird-table .ird-category-row th {
+  background: var(--ird-soft);
+  color: var(--ird-green);
+  font-size: 1.1em;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.ird-table td {
+  border: 1px solid var(--ird-rule);
+  padding: 0.25rem 0.5rem;
+  vertical-align: top;
+}
+
+.ird-table .num {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.ird-product-row td {
+  border-top: 1px solid var(--ird-border);
+  background: #fbfdfb;
+}
+
+.ird-line-row td:nth-child(2) {
+  padding-left: 1rem;
+}
+
+.ird-name,
+.ird-strong {
+  font-weight: 800;
+}
+
+.ird-flag {
+  margin-left: 0.4rem;
+  border: 1px solid var(--ird-border);
+  border-radius: 0.25rem;
+  padding: 0 0.3rem;
+  color: var(--ird-muted);
+  font-size: 0.8em;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.ird-muted {
+  color: var(--ird-muted);
+}
+
+.ird-shaded {
+  background: #f1f4f2;
+}
+
+.ird-table tfoot td {
+  border: 1px solid var(--ird-border);
+  background: var(--ird-soft);
+  font-weight: 800;
+}
+
+.ird-empty {
+  margin-top: 1rem;
+  color: var(--ird-muted);
+  font-style: italic;
+  text-align: center;
+}
+
+.ird-closing {
+  margin-top: 1rem;
+}
+
+.ird-totals {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border: 1px solid var(--ird-border);
+  border-radius: 0.375rem;
+}
+
+.ird-totals > div {
+  padding: 0.4rem 0.6rem;
+}
+
+.ird-totals > div + div {
+  border-left: 1px solid var(--ird-border);
+}
+
+.ird-totals dt {
+  color: var(--ird-muted);
+  font-size: 0.8em;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.ird-totals dd {
+  font-size: 1.15em;
+  font-weight: 800;
+}
+
+.ird-signatures {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+  padding-top: 1.6rem;
+}
+
+.ird-signature {
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.ird-signature-caption,
+.ird-footnote {
+  color: var(--ird-muted);
+  font-size: 0.8em;
+}
+
+.ird-footnote {
+  margin-top: 0.6rem;
+  text-align: center;
 }
 
 /* Printed sales report layout. SalesReportPreview adds this class on beforeprint and

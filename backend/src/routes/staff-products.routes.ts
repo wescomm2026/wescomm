@@ -20,6 +20,7 @@ import {
   updateProductVariant
 } from "../services/inventory.service.js";
 import { PRODUCT_SALE_MODES, PRODUCT_STATUSES } from "../types/app.js";
+import { getInventoryReport } from "../services/inventory-report.service.js";
 import { asyncHandler } from "../utils/async-handler.js";
 import { HttpError } from "../utils/http-error.js";
 import { publishRealtimeEventsBestEffort, REALTIME_TOPICS } from "../services/realtime-event.service.js";
@@ -291,6 +292,10 @@ const inventoryListQuerySchema = z.object({
   needs: z.enum(INVENTORY_ATTENTION_FILTERS).optional(),
   includeCategories: z.literal("1").optional()
 });
+const inventoryReportQuerySchema = z.object({
+  category: z.string().trim().min(1).max(120).regex(/^[a-z0-9-]+$/).optional(),
+  includeZero: z.enum(["0", "1"]).optional()
+});
 const permanentDeleteSchema = z.object({
   confirmation: z.string().trim().min(1).max(160),
   reason: z.string().trim().min(10).max(500)
@@ -337,6 +342,20 @@ staffProductsRoutes.get(
   asyncHandler(async (_request, response) => {
     const categories = await listCategories();
     response.json({ categories });
+  })
+);
+
+// Registered before "/:id" so the path is not read as a product id.
+staffProductsRoutes.get(
+  "/inventory-report",
+  asyncHandler(async (request: AuthenticatedRequest, response) => {
+    const query = inventoryReportQuerySchema.parse(request.query);
+    const report = await getInventoryReport({
+      actorId: request.auth!.id,
+      categorySlug: query.category,
+      includeZeroStock: query.includeZero !== "0"
+    });
+    response.json({ report });
   })
 );
 
