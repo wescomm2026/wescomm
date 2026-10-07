@@ -14,6 +14,7 @@ import { HttpError } from "../utils/http-error.js";
 import { createPage, decodeCursor, normalizePageLimit } from "../utils/cursor-pagination.js";
 import { lockProductForUpdate } from "../utils/product-transaction.js";
 import { safelyRecordAuditLog } from "./audit-log.service.js";
+import { assertReceiptVoidAllowed, receiptVoidableUntil } from "../domain/receipt-void-window.js";
 import {
   allocateWalkInSaleCostsInTransaction,
   reverseWalkInSaleCostAllocationsInTransaction
@@ -127,6 +128,7 @@ function mapWalkInReceipt(row: WalkInReceiptRecord) {
     issuedAt: row.issuedAt.toISOString(),
     verifiedAt: row.verifiedAt?.toISOString() ?? null,
     voidedAt: row.voidedAt?.toISOString() ?? null,
+    voidableUntil: row.status === "VOIDED" ? null : receiptVoidableUntil(row.issuedAt).toISOString(),
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
     buyerName,
@@ -831,7 +833,7 @@ export async function listWalkInSales(options: WalkInSaleListOptions = {}) {
   return createPage(rows.map(mapWalkInReceipt), limit);
 }
 
-export async function voidWalkInSale(input: { receiptId: string; reason: string; voidedById: string }) {
+export async function voidWalkInSale(input: { receiptId: string; reason: string; voidedById: string; actorRole?: string }) {
   const reason = input.reason.trim();
   const result = await prisma
     .$transaction(async (tx) => {
@@ -852,6 +854,7 @@ export async function voidWalkInSale(input: { receiptId: string; reason: string;
           reservationId: true,
           status: true,
           totalAmount: true,
+          issuedAt: true,
           walkInSale: { select: { id: true } },
           walkInSaleItems: { select: walkInSaleItemSelect }
         }
@@ -870,6 +873,7 @@ export async function voidWalkInSale(input: { receiptId: string; reason: string;
       if (!receipt.walkInSale) {
         throw new HttpError(409, "This walk-in sale header is missing and cannot be voided safely.", "WALK_IN_VOID_HEADER_MISSING");
       }
+      assertReceiptVoidAllowed({ actorRole: input.actorRole, soldAt: receipt.issuedAt });
       const previousStatus = receipt.status;
 
       const productIds = Array.from(new Set(receipt.walkInSaleItems.map((item) => item.productId))).sort();

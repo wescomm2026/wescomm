@@ -15,6 +15,8 @@ import {
   type BackendOperationalStudent
 } from "@/lib/api";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
+import { VoidDialogDetails, VoidWindowBadge } from "@/components/staff/VoidWindowParts";
+import { voidWindowState } from "@/lib/void-window";
 import {
   getStaffProductsPage,
   getStoredStaffSession,
@@ -376,6 +378,7 @@ function VoidWalkInSaleModal({
   receipt,
   submitting,
   reason,
+  role,
   onReasonChange,
   onClose,
   onConfirm
@@ -383,6 +386,7 @@ function VoidWalkInSaleModal({
   receipt: WalkInReceipt | null;
   submitting: boolean;
   reason: string;
+  role?: string | null;
   onReasonChange: (value: string) => void;
   onClose: () => void;
   onConfirm: () => void;
@@ -410,6 +414,7 @@ function VoidWalkInSaleModal({
             </p>
           </InlineAlert>
         ) : null}
+        <VoidDialogDetails state={voidWindowState(receipt.voidableUntil, role)} reason={reason} onReasonChange={onReasonChange} />
         <label className="mt-4 grid gap-1.5 text-sm font-semibold">
           Reason (required)
           <textarea
@@ -1740,20 +1745,27 @@ export function StaffWalkInSalesExperience() {
                     <Printer className="size-4" aria-hidden="true" />
                     Reprint
                   </Button>
-                  {receipt.status !== "VOIDED" ? (
-                    <Button
-                      variant="ghost"
-                      disabled={voiding}
-                      className="w-full border border-danger/30 text-danger hover:bg-danger/5"
-                      onClick={() => {
-                        setVoidReason("");
-                        setVoidTarget(receipt);
-                      }}
-                    >
-                      <Trash2 className="size-4" />
-                      Void & restore stock
-                    </Button>
-                  ) : null}
+                  {receipt.status !== "VOIDED" ? (() => {
+                    const voidWindow = voidWindowState(receipt.voidableUntil, user?.role);
+                    return (
+                      <>
+                        <VoidWindowBadge state={voidWindow} className="justify-center" />
+                        <Button
+                          variant="ghost"
+                          disabled={voiding || !voidWindow.canVoid}
+                          title={voidWindow.canVoid ? undefined : "The 2-day void period has ended. Ask an admin."}
+                          className="w-full border border-danger/30 text-danger hover:bg-danger/5"
+                          onClick={() => {
+                            setVoidReason("");
+                            setVoidTarget(receipt);
+                          }}
+                        >
+                          <Trash2 className="size-4" />
+                          {voidWindow.canVoid ? "Void & restore stock" : "Void period ended"}
+                        </Button>
+                      </>
+                    );
+                  })() : null}
                 </div>
               </article>
             ))}
@@ -1812,6 +1824,7 @@ export function StaffWalkInSalesExperience() {
         receipt={voidTarget}
         submitting={voiding}
         reason={voidReason}
+        role={user?.role}
         onReasonChange={setVoidReason}
         onClose={() => {
           setVoidTarget(null);

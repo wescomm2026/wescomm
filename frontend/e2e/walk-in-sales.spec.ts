@@ -164,6 +164,7 @@ test("staff record a SKU walk-in sale with cash, then void it to restore stock",
         issuedAt: "2026-09-28T08:30:00.000Z",
         verifiedAt: "2026-09-28T08:30:00.000Z",
         voidedAt: null,
+        voidableUntil: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
         createdAt: "2026-09-28T08:30:00.000Z",
         updatedAt: "2026-09-28T08:30:00.000Z",
         student: null,
@@ -206,6 +207,7 @@ test("staff record a SKU walk-in sale with cash, then void it to restore stock",
             status: "VOIDED",
             treasuryReconciliationRequired: receipt.collectionChannel === "TREASURER",
             voidedAt: "2026-09-28T09:00:00.000Z",
+            voidableUntil: null,
             updatedAt: "2026-09-28T09:00:00.000Z",
             sale: receipt.sale ? {
               ...receipt.sale,
@@ -289,9 +291,14 @@ test("staff record a SKU walk-in sale with cash, then void it to restore stock",
 
   await page.getByRole("button", { name: "Sales history", exact: true }).click();
   await expect(page.getByText("RCT-2026-TEST01").first()).toBeVisible();
+  await expect(page.getByText(/^Void allowed until /)).toBeVisible();
   await page.getByRole("button", { name: "Void & restore stock" }).click();
 
   const voidDialog = page.getByRole("dialog");
+  await expect(voidDialog.getByText("The items go back to inventory.")).toBeVisible();
+  await expect(voidDialog.getByText(/\(2-day void period\)/)).toBeVisible();
+  await voidDialog.getByRole("group", { name: "Common reasons" }).getByRole("button", { name: "Wrong size \u2014 exchange" }).click();
+  await expect(voidDialog.getByLabel("Reason (required)")).toHaveValue("Wrong size \u2014 exchange");
   await voidDialog.getByLabel("Reason (required)").fill("Wrong size handed to the student");
   await voidDialog.getByRole("button", { name: "Void & restore stock" }).click();
 
@@ -464,4 +471,60 @@ test("receipt printer width is chosen per computer and defaults to 58 mm", async
   await page.reload();
   await dismissWelcomeGate(page);
   await expect(page.getByRole("button", { name: "Printer: 76 mm" })).toBeVisible();
+});
+
+test("after the 2-day void period staff cannot void a sale, but an admin can with a warning", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "One void-window contract is sufficient.");
+  const oldSale: WalkInReceipt = {
+    id: "00000000-0000-4000-8000-000000000611",
+    receiptCode: "RCT-2026-OLD001",
+    studentId: null,
+    buyerName: "Old Walk-in",
+    collectionChannel: "COMMISSARY",
+    officialReceiptNumber: null,
+    treasuryReconciliationRequired: false,
+    publicVerificationUrl: null,
+    totalAmount: "350.00",
+    paymentMethod: "CASH",
+    status: "VERIFIED",
+    issuedAt: "2026-09-20T08:30:00.000Z",
+    verifiedAt: "2026-09-20T08:30:00.000Z",
+    voidedAt: null,
+    voidableUntil: "2026-09-22T15:59:00.000Z",
+    createdAt: "2026-09-20T08:30:00.000Z",
+    updatedAt: "2026-09-20T08:30:00.000Z",
+    student: null,
+    issuedBy: { id: staffProfile.id, fullName: staffProfile.fullName },
+    sale: null,
+    items: []
+  } as unknown as WalkInReceipt;
+
+  for (const role of ["STAFF", "ADMIN"] as const) {
+    await page.context().clearCookies();
+    await authorizeMockedWorkspace(page, role);
+    await page.unrouteAll({ behavior: "ignoreErrors" });
+    await page.route("**/api/backend/**", async (route) => {
+      const path = new URL(route.request().url()).pathname;
+      if (path === "/api/backend/auth/me") return json(route, { profile: { ...staffProfile, role } });
+      if (await handleShellRequest(route)) return;
+      if (path === "/api/backend/staff/products") return json(route, { products: [], categories: [], nextCursor: null });
+      if (path === "/api/backend/staff/students") return json(route, { items: [], nextCursor: null });
+      if (path === "/api/backend/staff/walk-in-sales") return json(route, { items: [oldSale], nextCursor: null });
+      return json(route, { error: "Unexpected API request in void-window test." }, 500);
+    });
+
+    await page.goto(role === "ADMIN" ? "/admin/walk-in-sales" : "/staff/walk-in-sales");
+    await dismissWelcomeGate(page);
+    await page.getByRole("button", { name: "Sales history", exact: true }).click();
+    await expect(page.getByText("RCT-2026-OLD001").first()).toBeVisible();
+    await expect(page.getByText(/^Void period ended /)).toBeVisible();
+
+    if (role === "STAFF") {
+      await expect(page.getByText(/admin only/)).toBeVisible();
+      await expect(page.getByRole("button", { name: "Void period ended" })).toBeDisabled();
+    } else {
+      await page.getByRole("button", { name: "Void & restore stock" }).click();
+      await expect(page.getByRole("dialog").getByRole("note")).toContainText("You are voiding as an admin");
+    }
+  }
 });
