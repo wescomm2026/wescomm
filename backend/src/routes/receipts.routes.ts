@@ -3,7 +3,8 @@ import { z } from "zod";
 import { requireAuth, type AuthenticatedRequest } from "../middleware/auth.js";
 import { createRateLimiter, ipRateLimitKey, userRateLimitKey } from "../middleware/rate-limit.js";
 import { requireRole } from "../middleware/require-role.js";
-import { getReceipt, listReceipts, markReceiptVerified, resolveReceiptTokenForViewer, verifyReceipt, verifyReceiptToken, voidReceipt } from "../services/receipt.service.js";
+import { getReceipt, isWalkInReceipt, listReceipts, markReceiptVerified, resolveReceiptTokenForViewer, verifyReceipt, verifyReceiptToken, voidReceipt } from "../services/receipt.service.js";
+import { voidWalkInSale } from "../services/walk-in-sale.service.js";
 import { asyncHandler } from "../utils/async-handler.js";
 import { HttpError } from "../utils/http-error.js";
 import { measureRequestPhase } from "../middleware/request-timing.js";
@@ -143,7 +144,13 @@ receiptsRoutes.patch(
   receiptWriteLimiter,
   asyncHandler(async (request: AuthenticatedRequest, response) => {
     const input = voidReceiptSchema.parse(request.body);
-    const receipt = await voidReceipt(receiptIdSchema.parse(request.params.id), request.auth!.id, input.reason);
+    const receiptId = receiptIdSchema.parse(request.params.id);
+    const actor = { id: request.auth!.id, role: request.auth!.role };
+    // Walk-in receipts are listed here too; route them through the walk-in void so
+    // their stock and cost allocations are restored and the sale header is voided.
+    const receipt = await isWalkInReceipt(receiptId)
+      ? (await voidWalkInSale({ receiptId, reason: input.reason, voidedById: actor.id, actorRole: actor.role }), await getReceipt(actor.id, actor.role, receiptId))
+      : await voidReceipt(receiptId, actor, input.reason);
     await invalidateDashboardAndReportCaches();
     scheduleOutboxProcessing();
     response.json({ receipt });

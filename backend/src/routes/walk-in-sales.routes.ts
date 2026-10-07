@@ -87,7 +87,8 @@ walkInSalesRoutes.post(
     const result = await voidWalkInSale({
       receiptId: walkInSaleReceiptIdSchema.parse(request.params.receiptId),
       reason: input.reason,
-      voidedById: request.auth!.id
+      voidedById: request.auth!.id,
+      actorRole: request.auth!.role
     });
     if (result.changed) {
       await invalidateOperationalReadCaches();
