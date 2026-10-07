@@ -75,12 +75,21 @@ function json(route: Route, body: unknown, status = 200) {
 // the browser print dialog. Runs in every frame, including the srcdoc print view.
 async function capturePrints(page: Page) {
   await page.addInitScript(() => {
-    const target = window.top as Window & { __printedReceipts?: string[] };
+    const target = window.top as Window & { __printedReceipts?: string[]; __printedPageRules?: string[] };
     target.__printedReceipts ??= [];
+    target.__printedPageRules ??= [];
     window.print = () => {
       target.__printedReceipts!.push(document.querySelector(".receipt")?.textContent?.replace(/\s+/g, " ").trim() ?? "");
+      const pageRule = Array.from(document.querySelectorAll("style"))
+        .map((style) => style.textContent ?? "")
+        .find((text) => text.trim().startsWith("@page"));
+      target.__printedPageRules!.push(pageRule?.trim() ?? "");
     };
   });
+}
+
+async function printedPageRules(page: Page) {
+  return page.evaluate(() => (window as Window & { __printedPageRules?: string[] }).__printedPageRules ?? []);
 }
 
 async function printedReceipts(page: Page) {
@@ -262,6 +271,10 @@ test("staff record a SKU walk-in sale with cash, then void it to restore stock",
   const [original] = await printedReceipts(page);
   expect(original).toContain("RCT-2026-TEST01");
   expect(original).toContain("Sales Receipt");
+  expect(original).toContain("COMMISSARY");
+  expect(original).not.toContain("WESCOMM");
+  // Default page length: no page size, so the receipt starts at the top of the printer's paper.
+  expect((await printedPageRules(page))[0]).toBe("@page { margin: 0; }");
   expect(original).toContain("Maria Walk-in");
   expect(original).toContain("Size: M / Color: Red");
   expect(original).toContain("Collected at Commissary");
@@ -459,8 +472,19 @@ test("receipt printer width is chosen per computer and defaults to 58 mm", async
   await dialog.getByRole("button", { name: "Print test receipt" }).click();
   await expect.poll(async () => (await printedReceipts(page)).length).toBe(1);
   expect((await printedReceipts(page))[0]).toContain("72 mm printable on 80 mm paper");
+  expect((await printedPageRules(page))[0]).toBe("@page { margin: 0; }");
 
-  await dialog.getByRole("radio", { name: /Custom/ }).check();
+  await expect(dialog.getByRole("radio", { name: /Printer's paper size/ })).toBeChecked();
+  await dialog.getByRole("radio", { name: /Custom length/ }).check();
+  await dialog.getByLabel("Page length (mm)").fill("20");
+  await expect(dialog.getByText("Use 50 to 3300 mm.")).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Save printer setting" })).toBeDisabled();
+  await dialog.getByLabel("Page length (mm)").fill("297");
+  await dialog.getByRole("button", { name: "Print test receipt" }).click();
+  await expect.poll(async () => (await printedPageRules(page)).length).toBe(2);
+  expect((await printedPageRules(page))[1]).toBe("@page { size: 80mm 297mm; margin: 0; }");
+
+  await dialog.getByRole("radio", { name: /Custom width/ }).check();
   await dialog.getByLabel("Paper width (mm)").fill("120");
   await expect(dialog.getByRole("button", { name: "Save printer setting" })).toBeDisabled();
   await dialog.getByLabel("Paper width (mm)").fill("76");
@@ -471,6 +495,11 @@ test("receipt printer width is chosen per computer and defaults to 58 mm", async
   await page.reload();
   await dismissWelcomeGate(page);
   await expect(page.getByRole("button", { name: "Printer: 76 mm" })).toBeVisible();
+  const saved = await page.evaluate(() => JSON.parse(window.localStorage.getItem("wescomm.thermal-printer.v1") ?? "{}"));
+  expect(saved).toMatchObject({ preset: "CUSTOM", paperWidthMm: 76, printableWidthMm: 68, pageLength: "CUSTOM", pageLengthMm: 297 });
+  await page.getByRole("button", { name: "Printer: 76 mm" }).click();
+  await expect(page.getByRole("dialog").getByRole("radio", { name: /Custom length/ })).toBeChecked();
+  await expect(page.getByRole("dialog").getByLabel("Page length (mm)")).toHaveValue("297");
 });
 
 test("after the 2-day void period staff cannot void a sale, but an admin can with a warning", async ({ page }, testInfo) => {
