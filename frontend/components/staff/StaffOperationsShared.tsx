@@ -459,7 +459,11 @@ export function StaffConversationAvatar({
   if (kind === "BOT") {
     return (
       <span className={cn("relative inline-grid shrink-0 place-items-center overflow-hidden rounded-full", sizeClass)} aria-hidden="true">
-        <Image src="/assets/chat-with-wesbot.svg" alt="" fill sizes={size === "sm" ? "32px" : size === "lg" ? "64px" : "44px"} className="object-contain" />
+        <AssetIcon
+          src="/assets/chat-with-wesbot.svg"
+          className="size-full rounded-full"
+          sizes={size === "sm" ? "32px" : size === "lg" ? "64px" : "44px"}
+        />
       </span>
     );
   }
@@ -577,13 +581,13 @@ export function Notice({ text, onClose }: { text: string; onClose: () => void })
       onMouseLeave={() => setPaused(false)}
       onFocus={() => setPaused(true)}
       onBlur={() => setPaused(false)}
-      className="fixed inset-x-3 bottom-4 z-[100] mx-auto flex max-w-md items-start gap-3 rounded-xl bg-foreground px-4 py-3 text-sm font-semibold text-white shadow-overlay sm:inset-x-auto sm:bottom-6 sm:right-6 sm:mx-0"
+      className="fixed inset-x-3 bottom-4 z-[100] mx-auto flex max-w-md items-start gap-3 rounded-xl bg-foreground px-4 py-3 text-sm font-semibold text-background shadow-overlay sm:inset-x-auto sm:bottom-6 sm:right-6 sm:mx-0"
     >
-      <span className="mt-0.5 grid size-5 shrink-0 place-items-center rounded-full bg-success text-white">
+      <span className="mt-0.5 grid size-5 shrink-0 place-items-center rounded-full bg-success text-background">
         <Check className="size-3.5" aria-hidden="true" />
       </span>
       <span className="min-w-0 flex-1 leading-5">{text}</span>
-      <button type="button" onClick={onClose} aria-label="Dismiss" className="-mr-1 grid size-6 shrink-0 place-items-center rounded-control text-white/70 hover:bg-white/10 hover:text-white">
+      <button type="button" onClick={onClose} aria-label="Dismiss" className="-mr-1 grid size-6 shrink-0 place-items-center rounded-control text-background/70 hover:bg-background/10 hover:text-background">
         <X className="size-4" aria-hidden="true" />
       </button>
     </div>

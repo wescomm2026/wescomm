@@ -2,7 +2,6 @@
 
 import { userFacingErrorMessage } from "@/lib/user-facing-error";
 
-import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Bell, Check, X } from "lucide-react";
@@ -17,6 +16,7 @@ import {
   type BackendNotificationType
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { AssetIcon } from "@/components/ui/AssetIcon";
 
 function notificationIcon(type: BackendNotificationType) {
   if (type === "RESERVATION") return "/assets/reservations.svg";
@@ -282,7 +282,7 @@ export function StudentNotifications({ onRequireAuth }: { onRequireAuth?: () => 
                 )}
               >
                 <span className="relative grid size-10 place-items-center rounded-md border border-[#dce7dd] bg-white">
-                  <Image src={notificationIcon(notification.type)} alt="" width={30} height={30} className="size-7 object-contain" />
+                  <AssetIcon src={notificationIcon(notification.type)} className="size-7" />
                 </span>
                 <span className="min-w-0">
                   <span className="block text-sm font-extrabold text-[#203027]">{notification.title}</span>

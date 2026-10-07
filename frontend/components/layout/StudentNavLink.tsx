@@ -1,8 +1,8 @@
 "use client";
 
-import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { StudentNavIcon } from "@/components/layout/StudentNavIcon";
 import { cn } from "@/lib/utils";
 
 type StudentNavLinkProps = {
@@ -24,12 +24,10 @@ export function StudentNavLink({ href, label, iconSrc }: StudentNavLinkProps) {
       )}
     >
       {iconSrc ? (
-        <Image
+        <StudentNavIcon
           src={iconSrc}
-          alt=""
-          width={34}
-          height={34}
-          className={cn("size-8 object-contain transition-transform group-hover:-translate-y-0.5", active && "-translate-y-0.5")}
+          active={active}
+          className={cn("group-hover:-translate-y-0.5", active && "-translate-y-0.5")}
         />
       ) : (
         <span className={cn("size-8 rounded-lg border-2 border-primary transition-transform group-hover:-translate-y-0.5", active && "-translate-y-0.5 bg-[#e8f4e8]")} />
