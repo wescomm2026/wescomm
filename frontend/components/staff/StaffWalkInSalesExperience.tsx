@@ -39,6 +39,8 @@ import {
   printThermalReceipt,
   sampleThermalReceipt,
   saveThermalPrinterSettings,
+  THERMAL_CUSTOM_PAGE_LENGTH,
+  type ThermalPageLength,
   THERMAL_CUSTOM_PAPER_WIDTH,
   THERMAL_MIN_PRINTABLE_WIDTH,
   THERMAL_PAPER_PRESETS,
@@ -544,6 +546,8 @@ function ThermalPrinterSettingsModal({
   const [preset, setPreset] = useState<ThermalPaperPreset>(settings.preset);
   const [customPaper, setCustomPaper] = useState(String(settings.paperWidthMm));
   const [customPrintable, setCustomPrintable] = useState(String(settings.printableWidthMm));
+  const [pageLength, setPageLength] = useState<ThermalPageLength>(settings.pageLength);
+  const [customLength, setCustomLength] = useState(String(settings.pageLengthMm));
   const [previewHtml, setPreviewHtml] = useState("");
   const [testPrinting, setTestPrinting] = useState(false);
   const [testError, setTestError] = useState("");
@@ -553,6 +557,8 @@ function ThermalPrinterSettingsModal({
     setPreset(settings.preset);
     setCustomPaper(String(settings.paperWidthMm));
     setCustomPrintable(String(settings.printableWidthMm));
+    setPageLength(settings.pageLength);
+    setCustomLength(String(settings.pageLengthMm));
     setTestError("");
   }, [open, settings]);
 
@@ -564,10 +570,18 @@ function ThermalPrinterSettingsModal({
     && Number.isFinite(customPrintableValue)
     && customPrintableValue >= THERMAL_MIN_PRINTABLE_WIDTH
     && customPrintableValue <= customPaperValue;
-  const draft = normalizeThermalPrinterSettings(preset === "CUSTOM"
-    ? { preset, paperWidthMm: customPaperValue, printableWidthMm: customPrintableValue }
-    : { preset });
-  const draftValid = preset !== "CUSTOM" || customValid;
+  const customLengthValue = Number.parseFloat(customLength);
+  const customLengthValid = Number.isFinite(customLengthValue)
+    && customLengthValue >= THERMAL_CUSTOM_PAGE_LENGTH.min
+    && customLengthValue <= THERMAL_CUSTOM_PAGE_LENGTH.max;
+  const draft = normalizeThermalPrinterSettings({
+    ...(preset === "CUSTOM"
+      ? { preset, paperWidthMm: customPaperValue, printableWidthMm: customPrintableValue }
+      : { preset }),
+    pageLength,
+    pageLengthMm: pageLength === "CUSTOM" ? customLengthValue : settings.pageLengthMm
+  });
+  const draftValid = (preset !== "CUSTOM" || customValid) && (pageLength !== "CUSTOM" || customLengthValid);
 
   useEffect(() => {
     if (!open || !draftValid) return;
@@ -584,6 +598,7 @@ function ThermalPrinterSettingsModal({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, draftValid, draft.paperWidthMm, draft.printableWidthMm]);
+  // Page length only changes the @page rule at print time, not the preview.
 
   if (!open) return null;
 
@@ -608,7 +623,12 @@ function ThermalPrinterSettingsModal({
   const presetOptions: Array<{ value: ThermalPaperPreset; label: string; detail: string }> = [
     { value: "58", label: "58 mm", detail: `Prints ${THERMAL_PAPER_PRESETS["58"].printableWidthMm} mm wide. Safe default.` },
     { value: "80", label: "80 mm", detail: `Prints ${THERMAL_PAPER_PRESETS["80"].printableWidthMm} mm wide.` },
-    { value: "CUSTOM", label: "Custom", detail: `${THERMAL_CUSTOM_PAPER_WIDTH.min} to ${THERMAL_CUSTOM_PAPER_WIDTH.max} mm paper.` }
+    { value: "CUSTOM", label: "Custom width", detail: `${THERMAL_CUSTOM_PAPER_WIDTH.min} to ${THERMAL_CUSTOM_PAPER_WIDTH.max} mm paper.` }
+  ];
+  const lengthOptions: Array<{ value: ThermalPageLength; label: string; detail: string }> = [
+    { value: "PRINTER", label: "Printer's paper size (recommended)", detail: "The receipt starts at the top of the paper. Fixes blank paper feeding before the receipt." },
+    { value: "CUSTOM", label: "Custom length", detail: "Match the paper length selected in the print dialog, e.g. 297 mm or 3276 mm." },
+    { value: "FIT", label: "Fit to receipt", detail: "The page is exactly as long as the receipt. Use only if your printer prints it without blank paper." }
   ];
 
   return (
@@ -686,14 +706,54 @@ function ThermalPrinterSettingsModal({
               </div>
             ) : null}
 
+            <fieldset className="grid gap-2">
+              <legend className="mb-1 text-sm font-semibold">Page length</legend>
+              {lengthOptions.map((option) => (
+                <label key={option.value} className={cn("flex cursor-pointer items-start gap-3 rounded-lg border p-3 text-sm transition-colors", pageLength === option.value ? "border-primary bg-primary/5" : "hover:border-primary/40")}>
+                  <input
+                    type="radio"
+                    name="thermal-page-length"
+                    value={option.value}
+                    checked={pageLength === option.value}
+                    onChange={() => setPageLength(option.value)}
+                    className="mt-1 accent-primary"
+                  />
+                  <span>
+                    <span className="block font-bold">{option.label}</span>
+                    <span className="block text-xs text-muted-foreground">{option.detail}</span>
+                  </span>
+                </label>
+              ))}
+              {pageLength === "CUSTOM" ? (
+                <label className="grid gap-1.5 text-xs font-semibold sm:max-w-xs">
+                  Page length (mm)
+                  <input
+                    type="number"
+                    min={THERMAL_CUSTOM_PAGE_LENGTH.min}
+                    max={THERMAL_CUSTOM_PAGE_LENGTH.max}
+                    step="1"
+                    inputMode="numeric"
+                    value={customLength}
+                    onChange={(event) => setCustomLength(event.target.value)}
+                    className="h-11 rounded-md border border-border-strong bg-white px-3 font-normal outline-none focus:border-primary"
+                  />
+                  {!customLengthValid ? (
+                    <span className="font-semibold text-danger">Use {THERMAL_CUSTOM_PAGE_LENGTH.min} to {THERMAL_CUSTOM_PAGE_LENGTH.max} mm.</span>
+                  ) : null}
+                </label>
+              ) : null}
+            </fieldset>
+
             <div className="rounded-lg border bg-surface-subtle p-3 text-xs leading-5 text-muted-foreground">
               <p className="font-bold text-foreground">In the print dialog, set once per computer:</p>
               <ul className="mt-1 list-disc space-y-0.5 pl-4">
                 <li>Printer: the thermal receipt printer</li>
-                <li>Paper size in the printer driver: the same roll width</li>
+                <li>Paper size: the receipt roll (e.g. 58 x 297 mm or 80 x 3276 mm), not A4 or Letter</li>
                 <li>Margins: None. Headers and footers: off</li>
                 <li>Scale: 100% (Default), not &quot;Fit to page&quot;</li>
               </ul>
+              <p className="mt-2 font-bold text-foreground">Blank paper before the receipt?</p>
+              <p>Choose &quot;Printer&apos;s paper size&quot; above. If blank paper still feeds after the receipt, pick a shorter roll paper size in the print dialog or turn on &quot;cut/stop at end of data&quot; in the printer driver.</p>
               <p className="mt-2">Print a test receipt and check that both edge marks and the QR code print fully.</p>
             </div>
 
