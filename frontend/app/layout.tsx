@@ -1,10 +1,15 @@
 import type { Metadata, Viewport } from "next";
+import Script from "next/script";
 import { WelcomeGateOverlay } from "@/components/auth/WelcomeGateOverlay";
 import { PwaLifecycle } from "@/components/pwa/PwaLifecycle";
+import { ThemeProvider } from "@/components/theme/ThemeProvider";
 import { ConfirmationDialogProvider } from "@/components/ui/ConfirmationDialogProvider";
 import { welcomeIntroBootstrapScript } from "@/lib/welcome-intro";
 import { developmentPwaCleanupScript } from "@/lib/service-worker";
+import { themeBootstrapScript } from "@/lib/theme";
 import "./globals.css";
+// Loaded after Tailwind so dark-mode equivalents of literal color classes take effect.
+import "./theme-dark-compat.css";
 
 export const metadata: Metadata = {
   title: "WESCOMM",
@@ -51,6 +56,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         ) : null}
       </head>
       <body suppressHydrationWarning>
+        <Script id="wescomm-theme" strategy="beforeInteractive">
+          {themeBootstrapScript()}
+        </Script>
         {/* This first-party bootstrap must execute while HTML is parsed so a
             reload never paints or downloads the already-seen intro. */}
         <script
@@ -58,14 +66,16 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           dangerouslySetInnerHTML={{ __html: welcomeIntroBootstrapScript() }}
         />
         <WelcomeGateOverlay />
-        <ConfirmationDialogProvider>
-          <PwaLifecycle
-            enableServiceWorker={enableServiceWorker}
-            enableRuntimeCaching={enableRuntimeCaching}
-          >
-            {children}
-          </PwaLifecycle>
-        </ConfirmationDialogProvider>
+        <ThemeProvider>
+          <ConfirmationDialogProvider>
+            <PwaLifecycle
+              enableServiceWorker={enableServiceWorker}
+              enableRuntimeCaching={enableRuntimeCaching}
+            >
+              {children}
+            </PwaLifecycle>
+          </ConfirmationDialogProvider>
+        </ThemeProvider>
       </body>
     </html>
   );

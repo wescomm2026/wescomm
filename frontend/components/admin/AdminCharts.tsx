@@ -16,7 +16,13 @@ import {
 } from "recharts";
 import type { BackendReportSummary } from "@/lib/api";
 
-const statusColors = ["#16803c", "#8cc665", "#f5b000", "#9aa3a8", "#00652f"];
+const statusColors = [
+  "hsl(var(--chart-1))",
+  "hsl(var(--chart-2))",
+  "hsl(var(--chart-3))",
+  "hsl(var(--chart-4))",
+  "hsl(var(--chart-5))"
+];
 
 function formatCurrency(value: number) {
   return `PHP ${value.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -43,11 +49,11 @@ export function AdminSummaryCharts({ summary, embedded = false }: { summary: Bac
         <div className="h-[310px] p-4">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={primaryTrend} margin={{ top: 10, right: 10, left: -12, bottom: 0 }}>
-              <CartesianGrid vertical={false} stroke="#e5ebe6" />
+              <CartesianGrid vertical={false} stroke="hsl(var(--chart-grid))" />
               <XAxis dataKey="day" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
               <YAxis tickFormatter={(value) => `PHP ${Math.round(Number(value) / 1000)}K`} tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
               <Tooltip formatter={(value: number) => formatCurrency(value)} />
-              <Line type="monotone" dataKey="sales" stroke="#08742f" strokeWidth={3} dot={{ r: 3, fill: "#08742f" }} />
+              <Line type="monotone" dataKey="sales" stroke="hsl(var(--chart-1))" strokeWidth={3} dot={{ r: 3, fill: "hsl(var(--chart-1))" }} />
             </LineChart>
           </ResponsiveContainer>
         </div>
@@ -102,7 +108,7 @@ export function AdminReportsCharts({ summary }: { summary: BackendReportSummary 
               <XAxis type="number" hide />
               <YAxis type="category" dataKey="category" width={125} tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
               <Tooltip formatter={(value: number) => formatCurrency(value)} />
-              <Bar dataKey="amount" fill="#16803c" radius={[0, 4, 4, 0]} barSize={16} />
+              <Bar dataKey="amount" fill="hsl(var(--chart-1))" radius={[0, 4, 4, 0]} barSize={16} />
             </BarChart>
           </ResponsiveContainer>
         </div>

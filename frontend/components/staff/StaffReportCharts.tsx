@@ -18,7 +18,13 @@ import {
 import type { ReactNode } from "react";
 import type { BackendReportSummary } from "@/lib/api";
 
-const statusColors = ["#16803c", "#8cc665", "#f5b000", "#9aa3a8", "#00652f"];
+const statusColors = [
+  "hsl(var(--chart-1))",
+  "hsl(var(--chart-2))",
+  "hsl(var(--chart-3))",
+  "hsl(var(--chart-4))",
+  "hsl(var(--chart-5))"
+];
 
 function formatCurrency(value: number) {
   return `PHP ${value.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -30,7 +36,7 @@ function formatNumber(value: number) {
 
 function ChartCard({ title, action, children }: { title: string; action: string; children: ReactNode }) {
   return (
-    <section className="overflow-hidden rounded-lg border bg-white shadow-sm">
+    <section className="overflow-hidden rounded-lg border bg-card shadow-sm">
       <div className="flex h-14 items-center border-b border-border px-4">
         <h2 className="font-extrabold text-foreground">{title}</h2>
         <span className="ml-auto rounded-md bg-surface-subtle px-3 py-1.5 text-xs font-semibold text-muted-foreground">{action}</span>
@@ -68,11 +74,11 @@ export function StaffReportCharts({ summary }: { summary: BackendReportSummary }
               </div>
               <ResponsiveContainer width="100%" height="88%">
                 <LineChart data={primaryTrend} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
-                  <CartesianGrid vertical={false} stroke="#e5ebe6" />
+                  <CartesianGrid vertical={false} stroke="hsl(var(--chart-grid))" />
                   <XAxis dataKey="day" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
                   <YAxis tickFormatter={(value) => `PHP ${Math.round(Number(value) / 1000)}K`} tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
                   <Tooltip formatter={(value: number) => formatCurrency(value)} />
-                  <Line type="monotone" dataKey="sales" stroke="#08742f" strokeWidth={3} dot={{ r: 3, fill: "#08742f" }} />
+                  <Line type="monotone" dataKey="sales" stroke="hsl(var(--chart-1))" strokeWidth={3} dot={{ r: 3, fill: "hsl(var(--chart-1))" }} />
                 </LineChart>
               </ResponsiveContainer>
             </>
@@ -88,8 +94,8 @@ export function StaffReportCharts({ summary }: { summary: BackendReportSummary }
                 <XAxis type="number" hide />
                 <YAxis type="category" dataKey="category" width={105} tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
                 <Tooltip formatter={(value: number) => formatCurrency(value)} />
-                <Bar dataKey="amount" fill="#16803c" radius={[0, 4, 4, 0]} barSize={13}>
-                  <LabelList dataKey="amount" position="right" formatter={(value: number) => `PHP ${Math.round(Number(value) / 1000)}K`} style={{ fontSize: 10, fontWeight: 700, fill: "#176b36" }} />
+                <Bar dataKey="amount" fill="hsl(var(--chart-1))" radius={[0, 4, 4, 0]} barSize={13}>
+                  <LabelList dataKey="amount" position="right" formatter={(value: number) => `PHP ${Math.round(Number(value) / 1000)}K`} style={{ fontSize: 10, fontWeight: 700, fill: "hsl(var(--primary))" }} />
                 </Bar>
               </BarChart>
             </ResponsiveContainer>
