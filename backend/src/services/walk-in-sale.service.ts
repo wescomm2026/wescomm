@@ -668,7 +668,16 @@ export async function recordWalkInSale(input: WalkInSaleInput) {
         const batchCount = await tx.inventoryBatch.count({
           where: { productId: plan.product.id, skuId: plan.sku?.id ?? null }
         });
-        if (batchCount === 0) continue;
+        if (batchCount === 0) {
+          if (plan.product.skuInventoryEnabled) {
+            throw new HttpError(
+              409,
+              "This size is missing its opening inventory cost record. Have an admin reconcile its inventory costs before recording the sale.",
+              "UNVERIFIED_BATCH_COST"
+            );
+          }
+          continue;
+        }
         await allocateWalkInSaleCostsInTransaction(tx, {
           walkInSaleItemId: itemId,
           productId: plan.product.id,

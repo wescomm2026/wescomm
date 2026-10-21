@@ -7,6 +7,10 @@ export default defineConfig({
   testDir: "./e2e",
   testMatch: [
     "conversation-retention.spec.ts",
+    "inventory-report.spec.ts",
+    "sales-report.spec.ts",
+    "theme.spec.ts",
+    "walk-in-sales.spec.ts",
     "operations-v2.spec.ts",
     "staff-chat-takeover-responsive.spec.ts",
     "staff-inventory-responsive.spec.ts",
