@@ -292,30 +292,53 @@ export async function listInventoryBatches(productId: string) {
   };
 }
 
-export async function verifyOpeningBatchCost(input: { productId: string; batchId: string; unitCost: number; actorId: string }) {
+/**
+ * Saves the cost of one uncosted opening batch. The write is conditional, so a
+ * cost saved meanwhile (e.g. by "Apply to all sizes") is never overwritten.
+ */
+export async function verifyOpeningBatchCostInTransaction(
+  tx: Transaction,
+  input: { productId: string; batchId: string; unitCost: number }
+) {
   requireRestockCost({ unitCost: input.unitCost, receivedAt: new Date() });
-  const batch = await prisma.$transaction(async (tx) => {
-    const current = await tx.inventoryBatch.findFirst({
-      where: { id: input.batchId, productId: input.productId },
-      select: {
-        id: true,
-        batchCode: true,
-        costVerified: true,
-        costAllocations: { take: 1, select: { id: true } },
-        walkInAllocations: { take: 1, select: { id: true } }
-      }
-    });
-    if (!current) throw new HttpError(404, "Inventory batch not found.");
-    if (current.costVerified) throw new HttpError(409, "This batch cost has already been verified and is immutable.", "BATCH_COST_IMMUTABLE");
-    if (current.costAllocations.length || current.walkInAllocations.length) {
-      throw new HttpError(409, "This opening batch was already used by a sale and requires an audited correction.", "BATCH_COST_ALREADY_ALLOCATED");
+  const current = await tx.inventoryBatch.findFirst({
+    where: { id: input.batchId, productId: input.productId },
+    select: {
+      id: true,
+      batchCode: true,
+      costVerified: true,
+      costAllocations: { take: 1, select: { id: true } },
+      walkInAllocations: { take: 1, select: { id: true } }
     }
-    return tx.inventoryBatch.update({
-      where: { id: current.id },
-      data: { unitCost: new Prisma.Decimal(input.unitCost), costVerified: true },
-      select: { id: true, batchCode: true, unitCost: true }
-    });
   });
+  if (!current) throw new HttpError(404, "Inventory batch not found.");
+  if (current.costVerified) throw new HttpError(409, "This batch cost has already been verified and is immutable.", "BATCH_COST_IMMUTABLE");
+  if (current.costAllocations.length || current.walkInAllocations.length) {
+    throw new HttpError(409, "This opening batch was already used by a sale and requires an audited correction.", "BATCH_COST_ALREADY_ALLOCATED");
+  }
+  const updated = await tx.inventoryBatch.updateMany({
+    where: {
+      id: current.id,
+      productId: input.productId,
+      costVerified: false,
+      costAllocations: { none: {} },
+      walkInAllocations: { none: {} }
+    },
+    data: { unitCost: new Prisma.Decimal(input.unitCost), costVerified: true }
+  });
+  // Another cashier saved or used this batch between the read and this write.
+  if (updated.count !== 1) {
+    throw new HttpError(
+      409,
+      "Another staff member saved this cost at the same time. Nothing was changed. Review the sizes and try again.",
+      "BATCH_COST_CONFLICT"
+    );
+  }
+  return { id: current.id, batchCode: current.batchCode, unitCost: new Prisma.Decimal(input.unitCost) };
+}
+
+export async function verifyOpeningBatchCost(input: { productId: string; batchId: string; unitCost: number; actorId: string }) {
+  const batch = await prisma.$transaction((tx) => verifyOpeningBatchCostInTransaction(tx, input));
   await safelyRecordAuditLog({
     actorId: input.actorId,
     action: "OPENING_BATCH_COST_VERIFIED",
@@ -323,6 +346,99 @@ export async function verifyOpeningBatchCost(input: { productId: string; batchId
     entityId: batch.id,
     summary: `Verified acquisition cost for ${batch.batchCode}.`,
     metadata: { productId: input.productId, unitCost: batch.unitCost.toString() }
+  });
+  return listInventoryBatches(input.productId);
+}
+
+function batchSizeLabel(batch: { sku: { optionSnapshot: Prisma.JsonValue } | null }) {
+  const options = Array.isArray(batch.sku?.optionSnapshot) ? batch.sku.optionSnapshot : [];
+  const label = options
+    .map((option) => (option && typeof option === "object" && "optionValue" in option ? String(option.optionValue) : ""))
+    .filter(Boolean)
+    .join(" · ");
+  return label || "All units";
+}
+
+/**
+ * Most items cost the same in every size, so staff can verify every uncosted
+ * opening batch of a product (or the chosen ones) at one unit cost. All or
+ * nothing: if any chosen batch was costed, used by a sale, or removed by
+ * someone else in the meantime, nothing is saved and the conflict is reported.
+ */
+export async function verifyOpeningBatchCostsInTransaction(
+  tx: Transaction,
+  input: { productId: string; batchIds?: string[]; unitCost: number }
+) {
+  requireRestockCost({ unitCost: input.unitCost, receivedAt: new Date() });
+  const requestedIds = input.batchIds ? [...new Set(input.batchIds)] : null;
+  const candidates = await tx.inventoryBatch.findMany({
+    where: {
+      productId: input.productId,
+      ...(requestedIds ? { id: { in: requestedIds } } : { costVerified: false })
+    },
+    select: {
+      id: true,
+      batchCode: true,
+      costVerified: true,
+      sku: { select: { optionSnapshot: true } },
+      costAllocations: { take: 1, select: { id: true } },
+      walkInAllocations: { take: 1, select: { id: true } }
+    }
+  });
+  const foundIds = new Set(candidates.map((batch) => batch.id));
+  const missing = requestedIds?.filter((id) => !foundIds.has(id)) ?? [];
+  const conflicts = candidates.filter((batch) => batch.costVerified || batch.costAllocations.length || batch.walkInAllocations.length);
+  if (missing.length || conflicts.length) {
+    const sizes = conflicts.map(batchSizeLabel);
+    throw new HttpError(
+      409,
+      sizes.length
+        ? `The cost for ${sizes.join(", ")} was already saved or used by a sale. Nothing was changed. Review the sizes and try again.`
+        : "Some sizes changed while you were working. Nothing was changed. Review the sizes and try again.",
+      "BATCH_COST_CONFLICT",
+      { conflictingBatchIds: conflicts.map((batch) => batch.id), missingBatchIds: missing }
+    );
+  }
+  if (!candidates.length) {
+    throw new HttpError(409, "There are no uncosted batches left to update for this product.", "NO_PENDING_BATCH_COSTS");
+  }
+  const updated = await tx.inventoryBatch.updateMany({
+    where: {
+      id: { in: candidates.map((batch) => batch.id) },
+      productId: input.productId,
+      costVerified: false,
+      costAllocations: { none: {} },
+      walkInAllocations: { none: {} }
+    },
+    data: { unitCost: new Prisma.Decimal(input.unitCost), costVerified: true }
+  });
+  // Another cashier may have saved a cost between the read and this write.
+  // Throwing rolls the whole transaction back, so no batch is half-updated.
+  if (updated.count !== candidates.length) {
+    throw new HttpError(
+      409,
+      "Another staff member updated some of these sizes at the same time. Nothing was changed. Review the sizes and try again.",
+      "BATCH_COST_CONFLICT",
+      { expected: candidates.length, updated: updated.count }
+    );
+  }
+  return candidates;
+}
+
+export async function verifyOpeningBatchCosts(input: { productId: string; batchIds?: string[]; unitCost: number; actorId: string }) {
+  requireRestockCost({ unitCost: input.unitCost, receivedAt: new Date() });
+  const verified = await prisma.$transaction((tx) => verifyOpeningBatchCostsInTransaction(tx, input));
+  await safelyRecordAuditLog({
+    actorId: input.actorId,
+    action: "OPENING_BATCH_COST_VERIFIED",
+    entityType: "product",
+    entityId: input.productId,
+    summary: `Verified acquisition cost for ${verified.length} batch${verified.length === 1 ? "" : "es"} at one unit cost.`,
+    metadata: {
+      productId: input.productId,
+      unitCost: input.unitCost.toFixed(2),
+      batchCodes: verified.map((batch) => batch.batchCode)
+    }
   });
   return listInventoryBatches(input.productId);
 }

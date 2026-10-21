@@ -3,7 +3,7 @@
 import { userFacingErrorMessage } from "@/lib/user-facing-error";
 
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
-import { Check, Circle, Minus, Plus, Printer, ReceiptText, RefreshCw, Search, ShoppingCart, Trash2, X } from "lucide-react";
+import { CalendarDays, Check, Circle, Minus, Plus, Printer, ReceiptText, RefreshCw, Search, ShoppingCart, Trash2, X } from "lucide-react";
 import { useRealtimeRefresh } from "@/components/realtime/RealtimeProvider";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
@@ -17,6 +17,16 @@ import {
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import { VoidDialogDetails, VoidWindowBadge } from "@/components/staff/VoidWindowParts";
 import { voidWindowState } from "@/lib/void-window";
+import {
+  DEFAULT_PAST_SALE_TIME,
+  earliestPastSaleDate,
+  formatSaleDateLabel,
+  manilaDateKey,
+  saleDateError,
+  saleDateStatus,
+  walkInSoldAt,
+  wasEnteredLater
+} from "@/lib/walk-in-sale-date";
 import {
   getStaffProductsPage,
   getStoredStaffSession,
@@ -821,6 +831,9 @@ export function StaffWalkInSalesExperience() {
   const [cashReceived, setCashReceived] = useState("");
   const [officialReceiptNumber, setOfficialReceiptNumber] = useState("");
   const [treasuryInspected, setTreasuryInspected] = useState(false);
+  // Kept between sales so a day of paper records can be entered in one go.
+  const [saleDate, setSaleDate] = useState(() => manilaDateKey());
+  const [saleTime, setSaleTime] = useState(DEFAULT_PAST_SALE_TIME);
   const [submitting, setSubmitting] = useState(false);
   const [saleError, setSaleError] = useState("");
   const [successReceipt, setSuccessReceipt] = useState<WalkInReceipt | null>(null);
@@ -1136,6 +1149,10 @@ export function StaffWalkInSalesExperience() {
   const officialReceiptNumberValue = officialReceiptNumber.trim().replace(/\s+/g, " ");
   const treasuryValid = officialReceiptNumberValue.length > 0 && treasuryInspected;
   const paymentValid = treasurySale ? treasuryValid : cashValid;
+  const todayKey = manilaDateKey();
+  const saleDateState = saleDateStatus(saleDate);
+  const pastSale = saleDateState === "PAST";
+  const saleDateValid = saleDateState === "TODAY" || pastSale;
   const quickCashAmounts = Array.from(new Set([
     cartTotal,
     Math.ceil(cartTotal / 100) * 100,
@@ -1154,6 +1171,10 @@ export function StaffWalkInSalesExperience() {
     }
     if (!buyerNameValid) {
       setSaleError("Enter the walk-in buyer's name before saving.");
+      return;
+    }
+    if (!saleDateValid) {
+      setSaleError(saleDateError(saleDateState));
       return;
     }
     if (treasurySale && !officialReceiptNumberValue) {
@@ -1188,7 +1209,8 @@ export function StaffWalkInSalesExperience() {
         buyerName,
         studentId: selectedStudent?.id,
         receiptCode: receiptCode.trim() || undefined,
-        clientSaleId: clientSaleIdRef.current
+        clientSaleId: clientSaleIdRef.current,
+        soldAt: walkInSoldAt(saleDate, saleTime)
       };
       const payload: WalkInSalePayload = treasurySale
         ? { ...sale, collectionChannel: "TREASURER", officialReceiptNumber: officialReceiptNumberValue, treasuryReceiptInspected: true }
@@ -1205,7 +1227,9 @@ export function StaffWalkInSalesExperience() {
       setOfficialReceiptNumber("");
       setTreasuryInspected(false);
       clientSaleIdRef.current = createClientSaleId();
-      setNotice(`${receipt.receiptCode} recorded for ${receipt.buyerName}.`);
+      setNotice(pastSale
+        ? `${receipt.receiptCode} recorded for ${receipt.buyerName}, dated ${formatSaleDateLabel(saleDate)}.`
+        : `${receipt.receiptCode} recorded for ${receipt.buyerName}.`);
       void loadHistory({ background: true });
       void loadCatalog({ background: true });
     } catch (submitError) {
@@ -1516,6 +1540,58 @@ export function StaffWalkInSalesExperience() {
               <h3 className="text-base font-extrabold text-foreground">Checkout</h3>
               <p className="mt-1 text-xs text-muted-foreground">Enter any walk-in buyer name. Linking a WESCOMM student account is optional.</p>
             </div>
+            <div className={cn("rounded-lg border p-3", !saleDateValid ? "border-danger/40 bg-danger/5" : pastSale ? "border-amber-300 bg-amber-50" : "bg-card")}>
+              <div className="flex flex-wrap items-end gap-3">
+                <label className="grid min-w-[9.5rem] flex-1 gap-1.5 text-xs font-semibold">
+                  <span className="inline-flex items-center gap-1.5"><CalendarDays className="size-3.5" aria-hidden="true" />Sale date</span>
+                  <input
+                    type="date"
+                    value={saleDate}
+                    min={earliestPastSaleDate()}
+                    max={todayKey}
+                    onChange={(event) => {
+                      // Keep whatever was entered; an incomplete or future date blocks saving.
+                      setSaleDate(event.target.value);
+                      setSaleError("");
+                    }}
+                    aria-describedby="walk-in-sale-date-help"
+                    className="h-11 rounded-md border border-border-strong bg-white px-3 font-normal outline-none focus:border-primary"
+                  />
+                </label>
+                {pastSale ? (
+                  <label className="grid w-[7.5rem] gap-1.5 text-xs font-semibold">
+                    Time (optional)
+                    <input
+                      type="time"
+                      value={saleTime}
+                      onChange={(event) => setSaleTime(event.target.value || DEFAULT_PAST_SALE_TIME)}
+                      className="h-11 rounded-md border border-border-strong bg-white px-3 font-normal outline-none focus:border-primary"
+                    />
+                  </label>
+                ) : null}
+              </div>
+              <div id="walk-in-sale-date-help" aria-live="polite">
+                {pastSale ? (
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <p className="min-w-0 flex-1 text-xs font-bold text-amber-900">
+                      Recording past sales for {formatSaleDateLabel(saleDate)}. Receipts and reports use this date; stock is deducted now. Voids follow the 2-day period from this date, so check each entry before saving.
+                    </p>
+                    <button type="button" className="text-xs font-bold text-amber-900 underline" onClick={() => setSaleDate(manilaDateKey())}>
+                      Back to today
+                    </button>
+                  </div>
+                ) : saleDateValid ? (
+                  <p className="mt-1.5 text-xs text-muted-foreground">Today. Pick an earlier date to enter a past sale.</p>
+                ) : (
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <p className="min-w-0 flex-1 text-xs font-bold text-danger">{saleDateError(saleDateState)}</p>
+                    <button type="button" className="text-xs font-bold text-danger underline" onClick={() => setSaleDate(manilaDateKey())}>
+                      Use today
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
             <div className="relative">
               <label className="grid gap-1.5 text-xs font-semibold">
                 Buyer name
@@ -1722,7 +1798,7 @@ export function StaffWalkInSalesExperience() {
               loading={submitting}
               onClick={() => void recordSale()}
             >
-              Save sale & deduct stock
+              {pastSale ? `Save ${formatSaleDateLabel(saleDate)} sale & deduct stock` : "Save sale & deduct stock"}
             </Button>
           </aside>
         </div>
@@ -1752,6 +1828,11 @@ export function StaffWalkInSalesExperience() {
                   <div>
                     <p className="font-extrabold">{receipt.receiptCode}</p>
                     <p className="text-xs text-muted-foreground">{formatStaffReceiptDate(receipt.issuedAt)}</p>
+                    {wasEnteredLater(receipt) ? (
+                      <p className="mt-1 inline-flex rounded bg-amber-50 px-2 py-0.5 text-[10px] font-extrabold text-amber-800" title={`Entered ${formatStaffReceiptDate(receipt.createdAt)}`}>
+                        Entered later · {formatStaffReceiptDate(receipt.createdAt)}
+                      </p>
+                    ) : null}
                   </div>
                   <span className="ml-auto"><StatusBadge statusKey={receipt.status} /></span>
                 </div>

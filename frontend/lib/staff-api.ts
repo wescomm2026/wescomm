@@ -559,6 +559,8 @@ type WalkInSaleBasePayload = {
   studentId?: string;
   receiptCode?: string;
   clientSaleId: string;
+  /** ISO date-time of a past sale being recorded now; omit for a sale happening now. */
+  soldAt?: string;
 };
 
 export type WalkInSalePayload =

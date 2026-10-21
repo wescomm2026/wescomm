@@ -557,3 +557,137 @@ test("after the 2-day void period staff cannot void a sale, but an admin can wit
     }
   }
 });
+
+test("staff record past walk-in sales on the date they happened", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "The sale date flow is the same on every viewport.");
+  const salePayloads: Array<Record<string, unknown>> = [];
+  let receipt: WalkInReceipt | null = null;
+  const unhandled: string[] = [];
+  // Three Manila calendar days ago, in the YYYY-MM-DD form the date input uses.
+  const manilaDay = (offsetDays: number) => new Date(Date.now() + 8 * 60 * 60 * 1000 - offsetDays * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const pastDay = manilaDay(3);
+  const today = manilaDay(0);
+  await authorizeMockedWorkspace(page, "STAFF");
+
+  await page.route("**/api/backend/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (await handleShellRequest(route)) return;
+    if (path === "/api/backend/staff/products" && request.method() === "GET") {
+      return json(route, { products: [skuProduct], categories: [skuProduct.category], nextCursor: null });
+    }
+    if (path === "/api/backend/staff/students" && request.method() === "GET") {
+      return json(route, { items: [], nextCursor: null });
+    }
+    if (path === "/api/backend/staff/walk-in-sales" && request.method() === "GET") {
+      return json(route, { items: receipt ? [receipt] : [], nextCursor: null });
+    }
+    if (path === "/api/backend/staff/walk-in-sales" && request.method() === "POST") {
+      const payload = request.postDataJSON() as Record<string, unknown>;
+      salePayloads.push(payload);
+      const soldAt = payload.soldAt ? new Date(String(payload.soldAt)).toISOString() : new Date().toISOString();
+      const enteredAt = new Date().toISOString();
+      receipt = {
+        id: "00000000-0000-4000-8000-000000000615",
+        receiptCode: "RCT-2026-PAST01",
+        studentId: null,
+        buyerName: String(payload.buyerName),
+        collectionChannel: "COMMISSARY",
+        officialReceiptNumber: null,
+        treasuryReconciliationRequired: false,
+        publicVerificationUrl: "http://127.0.0.1:3100/verify-receipt#v=e2e-token",
+        totalAmount: "350.00",
+        paymentMethod: "CASH",
+        status: "VERIFIED",
+        issuedAt: soldAt,
+        verifiedAt: soldAt,
+        voidedAt: null,
+        voidableUntil: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        createdAt: enteredAt,
+        updatedAt: enteredAt,
+        student: null,
+        issuedBy: { id: staffProfile.id, fullName: staffProfile.fullName },
+        sale: {
+          collectionChannel: "COMMISSARY",
+          officialReceiptNumber: null,
+          treasuryVerifiedById: null,
+          treasuryVerifiedAt: null,
+          cashTendered: "350.00",
+          changeDue: "0.00",
+          cashierId: staffProfile.id,
+          cashierName: staffProfile.fullName,
+          clientSaleId: String(payload.clientSaleId),
+          voidedById: null,
+          voidReason: null,
+          voidedAt: null
+        },
+        items: [{
+          id: "00000000-0000-4000-8000-000000000716",
+          productId: skuProduct.id,
+          skuId: "sku-m-red",
+          variantId: null,
+          productName: skuProduct.name,
+          options: [{ optionName: "Size", optionValue: "M" }, { optionName: "Color", optionValue: "Red" }],
+          quantity: 1,
+          unitPrice: "350.00",
+          subtotal: "350.00"
+        }]
+      };
+      return json(route, { receipt });
+    }
+    unhandled.push(`${request.method()} ${path}`);
+    return json(route, { error: "Unexpected API request in walk-in sale test." }, 500);
+  });
+
+  await page.goto("/staff/walk-in-sales");
+  await dismissWelcomeGate(page);
+  await expect(page.getByRole("heading", { name: "Record physical-store purchases" })).toBeVisible();
+
+  const saleDate = page.getByLabel("Sale date");
+  await expect(saleDate).toHaveValue(today);
+  await expect(page.getByText("Today. Pick an earlier date to enter a past sale.")).toBeVisible();
+
+  await saleDate.fill(pastDay);
+  await expect(page.getByText(/^Recording past sales for /)).toBeVisible();
+  await expect(page.getByLabel("Time (optional)")).toHaveValue("12:00");
+
+  await page.getByRole("button", { name: "Add PE Shirt With Variants to sale" }).click();
+  const skuPicker = page.getByRole("dialog");
+  await skuPicker.getByLabel("Size").selectOption("M");
+  await skuPicker.getByLabel("Color").selectOption("Red");
+  await skuPicker.getByRole("button", { name: "Add to sale" }).click();
+  await page.getByPlaceholder("Enter buyer name").fill("Paper Record Buyer");
+  await page.getByLabel(/Cash received/).fill("350.00");
+
+  // A future or incomplete date must block saving, never fall back to today.
+  await saleDate.fill(manilaDay(-2));
+  await expect(page.getByText("The sale date cannot be in the future. Choose today or an earlier date.").first()).toBeVisible();
+  await page.getByRole("button", { name: "Save sale & deduct stock" }).click();
+  await expect(page.getByText("The sale date cannot be in the future. Choose today or an earlier date.")).toHaveCount(2);
+  await saleDate.fill("");
+  await expect(page.getByText("Enter a complete sale date.")).toBeVisible();
+  expect(salePayloads).toHaveLength(0);
+  await saleDate.fill(pastDay);
+
+  const pastSaveButton = page.getByRole("button", { name: /^Save .+ sale & deduct stock$/ });
+  await expect(pastSaveButton).toBeEnabled();
+  await page.screenshot({ path: testInfo.outputPath("past-sale-checkout.png"), fullPage: false });
+  await pastSaveButton.click();
+
+  const success = page.getByRole("dialog");
+  await expect(success.getByText("Sale recorded")).toBeVisible();
+  expect(salePayloads).toHaveLength(1);
+  expect(salePayloads[0].soldAt).toBe(`${pastDay}T12:00:00+08:00`);
+  await success.getByRole("button", { name: "Done" }).click();
+
+  // The date stays set so the next paper record from that day is quick to enter.
+  await expect(saleDate).toHaveValue(pastDay);
+  await page.getByRole("button", { name: "Back to today" }).click();
+  await expect(saleDate).toHaveValue(today);
+  await expect(page.getByRole("button", { name: "Save sale & deduct stock" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Sales history", exact: true }).click();
+  await expect(page.getByText("RCT-2026-PAST01").first()).toBeVisible();
+  await expect(page.getByText(/^Entered later · /)).toBeVisible();
+  expect(unhandled).toEqual([]);
+});
