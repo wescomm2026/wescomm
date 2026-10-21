@@ -70,6 +70,26 @@ async function main() {
       return readSnapshot(tx);
     }, { timeout: 90000, maxWait: 10000, isolationLevel: 'RepeatableRead' });
     const plan=buildPlan(data,expected);
+    // Read-only provenance check against the original transcribed September count.
+    const dataset=JSON.parse(fs.readFileSync('backend/datasets/inventory/2026-09-ending-inventory.json','utf8'));
+    const normalize=value=>value.toLowerCase().replace(/[^a-z0-9]+/g,' ').trim().replace(/\s+/g,' ');
+    const rows=dataset.products.map(item=>{
+      const names=[item.name,...(item.matchExisting??[])].map(normalize);
+      const matches=data.products.filter(p=>names.includes(normalize(p.name)));
+      const expectedTotal=item.lines.reduce((sum,line)=>sum+line.count,0);
+      if(matches.length!==1)return {name:item.name,expectedTotal,status:'MISSING_OR_AMBIGUOUS',matches:matches.length};
+      const product=matches[0];
+      const sizeDifferences=[];
+      for(const line of item.lines.filter(line=>line.option)){
+        const variants=data.variants.filter(v=>v.productId===product.id&&normalize(v.optionValue)===normalize(line.option));
+        const skuMatches=data.skus.filter(s=>s.productId===product.id&&s.isActive&&s.optionValues.some(link=>variants.some(v=>v.id===link.variantId)));
+        const actual=product.skuInventoryEnabled?(skuMatches.length===1?skuMatches[0].stock:null):(variants.length===1?variants[0].stock:null);
+        if(actual!==line.count)sizeDifferences.push({size:line.option,expected:line.count,actual});
+      }
+      const sourceMovements=data.movements.filter(m=>m.productId===product.id&&(m.notes??'').includes(dataset.title));
+      return {name:item.name,expectedTotal,actualTotal:product.stock,status:product.stock===expectedTotal&&!sizeDifferences.length?'MATCH':'DIFFERENCE',sizeDifferences,sourceMovementCount:sourceMovements.length,sourceMovementDates:[...new Set(sourceMovements.map(m=>m.createdAt.toISOString().slice(0,10)))]};
+    });
+    plan.septemberCountComparison={title:dataset.title,countedAt:dataset.countedAt,sourceProducts:rows.length,matches:rows.filter(r=>r.status==='MATCH').length,differences:rows.filter(r=>r.status==='DIFFERENCE').length,unresolved:rows.filter(r=>r.status==='MISSING_OR_AMBIGUOUS').length,rows};
     fs.mkdirSync('reset-preview',{recursive:true});fs.writeFileSync('reset-preview/production-transaction-reset-plan.json',JSON.stringify(plan,null,2));
     console.log(JSON.stringify({mode:plan.mode,projectRef:expected,counts:plan.counts,productsToRestore:plan.stockRestoration.products.length,productUnitsToRestore:plan.stockRestoration.products.reduce((sum,p)=>sum+p.restore,0),warnings:plan.warnings.length,snapshotHash:plan.snapshotHash}));
   } finally { await db.$disconnect(); }
