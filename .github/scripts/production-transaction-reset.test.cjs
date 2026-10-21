@@ -21,7 +21,7 @@ async function fixture(){
  for(const [index,size] of ['S','M'].entries()){
   const variant=await db.productVariant.create({data:{productId:product.id,optionName:'Size',optionValue:size,stock:2}});
   const sku=await db.productSku.create({data:{productId:product.id,code:size,stock:2,optionValues:{create:{variantId:variant.id}}}});skus.push(sku);
-  const batch=await db.inventoryBatch.create({data:{productId:product.id,skuId:sku.id,batchCode:size,quantityReceived:3,quantityRemaining:2,unitCost:150,costVerified:true,createdById:actor.id}});batches.push(batch);
+  const batch=await db.inventoryBatch.create({data:{productId:product.id,skuId:sku.id,batchCode:size,quantityReceived:3,quantityRemaining:2,unitCost:150,costVerified:true,receivedAt:new Date('2026-09-30T00:00:00Z'),createdById:actor.id}});batches.push(batch);
   const receipt=await db.receipt.create({data:{receiptCode:'RESET-'+size,verificationHash:randomUUID(),status:'VERIFIED',totalAmount:350,issuedById:actor.id}});
   const sale=await db.walkInSale.create({data:{receiptId:receipt.id,buyerNameSnapshot:'Synthetic reset buyer',cashierNameSnapshot:'Reset test admin',cashierId:actor.id,clientSaleId:randomUUID(),requestFingerprint:'f'.repeat(64),cashTendered:500,changeDue:150}});
   const item=await db.walkInSaleItem.create({data:{saleId:sale.id,receiptId:receipt.id,productId:product.id,skuId:sku.id,productNameSnapshot:product.name,quantity:1,unitPrice:350,subtotal:350}});items.push(item);
