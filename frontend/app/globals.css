@@ -1072,6 +1072,8 @@ html:not([data-wescomm-intro="pending"]) .welcome-gate-overlay {
    measures the report at the printable width (A4 landscape minus margins), so a report
    that only slightly overflows one page can be scaled to fit it. */
 .sales-report-doc.srd-print-layout {
+  /* Stable print metrics: platform UI fonts can wrap the cashier and add a page. */
+  font-family: Arial, Helvetica, sans-serif;
   width: 277mm;
   max-width: none;
   border: 0;

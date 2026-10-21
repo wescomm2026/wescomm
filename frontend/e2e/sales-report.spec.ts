@@ -387,13 +387,15 @@ test.describe("sales report preview", () => {
     await expect(page.getByRole("button", { name: "Preview Report" })).toBeVisible();
   });
 
-  for (const [label, ledger] of [
-    ["3 sales, no voids", makeLedger(3)],
-    ["12 sales, 2 voids, 6 products", makeLedger(12, 2, 6)]
+  for (const [label, ledger, bodyFont] of [
+    ["3 sales, no voids", makeLedger(3), null],
+    ["12 sales, 2 voids, 6 products", makeLedger(12, 2, 6), null],
+    ["12 sales with a wider system font", makeLedger(12, 2, 6), "monospace"]
   ] as const) {
     test(`a normal day prints on one page with voids and sign-off (${label})`, async ({ page }, testInfo) => {
       test.skip(testInfo.project.name !== "desktop-chromium", "PDF output is Chromium-only.");
       await openPrintableLedger(page, ledger);
+      if (bodyFont) await page.addStyleTag({ content: `body { font-family: ${bodyFont}; }` });
       const pdf = await printReportPdf(page);
       await testInfo.attach("sales-report.pdf", { body: pdf, contentType: "application/pdf" });
       expect(pdfPageCount(pdf)).toBe(1);
