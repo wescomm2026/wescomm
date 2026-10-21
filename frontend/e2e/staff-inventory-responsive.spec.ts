@@ -632,3 +632,111 @@ test("stock count posts only the items with a variance", async ({ page }, testIn
   await expect(postButton).toBeDisabled();
   expect(unhandled).toEqual([]);
 });
+
+test("one unit cost can be applied to every uncosted size at once", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "One cost contract is sufficient.");
+  const { unhandled } = await mockInventory(page);
+  const costRequests: Array<Record<string, unknown>> = [];
+  let verified = false;
+  const batch = (id: string, skuId: string, size: string, color: string, quantity: number) => ({
+    id,
+    batchCode: `B-COUNT-${size}`,
+    skuId,
+    quantityReceived: quantity,
+    quantityRemaining: quantity,
+    unitCost: verified ? 200 : 0,
+    costVerified: verified,
+    receivedAt: "2026-09-30T00:00:00.000Z",
+    supplierNote: "Opening count",
+    sku: { code: null, optionSnapshot: [{ optionName: "Size", optionValue: size }, { optionName: "Color", optionValue: color }] }
+  });
+  const batchResult = () => ({
+    batches: [
+      batch("00000000-0000-4000-8000-000000000281", "sku-m-red", "M", "Red", 4),
+      batch("00000000-0000-4000-8000-000000000282", "sku-l-blue", "L", "Blue", 3)
+    ],
+    summary: { latestCost: verified ? 200 : null, averageInventoryCost: verified ? 200 : null, inventoryValue: verified ? 1400 : 0, unverifiedQuantity: verified ? 0 : 7 }
+  });
+  // Registered after mockInventory, so these take precedence for the PE shirt's batches.
+  await page.route(`**/api/backend/staff/products/${optionProduct.id}/batches**`, async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (path.endsWith("/batches") && request.method() === "GET") return json(route, batchResult());
+    if (path.endsWith("/batches/cost") && request.method() === "PATCH") {
+      costRequests.push(request.postDataJSON() as Record<string, unknown>);
+      verified = true;
+      return json(route, batchResult());
+    }
+    return route.fallback();
+  });
+
+  await page.goto("/staff/inventory");
+  await dismissWelcomeGate(page);
+  const shirtRow = page.locator("article").filter({ hasText: optionProduct.name }).first();
+  await shirtRow.getByRole("button", { name: "Update stock" }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByText("Unit cost needed")).toBeVisible();
+  await expect(dialog.getByText("Same cost for all 2 sizes")).toBeVisible();
+
+  const applyAll = dialog.getByRole("button", { name: "Apply to all sizes" });
+  await expect(applyAll).toBeDisabled();
+  await dialog.getByLabel("Unit cost for all 2 sizes").fill("200");
+  await page.screenshot({ path: testInfo.outputPath("apply-cost-to-all-sizes.png") });
+  await applyAll.click();
+
+  await expect(dialog.getByText("Unit cost needed")).toBeHidden();
+  expect(costRequests).toEqual([{
+    batchIds: ["00000000-0000-4000-8000-000000000281", "00000000-0000-4000-8000-000000000282"],
+    unitCost: 200
+  }]);
+  expect(unhandled).toEqual([]);
+});
+
+test("a bulk cost conflict saves nothing, explains why, and shows the sizes as they are now", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "One cost conflict contract is sufficient.");
+  const { unhandled } = await mockInventory(page);
+  let otherCashierSavedM = false;
+  const batches = () => [
+    { id: "00000000-0000-4000-8000-000000000291", size: "M", color: "Red", skuId: "sku-m-red", quantity: 4, verified: otherCashierSavedM },
+    { id: "00000000-0000-4000-8000-000000000292", size: "L", color: "Blue", skuId: "sku-l-blue", quantity: 3, verified: false }
+  ].map((entry) => ({
+    id: entry.id,
+    batchCode: `B-COUNT-${entry.size}`,
+    skuId: entry.skuId,
+    quantityReceived: entry.quantity,
+    quantityRemaining: entry.quantity,
+    unitCost: entry.verified ? 210 : 0,
+    costVerified: entry.verified,
+    receivedAt: "2026-09-30T00:00:00.000Z",
+    supplierNote: "Opening count",
+    sku: { code: null, optionSnapshot: [{ optionName: "Size", optionValue: entry.size }, { optionName: "Color", optionValue: entry.color }] }
+  }));
+  await page.route(`**/api/backend/staff/products/${optionProduct.id}/batches**`, async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (path.endsWith("/batches") && request.method() === "GET") {
+      const list = batches();
+      const unverified = list.filter((entry) => !entry.costVerified).reduce((total, entry) => total + entry.quantityRemaining, 0);
+      return json(route, { batches: list, summary: { latestCost: otherCashierSavedM ? 210 : null, averageInventoryCost: null, inventoryValue: otherCashierSavedM ? 840 : 0, unverifiedQuantity: unverified } });
+    }
+    if (path.endsWith("/batches/cost") && request.method() === "PATCH") {
+      otherCashierSavedM = true;
+      return json(route, { error: "The cost for M · Red was already saved or used by a sale. Nothing was changed. Review the sizes and try again.", code: "BATCH_COST_CONFLICT" }, 409);
+    }
+    return route.fallback();
+  });
+
+  await page.goto("/staff/inventory");
+  await dismissWelcomeGate(page);
+  await page.locator("article").filter({ hasText: optionProduct.name }).first().getByRole("button", { name: "Update stock" }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByLabel("Unit cost for all 2 sizes").fill("200");
+  await dialog.getByRole("button", { name: "Apply to all sizes" }).click();
+
+  await expect(page.getByText(/The cost for M · Red was already saved or used by a sale\. Nothing was changed\./)).toBeVisible();
+  // Reloaded: only L is still waiting for a cost, so the per-size row is all that remains.
+  await expect(dialog.getByText("Same cost for all 2 sizes")).toBeHidden();
+  await expect(dialog.getByLabel("Unit cost for 3 uncosted units")).toBeVisible();
+  await expect(dialog.getByLabel("Unit cost for 4 uncosted units")).toBeHidden();
+  expect(unhandled).toEqual([]);
+});

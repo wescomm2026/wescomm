@@ -14,6 +14,8 @@ import { HttpError } from "../utils/http-error.js";
 import { createPage, decodeCursor, normalizePageLimit } from "../utils/cursor-pagination.js";
 import { lockProductForUpdate } from "../utils/product-transaction.js";
 import { safelyRecordAuditLog } from "./audit-log.service.js";
+import { assertReceiptVoidAllowed, receiptVoidableUntil } from "../domain/receipt-void-window.js";
+import { resolveWalkInSoldAt } from "../domain/walk-in-sale-date.js";
 import {
   allocateWalkInSaleCostsInTransaction,
   reverseWalkInSaleCostAllocationsInTransaction
@@ -51,6 +53,8 @@ export type WalkInSaleInput = {
   officialReceiptNumber?: string | null;
   /** The cashier confirmed they inspected the Treasury official receipt. */
   treasuryReceiptInspected?: boolean;
+  /** When the sale happened, for sales recorded after the fact. Defaults to now. */
+  soldAt?: Date | null;
   clientSaleId: string;
   performedById: string;
 };
@@ -110,6 +114,10 @@ const walkInReceiptSelect = Prisma.validator<Prisma.ReceiptSelect>()({
 
 type WalkInReceiptRecord = Prisma.ReceiptGetPayload<{ select: typeof walkInReceiptSelect }>;
 
+function formatManilaDate(value: Date) {
+  return value.toLocaleDateString("en-PH", { timeZone: "Asia/Manila", month: "short", day: "numeric", year: "numeric" });
+}
+
 function roundToCentavos(value: number) {
   return Math.round((value + Number.EPSILON) * 100) / 100;
 }
@@ -127,6 +135,7 @@ function mapWalkInReceipt(row: WalkInReceiptRecord) {
     issuedAt: row.issuedAt.toISOString(),
     verifiedAt: row.verifiedAt?.toISOString() ?? null,
     voidedAt: row.voidedAt?.toISOString() ?? null,
+    voidableUntil: row.status === "VOIDED" ? null : receiptVoidableUntil(row.issuedAt).toISOString(),
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
     buyerName,
@@ -251,6 +260,8 @@ function saleRequestFingerprint(input: WalkInSaleInput, items: WalkInSaleItemInp
     studentId: input.studentId ?? null,
     receiptCode: input.receiptCode?.trim().toUpperCase() || null,
     ...payment,
+    // Only backdated sales carry a date, so same-day fingerprints are unchanged.
+    ...(input.soldAt ? { soldAt: input.soldAt.toISOString() } : {}),
     items
   })).digest("hex");
 }
@@ -346,6 +357,8 @@ export async function recordWalkInSale(input: WalkInSaleInput) {
     throw new HttpError(400, "Enter a buyer name between 2 and 120 characters.", "INVALID_BUYER_NAME");
   }
   const collection = resolveCollectionDetails(input);
+  const backdated = Boolean(input.soldAt);
+  const soldAt = resolveWalkInSoldAt(input.soldAt);
   const receiptCode = input.receiptCode?.trim().toUpperCase() || createReceiptCode();
   const items = normalizeSaleItems(input.items);
   const clientSaleId = input.clientSaleId.trim();
@@ -602,8 +615,8 @@ export async function recordWalkInSale(input: WalkInSaleInput) {
           publicVerificationTokenEncrypted: publicToken.encrypted,
           publicVerificationTokenHash: publicToken.hash,
           issuedById: input.performedById,
-          issuedAt: now,
-          verifiedAt: now
+          issuedAt: soldAt,
+          verifiedAt: soldAt
         },
         select: { id: true }
       });
@@ -655,7 +668,16 @@ export async function recordWalkInSale(input: WalkInSaleInput) {
         const batchCount = await tx.inventoryBatch.count({
           where: { productId: plan.product.id, skuId: plan.sku?.id ?? null }
         });
-        if (batchCount === 0) continue;
+        if (batchCount === 0) {
+          if (plan.product.skuInventoryEnabled) {
+            throw new HttpError(
+              409,
+              "This size is missing its opening inventory cost record. Have an admin reconcile its inventory costs before recording the sale.",
+              "UNVERIFIED_BATCH_COST"
+            );
+          }
+          continue;
+        }
         await allocateWalkInSaleCostsInTransaction(tx, {
           walkInSaleItemId: itemId,
           productId: plan.product.id,
@@ -749,7 +771,9 @@ export async function recordWalkInSale(input: WalkInSaleInput) {
         userId: mappedReceipt.studentId,
         type: "RECEIPT",
         title: "Walk-in purchase recorded",
-        message: `Your purchase ${mappedReceipt.receiptCode} totaling PHP ${mappedReceipt.totalAmount} has been recorded.`,
+        message: backdated
+          ? `Your purchase ${mappedReceipt.receiptCode} on ${formatManilaDate(soldAt)} totaling PHP ${mappedReceipt.totalAmount} has been recorded.`
+          : `Your purchase ${mappedReceipt.receiptCode} totaling PHP ${mappedReceipt.totalAmount} has been recorded.`,
         actionUrl: "/student/receipts"
       });
     }
@@ -759,7 +783,9 @@ export async function recordWalkInSale(input: WalkInSaleInput) {
       action: "WALK_IN_SALE_RECORDED",
       entityType: "receipt",
       entityId: mappedReceipt.id,
-      summary: `Recorded walk-in sale ${mappedReceipt.receiptCode} for ${result.buyerName}.`,
+      summary: backdated
+        ? `Recorded walk-in sale ${mappedReceipt.receiptCode} for ${result.buyerName}, dated ${formatManilaDate(soldAt)}.`
+        : `Recorded walk-in sale ${mappedReceipt.receiptCode} for ${result.buyerName}.`,
       metadata: {
         receiptCode: mappedReceipt.receiptCode,
         buyerName: result.buyerName,
@@ -770,7 +796,9 @@ export async function recordWalkInSale(input: WalkInSaleInput) {
         officialReceiptNumber: collection.officialReceiptNumber,
         cashReceived: collection.cashReceived,
         clientSaleId,
-        performedById: input.performedById
+        performedById: input.performedById,
+        soldAt: mappedReceipt.issuedAt,
+        backdated
       }
     });
 
@@ -831,7 +859,7 @@ export async function listWalkInSales(options: WalkInSaleListOptions = {}) {
   return createPage(rows.map(mapWalkInReceipt), limit);
 }
 
-export async function voidWalkInSale(input: { receiptId: string; reason: string; voidedById: string }) {
+export async function voidWalkInSale(input: { receiptId: string; reason: string; voidedById: string; actorRole?: string }) {
   const reason = input.reason.trim();
   const result = await prisma
     .$transaction(async (tx) => {
@@ -852,6 +880,7 @@ export async function voidWalkInSale(input: { receiptId: string; reason: string;
           reservationId: true,
           status: true,
           totalAmount: true,
+          issuedAt: true,
           walkInSale: { select: { id: true } },
           walkInSaleItems: { select: walkInSaleItemSelect }
         }
@@ -870,6 +899,7 @@ export async function voidWalkInSale(input: { receiptId: string; reason: string;
       if (!receipt.walkInSale) {
         throw new HttpError(409, "This walk-in sale header is missing and cannot be voided safely.", "WALK_IN_VOID_HEADER_MISSING");
       }
+      assertReceiptVoidAllowed({ actorRole: input.actorRole, soldAt: receipt.issuedAt });
       const previousStatus = receipt.status;
 
       const productIds = Array.from(new Set(receipt.walkInSaleItems.map((item) => item.productId))).sort();

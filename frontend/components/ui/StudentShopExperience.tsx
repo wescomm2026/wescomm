@@ -714,7 +714,7 @@ export function StudentShopExperience() {
                 aria-pressed={category === item.label}
                 className={`flex w-full items-center gap-3 rounded-lg px-3 py-3 text-left text-sm font-semibold hover:bg-[#f4faf4] ${category === item.label ? "bg-[#e8f4e8] text-primary" : "text-[#26312b]"}`}
               >
-                <Image src={shopProductCardImage(item.image)} alt="" width={28} height={28} className="size-7 object-contain" />
+                <AssetIcon src={item.image} className="size-7" />
                 {item.label}
               </button>
             ))}
@@ -738,7 +738,7 @@ export function StudentShopExperience() {
                 aria-pressed={category === item.label}
                 className={`flex min-h-[86px] min-w-[92px] flex-col items-center justify-center rounded-xl border border-[#dfe8df] p-2 text-center text-[11px] font-semibold leading-tight ${category === item.label ? "bg-[#e8f4e8] text-primary" : "bg-white"}`}
               >
-                <Image src={shopProductCardImage(item.image)} alt="" width={34} height={34} className="mb-1 size-8 object-contain" />
+                <AssetIcon src={item.image} className="mb-1 size-8" />
                 {item.label}
               </button>
             ))}

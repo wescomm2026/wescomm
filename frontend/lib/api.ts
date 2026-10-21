@@ -264,6 +264,8 @@ export type BackendReceipt = {
   issuedAt: string;
   verifiedAt?: string | null;
   voidedAt?: string | null;
+  /** End of the 2-day void period (11:59 PM Manila); null once voided. */
+  voidableUntil?: string | null;
   createdAt: string;
   updatedAt: string;
   student?: BackendProfileSummary | null;

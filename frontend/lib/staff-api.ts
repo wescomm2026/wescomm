@@ -524,6 +524,8 @@ export type WalkInReceipt = {
   issuedAt: string;
   verifiedAt: string | null;
   voidedAt: string | null;
+  /** End of the 2-day void period (11:59 PM Manila); null once voided. */
+  voidableUntil?: string | null;
   createdAt: string;
   updatedAt: string;
   student: {
@@ -557,6 +559,8 @@ type WalkInSaleBasePayload = {
   studentId?: string;
   receiptCode?: string;
   clientSaleId: string;
+  /** ISO date-time of a past sale being recorded now; omit for a sale happening now. */
+  soldAt?: string;
 };
 
 export type WalkInSalePayload =

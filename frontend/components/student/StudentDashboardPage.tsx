@@ -1,4 +1,3 @@
-import Image from "next/image";
 import Link from "next/link";
 import { CalendarCheck2, ChevronRight, Search } from "lucide-react";
 import { DashboardProductsProvider } from "@/components/dashboard/DashboardProductsProvider";
@@ -60,7 +59,7 @@ export function StudentDashboardPage() {
         <div className="grid gap-5 lg:grid-cols-[1.45fr_0.75fr]">
           <StockOverview />
           <section className="wes-card flex flex-col gap-4 overflow-hidden bg-primary/5 p-5 sm:flex-row sm:items-center lg:flex-col lg:items-start xl:flex-row xl:items-center">
-            <Image src="/assets/chat-with-wesbot.svg" alt="" width={110} height={110} className="mx-auto size-24 shrink-0 object-contain sm:mx-0" />
+            <AssetIcon src="/assets/chat-with-wesbot.svg" className="mx-auto size-24 rounded-2xl sm:mx-0" sizes="96px" />
             <div className="min-w-0 flex-1 text-center sm:text-left">
               <h2 className="text-lg font-bold leading-snug text-primary xl:text-xl">Need help? Chat with WesBot</h2>
               <p className="mt-1 text-sm leading-5 text-muted-foreground">Ask about stock, pickup, or receipts. A staff member can take over when you need a person.</p>

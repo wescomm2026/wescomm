@@ -10,6 +10,7 @@ import { StudentNotifications } from "@/components/layout/StudentNotifications";
 import { StudentNavLink } from "@/components/layout/StudentNavLink";
 import { Button } from "@/components/ui/button";
 import { AssetIcon } from "@/components/ui/AssetIcon";
+import { ThemeSelector } from "@/components/theme/ThemeSelector";
 
 type NavItem = {
   href: string;
@@ -57,6 +58,7 @@ export function WebHeader({ items, role }: { items: NavItem[]; role: string }) {
                 </button>
               ) : null}
               <StudentNotifications onRequireAuth={ready && !user ? openAuth : undefined} />
+              <ThemeSelector />
               {ready && user ? (
                 <StudentAccountMenu user={user} onLogout={logout} />
               ) : (

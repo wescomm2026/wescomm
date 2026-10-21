@@ -408,16 +408,20 @@ export async function reconcileProductSkuInventory(input: {
         where: { productId: input.productId, skuId: null, quantityRemaining: { gt: 0 } },
         data: { quantityRemaining: 0 }
       });
-      for (const sku of skuRows) {
-        if (sku.stock <= 0) continue;
-        await adjustInventoryBatchesInTransaction(transaction, {
-          productId: input.productId,
-          skuId: sku.id,
-          difference: sku.stock,
-          createdById: input.performedById,
-          note: "Opening SKU balance from inventory setup; verify the acquisition cost before release."
-        });
-      }
+    }
+
+    // Every rebuild creates new physical SKU rows. Even an already-enabled
+    // product that started at zero needs explicit, unverified cost layers for
+    // its new positive balances; historical batches stay on the retired rows.
+    for (const sku of skuRows) {
+      if (sku.stock <= 0) continue;
+      await adjustInventoryBatchesInTransaction(transaction, {
+        productId: input.productId,
+        skuId: sku.id,
+        difference: sku.stock,
+        createdById: input.performedById,
+        note: "Opening SKU balance from inventory setup; verify the acquisition cost before release."
+      });
     }
 
     const totalStock = normalizedSkus.reduce((total, sku) => total + sku.stock, 0);

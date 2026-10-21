@@ -57,6 +57,7 @@ walkInSalesRoutes.post(
       studentId: input.studentId ?? null,
       receiptCode: input.receiptCode ?? null,
       clientSaleId: input.clientSaleId,
+      soldAt: input.soldAt ? new Date(input.soldAt) : null,
       performedById: request.auth!.id,
       ...(input.collectionChannel === "TREASURER"
         ? {
@@ -87,7 +88,8 @@ walkInSalesRoutes.post(
     const result = await voidWalkInSale({
       receiptId: walkInSaleReceiptIdSchema.parse(request.params.receiptId),
       reason: input.reason,
-      voidedById: request.auth!.id
+      voidedById: request.auth!.id,
+      actorRole: request.auth!.role
     });
     if (result.changed) {
       await invalidateOperationalReadCaches();

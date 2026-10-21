@@ -25,6 +25,8 @@ import {
   hashHighEntropyLookup
 } from "../utils/field-encryption.js";
 import { safelyRecordAuditLog } from "./audit-log.service.js";
+import { returnCompletedReservationStockInTransaction } from "./reservation-stock-return.service.js";
+import { assertReceiptVoidAllowed, receiptVoidableUntil } from "../domain/receipt-void-window.js";
 
 const RECEIPT_TOKEN_CONTEXT = "receipt.public-verification-token";
 
@@ -228,6 +230,7 @@ function mapPrismaReceipt(receipt: ReceiptRecord) {
     issuedAt: receipt.issuedAt.toISOString(),
     verifiedAt: receipt.verifiedAt?.toISOString() ?? null,
     voidedAt: receipt.voidedAt?.toISOString() ?? null,
+    voidableUntil: receipt.status === "VOIDED" ? null : receiptVoidableUntil(receipt.issuedAt).toISOString(),
     createdAt: receipt.createdAt.toISOString(),
     updatedAt: receipt.updatedAt.toISOString(),
     buyerName: receipt.walkInSale?.buyerNameSnapshot ?? receipt.student?.fullName ?? null,
@@ -517,18 +520,35 @@ export async function markReceiptVerified(receiptId: string, verifiedById: strin
   });
 }
 
-export async function voidReceipt(receiptId: string, voidedById: string, reason?: string) {
+/**
+ * Voids an online-reservation receipt: the payment is voided, the sale drops out of
+ * sales reports, and the picked-up items return to inventory. Staff may void only
+ * within the 2-day window; admins may void later. Walk-in receipts use voidWalkInSale.
+ */
+export async function voidReceipt(receiptId: string, actor: { id: string; role: AppRole }, reason?: string) {
   return updateReceiptStatusInTransaction({
     receiptId,
-    actorId: voidedById,
+    actorId: actor.id,
+    actorRole: actor.role,
     nextStatus: "VOIDED",
     reason: reason?.trim() || null
   });
 }
 
+/** Lets the receipts route send walk-in receipts to the walk-in void, which restores their stock. */
+export async function isWalkInReceipt(receiptId: string) {
+  const receipt = await prisma.receipt.findUnique({
+    where: { id: receiptId },
+    select: { reservationId: true, walkInSale: { select: { id: true } } }
+  });
+  if (!receipt) throw new HttpError(404, "Receipt not found.");
+  return Boolean(receipt.walkInSale) && !receipt.reservationId;
+}
+
 async function updateReceiptStatusInTransaction(input: {
   receiptId: string;
   actorId: string;
+  actorRole?: AppRole;
   nextStatus: "VERIFIED" | "VOIDED";
   reason?: string | null;
 }) {
@@ -542,6 +562,12 @@ async function updateReceiptStatusInTransaction(input: {
       throw new HttpError(400, "Voided receipts cannot be verified.");
     }
     if (current.status === input.nextStatus) return mapPrismaReceipt(current);
+    if (input.nextStatus === "VOIDED") {
+      if (current.walkInSale && !current.reservationId) {
+        throw new HttpError(400, "Void walk-in sales from Walk-in Sales so their stock is restored.", "WALK_IN_VOID_REQUIRED");
+      }
+      assertReceiptVoidAllowed({ actorRole: input.actorRole, soldAt: current.issuedAt });
+    }
 
     const now = new Date();
     const receipt = await tx.receipt.update({
@@ -564,6 +590,11 @@ async function updateReceiptStatusInTransaction(input: {
           voidedById: input.actorId,
           voidReason: input.reason ?? "Receipt voided."
         }
+      });
+      await returnCompletedReservationStockInTransaction(tx, {
+        reservationId: receipt.reservationId,
+        actorId: input.actorId,
+        note: `Receipt ${receipt.receiptCode} voided \u2014 ${input.reason ?? "no reason given"}`
       });
     }
 

@@ -12,6 +12,7 @@ import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
 import { useRealtimeRefresh } from "@/components/realtime/RealtimeProvider";
 import { AssetIcon } from "@/components/ui/AssetIcon";
 import { Button } from "@/components/ui/button";
+import { ThemeSelector } from "@/components/theme/ThemeSelector";
 import { useAccessibleDialog } from "@/components/ui/useAccessibleDialog";
 import {
   getNotificationsFromApi,
@@ -713,6 +714,8 @@ export function StaffShell({
                 </section>
               ) : null}
             </div>
+
+            <ThemeSelector />
 
             <div ref={profileRef} className="relative shrink-0">
               <button

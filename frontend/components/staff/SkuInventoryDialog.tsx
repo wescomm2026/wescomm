@@ -14,7 +14,7 @@ import {
   updateStaffProduct,
   type StaffProduct
 } from "@/lib/staff-api";
-import { getStaffInventoryBatches, verifyStaffOpeningBatchCost, type StaffInventoryBatchResult } from "@/lib/inventory-batch-api";
+import { getStaffInventoryBatches, verifyStaffOpeningBatchCost, verifyStaffOpeningBatchCosts, type StaffInventoryBatchResult } from "@/lib/inventory-batch-api";
 import { sortProductOptionValues } from "@/lib/product-display";
 import { shopProductCardImage } from "@/lib/shop-assets";
 import {
@@ -524,6 +524,22 @@ export function SkuInventoryDialog({
       setBatchResult(await verifyStaffOpeningBatchCost(token, product.id, batchId, parsed));
     } catch (saveError) {
       setError(userFacingErrorMessage(saveError, "Unable to save the unit cost."));
+      // Nothing was saved; show the sizes as they are now so staff can retry.
+      void getStaffInventoryBatches(token, product.id).then(setBatchResult).catch(() => undefined);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const saveOpeningCostForAll = async (batchIds: string[], unitCost: number) => {
+    setSubmitting(true);
+    setError("");
+    try {
+      setBatchResult(await verifyStaffOpeningBatchCosts(token, product.id, batchIds, unitCost));
+    } catch (saveError) {
+      setError(userFacingErrorMessage(saveError, "Unable to save the unit cost."));
+      // Nothing was saved; show the sizes as they are now so staff can retry.
+      void getStaffInventoryBatches(token, product.id).then(setBatchResult).catch(() => undefined);
     } finally {
       setSubmitting(false);
     }
@@ -621,6 +637,7 @@ export function SkuInventoryDialog({
                   drafts={openingCostDrafts}
                   onDraft={(batchId, value) => setOpeningCostDrafts((current) => ({ ...current, [batchId]: value }))}
                   onSave={(batchId) => void saveOpeningCost(batchId)}
+                  onSaveAll={(batchIds, unitCost) => void saveOpeningCostForAll(batchIds, unitCost)}
                   submitting={submitting}
                 />
               ) : null}
