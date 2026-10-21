@@ -330,7 +330,7 @@ test.describe("sales report preview", () => {
     expect(downloadSnapshotAt).toBe(ledgerFixture.generatedAt);
 
     await page.getByRole("button", { name: "Print" }).click();
-    expect(auditPayloads).toHaveLength(1);
+    await expect.poll(() => auditPayloads.length).toBe(1);
     expect(auditPayloads[0]).toMatchObject({
       action: "PRINTED",
       period: "DAILY",

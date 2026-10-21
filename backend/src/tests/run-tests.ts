@@ -142,6 +142,7 @@ if (process.env.RUN_DATABASE_INTEGRATION_TESTS === "true") {
   await import("./walk-in-sale-postgres.integration.test.js");
   await import("./receipt-void-postgres.integration.test.js");
   await import("./inventory-count-import-postgres.integration.test.js");
+  await import("./sku-rebuild-cost-postgres.integration.test.js");
   await import("./wishlist-postgres.integration.test.js");
   await import("./conversation-archive-postgres.integration.test.js");
   await import("./conversation-message-edit-postgres.integration.test.js");
