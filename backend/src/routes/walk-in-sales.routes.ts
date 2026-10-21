@@ -57,6 +57,7 @@ walkInSalesRoutes.post(
       studentId: input.studentId ?? null,
       receiptCode: input.receiptCode ?? null,
       clientSaleId: input.clientSaleId,
+      soldAt: input.soldAt ? new Date(input.soldAt) : null,
       performedById: request.auth!.id,
       ...(input.collectionChannel === "TREASURER"
         ? {

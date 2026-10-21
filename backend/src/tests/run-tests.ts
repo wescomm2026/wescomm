@@ -108,6 +108,7 @@ await import("./public-receipt.test.js");
 await import("./receipt-integrity.test.js");
 await import("./walk-in-sale.test.js");
 await import("./receipt-void-window.test.js");
+await import("./walk-in-sale-date.test.js");
 await import("./inventory-count-import.test.js");
 await import("./inventory-report.test.js");
 await import("./report-range.test.js");
