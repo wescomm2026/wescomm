@@ -7,20 +7,7 @@ const { createRequire } = require('node:module');
 const requireBackend = createRequire(path.resolve('backend/package.json'));
 const { PrismaClient } = requireBackend('@prisma/client');
 
-async function main() {
-  const expected = process.env.EXPECTED_SUPABASE_PROJECT_REF;
-  assert.equal(expected, 'pffbftlyrovuprrebdsy', 'Unexpected production project');
-  const connection = new URL(process.env.DATABASE_URL);
-  const actual = connection.hostname.match(/^db\.([a-z0-9]+)\.supabase\.co$/)?.[1]
-    ?? decodeURIComponent(connection.username).match(/\.([a-z0-9]+)$/)?.[1];
-  assert.equal(actual, expected, 'Database does not match the production project');
-  assert.equal(connection.port || '5432', '5432', 'Use the direct/session backup endpoint');
-  assert.ok(['require', 'verify-ca', 'verify-full'].includes(connection.searchParams.get('sslmode')), 'TLS required');
-  const db = new PrismaClient({ log: [] });
-  try {
-    const data = await db.$transaction(async tx => {
-      await tx.$executeRawUnsafe('SET TRANSACTION READ ONLY');
-      await tx.$executeRawUnsafe("SET LOCAL statement_timeout = '25s'");
+async function readSnapshot(tx) {
       const tables = ['profiles','products','product_variants','product_skus','inventory_batches','inventory_movements','reservations','reservation_items','reservation_schedule_changes','reservation_idempotency_keys','reservation_bulk_actions','receipts','walk_in_sales','walk_in_sale_items','walk_in_sale_cost_allocations','payments','online_payments','online_payment_attempts','paymongo_webhook_events','order_item_cost_allocations','treasury_official_receipts'];
       const counts = {};
       for (const table of tables) counts[table] = Number((await tx.$queryRawUnsafe(`SELECT count(*)::int AS count FROM "${table}"`))[0].count);
@@ -37,7 +24,8 @@ async function main() {
       const reservations = await tx.reservation.findMany({select:{id:true,status:true,receipt:{select:{status:true}}},orderBy:{id:'asc'}});
       const onlinePayments = await tx.onlinePayment.groupBy({by:['status'],_count:{_all:true}});
       return {counts,products,skus,variants,movements,batches,allocations,sales,reservations,onlinePayments};
-    }, { timeout: 90000, maxWait: 10000, isolationLevel: 'RepeatableRead' });
+}
+function buildPlan(data,expected) {
     const transactionTypes = new Set(['SALE','RESERVATION_HOLD','RESERVATION_CANCEL','RESERVATION_NO_SHOW']);
     const isTransaction = m => transactionTypes.has(m.type) || (m.type==='ADJUSTMENT' && /^(Walk-in sale .+ voided|Receipt .+ voided)/i.test(m.notes??''));
     const transactionMovements = data.movements.filter(isTransaction);
@@ -62,9 +50,29 @@ async function main() {
       }
     }
     for(const b of batchChanges)if(b.after>b.received)warnings.push({batchId:b.id,reason:'Restored batch would exceed quantity received.'});
-    const plan={mode:'READ_ONLY_DRY_RUN',projectRef:expected,generatedAt:new Date().toISOString(),backupRunId:process.env.GITHUB_RUN_ID,sourceCommit:process.env.GITHUB_SHA,snapshotHash:createHash('sha256').update(JSON.stringify(data)).digest('hex'),counts:data.counts,reservationsByStatus:Object.fromEntries([...new Set(data.reservations.map(r=>r.status))].map(status=>[status,data.reservations.filter(r=>r.status===status).length])),onlinePaymentStatuses:data.onlinePayments,stockRestoration:{products:productChanges,skus:skuChanges,variants:variantChanges,batches:batchChanges},transactionMovementCount:transactionMovements.length,warnings,preserved:['profiles and authentication','product catalog and selling prices','existing acquisition costs and batches','departments/categories/settings','audit history and non-transaction inventory history']};
+    const plan={mode:'READ_ONLY_DRY_RUN',projectRef:expected,generatedAt:new Date().toISOString(),backupRunId:process.env.GITHUB_RUN_ID,sourceCommit:process.env.GITHUB_SHA,snapshotHash:createHash('sha256').update(JSON.stringify(data)).digest('hex'),counts:data.counts,reservationsByStatus:Object.fromEntries([...new Set(data.reservations.map(r=>r.status))].map(status=>[status,data.reservations.filter(r=>r.status===status).length])),onlinePaymentStatuses:data.onlinePayments,stockRestoration:{products:productChanges,skus:skuChanges,variants:variantChanges,batches:batchChanges},transactionIds:{sales:data.sales.map(s=>s.id),receipts:data.sales.map(s=>s.receiptId),reservations:data.reservations.map(r=>r.id),movements:transactionMovements.map(m=>m.id)},transactionMovementCount:transactionMovements.length,warnings,preserved:['profiles and authentication','product catalog and selling prices','existing acquisition costs and batches','departments/categories/settings','audit history and non-transaction inventory history']};
+    return plan;
+}
+async function main() {
+  const expected = process.env.EXPECTED_SUPABASE_PROJECT_REF;
+  assert.equal(expected, 'pffbftlyrovuprrebdsy', 'Unexpected production project');
+  const connection = new URL(process.env.DATABASE_URL);
+  const actual = connection.hostname.match(/^db\.([a-z0-9]+)\.supabase\.co$/)?.[1]
+    ?? decodeURIComponent(connection.username).match(/\.([a-z0-9]+)$/)?.[1];
+  assert.equal(actual, expected, 'Database does not match the production project');
+  assert.equal(connection.port || '5432', '5432', 'Use the direct/session backup endpoint');
+  assert.ok(['require', 'verify-ca', 'verify-full'].includes(connection.searchParams.get('sslmode')), 'TLS required');
+  const db = new PrismaClient({ log: [] });
+  try {
+    const data = await db.$transaction(async tx => {
+      await tx.$executeRawUnsafe('SET TRANSACTION READ ONLY');
+      await tx.$executeRawUnsafe("SET LOCAL statement_timeout = '25s'");
+      return readSnapshot(tx);
+    }, { timeout: 90000, maxWait: 10000, isolationLevel: 'RepeatableRead' });
+    const plan=buildPlan(data,expected);
     fs.mkdirSync('reset-preview',{recursive:true});fs.writeFileSync('reset-preview/production-transaction-reset-plan.json',JSON.stringify(plan,null,2));
-    console.log(JSON.stringify({mode:plan.mode,projectRef:expected,counts:plan.counts,productsToRestore:productChanges.length,productUnitsToRestore:productChanges.reduce((sum,p)=>sum+p.restore,0),warnings:warnings.length,snapshotHash:plan.snapshotHash}));
+    console.log(JSON.stringify({mode:plan.mode,projectRef:expected,counts:plan.counts,productsToRestore:plan.stockRestoration.products.length,productUnitsToRestore:plan.stockRestoration.products.reduce((sum,p)=>sum+p.restore,0),warnings:plan.warnings.length,snapshotHash:plan.snapshotHash}));
   } finally { await db.$disconnect(); }
 }
-main().catch(()=>{console.error('Read-only production preview failed; inspect the target configuration and database schema. No writes were permitted.');process.exitCode=1;});
+module.exports={readSnapshot,buildPlan};
+if(require.main===module)main().catch(()=>{console.error('Read-only production preview failed; inspect the target configuration and database schema. No writes were permitted.');process.exitCode=1;});

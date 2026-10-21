@@ -5,6 +5,17 @@ on:
     # 02:20 Asia/Singapore every day (GitHub cron uses UTC).
     - cron: "20 18 * * *"
   workflow_dispatch:
+    inputs:
+      operation:
+        type: choice
+        default: preview
+        options: [preview, apply]
+      confirmation:
+        type: string
+        default: ''
+      approved_snapshot_hash:
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -14,6 +25,57 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  test-transaction-reset:
+    name: Test transaction reset on isolated PostgreSQL
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: wescomm_reset_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports: ['5432:5432']
+        options: --health-cmd "pg_isready -U postgres -d wescomm_reset_test" --health-interval 5s --health-timeout 5s --health-retries 5
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/wescomm_reset_test?schema=public
+      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/wescomm_reset_test?schema=public
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm --prefix backend ci
+      - run: cd backend && npx prisma db push --skip-generate
+      - run: node --test .github/scripts/production-transaction-reset.test.cjs
+  apply-transaction-reset:
+    name: Apply approved production transaction reset
+    if: github.event_name == 'workflow_dispatch' && inputs.operation == 'apply'
+    needs: [backup, preview-transaction-reset, test-transaction-reset]
+    environment: Production
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_BACKUP_URL }}
+      DIRECT_URL: ${{ secrets.DATABASE_BACKUP_URL }}
+      EXPECTED_SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+      RESET_CONFIRMATION: ${{ inputs.confirmation }}
+      APPROVED_SNAPSHOT_HASH: ${{ inputs.approved_snapshot_hash }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm --prefix backend ci
+      - name: Restore stock and clear approved transactions atomically
+        run: node .github/scripts/apply-production-transaction-reset.cjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: production-transaction-reset-result
+          path: reset-result/production-transaction-reset-result.json
+          retention-days: 30
   preview-transaction-reset:
     name: Read-only production transaction reset preview
     if: github.event_name == 'workflow_dispatch'
