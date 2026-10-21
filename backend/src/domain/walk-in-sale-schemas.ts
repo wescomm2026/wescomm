@@ -15,7 +15,9 @@ const walkInSaleBaseSchema = {
   buyerName: z.string().trim().min(2).max(120),
   studentId: z.string().uuid().nullish(),
   receiptCode: z.string().trim().min(5).max(64).regex(/^[A-Za-z0-9-]+$/, "Invalid receipt code.").optional(),
-  clientSaleId: z.string().trim().min(8).max(64).regex(/^[A-Za-z0-9_-]+$/, "Invalid sale key.")
+  clientSaleId: z.string().trim().min(8).max(64).regex(/^[A-Za-z0-9_-]+$/, "Invalid sale key."),
+  /** Set only when recording a past sale; omitted means the sale happens now. */
+  soldAt: z.string().datetime({ offset: true }).optional()
 };
 
 /**

@@ -75,12 +75,21 @@ function json(route: Route, body: unknown, status = 200) {
 // the browser print dialog. Runs in every frame, including the srcdoc print view.
 async function capturePrints(page: Page) {
   await page.addInitScript(() => {
-    const target = window.top as Window & { __printedReceipts?: string[] };
+    const target = window.top as Window & { __printedReceipts?: string[]; __printedPageRules?: string[] };
     target.__printedReceipts ??= [];
+    target.__printedPageRules ??= [];
     window.print = () => {
       target.__printedReceipts!.push(document.querySelector(".receipt")?.textContent?.replace(/\s+/g, " ").trim() ?? "");
+      const pageRule = Array.from(document.querySelectorAll("style"))
+        .map((style) => style.textContent ?? "")
+        .find((text) => text.trim().startsWith("@page"));
+      target.__printedPageRules!.push(pageRule?.trim() ?? "");
     };
   });
+}
+
+async function printedPageRules(page: Page) {
+  return page.evaluate(() => (window as Window & { __printedPageRules?: string[] }).__printedPageRules ?? []);
 }
 
 async function printedReceipts(page: Page) {
@@ -164,6 +173,7 @@ test("staff record a SKU walk-in sale with cash, then void it to restore stock",
         issuedAt: "2026-09-28T08:30:00.000Z",
         verifiedAt: "2026-09-28T08:30:00.000Z",
         voidedAt: null,
+        voidableUntil: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
         createdAt: "2026-09-28T08:30:00.000Z",
         updatedAt: "2026-09-28T08:30:00.000Z",
         student: null,
@@ -206,6 +216,7 @@ test("staff record a SKU walk-in sale with cash, then void it to restore stock",
             status: "VOIDED",
             treasuryReconciliationRequired: receipt.collectionChannel === "TREASURER",
             voidedAt: "2026-09-28T09:00:00.000Z",
+            voidableUntil: null,
             updatedAt: "2026-09-28T09:00:00.000Z",
             sale: receipt.sale ? {
               ...receipt.sale,
@@ -260,6 +271,10 @@ test("staff record a SKU walk-in sale with cash, then void it to restore stock",
   const [original] = await printedReceipts(page);
   expect(original).toContain("RCT-2026-TEST01");
   expect(original).toContain("Sales Receipt");
+  expect(original).toContain("COMMISSARY");
+  expect(original).not.toContain("WESCOMM");
+  // Default page length: no page size, so the receipt starts at the top of the printer's paper.
+  expect((await printedPageRules(page))[0]).toBe("@page { margin: 0; }");
   expect(original).toContain("Maria Walk-in");
   expect(original).toContain("Size: M / Color: Red");
   expect(original).toContain("Collected at Commissary");
@@ -289,9 +304,14 @@ test("staff record a SKU walk-in sale with cash, then void it to restore stock",
 
   await page.getByRole("button", { name: "Sales history", exact: true }).click();
   await expect(page.getByText("RCT-2026-TEST01").first()).toBeVisible();
+  await expect(page.getByText(/^Void allowed until /)).toBeVisible();
   await page.getByRole("button", { name: "Void & restore stock" }).click();
 
   const voidDialog = page.getByRole("dialog");
+  await expect(voidDialog.getByText("The items go back to inventory.")).toBeVisible();
+  await expect(voidDialog.getByText(/\(2-day void period\)/)).toBeVisible();
+  await voidDialog.getByRole("group", { name: "Common reasons" }).getByRole("button", { name: "Wrong size \u2014 exchange" }).click();
+  await expect(voidDialog.getByLabel("Reason (required)")).toHaveValue("Wrong size \u2014 exchange");
   await voidDialog.getByLabel("Reason (required)").fill("Wrong size handed to the student");
   await voidDialog.getByRole("button", { name: "Void & restore stock" }).click();
 
@@ -452,8 +472,19 @@ test("receipt printer width is chosen per computer and defaults to 58 mm", async
   await dialog.getByRole("button", { name: "Print test receipt" }).click();
   await expect.poll(async () => (await printedReceipts(page)).length).toBe(1);
   expect((await printedReceipts(page))[0]).toContain("72 mm printable on 80 mm paper");
+  expect((await printedPageRules(page))[0]).toBe("@page { margin: 0; }");
 
-  await dialog.getByRole("radio", { name: /Custom/ }).check();
+  await expect(dialog.getByRole("radio", { name: /Printer's paper size/ })).toBeChecked();
+  await dialog.getByRole("radio", { name: /Custom length/ }).check();
+  await dialog.getByLabel("Page length (mm)").fill("20");
+  await expect(dialog.getByText("Use 50 to 3300 mm.")).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Save printer setting" })).toBeDisabled();
+  await dialog.getByLabel("Page length (mm)").fill("297");
+  await dialog.getByRole("button", { name: "Print test receipt" }).click();
+  await expect.poll(async () => (await printedPageRules(page)).length).toBe(2);
+  expect((await printedPageRules(page))[1]).toBe("@page { size: 80mm 297mm; margin: 0; }");
+
+  await dialog.getByRole("radio", { name: /Custom width/ }).check();
   await dialog.getByLabel("Paper width (mm)").fill("120");
   await expect(dialog.getByRole("button", { name: "Save printer setting" })).toBeDisabled();
   await dialog.getByLabel("Paper width (mm)").fill("76");
@@ -464,4 +495,199 @@ test("receipt printer width is chosen per computer and defaults to 58 mm", async
   await page.reload();
   await dismissWelcomeGate(page);
   await expect(page.getByRole("button", { name: "Printer: 76 mm" })).toBeVisible();
+  const saved = await page.evaluate(() => JSON.parse(window.localStorage.getItem("wescomm.thermal-printer.v1") ?? "{}"));
+  expect(saved).toMatchObject({ preset: "CUSTOM", paperWidthMm: 76, printableWidthMm: 68, pageLength: "CUSTOM", pageLengthMm: 297 });
+  await page.getByRole("button", { name: "Printer: 76 mm" }).click();
+  await expect(page.getByRole("dialog").getByRole("radio", { name: /Custom length/ })).toBeChecked();
+  await expect(page.getByRole("dialog").getByLabel("Page length (mm)")).toHaveValue("297");
+});
+
+test("after the 2-day void period staff cannot void a sale, but an admin can with a warning", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "One void-window contract is sufficient.");
+  const oldSale: WalkInReceipt = {
+    id: "00000000-0000-4000-8000-000000000611",
+    receiptCode: "RCT-2026-OLD001",
+    studentId: null,
+    buyerName: "Old Walk-in",
+    collectionChannel: "COMMISSARY",
+    officialReceiptNumber: null,
+    treasuryReconciliationRequired: false,
+    publicVerificationUrl: null,
+    totalAmount: "350.00",
+    paymentMethod: "CASH",
+    status: "VERIFIED",
+    issuedAt: "2026-09-20T08:30:00.000Z",
+    verifiedAt: "2026-09-20T08:30:00.000Z",
+    voidedAt: null,
+    voidableUntil: "2026-09-22T15:59:00.000Z",
+    createdAt: "2026-09-20T08:30:00.000Z",
+    updatedAt: "2026-09-20T08:30:00.000Z",
+    student: null,
+    issuedBy: { id: staffProfile.id, fullName: staffProfile.fullName },
+    sale: null,
+    items: []
+  } as unknown as WalkInReceipt;
+
+  for (const role of ["STAFF", "ADMIN"] as const) {
+    await page.context().clearCookies();
+    await authorizeMockedWorkspace(page, role);
+    await page.unrouteAll({ behavior: "ignoreErrors" });
+    await page.route("**/api/backend/**", async (route) => {
+      const path = new URL(route.request().url()).pathname;
+      if (path === "/api/backend/auth/me") return json(route, { profile: { ...staffProfile, role } });
+      if (await handleShellRequest(route)) return;
+      if (path === "/api/backend/staff/products") return json(route, { products: [], categories: [], nextCursor: null });
+      if (path === "/api/backend/staff/students") return json(route, { items: [], nextCursor: null });
+      if (path === "/api/backend/staff/walk-in-sales") return json(route, { items: [oldSale], nextCursor: null });
+      return json(route, { error: "Unexpected API request in void-window test." }, 500);
+    });
+
+    await page.goto(role === "ADMIN" ? "/admin/walk-in-sales" : "/staff/walk-in-sales");
+    await dismissWelcomeGate(page);
+    await page.getByRole("button", { name: "Sales history", exact: true }).click();
+    await expect(page.getByText("RCT-2026-OLD001").first()).toBeVisible();
+    await expect(page.getByText(/^Void period ended /)).toBeVisible();
+
+    if (role === "STAFF") {
+      await expect(page.getByText(/admin only/)).toBeVisible();
+      await expect(page.getByRole("button", { name: "Void period ended" })).toBeDisabled();
+    } else {
+      await page.getByRole("button", { name: "Void & restore stock" }).click();
+      await expect(page.getByRole("dialog").getByRole("note")).toContainText("You are voiding as an admin");
+    }
+  }
+});
+
+test("staff record past walk-in sales on the date they happened", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "The sale date flow is the same on every viewport.");
+  const salePayloads: Array<Record<string, unknown>> = [];
+  let receipt: WalkInReceipt | null = null;
+  const unhandled: string[] = [];
+  // Three Manila calendar days ago, in the YYYY-MM-DD form the date input uses.
+  const manilaDay = (offsetDays: number) => new Date(Date.now() + 8 * 60 * 60 * 1000 - offsetDays * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const pastDay = manilaDay(3);
+  const today = manilaDay(0);
+  await authorizeMockedWorkspace(page, "STAFF");
+
+  await page.route("**/api/backend/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (await handleShellRequest(route)) return;
+    if (path === "/api/backend/staff/products" && request.method() === "GET") {
+      return json(route, { products: [skuProduct], categories: [skuProduct.category], nextCursor: null });
+    }
+    if (path === "/api/backend/staff/students" && request.method() === "GET") {
+      return json(route, { items: [], nextCursor: null });
+    }
+    if (path === "/api/backend/staff/walk-in-sales" && request.method() === "GET") {
+      return json(route, { items: receipt ? [receipt] : [], nextCursor: null });
+    }
+    if (path === "/api/backend/staff/walk-in-sales" && request.method() === "POST") {
+      const payload = request.postDataJSON() as Record<string, unknown>;
+      salePayloads.push(payload);
+      const soldAt = payload.soldAt ? new Date(String(payload.soldAt)).toISOString() : new Date().toISOString();
+      const enteredAt = new Date().toISOString();
+      receipt = {
+        id: "00000000-0000-4000-8000-000000000615",
+        receiptCode: "RCT-2026-PAST01",
+        studentId: null,
+        buyerName: String(payload.buyerName),
+        collectionChannel: "COMMISSARY",
+        officialReceiptNumber: null,
+        treasuryReconciliationRequired: false,
+        publicVerificationUrl: "http://127.0.0.1:3100/verify-receipt#v=e2e-token",
+        totalAmount: "350.00",
+        paymentMethod: "CASH",
+        status: "VERIFIED",
+        issuedAt: soldAt,
+        verifiedAt: soldAt,
+        voidedAt: null,
+        voidableUntil: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        createdAt: enteredAt,
+        updatedAt: enteredAt,
+        student: null,
+        issuedBy: { id: staffProfile.id, fullName: staffProfile.fullName },
+        sale: {
+          collectionChannel: "COMMISSARY",
+          officialReceiptNumber: null,
+          treasuryVerifiedById: null,
+          treasuryVerifiedAt: null,
+          cashTendered: "350.00",
+          changeDue: "0.00",
+          cashierId: staffProfile.id,
+          cashierName: staffProfile.fullName,
+          clientSaleId: String(payload.clientSaleId),
+          voidedById: null,
+          voidReason: null,
+          voidedAt: null
+        },
+        items: [{
+          id: "00000000-0000-4000-8000-000000000716",
+          productId: skuProduct.id,
+          skuId: "sku-m-red",
+          variantId: null,
+          productName: skuProduct.name,
+          options: [{ optionName: "Size", optionValue: "M" }, { optionName: "Color", optionValue: "Red" }],
+          quantity: 1,
+          unitPrice: "350.00",
+          subtotal: "350.00"
+        }]
+      };
+      return json(route, { receipt });
+    }
+    unhandled.push(`${request.method()} ${path}`);
+    return json(route, { error: "Unexpected API request in walk-in sale test." }, 500);
+  });
+
+  await page.goto("/staff/walk-in-sales");
+  await dismissWelcomeGate(page);
+  await expect(page.getByRole("heading", { name: "Record physical-store purchases" })).toBeVisible();
+
+  const saleDate = page.getByLabel("Sale date");
+  await expect(saleDate).toHaveValue(today);
+  await expect(page.getByText("Today. Pick an earlier date to enter a past sale.")).toBeVisible();
+
+  await saleDate.fill(pastDay);
+  await expect(page.getByText(/^Recording past sales for /)).toBeVisible();
+  await expect(page.getByLabel("Time (optional)")).toHaveValue("12:00");
+
+  await page.getByRole("button", { name: "Add PE Shirt With Variants to sale" }).click();
+  const skuPicker = page.getByRole("dialog");
+  await skuPicker.getByLabel("Size").selectOption("M");
+  await skuPicker.getByLabel("Color").selectOption("Red");
+  await skuPicker.getByRole("button", { name: "Add to sale" }).click();
+  await page.getByPlaceholder("Enter buyer name").fill("Paper Record Buyer");
+  await page.getByLabel(/Cash received/).fill("350.00");
+
+  // A future or incomplete date must block saving, never fall back to today.
+  await saleDate.fill(manilaDay(-2));
+  await expect(page.getByText("The sale date cannot be in the future. Choose today or an earlier date.").first()).toBeVisible();
+  await page.getByRole("button", { name: "Save sale & deduct stock" }).click();
+  await expect(page.getByText("The sale date cannot be in the future. Choose today or an earlier date.")).toHaveCount(2);
+  await saleDate.fill("");
+  await expect(page.getByText("Enter a complete sale date.")).toBeVisible();
+  expect(salePayloads).toHaveLength(0);
+  await saleDate.fill(pastDay);
+
+  const pastSaveButton = page.getByRole("button", { name: /^Save .+ sale & deduct stock$/ });
+  await expect(pastSaveButton).toBeEnabled();
+  await page.screenshot({ path: testInfo.outputPath("past-sale-checkout.png"), fullPage: false });
+  await pastSaveButton.click();
+
+  const success = page.getByRole("dialog");
+  await expect(success.getByText("Sale recorded")).toBeVisible();
+  expect(salePayloads).toHaveLength(1);
+  expect(salePayloads[0].soldAt).toBe(`${pastDay}T12:00:00+08:00`);
+  await success.getByRole("button", { name: "Done" }).click();
+
+  // The date stays set so the next paper record from that day is quick to enter.
+  await expect(saleDate).toHaveValue(pastDay);
+  await page.getByRole("button", { name: "Back to today" }).click();
+  await expect(saleDate).toHaveValue(today);
+  await expect(page.getByRole("button", { name: "Save sale & deduct stock" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Sales history", exact: true }).click();
+  await expect(page.getByText("RCT-2026-PAST01").first()).toBeVisible();
+  await expect(page.getByText(/^Entered later · /)).toBeVisible();
+  expect(unhandled).toEqual([]);
 });

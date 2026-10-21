@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import type { StaffInventoryBatchResult } from "@/lib/inventory-batch-api";
 import { cn } from "@/lib/utils";
@@ -213,20 +213,38 @@ export function UnitCostNeeded({
   drafts,
   onDraft,
   onSave,
+  onSaveAll,
   submitting
 }: {
   batches: StaffInventoryBatchResult["batches"];
   drafts: Record<string, string>;
   onDraft: (batchId: string, value: string) => void;
   onSave: (batchId: string) => void;
+  /** Saves one unit cost for every listed batch (most items cost the same in every size). */
+  onSaveAll?: (batchIds: string[], unitCost: number) => void;
   submitting: boolean;
 }) {
+  const [allDraft, setAllDraft] = useState("");
   const pending = batches.filter((batch) => !batch.costVerified && batch.quantityRemaining > 0);
   if (!pending.length) return null;
+  const pendingUnits = pending.reduce((total, batch) => total + batch.quantityRemaining, 0);
   return (
     <section className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-4">
       <h3 className="text-sm font-extrabold text-amber-900">Unit cost needed</h3>
       <p className="mt-1 text-xs leading-5 text-amber-800">These units were added by a stock count without a cost. Enter what was paid per unit so they can be sold.</p>
+      {onSaveAll && pending.length > 1 ? (
+        <div className="mt-3 grid gap-2 rounded-md border border-amber-300 bg-white p-3 sm:grid-cols-[1fr_160px_auto] sm:items-center">
+          <div>
+            <p className="text-xs font-bold text-foreground">Same cost for all {pending.length} sizes</p>
+            <p className="text-xs text-muted-foreground">{pendingUnits} unit{pendingUnits === 1 ? "" : "s"} · or enter each size below if they differ</p>
+          </div>
+          <div className="flex h-10 items-center rounded-md border px-2 focus-within:border-primary">
+            <span className="mr-1 text-xs font-bold text-muted-foreground">PHP</span>
+            <input type="number" min="0" step="0.01" inputMode="decimal" aria-label={`Unit cost for all ${pending.length} sizes`} value={allDraft} onChange={(event) => setAllDraft(event.target.value)} className="min-w-0 flex-1 outline-none" placeholder="0.00" />
+          </div>
+          <Button type="button" className="h-10" disabled={submitting || !isMoneyInput(allDraft)} onClick={() => onSaveAll(pending.map((batch) => batch.id), Number(allDraft))}>Apply to all sizes</Button>
+        </div>
+      ) : null}
       <div className="mt-3 space-y-2">
         {pending.map((batch) => (
           <div key={batch.id} className="grid gap-2 rounded-md bg-white p-3 sm:grid-cols-[1fr_160px_auto] sm:items-center">

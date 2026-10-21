@@ -10,13 +10,23 @@ import type { WalkInCollectionChannel, WalkInReceipt } from "@/lib/staff-api";
  * (384 dots at 203 dpi) and an 80 mm roll roughly 72 mm (576 dots). The receipt
  * is laid out at the printable width and centered on the page so nothing is
  * clipped by the printer's unprintable side margins.
+ *
+ * Page length: when the page size requested by the receipt differs from the paper
+ * size selected in the printer driver, Chrome scales and centers the page on the
+ * driver's paper, which feeds blank paper before the receipt. "PRINTER" (default)
+ * requests no page size so the receipt starts at the top edge; "CUSTOM" matches a
+ * known driver paper length; "FIT" makes the page exactly as long as the receipt.
  */
 export type ThermalPaperPreset = "58" | "80" | "CUSTOM";
+export type ThermalPageLength = "PRINTER" | "CUSTOM" | "FIT";
 
 export type ThermalPrinterSettings = {
   preset: ThermalPaperPreset;
   paperWidthMm: number;
   printableWidthMm: number;
+  pageLength: ThermalPageLength;
+  /** Used when pageLength is CUSTOM. */
+  pageLengthMm: number;
 };
 
 export const THERMAL_PAPER_PRESETS = {
@@ -26,12 +36,16 @@ export const THERMAL_PAPER_PRESETS = {
 
 export const THERMAL_CUSTOM_PAPER_WIDTH = { min: 40, max: 110 } as const;
 export const THERMAL_MIN_PRINTABLE_WIDTH = 30;
+export const THERMAL_CUSTOM_PAGE_LENGTH = { min: 50, max: 3300 } as const;
+export const DEFAULT_THERMAL_PAGE_LENGTH_MM = 297;
 
 // 58 mm is the safe default: a narrow layout still prints on an 80 mm printer,
 // while an 80 mm layout would be clipped on a 58 mm printer.
 export const DEFAULT_THERMAL_PRINTER_SETTINGS: ThermalPrinterSettings = {
   preset: "58",
-  ...THERMAL_PAPER_PRESETS["58"]
+  ...THERMAL_PAPER_PRESETS["58"],
+  pageLength: "PRINTER",
+  pageLengthMm: DEFAULT_THERMAL_PAGE_LENGTH_MM
 };
 
 const SETTINGS_STORAGE_KEY = "wescomm.thermal-printer.v1";
@@ -48,12 +62,29 @@ export function defaultPrintableWidthMm(paperWidthMm: number) {
   return Math.max(THERMAL_MIN_PRINTABLE_WIDTH, Math.round(paperWidthMm - (paperWidthMm >= 70 ? 8 : 10)));
 }
 
+function normalizePageLength(candidate: Partial<Record<keyof ThermalPrinterSettings, unknown>>) {
+  const pageLength: ThermalPageLength = candidate.pageLength === "CUSTOM" || candidate.pageLength === "FIT" ? candidate.pageLength : "PRINTER";
+  const requestedLength = Number(candidate.pageLengthMm);
+  const pageLengthMm = Number.isFinite(requestedLength) && requestedLength > 0
+    ? Math.round(clamp(requestedLength, THERMAL_CUSTOM_PAGE_LENGTH.min, THERMAL_CUSTOM_PAGE_LENGTH.max))
+    : DEFAULT_THERMAL_PAGE_LENGTH_MM;
+  return { pageLength, pageLengthMm };
+}
+
 export function normalizeThermalPrinterSettings(value: unknown): ThermalPrinterSettings {
   const candidate = (value && typeof value === "object" ? value : {}) as Partial<Record<keyof ThermalPrinterSettings, unknown>>;
+  return { ...normalizePaperWidth(candidate), ...normalizePageLength(candidate) };
+}
+
+function normalizePaperWidth(
+  candidate: Partial<Record<keyof ThermalPrinterSettings, unknown>>
+): Pick<ThermalPrinterSettings, "preset" | "paperWidthMm" | "printableWidthMm"> {
   if (candidate.preset === "58" || candidate.preset === "80") {
     return { preset: candidate.preset, ...THERMAL_PAPER_PRESETS[candidate.preset] };
   }
-  if (candidate.preset !== "CUSTOM") return DEFAULT_THERMAL_PRINTER_SETTINGS;
+  if (candidate.preset !== "CUSTOM") {
+    return { preset: "58" as const, ...THERMAL_PAPER_PRESETS["58"] };
+  }
 
   const requestedPaper = Number(candidate.paperWidthMm);
   const paperWidthMm = Number.isFinite(requestedPaper)
@@ -63,7 +94,7 @@ export function normalizeThermalPrinterSettings(value: unknown): ThermalPrinterS
   const printableWidthMm = Number.isFinite(requestedPrintable)
     ? roundToHalf(clamp(requestedPrintable, THERMAL_MIN_PRINTABLE_WIDTH, paperWidthMm))
     : defaultPrintableWidthMm(paperWidthMm);
-  return { preset: "CUSTOM", paperWidthMm, printableWidthMm };
+  return { preset: "CUSTOM" as const, paperWidthMm, printableWidthMm };
 }
 
 export function loadThermalPrinterSettings(): ThermalPrinterSettings {
@@ -150,7 +181,7 @@ export function sampleThermalReceipt(origin: string): ThermalReceiptData {
     issuedAt: new Date().toISOString(),
     buyerName: "Printer Test Buyer With A Long Name",
     studentNumber: null,
-    cashierName: "WESCOMM Cashier",
+    cashierName: "Commissary Cashier",
     collectionChannel: "COMMISSARY",
     officialReceiptNumber: null,
     items: [
@@ -327,7 +358,7 @@ export async function buildThermalReceiptDocument(data: ThermalReceiptData, opti
 <main class="receipt">
   <div class="center">
     <img class="logo" src="${escapeHtml(options.logoUrl)}" alt="">
-    <p class="brand">WESCOMM</p>
+    <p class="brand">COMMISSARY</p>
     <div class="title">Sales Receipt</div>
     <div class="code">${escapeHtml(data.receiptCode)}</div>
   </div>
@@ -356,10 +387,17 @@ export async function buildThermalReceiptDocument(data: ThermalReceiptData, opti
 
 const MM_PER_CSS_PIXEL = 25.4 / 96;
 
+/** The @page rule for the chosen page length; measuredHeightMm is the receipt's own length. */
+export function thermalPageRule(settings: ThermalPrinterSettings, measuredHeightMm: number) {
+  if (settings.pageLength === "PRINTER") return "@page { margin: 0; }";
+  const lengthMm = settings.pageLength === "CUSTOM" ? settings.pageLengthMm : measuredHeightMm;
+  return `@page { size: ${settings.paperWidthMm}mm ${lengthMm}mm; margin: 0; }`;
+}
+
 /**
  * Prints the receipt document from an off-screen iframe so the print preview
- * contains only the receipt. The page height is measured after layout so the
- * receipt prints as one continuous page with no wasted paper.
+ * contains only the receipt. The page size follows the saved page-length setting
+ * (see ThermalPageLength); for FIT the height is measured after layout.
  */
 export async function printThermalDocument(html: string, settings: ThermalPrinterSettings) {
   const iframe = document.createElement("iframe");
@@ -394,7 +432,7 @@ export async function printThermalDocument(html: string, settings: ThermalPrinte
   const heightPx = receiptElement?.getBoundingClientRect().height ?? frameDocument.documentElement.scrollHeight;
   const pageHeightMm = Math.ceil(heightPx * MM_PER_CSS_PIXEL) + 2;
   const pageStyle = frameDocument.createElement("style");
-  pageStyle.textContent = `@page { size: ${settings.paperWidthMm}mm ${pageHeightMm}mm; margin: 0; }`;
+  pageStyle.textContent = thermalPageRule(settings, pageHeightMm);
   frameDocument.head.appendChild(pageStyle);
 
   let removed = false;

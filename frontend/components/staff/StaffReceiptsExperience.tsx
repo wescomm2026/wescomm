@@ -18,6 +18,9 @@ import {
   voidReceiptFromApi
 } from "@/lib/api";
 import { getStoredStaffSession } from "@/lib/staff-api";
+import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
+import { VoidWindowBadge } from "@/components/staff/VoidWindowParts";
+import { voidWindowState } from "@/lib/void-window";
 import {
   mergeUniqueById,
   StaffReceiptRow,
@@ -31,6 +34,7 @@ import {
 } from "@/components/staff/StaffOperationsShared";
 
 export function StaffReceiptsExperience() {
+  const { user } = useStudentAuth();
   const [rows, setRows] = useState<StaffReceiptRow[]>([]);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("All");
@@ -274,17 +278,24 @@ export function StaffReceiptsExperience() {
                     </Button>
                   ) : null}
                 </div>
-                {row.backendStatus !== "VOIDED" ? (
-                  <Button
-                    variant="ghost"
-                    disabled={submittingId === row.id}
-                    className="w-full text-danger hover:bg-danger/5"
-                    onClick={() => askVoid(row)}
-                  >
-                    <Trash2 className="size-4" />
-                    {submittingId === row.id ? "Saving..." : "Void receipt"}
-                  </Button>
-                ) : null}
+                {row.backendStatus !== "VOIDED" ? (() => {
+                  const voidWindow = voidWindowState(row.receipt.voidableUntil, user?.role);
+                  return (
+                    <>
+                      <VoidWindowBadge state={voidWindow} className="justify-center" />
+                      <Button
+                        variant="ghost"
+                        disabled={submittingId === row.id || !voidWindow.canVoid}
+                        title={voidWindow.canVoid ? undefined : "The 2-day void period has ended. Ask an admin."}
+                        className="w-full text-danger hover:bg-danger/5"
+                        onClick={() => askVoid(row)}
+                      >
+                        <Trash2 className="size-4" />
+                        {submittingId === row.id ? "Saving..." : voidWindow.canVoid ? "Void receipt" : "Void period ended"}
+                      </Button>
+                    </>
+                  );
+                })() : null}
               </div>
             </article>
           ))}
@@ -316,11 +327,13 @@ export function StaffReceiptsExperience() {
         onClose={() => setSelectedReceipt(null)}
         onAskVerify={askVerify}
         onAskVoid={askVoid}
+        role={user?.role}
       />
       <ReceiptActionModal
         action={receiptAction}
         reason={voidReason}
         submitting={Boolean(submittingId)}
+        role={user?.role}
         onReasonChange={setVoidReason}
         onClose={() => {
           setReceiptAction(null);

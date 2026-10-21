@@ -54,3 +54,11 @@ export function verifyStaffOpeningBatchCost(token: string, productId: string, ba
     body: JSON.stringify({ unitCost })
   });
 }
+
+/** Saves one unit cost for several uncosted batches of a product at once. */
+export function verifyStaffOpeningBatchCosts(token: string, productId: string, batchIds: string[], unitCost: number) {
+  return inventoryBatchFetch(`/staff/products/${productId}/batches/cost`, token, {
+    method: "PATCH",
+    body: JSON.stringify({ batchIds, unitCost })
+  });
+}

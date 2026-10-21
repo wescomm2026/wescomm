@@ -12,7 +12,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
   ({ children, className, variant = "primary", size = "md", loading = false, disabled, ...props }, ref) => {
     const variants = {
       primary: "bg-primary text-primary-foreground shadow-soft hover:bg-primary-hover [&_.asset-icon-img]:brightness-0 [&_.asset-icon-img]:invert",
-      secondary: "border border-border-strong bg-white text-primary hover:bg-surface-subtle",
+      secondary: "border border-border-strong bg-card text-primary hover:bg-surface-subtle",
       ghost: "bg-transparent text-foreground hover:bg-surface-subtle",
       destructive: "bg-danger text-white shadow-soft hover:brightness-90"
     };

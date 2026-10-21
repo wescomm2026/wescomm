@@ -35,7 +35,7 @@ import {
   type StaffInventoryAttention,
   type StaffProductVisibility
 } from "@/lib/staff-api";
-import { getStaffInventoryBatches, verifyStaffOpeningBatchCost, type StaffInventoryBatchResult } from "@/lib/inventory-batch-api";
+import { getStaffInventoryBatches, verifyStaffOpeningBatchCost, verifyStaffOpeningBatchCosts, type StaffInventoryBatchResult } from "@/lib/inventory-batch-api";
 import { isUniformClothOnly } from "@/lib/product-display";
 import { optimizeShopProductImage, shopProductCardImage } from "@/lib/shop-assets";
 import { WUP_DEFAULT_PRODUCT_TEMPLATES } from "@/lib/wup-default-catalog";
@@ -542,6 +542,41 @@ export function StaffInventoryExperience() {
       setNotice("Unit cost saved. These units can now be sold.");
     } catch (batchError) {
       setError(userFacingErrorMessage(batchError, "Unable to save the unit cost."));
+      // Nothing was saved; show the sizes as they are now so staff can retry.
+      const productId = restockingProduct.id;
+      void getStaffInventoryBatches(token, productId).then((result) => {
+        setBatchResult(result);
+        setProducts((current) => current.map((product) => product.id === productId
+          ? { ...product, unverifiedCostQuantity: result.summary.unverifiedQuantity }
+          : product));
+      }).catch(() => undefined);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const saveOpeningBatchCostForAll = async (batchIds: string[], unitCost: number) => {
+    if (!restockingProduct) return;
+    setSubmitting(true);
+    setError("");
+    try {
+      const result = await verifyStaffOpeningBatchCosts(token, restockingProduct.id, batchIds, unitCost);
+      setBatchResult(result);
+      const productId = restockingProduct.id;
+      setProducts((current) => current.map((product) => product.id === productId
+        ? { ...product, unverifiedCostQuantity: result.summary.unverifiedQuantity }
+        : product));
+      setNotice("Unit cost saved for every size. These units can now be sold.");
+    } catch (batchError) {
+      setError(userFacingErrorMessage(batchError, "Unable to save the unit cost."));
+      // Nothing was saved; show the sizes as they are now so staff can retry.
+      const productId = restockingProduct.id;
+      void getStaffInventoryBatches(token, productId).then((result) => {
+        setBatchResult(result);
+        setProducts((current) => current.map((product) => product.id === productId
+          ? { ...product, unverifiedCostQuantity: result.summary.unverifiedQuantity }
+          : product));
+      }).catch(() => undefined);
     } finally {
       setSubmitting(false);
     }
@@ -1811,6 +1846,7 @@ export function StaffInventoryExperience() {
                   drafts={openingCostDrafts}
                   onDraft={(batchId, value) => setOpeningCostDrafts((current) => ({ ...current, [batchId]: value }))}
                   onSave={(batchId) => void saveOpeningBatchCost(batchId)}
+                  onSaveAll={(batchIds, unitCost) => void saveOpeningBatchCostForAll(batchIds, unitCost)}
                   submitting={submitting}
                 />
               ) : null}

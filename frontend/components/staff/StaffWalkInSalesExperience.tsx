@@ -3,7 +3,7 @@
 import { userFacingErrorMessage } from "@/lib/user-facing-error";
 
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
-import { Check, Circle, Minus, Plus, Printer, ReceiptText, RefreshCw, Search, ShoppingCart, Trash2, X } from "lucide-react";
+import { CalendarDays, Check, Circle, Minus, Plus, Printer, ReceiptText, RefreshCw, Search, ShoppingCart, Trash2, X } from "lucide-react";
 import { useRealtimeRefresh } from "@/components/realtime/RealtimeProvider";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
@@ -15,6 +15,18 @@ import {
   type BackendOperationalStudent
 } from "@/lib/api";
 import { useStudentAuth } from "@/components/auth/StudentAuthProvider";
+import { VoidDialogDetails, VoidWindowBadge } from "@/components/staff/VoidWindowParts";
+import { voidWindowState } from "@/lib/void-window";
+import {
+  DEFAULT_PAST_SALE_TIME,
+  earliestPastSaleDate,
+  formatSaleDateLabel,
+  manilaDateKey,
+  saleDateError,
+  saleDateStatus,
+  walkInSoldAt,
+  wasEnteredLater
+} from "@/lib/walk-in-sale-date";
 import {
   getStaffProductsPage,
   getStoredStaffSession,
@@ -37,6 +49,8 @@ import {
   printThermalReceipt,
   sampleThermalReceipt,
   saveThermalPrinterSettings,
+  THERMAL_CUSTOM_PAGE_LENGTH,
+  type ThermalPageLength,
   THERMAL_CUSTOM_PAPER_WIDTH,
   THERMAL_MIN_PRINTABLE_WIDTH,
   THERMAL_PAPER_PRESETS,
@@ -376,6 +390,7 @@ function VoidWalkInSaleModal({
   receipt,
   submitting,
   reason,
+  role,
   onReasonChange,
   onClose,
   onConfirm
@@ -383,6 +398,7 @@ function VoidWalkInSaleModal({
   receipt: WalkInReceipt | null;
   submitting: boolean;
   reason: string;
+  role?: string | null;
   onReasonChange: (value: string) => void;
   onClose: () => void;
   onConfirm: () => void;
@@ -410,6 +426,7 @@ function VoidWalkInSaleModal({
             </p>
           </InlineAlert>
         ) : null}
+        <VoidDialogDetails state={voidWindowState(receipt.voidableUntil, role)} reason={reason} onReasonChange={onReasonChange} />
         <label className="mt-4 grid gap-1.5 text-sm font-semibold">
           Reason (required)
           <textarea
@@ -539,6 +556,8 @@ function ThermalPrinterSettingsModal({
   const [preset, setPreset] = useState<ThermalPaperPreset>(settings.preset);
   const [customPaper, setCustomPaper] = useState(String(settings.paperWidthMm));
   const [customPrintable, setCustomPrintable] = useState(String(settings.printableWidthMm));
+  const [pageLength, setPageLength] = useState<ThermalPageLength>(settings.pageLength);
+  const [customLength, setCustomLength] = useState(String(settings.pageLengthMm));
   const [previewHtml, setPreviewHtml] = useState("");
   const [testPrinting, setTestPrinting] = useState(false);
   const [testError, setTestError] = useState("");
@@ -548,6 +567,8 @@ function ThermalPrinterSettingsModal({
     setPreset(settings.preset);
     setCustomPaper(String(settings.paperWidthMm));
     setCustomPrintable(String(settings.printableWidthMm));
+    setPageLength(settings.pageLength);
+    setCustomLength(String(settings.pageLengthMm));
     setTestError("");
   }, [open, settings]);
 
@@ -559,10 +580,18 @@ function ThermalPrinterSettingsModal({
     && Number.isFinite(customPrintableValue)
     && customPrintableValue >= THERMAL_MIN_PRINTABLE_WIDTH
     && customPrintableValue <= customPaperValue;
-  const draft = normalizeThermalPrinterSettings(preset === "CUSTOM"
-    ? { preset, paperWidthMm: customPaperValue, printableWidthMm: customPrintableValue }
-    : { preset });
-  const draftValid = preset !== "CUSTOM" || customValid;
+  const customLengthValue = Number.parseFloat(customLength);
+  const customLengthValid = Number.isFinite(customLengthValue)
+    && customLengthValue >= THERMAL_CUSTOM_PAGE_LENGTH.min
+    && customLengthValue <= THERMAL_CUSTOM_PAGE_LENGTH.max;
+  const draft = normalizeThermalPrinterSettings({
+    ...(preset === "CUSTOM"
+      ? { preset, paperWidthMm: customPaperValue, printableWidthMm: customPrintableValue }
+      : { preset }),
+    pageLength,
+    pageLengthMm: pageLength === "CUSTOM" ? customLengthValue : settings.pageLengthMm
+  });
+  const draftValid = (preset !== "CUSTOM" || customValid) && (pageLength !== "CUSTOM" || customLengthValid);
 
   useEffect(() => {
     if (!open || !draftValid) return;
@@ -579,6 +608,7 @@ function ThermalPrinterSettingsModal({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, draftValid, draft.paperWidthMm, draft.printableWidthMm]);
+  // Page length only changes the @page rule at print time, not the preview.
 
   if (!open) return null;
 
@@ -603,7 +633,12 @@ function ThermalPrinterSettingsModal({
   const presetOptions: Array<{ value: ThermalPaperPreset; label: string; detail: string }> = [
     { value: "58", label: "58 mm", detail: `Prints ${THERMAL_PAPER_PRESETS["58"].printableWidthMm} mm wide. Safe default.` },
     { value: "80", label: "80 mm", detail: `Prints ${THERMAL_PAPER_PRESETS["80"].printableWidthMm} mm wide.` },
-    { value: "CUSTOM", label: "Custom", detail: `${THERMAL_CUSTOM_PAPER_WIDTH.min} to ${THERMAL_CUSTOM_PAPER_WIDTH.max} mm paper.` }
+    { value: "CUSTOM", label: "Custom width", detail: `${THERMAL_CUSTOM_PAPER_WIDTH.min} to ${THERMAL_CUSTOM_PAPER_WIDTH.max} mm paper.` }
+  ];
+  const lengthOptions: Array<{ value: ThermalPageLength; label: string; detail: string }> = [
+    { value: "PRINTER", label: "Printer's paper size (recommended)", detail: "The receipt starts at the top of the paper. Fixes blank paper feeding before the receipt." },
+    { value: "CUSTOM", label: "Custom length", detail: "Match the paper length selected in the print dialog, e.g. 297 mm or 3276 mm." },
+    { value: "FIT", label: "Fit to receipt", detail: "The page is exactly as long as the receipt. Use only if your printer prints it without blank paper." }
   ];
 
   return (
@@ -681,14 +716,54 @@ function ThermalPrinterSettingsModal({
               </div>
             ) : null}
 
+            <fieldset className="grid gap-2">
+              <legend className="mb-1 text-sm font-semibold">Page length</legend>
+              {lengthOptions.map((option) => (
+                <label key={option.value} className={cn("flex cursor-pointer items-start gap-3 rounded-lg border p-3 text-sm transition-colors", pageLength === option.value ? "border-primary bg-primary/5" : "hover:border-primary/40")}>
+                  <input
+                    type="radio"
+                    name="thermal-page-length"
+                    value={option.value}
+                    checked={pageLength === option.value}
+                    onChange={() => setPageLength(option.value)}
+                    className="mt-1 accent-primary"
+                  />
+                  <span>
+                    <span className="block font-bold">{option.label}</span>
+                    <span className="block text-xs text-muted-foreground">{option.detail}</span>
+                  </span>
+                </label>
+              ))}
+              {pageLength === "CUSTOM" ? (
+                <label className="grid gap-1.5 text-xs font-semibold sm:max-w-xs">
+                  Page length (mm)
+                  <input
+                    type="number"
+                    min={THERMAL_CUSTOM_PAGE_LENGTH.min}
+                    max={THERMAL_CUSTOM_PAGE_LENGTH.max}
+                    step="1"
+                    inputMode="numeric"
+                    value={customLength}
+                    onChange={(event) => setCustomLength(event.target.value)}
+                    className="h-11 rounded-md border border-border-strong bg-white px-3 font-normal outline-none focus:border-primary"
+                  />
+                  {!customLengthValid ? (
+                    <span className="font-semibold text-danger">Use {THERMAL_CUSTOM_PAGE_LENGTH.min} to {THERMAL_CUSTOM_PAGE_LENGTH.max} mm.</span>
+                  ) : null}
+                </label>
+              ) : null}
+            </fieldset>
+
             <div className="rounded-lg border bg-surface-subtle p-3 text-xs leading-5 text-muted-foreground">
               <p className="font-bold text-foreground">In the print dialog, set once per computer:</p>
               <ul className="mt-1 list-disc space-y-0.5 pl-4">
                 <li>Printer: the thermal receipt printer</li>
-                <li>Paper size in the printer driver: the same roll width</li>
+                <li>Paper size: the receipt roll (e.g. 58 x 297 mm or 80 x 3276 mm), not A4 or Letter</li>
                 <li>Margins: None. Headers and footers: off</li>
                 <li>Scale: 100% (Default), not &quot;Fit to page&quot;</li>
               </ul>
+              <p className="mt-2 font-bold text-foreground">Blank paper before the receipt?</p>
+              <p>Choose &quot;Printer&apos;s paper size&quot; above. If blank paper still feeds after the receipt, pick a shorter roll paper size in the print dialog or turn on &quot;cut/stop at end of data&quot; in the printer driver.</p>
               <p className="mt-2">Print a test receipt and check that both edge marks and the QR code print fully.</p>
             </div>
 
@@ -756,6 +831,9 @@ export function StaffWalkInSalesExperience() {
   const [cashReceived, setCashReceived] = useState("");
   const [officialReceiptNumber, setOfficialReceiptNumber] = useState("");
   const [treasuryInspected, setTreasuryInspected] = useState(false);
+  // Kept between sales so a day of paper records can be entered in one go.
+  const [saleDate, setSaleDate] = useState(() => manilaDateKey());
+  const [saleTime, setSaleTime] = useState(DEFAULT_PAST_SALE_TIME);
   const [submitting, setSubmitting] = useState(false);
   const [saleError, setSaleError] = useState("");
   const [successReceipt, setSuccessReceipt] = useState<WalkInReceipt | null>(null);
@@ -1071,6 +1149,10 @@ export function StaffWalkInSalesExperience() {
   const officialReceiptNumberValue = officialReceiptNumber.trim().replace(/\s+/g, " ");
   const treasuryValid = officialReceiptNumberValue.length > 0 && treasuryInspected;
   const paymentValid = treasurySale ? treasuryValid : cashValid;
+  const todayKey = manilaDateKey();
+  const saleDateState = saleDateStatus(saleDate);
+  const pastSale = saleDateState === "PAST";
+  const saleDateValid = saleDateState === "TODAY" || pastSale;
   const quickCashAmounts = Array.from(new Set([
     cartTotal,
     Math.ceil(cartTotal / 100) * 100,
@@ -1089,6 +1171,10 @@ export function StaffWalkInSalesExperience() {
     }
     if (!buyerNameValid) {
       setSaleError("Enter the walk-in buyer's name before saving.");
+      return;
+    }
+    if (!saleDateValid) {
+      setSaleError(saleDateError(saleDateState));
       return;
     }
     if (treasurySale && !officialReceiptNumberValue) {
@@ -1123,7 +1209,8 @@ export function StaffWalkInSalesExperience() {
         buyerName,
         studentId: selectedStudent?.id,
         receiptCode: receiptCode.trim() || undefined,
-        clientSaleId: clientSaleIdRef.current
+        clientSaleId: clientSaleIdRef.current,
+        soldAt: walkInSoldAt(saleDate, saleTime)
       };
       const payload: WalkInSalePayload = treasurySale
         ? { ...sale, collectionChannel: "TREASURER", officialReceiptNumber: officialReceiptNumberValue, treasuryReceiptInspected: true }
@@ -1140,7 +1227,9 @@ export function StaffWalkInSalesExperience() {
       setOfficialReceiptNumber("");
       setTreasuryInspected(false);
       clientSaleIdRef.current = createClientSaleId();
-      setNotice(`${receipt.receiptCode} recorded for ${receipt.buyerName}.`);
+      setNotice(pastSale
+        ? `${receipt.receiptCode} recorded for ${receipt.buyerName}, dated ${formatSaleDateLabel(saleDate)}.`
+        : `${receipt.receiptCode} recorded for ${receipt.buyerName}.`);
       void loadHistory({ background: true });
       void loadCatalog({ background: true });
     } catch (submitError) {
@@ -1451,6 +1540,58 @@ export function StaffWalkInSalesExperience() {
               <h3 className="text-base font-extrabold text-foreground">Checkout</h3>
               <p className="mt-1 text-xs text-muted-foreground">Enter any walk-in buyer name. Linking a WESCOMM student account is optional.</p>
             </div>
+            <div className={cn("rounded-lg border p-3", !saleDateValid ? "border-danger/40 bg-danger/5" : pastSale ? "border-amber-300 bg-amber-50" : "bg-card")}>
+              <div className="flex flex-wrap items-end gap-3">
+                <label className="grid min-w-[9.5rem] flex-1 gap-1.5 text-xs font-semibold">
+                  <span className="inline-flex items-center gap-1.5"><CalendarDays className="size-3.5" aria-hidden="true" />Sale date</span>
+                  <input
+                    type="date"
+                    value={saleDate}
+                    min={earliestPastSaleDate()}
+                    max={todayKey}
+                    onChange={(event) => {
+                      // Keep whatever was entered; an incomplete or future date blocks saving.
+                      setSaleDate(event.target.value);
+                      setSaleError("");
+                    }}
+                    aria-describedby="walk-in-sale-date-help"
+                    className="h-11 rounded-md border border-border-strong bg-white px-3 font-normal outline-none focus:border-primary"
+                  />
+                </label>
+                {pastSale ? (
+                  <label className="grid w-[7.5rem] gap-1.5 text-xs font-semibold">
+                    Time (optional)
+                    <input
+                      type="time"
+                      value={saleTime}
+                      onChange={(event) => setSaleTime(event.target.value || DEFAULT_PAST_SALE_TIME)}
+                      className="h-11 rounded-md border border-border-strong bg-white px-3 font-normal outline-none focus:border-primary"
+                    />
+                  </label>
+                ) : null}
+              </div>
+              <div id="walk-in-sale-date-help" aria-live="polite">
+                {pastSale ? (
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <p className="min-w-0 flex-1 text-xs font-bold text-amber-900">
+                      Recording past sales for {formatSaleDateLabel(saleDate)}. Receipts and reports use this date; stock is deducted now. Voids follow the 2-day period from this date, so check each entry before saving.
+                    </p>
+                    <button type="button" className="text-xs font-bold text-amber-900 underline" onClick={() => setSaleDate(manilaDateKey())}>
+                      Back to today
+                    </button>
+                  </div>
+                ) : saleDateValid ? (
+                  <p className="mt-1.5 text-xs text-muted-foreground">Today. Pick an earlier date to enter a past sale.</p>
+                ) : (
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <p className="min-w-0 flex-1 text-xs font-bold text-danger">{saleDateError(saleDateState)}</p>
+                    <button type="button" className="text-xs font-bold text-danger underline" onClick={() => setSaleDate(manilaDateKey())}>
+                      Use today
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
             <div className="relative">
               <label className="grid gap-1.5 text-xs font-semibold">
                 Buyer name
@@ -1657,7 +1798,7 @@ export function StaffWalkInSalesExperience() {
               loading={submitting}
               onClick={() => void recordSale()}
             >
-              Save sale & deduct stock
+              {pastSale ? `Save ${formatSaleDateLabel(saleDate)} sale & deduct stock` : "Save sale & deduct stock"}
             </Button>
           </aside>
         </div>
@@ -1687,6 +1828,11 @@ export function StaffWalkInSalesExperience() {
                   <div>
                     <p className="font-extrabold">{receipt.receiptCode}</p>
                     <p className="text-xs text-muted-foreground">{formatStaffReceiptDate(receipt.issuedAt)}</p>
+                    {wasEnteredLater(receipt) ? (
+                      <p className="mt-1 inline-flex rounded bg-amber-50 px-2 py-0.5 text-[10px] font-extrabold text-amber-800" title={`Entered ${formatStaffReceiptDate(receipt.createdAt)}`}>
+                        Entered later · {formatStaffReceiptDate(receipt.createdAt)}
+                      </p>
+                    ) : null}
                   </div>
                   <span className="ml-auto"><StatusBadge statusKey={receipt.status} /></span>
                 </div>
@@ -1740,20 +1886,27 @@ export function StaffWalkInSalesExperience() {
                     <Printer className="size-4" aria-hidden="true" />
                     Reprint
                   </Button>
-                  {receipt.status !== "VOIDED" ? (
-                    <Button
-                      variant="ghost"
-                      disabled={voiding}
-                      className="w-full border border-danger/30 text-danger hover:bg-danger/5"
-                      onClick={() => {
-                        setVoidReason("");
-                        setVoidTarget(receipt);
-                      }}
-                    >
-                      <Trash2 className="size-4" />
-                      Void & restore stock
-                    </Button>
-                  ) : null}
+                  {receipt.status !== "VOIDED" ? (() => {
+                    const voidWindow = voidWindowState(receipt.voidableUntil, user?.role);
+                    return (
+                      <>
+                        <VoidWindowBadge state={voidWindow} className="justify-center" />
+                        <Button
+                          variant="ghost"
+                          disabled={voiding || !voidWindow.canVoid}
+                          title={voidWindow.canVoid ? undefined : "The 2-day void period has ended. Ask an admin."}
+                          className="w-full border border-danger/30 text-danger hover:bg-danger/5"
+                          onClick={() => {
+                            setVoidReason("");
+                            setVoidTarget(receipt);
+                          }}
+                        >
+                          <Trash2 className="size-4" />
+                          {voidWindow.canVoid ? "Void & restore stock" : "Void period ended"}
+                        </Button>
+                      </>
+                    );
+                  })() : null}
                 </div>
               </article>
             ))}
@@ -1812,6 +1965,7 @@ export function StaffWalkInSalesExperience() {
         receipt={voidTarget}
         submitting={voiding}
         reason={voidReason}
+        role={user?.role}
         onReasonChange={setVoidReason}
         onClose={() => {
           setVoidTarget(null);

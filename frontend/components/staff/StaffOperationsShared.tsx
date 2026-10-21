@@ -8,6 +8,8 @@ import { AssetIcon } from "@/components/ui/AssetIcon";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { StatusBadge } from "@/components/ui/StatusBadge";
+import { VoidDialogDetails } from "@/components/staff/VoidWindowParts";
+import { voidWindowState } from "@/lib/void-window";
 import { useAccessibleDialog } from "@/components/ui/useAccessibleDialog";
 import {
   type BackendConversation,
@@ -457,7 +459,11 @@ export function StaffConversationAvatar({
   if (kind === "BOT") {
     return (
       <span className={cn("relative inline-grid shrink-0 place-items-center overflow-hidden rounded-full", sizeClass)} aria-hidden="true">
-        <Image src="/assets/chat-with-wesbot.svg" alt="" fill sizes={size === "sm" ? "32px" : size === "lg" ? "64px" : "44px"} className="object-contain" />
+        <AssetIcon
+          src="/assets/chat-with-wesbot.svg"
+          className="size-full rounded-full"
+          sizes={size === "sm" ? "32px" : size === "lg" ? "64px" : "44px"}
+        />
       </span>
     );
   }
@@ -575,13 +581,13 @@ export function Notice({ text, onClose }: { text: string; onClose: () => void })
       onMouseLeave={() => setPaused(false)}
       onFocus={() => setPaused(true)}
       onBlur={() => setPaused(false)}
-      className="fixed inset-x-3 bottom-4 z-[100] mx-auto flex max-w-md items-start gap-3 rounded-xl bg-foreground px-4 py-3 text-sm font-semibold text-white shadow-overlay sm:inset-x-auto sm:bottom-6 sm:right-6 sm:mx-0"
+      className="fixed inset-x-3 bottom-4 z-[100] mx-auto flex max-w-md items-start gap-3 rounded-xl bg-foreground px-4 py-3 text-sm font-semibold text-background shadow-overlay sm:inset-x-auto sm:bottom-6 sm:right-6 sm:mx-0"
     >
-      <span className="mt-0.5 grid size-5 shrink-0 place-items-center rounded-full bg-success text-white">
+      <span className="mt-0.5 grid size-5 shrink-0 place-items-center rounded-full bg-success text-background">
         <Check className="size-3.5" aria-hidden="true" />
       </span>
       <span className="min-w-0 flex-1 leading-5">{text}</span>
-      <button type="button" onClick={onClose} aria-label="Dismiss" className="-mr-1 grid size-6 shrink-0 place-items-center rounded-control text-white/70 hover:bg-white/10 hover:text-white">
+      <button type="button" onClick={onClose} aria-label="Dismiss" className="-mr-1 grid size-6 shrink-0 place-items-center rounded-control text-background/70 hover:bg-background/10 hover:text-background">
         <X className="size-4" aria-hidden="true" />
       </button>
     </div>
@@ -593,13 +599,15 @@ export function StaffReceiptPreviewModal({
   submitting,
   onClose,
   onAskVerify,
-  onAskVoid
+  onAskVoid,
+  role
 }: {
   row: StaffReceiptRow | null;
   submitting: boolean;
   onClose: () => void;
   onAskVerify: (row: StaffReceiptRow) => void;
   onAskVoid: (row: StaffReceiptRow) => void;
+  role?: string | null;
 }) {
   const dialog = useAccessibleDialog(Boolean(row), onClose);
   if (!row) return null;
@@ -677,7 +685,7 @@ export function StaffReceiptPreviewModal({
             </Button>
           ) : null}
           {row.backendStatus !== "VOIDED" ? (
-            <Button type="button" variant="ghost" disabled={submitting} className="border border-red-200 bg-red-50 text-red-700 hover:bg-red-100" onClick={() => onAskVoid(row)}>
+            <Button type="button" variant="ghost" disabled={submitting || !voidWindowState(row.receipt.voidableUntil, role).canVoid} title={voidWindowState(row.receipt.voidableUntil, role).canVoid ? undefined : "The 2-day void period has ended. Ask an admin."} className="border border-red-200 bg-red-50 text-red-700 hover:bg-red-100" onClick={() => onAskVoid(row)}>
               <Trash2 className="size-4" />
               Void receipt
             </Button>
@@ -692,6 +700,7 @@ export function ReceiptActionModal({
   action,
   reason,
   submitting,
+  role,
   onReasonChange,
   onClose,
   onConfirm
@@ -699,6 +708,7 @@ export function ReceiptActionModal({
   action: { type: "verify" | "void"; row: StaffReceiptRow } | null;
   reason: string;
   submitting: boolean;
+  role?: string | null;
   onReasonChange: (value: string) => void;
   onClose: () => void;
   onConfirm: () => void;
@@ -731,6 +741,9 @@ export function ReceiptActionModal({
             : "This receipt will be marked as officially verified and the student will be notified."}
         </p>
         {isVoid ? (
+          <VoidDialogDetails state={voidWindowState(action.row.receipt.voidableUntil, role)} reason={reason} onReasonChange={onReasonChange} />
+        ) : null}
+        {isVoid ? (
           <label className="mt-4 grid gap-1.5 text-sm font-semibold">
             Reason
             <textarea
@@ -746,7 +759,7 @@ export function ReceiptActionModal({
           <Button type="button" variant="secondary" onClick={onClose} disabled={submitting}>Cancel</Button>
           <Button
             type="button"
-            disabled={submitting}
+            disabled={submitting || (isVoid && reason.trim().length < 5)}
             className={isVoid ? "bg-red-700 hover:bg-red-800" : ""}
             onClick={onConfirm}
           >

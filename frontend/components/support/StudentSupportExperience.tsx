@@ -26,6 +26,7 @@ import {
   type BackendTypingUser
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { AssetIcon } from "@/components/ui/AssetIcon";
 
 const quickQuestions = [
   { label: "Browse FAQs", message: "FAQ" },
@@ -247,7 +248,11 @@ function ChatAvatar({ kind, size = "md" }: { kind: "BOT" | "STAFF"; size?: "sm" 
   if (kind === "BOT") {
     return (
       <span className={cn("relative inline-grid shrink-0 place-items-center overflow-hidden rounded-full", sizeClass)} aria-hidden="true">
-        <Image src="/assets/chat-with-wesbot.svg" alt="" fill sizes={size === "sm" ? "32px" : size === "lg" ? "64px" : "44px"} className="object-contain" />
+        <AssetIcon
+          src="/assets/chat-with-wesbot.svg"
+          className="size-full rounded-full"
+          sizes={size === "sm" ? "32px" : size === "lg" ? "64px" : "44px"}
+        />
       </span>
     );
   }

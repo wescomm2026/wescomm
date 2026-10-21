@@ -28,7 +28,7 @@ import { reconcileProductSkuInventory, restockProductSkus } from "../services/sk
 import { invalidateOperationalReadCaches } from "../services/operational-cache.service.js";
 import { getProductDeletionEligibility, permanentlyDeleteProduct } from "../services/product-deletion.service.js";
 import { scheduleOutboxProcessing } from "../services/outbox.service.js";
-import { listInventoryBatches, verifyOpeningBatchCost } from "../services/inventory-cost.service.js";
+import { listInventoryBatches, verifyOpeningBatchCost, verifyOpeningBatchCosts } from "../services/inventory-cost.service.js";
 
 export const staffProductsRoutes = Router();
 
@@ -383,6 +383,26 @@ staffProductsRoutes.get(
   "/:id/batches",
   asyncHandler(async (request, response) => {
     const result = await listInventoryBatches(productIdSchema.parse(request.params.id));
+    response.json(result);
+  })
+);
+
+staffProductsRoutes.patch(
+  "/:id/batches/cost",
+  inventoryWriteLimiter,
+  asyncHandler(async (request: AuthenticatedRequest, response) => {
+    const input = z.object({
+      unitCost: acquisitionCostSchema,
+      batchIds: z.array(batchIdSchema).min(1).max(200).optional()
+    }).strict().parse(request.body);
+    const productId = productIdSchema.parse(request.params.id);
+    const result = await verifyOpeningBatchCosts({
+      productId,
+      batchIds: input.batchIds,
+      unitCost: input.unitCost,
+      actorId: request.auth!.id
+    });
+    await publishInventoryChange(productId, "batch-cost-verified");
     response.json(result);
   })
 );

@@ -1,11 +1,11 @@
 "use client";
 
-import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { usePathname } from "next/navigation";
 import { MoreHorizontal, X } from "lucide-react";
+import { StudentNavIcon } from "@/components/layout/StudentNavIcon";
 import { cn } from "@/lib/utils";
 
 type NavItem = {
@@ -109,7 +109,7 @@ export function MobileBottomNav({ items }: { items: NavItem[] }) {
                 )}
               >
                 {item.iconSrc ? (
-                  <Image src={item.iconSrc} alt="" width={38} height={38} className="size-9 object-contain" />
+                  <StudentNavIcon src={item.iconSrc} active={active} size="lg" />
                 ) : null}
                 <span>{item.label}</span>
               </Link>
@@ -142,7 +142,7 @@ export function MobileBottomNav({ items }: { items: NavItem[] }) {
               >
                 <span className={cn("absolute inset-x-3 top-0 h-0.5 rounded-b-full", active ? "bg-primary" : "bg-transparent")} />
                 {item.iconSrc ? (
-                  <Image src={item.iconSrc} alt="" width={28} height={28} className="size-7 object-contain" />
+                  <StudentNavIcon src={item.iconSrc} active={active} size="sm" />
                 ) : null}
                 <span className="max-w-full truncate">{compactLabel(item.label)}</span>
               </Link>
